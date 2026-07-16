@@ -657,6 +657,8 @@ git commit -m "feat(api): add Prisma/Neon wiring and /api/health/db connectivity
 **Interfaces:**
 - Produces: `HealthStatus` React component that renders API + DB status from `/api/health` and `/api/health/db`. `cn(...)` util and `queryClient` are consumed by all later web features.
 
+> **Post-review fix (commit `9326396`):** the shipped `HealthStatus` distinguishes the *loading* state (a neutral `pending` badge, `checking…`) from *error* (red) — the brief's original `variant={... ? "success" : "destructive"}` rendered red during loading, misreading as "down". `badge.tsx` gains a `pending` variant; the test covers the loading state and adds `afterEach(vi.unstubAllGlobals())`. The committed files are the source of truth for this component.
+
 - [ ] **Step 1: Create package + build config**
 
 `apps/web/package.json`:
