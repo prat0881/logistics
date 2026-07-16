@@ -141,7 +141,7 @@ git commit -m "chore: scaffold pnpm monorepo and shared tooling"
 ### Task 2: `@svyft/shared` — Finding type + formatQueryCode (TDD)
 
 **Files:**
-- Create: `packages/shared/package.json`, `packages/shared/tsconfig.json`, `packages/shared/vitest.config.ts`
+- Create: `packages/shared/package.json`, `packages/shared/tsconfig.json`, `packages/shared/vitest.config.mts`
 - Create: `packages/shared/src/findings.ts`, `packages/shared/src/query-code.ts`, `packages/shared/src/index.ts`
 - Test: `packages/shared/src/query-code.test.ts`
 
@@ -183,7 +183,7 @@ git commit -m "chore: scaffold pnpm monorepo and shared tooling"
   "exclude": ["src/**/*.test.ts", "dist"]
 }
 ```
-`packages/shared/vitest.config.ts`:
+`packages/shared/vitest.config.mts`:
 ```ts
 import { defineConfig } from "vitest/config";
 export default defineConfig({ test: { environment: "node", include: ["src/**/*.test.ts"] } });
