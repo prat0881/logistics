@@ -43,6 +43,7 @@ packages:
 {
   "name": "svyft-logistics",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@9.12.0",
   "engines": { "node": ">=20 <21" },
   "scripts": {
@@ -125,7 +126,8 @@ indent_size = 2
 Run: `pnpm install`
 Expected: resolves, writes `pnpm-lock.yaml`, exit 0.
 Run: `pnpm -r run lint`
-Expected: "None of the selected packages has a script named 'lint'" (no workspaces yet) — exit 0.
+Expected: "No projects matched the filters" (no workspace packages yet) — exit 0.
+(`"type": "module"` on the root package.json keeps the ESM `eslint.config.js` loading without a `MODULE_TYPELESS_PACKAGE_JSON` warning on Node 20.)
 
 - [ ] **Step 8: Commit**
 
