@@ -276,7 +276,7 @@ git commit -m "feat(shared): add Finding type and formatQueryCode util"
 ### Task 3: `apps/api` NestJS app + `GET /api/health` (TDD e2e)
 
 **Files:**
-- Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/nest-cli.json`
+- Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/tsconfig.build.json`, `apps/api/nest-cli.json`
 - Create: `apps/api/src/main.ts`, `apps/api/src/app.module.ts`
 - Create: `apps/api/src/modules/health/health.module.ts`, `apps/api/src/modules/health/health.controller.ts`
 - Test: `apps/api/test/health.e2e-spec.ts`, `apps/api/test/jest-e2e.json`
@@ -346,6 +346,13 @@ git commit -m "feat(shared): add Finding type and formatQueryCode util"
     "baseUrl": "."
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
+}
+```
+`apps/api/tsconfig.build.json` (excludes tests so `nest build` emits a flat `dist/main.js`, not `dist/src/main.js`):
+```json
+{
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
 }
 ```
 `apps/api/test/jest-e2e.json`:
