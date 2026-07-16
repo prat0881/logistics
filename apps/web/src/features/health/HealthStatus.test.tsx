@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HealthStatus } from "./HealthStatus";
@@ -23,9 +23,26 @@ describe("HealthStatus", () => {
     );
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("shows API and DB as ok", async () => {
     renderWithClient();
     const okBadges = await screen.findAllByText("ok");
     expect(okBadges).toHaveLength(2);
+  });
+
+  it("shows a neutral checking state while the queries are loading, not an error", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    renderWithClient();
+
+    const checkingBadges = screen.getAllByText("checking…");
+    expect(checkingBadges).toHaveLength(2);
+    expect(screen.queryByText("ok")).not.toBeInTheDocument();
+    expect(screen.queryByText("error")).not.toBeInTheDocument();
   });
 });
