@@ -565,14 +565,14 @@ Neighbors are Dockerized with **no known shared proxy**. Plan: a **Caddy contain
 ### 11.8 App-specific notes
 - **Escalation cron (§8.2):** single container replica → timers fire once (correct). Multi-replica later needs a leader-lock or BullMQ.
 - **MSDS uploads (§8.4):** named volume now; **DO Spaces** (S3-compatible) is the durable path — a `FilesService` config swap.
-- **Ops hygiene:** `restart: unless-stopped`; DO firewall exposes only `:80/:443`; app port stays internal.
+- **Ops hygiene:** `restart: unless-stopped`; DO firewall allows `:80/:443` (public) **plus `:22`/SSH** (the CD pipeline SSHes in each deploy); app port stays internal.
 
 ### 11.9 Pre-flight / operational checklist
 - [ ] Audit `:80` / `:443` / published ports (decides §11.4 branch).
 - [ ] Confirm droplet RAM headroom (size up if tight — but we build in CI, so no build-time pressure).
 - [ ] DNS: `logistics.<domain>` A-record → droplet IP.
 - [ ] Neon project created, region matched, URLs in secrets.
-- [ ] DO firewall: 80/443 public only.
+- [ ] DO firewall: 80/443 public **plus 22/SSH** (key-only) — the CD pipeline SSHes in on every deploy; don't restrict to only 80/443.
 
 ---
 

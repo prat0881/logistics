@@ -1344,7 +1344,7 @@ Prereqs: DigitalOcean droplet (Docker), a domain, GitHub repo `sj132q/svyft-logi
 - [ ] `ss -tlnp | grep -E ':80|:443'` — confirm `:80/:443` are free.
       - Free → proceed with the Caddy edge below.
       - Occupied → an edge already exists; instead of the `caddy` service, add a route for `logistics.<domain>` to the existing edge and drop the `caddy` service + `ports` from `docker-compose.prod.yml`.
-- [ ] Ensure the droplet's DO firewall exposes only 80/443 publicly.
+- [ ] DO firewall: allow **80/443** publicly **and 22/SSH** (key-only auth). The CD pipeline SSHes into the droplet on every deploy from GitHub-hosted runners (dynamic IPs), so do **not** restrict to only 80/443 — that would lock CD out of every future deploy.
 
 ## 3. Droplet files
 - [ ] `mkdir -p /opt/svyft-logistics && cd /opt/svyft-logistics`
@@ -1367,7 +1367,7 @@ SITE_ADDRESS=logistics.<domain>
 - [ ] Push any commit to `main` (or re-run the Deploy workflow).
 - [ ] Watch: `gh run watch`.
 - [ ] Verify: `curl -s https://logistics.<domain>/api/health` → `{"status":"ok"}`
-- [ ] Verify: `curl -s https://logistics.<domain>/api/health/db` → `{"db":"ok"}`
+- [ ] Verify: `curl -s https://logistics.<domain>/api/health/db` → `{"status":"ok","db":"ok"}`
 - [ ] Open `https://logistics.<domain>/` → two green `ok` badges.
 
 ## Rollback
