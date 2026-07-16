@@ -40,3 +40,6 @@ Thumbs.db
 .cache/
 tmp/
 .turbo/
+
+# Subagent-driven-development scratch (briefs, reports, review packages, ledger)
+.superpowers/
