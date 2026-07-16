@@ -488,7 +488,7 @@ git commit -m "feat(api): bootstrap NestJS app with /api/health endpoint"
 - Produces: `PrismaService` (injectable `PrismaClient` with connect/disconnect lifecycle), exported by a `@Global()` `PrismaModule`; consumed by every data module in later plans.
 - Produces: HTTP `GET /api/health/db` → `200 { status: "ok", db: "ok" }` when Postgres is reachable.
 
-> **Note:** No Prisma models yet — connectivity is proven with a raw `SELECT 1`. The first migration (User model) lands in Plan 1.
+> **Note:** No Prisma models yet — connectivity is proven with a raw `SELECT 1`. The first migration (User model) lands in Plan 1. Because the schema has zero models, `prisma generate` needs `--allow-no-models` (a permissive flag, safe to keep after models exist). `@prisma/client` is added to BOTH the root `package.json` (so `prisma generate` run from the repo root resolves it) and `apps/api`. Prisma Client does NOT auto-load `apps/api/.env` at runtime, so `DATABASE_URL`/`DIRECT_URL` must be present in the process environment when the app or e2e tests run — CI sets them as job env; local dev gets proper `.env` loading via `@nestjs/config` in Task 6.
 
 - [ ] **Step 1: Add Prisma deps**
 
@@ -542,7 +542,7 @@ volumes:
 
 Run: `docker compose -f docker-compose.dev.yml up -d`
 Create `apps/api/.env` with the two local URLs from `.env.example` (uncommented) + `PORT=4000`.
-Run: `pnpm exec prisma generate --schema prisma/schema.prisma`
+Run: `pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models`
 Expected: "Generated Prisma Client", exit 0.
 
 - [ ] **Step 5: Write the failing test**
@@ -984,6 +984,11 @@ git commit -m "feat(web): scaffold Vite/React/Tailwind/shadcn app with HealthSta
 **Interfaces:**
 - Produces: a documented one-command local loop (`pnpm dev`) proving web → `/api` proxy → DB end-to-end.
 
+**Carry-forward requirements from Task 4 (implement in this task):**
+1. **Env loading:** add `@nestjs/config` and wire `ConfigModule.forRoot({ isGlobal: true })` into `apps/api` `AppModule` so `DATABASE_URL`/`DIRECT_URL` load from `apps/api/.env` (the default lookup is cwd, which is `apps/api` for both `nest start` and `pnpm --filter @svyft/api test`). Acceptance: `pnpm --filter @svyft/api test` passes with only `apps/api/.env` present — no inline env vars.
+2. **Dev DB port:** parameterize the host port in `docker-compose.dev.yml` as `"${DEV_DB_PORT:-5432}:5432"` and document `DEV_DB_PORT` in the README, so local Postgres doesn't collide with a `5432` already bound on a shared machine.
+3. Any `prisma generate` shown in the README already carries `--allow-no-models` (Plan 0 has no models yet).
+
 - [ ] **Step 1: Create `README.md`**
 
 ````markdown
@@ -997,7 +1002,7 @@ Monorepo: `apps/api` (NestJS), `apps/web` (React/Vite), `packages/shared`.
 docker compose -f docker-compose.dev.yml up -d      # Postgres on :5432
 cp apps/api/.env.example apps/api/.env              # then uncomment the local URLs
 pnpm install
-pnpm exec prisma generate --schema prisma/schema.prisma
+pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models
 pnpm dev                                            # shared(watch) + api(:4000) + web(:5173)
 ```
 
@@ -1088,7 +1093,7 @@ WORKDIR /repo
 COPY . .
 RUN pnpm install --frozen-lockfile \
  && pnpm --filter @svyft/shared build \
- && pnpm exec prisma generate --schema prisma/schema.prisma \
+ && pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models \
  && pnpm --filter @svyft/web build \
  && pnpm --filter @svyft/api build \
  && mkdir -p apps/api/client && cp -r apps/web/dist/. apps/api/client/
@@ -1207,7 +1212,7 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @svyft/shared build
-      - run: pnpm exec prisma generate --schema prisma/schema.prisma
+      - run: pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm run test
