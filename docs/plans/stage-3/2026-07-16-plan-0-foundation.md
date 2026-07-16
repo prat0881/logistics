@@ -1054,6 +1054,7 @@ Run: `pnpm install`
 Update `apps/api/src/app.module.ts`:
 ```ts
 import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { ServeStaticModule } from "@nestjs/serve-static";
 import { join } from "node:path";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -1069,7 +1070,9 @@ const staticImports =
       ]
     : [];
 
-@Module({ imports: [...staticImports, PrismaModule, HealthModule] })
+@Module({
+  imports: [ConfigModule.forRoot({ isGlobal: true }), ...staticImports, PrismaModule, HealthModule],
+})
 export class AppModule {}
 ```
 
@@ -1091,6 +1094,8 @@ node_modules
 ```dockerfile
 FROM node:20-alpine
 RUN corepack enable
+# node:20-alpine ships no `openssl` package, so Prisma's engine (needs libssl) crash-loops at boot — install it.
+RUN apk add --no-cache openssl
 WORKDIR /repo
 COPY . .
 RUN pnpm install --frozen-lockfile \
