@@ -1213,8 +1213,7 @@ jobs:
       DIRECT_URL: postgresql://svyft:svyft@localhost:5432/svyft?schema=public
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 9 }
+      - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager" (do NOT also pass with.version — action-setup@v4 errors on both)
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
