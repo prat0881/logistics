@@ -19,7 +19,14 @@ export function ConfigPage() {
   const save = useMutation({
     mutationFn: (v: { mode: string; kgPerCbm: number }) =>
       patchJson(`/api/config/density-factors/${v.mode}`, { kgPerCbm: v.kgPerCbm }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["density-factors"] }),
+    onSuccess: async (_data, variables) => {
+      await qc.invalidateQueries({ queryKey: ["density-factors"] });
+      setEdits((s) => {
+        const rest = { ...s };
+        delete rest[variables.mode];
+        return rest;
+      });
+    },
   });
 
   return (
@@ -32,7 +39,7 @@ export function ConfigPage() {
             <span className="w-16">{f.mode}</span>
             <Input
               className="w-32"
-              defaultValue={String(f.kgPerCbm)}
+              value={edits[f.mode] ?? String(f.kgPerCbm)}
               onChange={(e) => setEdits((s) => ({ ...s, [f.mode]: e.target.value }))}
             />
             <Button
