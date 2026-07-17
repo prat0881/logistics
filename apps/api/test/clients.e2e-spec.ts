@@ -129,8 +129,12 @@ describe("Clients (e2e)", () => {
       .get("/api/clients?page=-1")
       .set("Cookie", cookie(Role.EXECUTIVE))
       .expect(200);
-    // resilient minting: remove the sequence row, then a create must still succeed with a code
-    await prisma.client.deleteMany({ where: { companyName: `${CO} RESILIENT` } });
+    // resilient minting: remove the sequence row, then a create must still succeed with a code.
+    // Also free CL-0001 (the code the reset upsert will re-mint) so it can't collide with a
+    // client an earlier test in this suite already minted it to.
+    await prisma.client.deleteMany({
+      where: { OR: [{ companyName: { startsWith: CO } }, { clientCode: "CL-0001" }] },
+    });
     await prisma.codeSequence.deleteMany({ where: { key: "CLIENT" } });
     const res = await request(app.getHttpServer())
       .post("/api/clients")

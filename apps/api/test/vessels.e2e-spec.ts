@@ -92,8 +92,12 @@ describe("Vessels (e2e)", () => {
       .get("/api/vessels?page=-1")
       .set("Cookie", cookie(Role.EXECUTIVE))
       .expect(200);
-    // resilient minting: remove the sequence row, then a create must still succeed with a code
-    await prisma.vessel.deleteMany({ where: { name: `${NAME} RESILIENT` } });
+    // resilient minting: remove the sequence row, then a create must still succeed with a code.
+    // Also free VS-0001 (the code the reset upsert will re-mint) so it can't collide with a
+    // vessel an earlier test in this suite already minted it to.
+    await prisma.vessel.deleteMany({
+      where: { OR: [{ name: { startsWith: NAME } }, { vesselCode: "VS-0001" }] },
+    });
     await prisma.codeSequence.deleteMany({ where: { key: "VESSEL" } });
     const res2 = await request(app.getHttpServer())
       .post("/api/vessels")
