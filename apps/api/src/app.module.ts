@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { ServeStaticModule } from "@nestjs/serve-static";
 import { join } from "node:path";
 import { PrismaModule } from "./prisma/prisma.module";
+import { AuthModule } from "./modules/auth/auth.module";
 import { HealthModule } from "./modules/health/health.module";
 
 const staticImports =
@@ -16,6 +17,12 @@ const staticImports =
     : [];
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), ...staticImports, PrismaModule, HealthModule],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    ...staticImports,
+    PrismaModule,
+    AuthModule,
+    HealthModule,
+  ],
 })
 export class AppModule {}

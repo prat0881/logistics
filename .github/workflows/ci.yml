@@ -21,6 +21,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://svyft:svyft@localhost:5432/svyft?schema=public
       DIRECT_URL: postgresql://svyft:svyft@localhost:5432/svyft?schema=public
+      JWT_ACCESS_SECRET: test-access-secret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -29,6 +30,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @svyft/shared build
       - run: pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models
+      - run: pnpm exec prisma migrate deploy --schema prisma/schema.prisma
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm run test
