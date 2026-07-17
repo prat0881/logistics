@@ -1,11 +1,13 @@
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? "test-access-secret";
 
 import { Controller, Get, INestApplication } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import { JwtService } from "@nestjs/jwt";
 import request from "supertest";
 import cookieParser from "cookie-parser";
 import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
+import { PrismaModule } from "../src/prisma/prisma.module";
 import { AuthModule } from "../src/modules/auth/auth.module";
 import { Public } from "../src/modules/auth/decorators/public.decorator";
 import { Roles } from "../src/modules/auth/decorators/roles.decorator";
@@ -41,7 +43,7 @@ describe("RBAC guards (e2e)", () => {
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [AuthModule],
+      imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, AuthModule],
       controllers: [TestController],
     }).compile();
     app = moduleRef.createNestApplication();
