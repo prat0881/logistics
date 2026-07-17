@@ -21,6 +21,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://svyft:svyft@localhost:5432/svyft?schema=public
       DIRECT_URL: postgresql://svyft:svyft@localhost:5432/svyft?schema=public
+      JWT_ACCESS_SECRET: test-access-secret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
