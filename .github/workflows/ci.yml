@@ -29,6 +29,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @svyft/shared build
       - run: pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models
+      - run: pnpm exec prisma migrate deploy --schema prisma/schema.prisma
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm run test
