@@ -47,9 +47,10 @@ export class VesselsService {
   async create(input: VesselCreateInput) {
     try {
       return await this.prisma.$transaction(async (tx) => {
-        const row = await tx.codeSequence.update({
+        const row = await tx.codeSequence.upsert({
           where: { key: "VESSEL" },
-          data: { lastNumber: { increment: 1 } },
+          create: { key: "VESSEL", lastNumber: 1 },
+          update: { lastNumber: { increment: 1 } },
         });
         const vesselCode = `VS-${String(row.lastNumber).padStart(4, "0")}`;
         return tx.vessel.create({ data: { vesselCode, ...input } });

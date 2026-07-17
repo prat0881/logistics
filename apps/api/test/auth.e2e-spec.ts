@@ -8,6 +8,7 @@ import { Role, ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PasswordService } from "../src/modules/auth/password.service";
+import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 
 const EMAIL = "auth-e2e@svyft.test";
 const PASSWORD = "correct horse battery";
@@ -25,6 +26,7 @@ describe("Auth (e2e)", () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
+    app.useGlobalFilters(new PrismaExceptionFilter());
     app.setGlobalPrefix("api");
     await app.init();
     prisma = moduleRef.get(PrismaService);

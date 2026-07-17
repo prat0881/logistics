@@ -59,9 +59,10 @@ export class ClientsService {
   async create(input: ClientCreateInput) {
     try {
       return await this.prisma.$transaction(async (tx) => {
-        const row = await tx.codeSequence.update({
+        const row = await tx.codeSequence.upsert({
           where: { key: "CLIENT" },
-          data: { lastNumber: { increment: 1 } },
+          create: { key: "CLIENT", lastNumber: 1 },
+          update: { lastNumber: { increment: 1 } },
         });
         const clientCode = `CL-${String(row.lastNumber).padStart(4, "0")}`;
         return tx.client.create({ data: { clientCode, ...input } });

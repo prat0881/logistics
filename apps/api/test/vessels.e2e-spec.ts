@@ -8,6 +8,7 @@ import { JwtService } from "@nestjs/jwt";
 import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 
 const NAME = "MV Vessels E2E";
 const IMO = "9999001";
@@ -23,6 +24,7 @@ describe("Vessels (e2e)", () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
+    app.useGlobalFilters(new PrismaExceptionFilter());
     app.setGlobalPrefix("api");
     await app.init();
     prisma = moduleRef.get(PrismaService);
@@ -79,5 +81,25 @@ describe("Vessels (e2e)", () => {
       .set("Cookie", cookie(Role.EXECUTIVE))
       .expect(200);
     expect(res.body.total).toBeGreaterThanOrEqual(1);
+  });
+
+  it("400s a malformed id; clamps a negative page; mints without a pre-seeded sequence", async () => {
+    await request(app.getHttpServer())
+      .get("/api/vessels/not-a-uuid")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(400);
+    await request(app.getHttpServer())
+      .get("/api/vessels?page=-1")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(200);
+    // resilient minting: remove the sequence row, then a create must still succeed with a code
+    await prisma.vessel.deleteMany({ where: { name: `${NAME} RESILIENT` } });
+    await prisma.codeSequence.deleteMany({ where: { key: "VESSEL" } });
+    const res2 = await request(app.getHttpServer())
+      .post("/api/vessels")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ name: `${NAME} RESILIENT`, vesselType: "CONTAINER" })
+      .expect(201);
+    expect(res2.body.vesselCode).toMatch(/^VS-\d{4}$/);
   });
 });

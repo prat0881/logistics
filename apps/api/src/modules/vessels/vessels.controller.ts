@@ -19,7 +19,7 @@ export class VesselsController {
     return this.vessels.list({
       q,
       status,
-      page: Number(page) || 1,
+      page: Math.max(1, Number(page) || 1),
       pageSize: Math.min(Number(pageSize) || 20, 100),
     });
   }

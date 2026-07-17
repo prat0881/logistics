@@ -8,6 +8,7 @@ import { JwtService } from "@nestjs/jwt";
 import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 
 const CO = "Clients E2E Co";
 
@@ -23,6 +24,7 @@ describe("Clients (e2e)", () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
+    app.useGlobalFilters(new PrismaExceptionFilter());
     app.setGlobalPrefix("api");
     await app.init();
     prisma = moduleRef.get(PrismaService);
@@ -112,5 +114,29 @@ describe("Clients (e2e)", () => {
       .set("Cookie", cookie(Role.MANAGER))
       .send({ country: "IN" })
       .expect(400);
+  });
+
+  it("400s a malformed id and a bad status filter; clamps a negative page; mints without a pre-seeded sequence", async () => {
+    await request(app.getHttpServer())
+      .get("/api/clients/not-a-uuid")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(400);
+    await request(app.getHttpServer())
+      .get("/api/clients?status=xyz")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(400);
+    await request(app.getHttpServer())
+      .get("/api/clients?page=-1")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(200);
+    // resilient minting: remove the sequence row, then a create must still succeed with a code
+    await prisma.client.deleteMany({ where: { companyName: `${CO} RESILIENT` } });
+    await prisma.codeSequence.deleteMany({ where: { key: "CLIENT" } });
+    const res = await request(app.getHttpServer())
+      .post("/api/clients")
+      .set("Cookie", cookie(Role.MANAGER))
+      .send({ companyName: `${CO} RESILIENT`, country: "IN" })
+      .expect(201);
+    expect(res.body.clientCode).toMatch(/^CL-\d{4}$/);
   });
 });

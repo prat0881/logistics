@@ -13,6 +13,7 @@ import { Public } from "../src/modules/auth/decorators/public.decorator";
 import { Roles } from "../src/modules/auth/decorators/roles.decorator";
 import { CurrentUser } from "../src/modules/auth/decorators/current-user.decorator";
 import type { RequestUser } from "../src/modules/auth/types";
+import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 
 @Controller("t")
 class TestController {
@@ -48,6 +49,7 @@ describe("RBAC guards (e2e)", () => {
     }).compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
+    app.useGlobalFilters(new PrismaExceptionFilter());
     app.setGlobalPrefix("api");
     await app.init();
     jwt = moduleRef.get(JwtService);

@@ -9,6 +9,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 
 describe("Config data (e2e)", () => {
   let app: INestApplication;
@@ -20,6 +21,7 @@ describe("Config data (e2e)", () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
+    app.useGlobalFilters(new PrismaExceptionFilter());
     app.setGlobalPrefix("api");
     await app.init();
     jwt = moduleRef.get(JwtService);
