@@ -2,6 +2,12 @@ name: Deploy
 on:
   push:
     branches: [main]
+    paths: # only redeploy when runtime code/deps change — not docs/config
+      - "apps/**"
+      - "packages/**"
+      - "prisma/**"
+      - "pnpm-lock.yaml"
+  workflow_dispatch: {} # manual "Run workflow" for redeploys / config-only changes
 concurrency:
   group: deploy-prod
   cancel-in-progress: false
