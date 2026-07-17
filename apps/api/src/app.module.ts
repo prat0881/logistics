@@ -8,6 +8,7 @@ import { CodeSequenceModule } from "./common/code-sequence.module";
 import { HealthModule } from "./modules/health/health.module";
 import { ClientsModule } from "./modules/clients/clients.module";
 import { VesselsModule } from "./modules/vessels/vessels.module";
+import { ConfigDataModule } from "./modules/config/config-data.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -28,6 +29,7 @@ const staticImports =
     CodeSequenceModule,
     ClientsModule,
     VesselsModule,
+    ConfigDataModule,
     HealthModule,
   ],
 })
