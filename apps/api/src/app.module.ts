@@ -6,6 +6,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CodeSequenceModule } from "./common/code-sequence.module";
 import { HealthModule } from "./modules/health/health.module";
+import { ClientsModule } from "./modules/clients/clients.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -24,6 +25,7 @@ const staticImports =
     PrismaModule,
     AuthModule,
     CodeSequenceModule,
+    ClientsModule,
     HealthModule,
   ],
 })
