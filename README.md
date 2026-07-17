@@ -11,7 +11,7 @@ pnpm install
 pnpm --filter @svyft/shared build
 set -a; . apps/api/.env; set +a                     # export DB + auth env for the CLI
 pnpm exec prisma migrate deploy --schema prisma/schema.prisma   # apply migrations
-pnpm exec prisma db seed                            # seed admin/manager/executive (idempotent)
+pnpm exec prisma db seed                            # seed users + reference data (idempotent)
 pnpm dev                                            # shared(watch) + api(:4000) + web(:5173)
 ```
 
@@ -34,6 +34,15 @@ port (e.g. `localhost:5433` instead of `localhost:5432`).
 ## Auth
 
 Real login: access-token JWT in an httpOnly cookie (15 min) + a rotating refresh token (7 days, SHA-256-hashed in `RefreshToken`). Roles: Executive / Manager / Administrator, enforced by global guards (`@Public()` opts out). Endpoints: `POST /api/auth/login` · `/refresh` · `/logout` · `GET /api/auth/me`. Seed accounts and `JWT_ACCESS_SECRET` come from env (see `apps/api/.env.example`). `COOKIE_SECURE` must be `false` on plain HTTP and `true` only under HTTPS.
+
+## Masters
+
+Client and Vessel masters (search/create/edit, plus client contacts) live under `/masters/*` —
+Administrator/Manager can write, every authenticated role can read. Codes are auto-minted
+(`CL-####` / `VS-####`). Admin-only reference data (freight density factors, checklist
+definitions) lives at `/admin/config`. `pnpm exec prisma db seed` now seeds the reference data
+alongside the users — density factors (ROAD/AIR/SEA), the 9 checklist items, and the
+`CLIENT`/`VESSEL` code sequences — idempotently.
 
 ## Verify
 
