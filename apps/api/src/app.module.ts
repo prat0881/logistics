@@ -1,0 +1,21 @@
+import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
+import { ServeStaticModule } from "@nestjs/serve-static";
+import { join } from "node:path";
+import { PrismaModule } from "./prisma/prisma.module";
+import { HealthModule } from "./modules/health/health.module";
+
+const staticImports =
+  process.env.SERVE_STATIC === "true"
+    ? [
+        ServeStaticModule.forRoot({
+          rootPath: join(__dirname, "..", "client"),
+          exclude: ["/api/(.*)"],
+        }),
+      ]
+    : [];
+
+@Module({
+  imports: [ConfigModule.forRoot({ isGlobal: true }), ...staticImports, PrismaModule, HealthModule],
+})
+export class AppModule {}

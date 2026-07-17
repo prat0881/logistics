@@ -1,0 +1,35 @@
+services:
+  api:
+    image: ${IMAGE:-ghcr.io/sj132q/svyft-logistics:latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      SERVE_STATIC: "true"
+      PORT: "4000"
+    expose: ["4000"]
+    volumes: ["svyft_uploads:/repo/apps/api/uploads"]
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+volumes:
+  svyft_uploads:
+  caddy_data:
+  caddy_config:

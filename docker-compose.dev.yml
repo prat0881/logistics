@@ -1,0 +1,11 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: svyft
+      POSTGRES_PASSWORD: svyft
+      POSTGRES_DB: svyft
+    ports: ["${DEV_DB_PORT:-5432}:5432"]
+    volumes: ["svyft_pgdata:/var/lib/postgresql/data"]
+volumes:
+  svyft_pgdata:

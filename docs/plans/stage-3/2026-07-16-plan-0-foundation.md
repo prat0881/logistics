@@ -43,6 +43,7 @@ packages:
 {
   "name": "svyft-logistics",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@9.12.0",
   "engines": { "node": ">=20 <21" },
   "scripts": {
@@ -125,7 +126,8 @@ indent_size = 2
 Run: `pnpm install`
 Expected: resolves, writes `pnpm-lock.yaml`, exit 0.
 Run: `pnpm -r run lint`
-Expected: "None of the selected packages has a script named 'lint'" (no workspaces yet) — exit 0.
+Expected: "No projects matched the filters" (no workspace packages yet) — exit 0.
+(`"type": "module"` on the root package.json keeps the ESM `eslint.config.js` loading without a `MODULE_TYPELESS_PACKAGE_JSON` warning on Node 20.)
 
 - [ ] **Step 8: Commit**
 
@@ -139,7 +141,7 @@ git commit -m "chore: scaffold pnpm monorepo and shared tooling"
 ### Task 2: `@svyft/shared` — Finding type + formatQueryCode (TDD)
 
 **Files:**
-- Create: `packages/shared/package.json`, `packages/shared/tsconfig.json`, `packages/shared/vitest.config.ts`
+- Create: `packages/shared/package.json`, `packages/shared/tsconfig.json`, `packages/shared/vitest.config.mts`
 - Create: `packages/shared/src/findings.ts`, `packages/shared/src/query-code.ts`, `packages/shared/src/index.ts`
 - Test: `packages/shared/src/query-code.test.ts`
 
@@ -181,7 +183,7 @@ git commit -m "chore: scaffold pnpm monorepo and shared tooling"
   "exclude": ["src/**/*.test.ts", "dist"]
 }
 ```
-`packages/shared/vitest.config.ts`:
+`packages/shared/vitest.config.mts`:
 ```ts
 import { defineConfig } from "vitest/config";
 export default defineConfig({ test: { environment: "node", include: ["src/**/*.test.ts"] } });
@@ -274,7 +276,7 @@ git commit -m "feat(shared): add Finding type and formatQueryCode util"
 ### Task 3: `apps/api` NestJS app + `GET /api/health` (TDD e2e)
 
 **Files:**
-- Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/nest-cli.json`
+- Create: `apps/api/package.json`, `apps/api/tsconfig.json`, `apps/api/tsconfig.build.json`, `apps/api/nest-cli.json`
 - Create: `apps/api/src/main.ts`, `apps/api/src/app.module.ts`
 - Create: `apps/api/src/modules/health/health.module.ts`, `apps/api/src/modules/health/health.controller.ts`
 - Test: `apps/api/test/health.e2e-spec.ts`, `apps/api/test/jest-e2e.json`
@@ -344,6 +346,13 @@ git commit -m "feat(shared): add Finding type and formatQueryCode util"
     "baseUrl": "."
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
+}
+```
+`apps/api/tsconfig.build.json` (excludes tests so `nest build` emits a flat `dist/main.js`, not `dist/src/main.js`):
+```json
+{
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
 }
 ```
 `apps/api/test/jest-e2e.json`:
@@ -479,7 +488,7 @@ git commit -m "feat(api): bootstrap NestJS app with /api/health endpoint"
 - Produces: `PrismaService` (injectable `PrismaClient` with connect/disconnect lifecycle), exported by a `@Global()` `PrismaModule`; consumed by every data module in later plans.
 - Produces: HTTP `GET /api/health/db` → `200 { status: "ok", db: "ok" }` when Postgres is reachable.
 
-> **Note:** No Prisma models yet — connectivity is proven with a raw `SELECT 1`. The first migration (User model) lands in Plan 1.
+> **Note:** No Prisma models yet — connectivity is proven with a raw `SELECT 1`. The first migration (User model) lands in Plan 1. Because the schema has zero models, `prisma generate` needs `--allow-no-models` (a permissive flag, safe to keep after models exist). `@prisma/client` is added to BOTH the root `package.json` (so `prisma generate` run from the repo root resolves it) and `apps/api`. Prisma Client does NOT auto-load `apps/api/.env` at runtime, so `DATABASE_URL`/`DIRECT_URL` must be present in the process environment when the app or e2e tests run — CI sets them as job env; local dev gets proper `.env` loading via `@nestjs/config` in Task 6.
 
 - [ ] **Step 1: Add Prisma deps**
 
@@ -533,7 +542,7 @@ volumes:
 
 Run: `docker compose -f docker-compose.dev.yml up -d`
 Create `apps/api/.env` with the two local URLs from `.env.example` (uncommented) + `PORT=4000`.
-Run: `pnpm exec prisma generate --schema prisma/schema.prisma`
+Run: `pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models`
 Expected: "Generated Prisma Client", exit 0.
 
 - [ ] **Step 5: Write the failing test**
@@ -647,6 +656,8 @@ git commit -m "feat(api): add Prisma/Neon wiring and /api/health/db connectivity
 
 **Interfaces:**
 - Produces: `HealthStatus` React component that renders API + DB status from `/api/health` and `/api/health/db`. `cn(...)` util and `queryClient` are consumed by all later web features.
+
+> **Post-review fix (commit `9326396`):** the shipped `HealthStatus` distinguishes the *loading* state (a neutral `pending` badge, `checking…`) from *error* (red) — the brief's original `variant={... ? "success" : "destructive"}` rendered red during loading, misreading as "down". `badge.tsx` gains a `pending` variant; the test covers the loading state and adds `afterEach(vi.unstubAllGlobals())`. The committed files are the source of truth for this component.
 
 - [ ] **Step 1: Create package + build config**
 
@@ -975,6 +986,11 @@ git commit -m "feat(web): scaffold Vite/React/Tailwind/shadcn app with HealthSta
 **Interfaces:**
 - Produces: a documented one-command local loop (`pnpm dev`) proving web → `/api` proxy → DB end-to-end.
 
+**Carry-forward requirements from Task 4 (implement in this task):**
+1. **Env loading:** add `@nestjs/config` and wire `ConfigModule.forRoot({ isGlobal: true })` into `apps/api` `AppModule` so `DATABASE_URL`/`DIRECT_URL` load from `apps/api/.env` (the default lookup is cwd, which is `apps/api` for both `nest start` and `pnpm --filter @svyft/api test`). Acceptance: `pnpm --filter @svyft/api test` passes with only `apps/api/.env` present — no inline env vars.
+2. **Dev DB port:** parameterize the host port in `docker-compose.dev.yml` as `"${DEV_DB_PORT:-5432}:5432"` and document `DEV_DB_PORT` in the README, so local Postgres doesn't collide with a `5432` already bound on a shared machine.
+3. Any `prisma generate` shown in the README already carries `--allow-no-models` (Plan 0 has no models yet).
+
 - [ ] **Step 1: Create `README.md`**
 
 ````markdown
@@ -988,7 +1004,7 @@ Monorepo: `apps/api` (NestJS), `apps/web` (React/Vite), `packages/shared`.
 docker compose -f docker-compose.dev.yml up -d      # Postgres on :5432
 cp apps/api/.env.example apps/api/.env              # then uncomment the local URLs
 pnpm install
-pnpm exec prisma generate --schema prisma/schema.prisma
+pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models
 pnpm dev                                            # shared(watch) + api(:4000) + web(:5173)
 ```
 
@@ -1038,6 +1054,7 @@ Run: `pnpm install`
 Update `apps/api/src/app.module.ts`:
 ```ts
 import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { ServeStaticModule } from "@nestjs/serve-static";
 import { join } from "node:path";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -1053,7 +1070,9 @@ const staticImports =
       ]
     : [];
 
-@Module({ imports: [...staticImports, PrismaModule, HealthModule] })
+@Module({
+  imports: [ConfigModule.forRoot({ isGlobal: true }), ...staticImports, PrismaModule, HealthModule],
+})
 export class AppModule {}
 ```
 
@@ -1075,11 +1094,13 @@ node_modules
 ```dockerfile
 FROM node:20-alpine
 RUN corepack enable
+# node:20-alpine ships no `openssl` package, so Prisma's engine (needs libssl) crash-loops at boot — install it.
+RUN apk add --no-cache openssl
 WORKDIR /repo
 COPY . .
 RUN pnpm install --frozen-lockfile \
  && pnpm --filter @svyft/shared build \
- && pnpm exec prisma generate --schema prisma/schema.prisma \
+ && pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models \
  && pnpm --filter @svyft/web build \
  && pnpm --filter @svyft/api build \
  && mkdir -p apps/api/client && cp -r apps/web/dist/. apps/api/client/
@@ -1192,13 +1213,12 @@ jobs:
       DIRECT_URL: postgresql://svyft:svyft@localhost:5432/svyft?schema=public
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 9 }
+      - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager" (do NOT also pass with.version — action-setup@v4 errors on both)
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @svyft/shared build
-      - run: pnpm exec prisma generate --schema prisma/schema.prisma
+      - run: pnpm exec prisma generate --schema prisma/schema.prisma --allow-no-models
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm run test
@@ -1323,7 +1343,7 @@ Prereqs: DigitalOcean droplet (Docker), a domain, GitHub repo `sj132q/svyft-logi
 - [ ] `ss -tlnp | grep -E ':80|:443'` — confirm `:80/:443` are free.
       - Free → proceed with the Caddy edge below.
       - Occupied → an edge already exists; instead of the `caddy` service, add a route for `logistics.<domain>` to the existing edge and drop the `caddy` service + `ports` from `docker-compose.prod.yml`.
-- [ ] Ensure the droplet's DO firewall exposes only 80/443 publicly.
+- [ ] DO firewall: allow **80/443** publicly **and 22/SSH** (key-only auth). The CD pipeline SSHes into the droplet on every deploy from GitHub-hosted runners (dynamic IPs), so do **not** restrict to only 80/443 — that would lock CD out of every future deploy.
 
 ## 3. Droplet files
 - [ ] `mkdir -p /opt/svyft-logistics && cd /opt/svyft-logistics`
@@ -1346,7 +1366,7 @@ SITE_ADDRESS=logistics.<domain>
 - [ ] Push any commit to `main` (or re-run the Deploy workflow).
 - [ ] Watch: `gh run watch`.
 - [ ] Verify: `curl -s https://logistics.<domain>/api/health` → `{"status":"ok"}`
-- [ ] Verify: `curl -s https://logistics.<domain>/api/health/db` → `{"db":"ok"}`
+- [ ] Verify: `curl -s https://logistics.<domain>/api/health/db` → `{"status":"ok","db":"ok"}`
 - [ ] Open `https://logistics.<domain>/` → two green `ok` badges.
 
 ## Rollback
