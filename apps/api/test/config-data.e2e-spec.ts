@@ -63,4 +63,17 @@ describe("Config data (e2e)", () => {
       res.body.find((i: { itemKey: string }) => i.itemKey === "msds-received").dgConditional,
     ).toBe(true);
   });
+
+  it("404s an unknown density mode and an unknown checklist item", async () => {
+    await request(app.getHttpServer())
+      .patch("/api/config/density-factors/NOPE")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ kgPerCbm: 100 })
+      .expect(404);
+    await request(app.getHttpServer())
+      .patch("/api/config/checklist-definition/nope-key")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ label: "x" })
+      .expect(404);
+  });
 });

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { FREIGHT_MODES, type FreightMode } from "@svyft/shared";
 import type { ChecklistItemUpdateInput, DensityFactorUpdateInput } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 
@@ -12,6 +13,9 @@ export class ConfigDataService {
   }
 
   async updateDensityFactor(mode: string, input: DensityFactorUpdateInput) {
+    if (!FREIGHT_MODES.includes(mode as FreightMode)) {
+      throw new NotFoundException("Unknown freight mode");
+    }
     try {
       return await this.prisma.freightDensityFactor.update({
         where: { mode: mode as never },
