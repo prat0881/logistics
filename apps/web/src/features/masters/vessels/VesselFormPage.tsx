@@ -53,7 +53,10 @@ export function VesselFormPage() {
       </div>
       <div className="space-y-1">
         <Label htmlFor="imoNumber">IMO number</Label>
-        <Input id="imoNumber" {...register("imoNumber")} />
+        <Input
+          id="imoNumber"
+          {...register("imoNumber", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
+        />
         {errors.imoNumber && (
           <p role="alert" className="text-sm text-red-600">
             {errors.imoNumber.message}
