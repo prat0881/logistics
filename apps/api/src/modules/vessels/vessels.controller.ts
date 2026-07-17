@@ -20,7 +20,7 @@ export class VesselsController {
       q,
       status,
       page: Math.max(1, Number(page) || 1),
-      pageSize: Math.min(Number(pageSize) || 20, 100),
+      pageSize: Math.min(Math.max(1, Number(pageSize) || 20), 100),
     });
   }
 

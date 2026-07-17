@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { Role } from "@svyft/shared";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { useVessels } from "../useMasters";
 import { Input } from "@/components/ui/input";
@@ -7,7 +8,7 @@ import { Input } from "@/components/ui/input";
 export function VesselsListPage() {
   const { user } = useAuth();
   const [q, setQ] = useState("");
-  const canWrite = user?.role === "ADMINISTRATOR" || user?.role === "MANAGER";
+  const canWrite = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
   const { data, isLoading } = useVessels(q);
 
   return (

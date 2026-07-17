@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
+import { Role } from "@svyft/shared";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { HomePage } from "@/features/home/HomePage";
 import { ProtectedRoute } from "@/features/auth/ProtectedRoute";
@@ -21,7 +22,7 @@ function Protected({ children }: { children: ReactNode }) {
 
 function AdminOnly({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  return user?.role === "ADMINISTRATOR" ? <>{children}</> : <Navigate to="/" replace />;
+  return user?.role === Role.ADMINISTRATOR ? <>{children}</> : <Navigate to="/" replace />;
 }
 
 export function App() {
