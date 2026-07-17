@@ -8,14 +8,10 @@ import type {
   Paginated,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
-import { CodeSequenceService } from "../../common/code-sequence.service";
 
 @Injectable()
 export class ClientsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly codes: CodeSequenceService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async list(params: {
     q?: string;

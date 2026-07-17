@@ -30,8 +30,3 @@ export async function patchJson<T>(url: string, body: unknown): Promise<T> {
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   return (await res.json()) as T;
 }
-
-export async function del(url: string): Promise<void> {
-  const res = await fetch(url, { method: "DELETE", credentials: "include" });
-  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-}

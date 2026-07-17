@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { Role } from "@svyft/shared";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
-  const isAdmin = user?.role === "ADMINISTRATOR";
+  const isAdmin = user?.role === Role.ADMINISTRATOR;
   return (
     <div className="min-h-screen">
       <header className="flex items-center justify-between border-b px-6 py-3">
