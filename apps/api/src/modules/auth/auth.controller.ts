@@ -8,14 +8,18 @@ import { CurrentUser } from "./decorators/current-user.decorator";
 import { AuthService, type AuthTokens } from "./auth.service";
 import type { RequestUser } from "./types";
 
-const secure = process.env.COOKIE_SECURE === "true";
 const ACCESS_MAX_AGE_MS = 15 * 60 * 1000;
+
+function cookieSecure(): boolean {
+  return process.env.COOKIE_SECURE === "true";
+}
 
 function readCookie(req: Request, name: string): string | undefined {
   return (req.cookies as Record<string, string> | undefined)?.[name];
 }
 
 function setAuthCookies(res: Response, tokens: AuthTokens): void {
+  const secure = cookieSecure();
   res.cookie(ACCESS_TOKEN_COOKIE, tokens.accessToken, {
     httpOnly: true,
     sameSite: "strict",
@@ -33,6 +37,7 @@ function setAuthCookies(res: Response, tokens: AuthTokens): void {
 }
 
 function clearAuthCookies(res: Response): void {
+  const secure = cookieSecure();
   res.clearCookie(ACCESS_TOKEN_COOKIE, { httpOnly: true, sameSite: "strict", secure, path: "/" });
   res.clearCookie(REFRESH_TOKEN_COOKIE, {
     httpOnly: true,

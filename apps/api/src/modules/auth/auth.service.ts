@@ -6,8 +6,6 @@ import { PasswordService } from "./password.service";
 import { generateRefreshToken, hashRefreshToken } from "./refresh-token.util";
 import type { JwtPayload } from "./types";
 
-const REFRESH_TTL_DAYS = Number(process.env.REFRESH_TTL_DAYS ?? 7);
-
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
@@ -41,10 +39,11 @@ export class AuthService {
     tenantId: string | null;
     role: AuthUser["role"];
   }): Promise<AuthTokens> {
+    const refreshTtlDays = Number(process.env.REFRESH_TTL_DAYS ?? 7);
     const payload: JwtPayload = { sub: u.id, role: u.role, tenantId: u.tenantId };
     const accessToken = this.jwt.sign(payload);
     const refreshToken = generateRefreshToken();
-    const refreshExpiresAt = new Date(Date.now() + REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000);
+    const refreshExpiresAt = new Date(Date.now() + refreshTtlDays * 24 * 60 * 60 * 1000);
     await this.prisma.refreshToken.create({
       data: {
         userId: u.id,
@@ -78,10 +77,13 @@ export class AuthService {
     if (!user || !user.isActive) {
       throw new UnauthorizedException("Invalid refresh token");
     }
-    await this.prisma.refreshToken.update({
-      where: { id: existing.id },
+    const claim = await this.prisma.refreshToken.updateMany({
+      where: { id: existing.id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    if (claim.count === 0) {
+      throw new UnauthorizedException("Invalid refresh token");
+    }
     return { user: this.toAuthUser(user), tokens: await this.issueTokens(user) };
   }
 
