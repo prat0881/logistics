@@ -4,7 +4,11 @@ import { ServeStaticModule } from "@nestjs/serve-static";
 import { join } from "node:path";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { CodeSequenceModule } from "./common/code-sequence.module";
 import { HealthModule } from "./modules/health/health.module";
+import { ClientsModule } from "./modules/clients/clients.module";
+import { VesselsModule } from "./modules/vessels/vessels.module";
+import { ConfigDataModule } from "./modules/config/config-data.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -22,6 +26,10 @@ const staticImports =
     ...staticImports,
     PrismaModule,
     AuthModule,
+    CodeSequenceModule,
+    ClientsModule,
+    VesselsModule,
+    ConfigDataModule,
     HealthModule,
   ],
 })
