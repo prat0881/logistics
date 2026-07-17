@@ -37,12 +37,14 @@ Real login: access-token JWT in an httpOnly cookie (15 min) + a rotating refresh
 
 ## Masters
 
-Client and Vessel masters (search/create/edit, plus client contacts) live under `/masters/*` —
-Administrator/Manager can write, every authenticated role can read. Codes are auto-minted
-(`CL-####` / `VS-####`). Admin-only reference data (freight density factors, checklist
-definitions) lives at `/admin/config`. `pnpm exec prisma db seed` now seeds the reference data
-alongside the users — density factors (ROAD/AIR/SEA), the 9 checklist items, and the
-`CLIENT`/`VESSEL` code sequences — idempotently.
+Client and Vessel masters (search/create/edit) live under `/masters/*` — Administrator/Manager can
+write, every authenticated role can read. Codes are auto-minted (`CL-####` / `VS-####`). Client
+contacts are managed via the API only (`/api/clients/:id/contacts`) — no UI yet. Reference data
+(freight density factors, checklist definitions) lives at `/admin/config`: any authenticated role
+can read it via the API, but only an Administrator can edit it (the `/admin/config` page is
+Admin-only). `pnpm exec prisma db seed` now seeds the reference data alongside the users — density
+factors (ROAD/AIR/SEA), the 9 checklist items, and the `CLIENT`/`VESSEL` code sequences —
+idempotently.
 
 ## Verify
 
