@@ -23,12 +23,13 @@ pnpm monorepo · NestJS + Prisma (Neon Postgres) · Vite + React + Tailwind + sh
 
 ## Deployment facts
 - Droplet `142.93.220.226` (Bangalore), Docker, **shared** with another app (on `:5173`). Our app: HTTP on **`:4096`** (no domain/TLS yet).
-- Neon Postgres (Singapore `ap-southeast-1`); pooled+direct URLs live in droplet `/opt/svyft-logistics/.env` (NOT in the repo). The droplet uses an **HTTP-on-4096 compose variant**, not the repo's Caddy version.
-- **CD:** pushing **runtime code** (`apps/**`, `packages/**`, `prisma/**`, `pnpm-lock.yaml`) to `main` → Actions builds image → GHCR → SSH deploy (`prisma migrate deploy` + `compose up`). Docs/config pushes do **not** deploy (path-filtered); redeploy manually via the Deploy workflow's **Run workflow** (`workflow_dispatch`).
+- Neon Postgres (Singapore `ap-southeast-1`); pooled+direct URLs live in droplet `/opt/svyft-logistics/.env` (NOT in the repo).
+- **Prod compose = `docker-compose.prod.yml`** (HTTP on `:4096`, no Caddy) — the repo file now matches what the droplet runs (fixed in `fix/cd-compose-sync`). The Caddy/HTTPS variant lives at **`docker-compose.caddy.yml`** (for when a domain lands). Keep the droplet's `/opt/svyft-logistics/docker-compose.prod.yml` in sync with the repo.
+- **CD:** pushing **runtime code** (`apps/**`, `packages/**`, `prisma/**`, `pnpm-lock.yaml`) to `main` → Actions builds image → GHCR → SSH deploy (`prisma migrate deploy` + `compose up -d --force-recreate`). `--force-recreate` is required so the container actually adopts the new image (plain `up -d` silently kept the old one). Docs/config pushes do **not** deploy (path-filtered); redeploy manually via the Deploy workflow's **Run workflow** (`workflow_dispatch`).
 - Secrets set: `DROPLET_HOST`, `DROPLET_USER`, `DROPLET_SSH_KEY`, `GHCR_TOKEN`.
 
 ## Pending (before "proper" production — not blocking Plan 1)
-- **HTTPS** (needs a domain → switch to the repo's Caddy `docker-compose.prod.yml`).
+- **HTTPS** (needs a domain → switch CD + the droplet to `docker-compose.caddy.yml`, set `SITE_ADDRESS` in `.env`, then flip `COOKIE_SECURE=true`).
 - **Hardening:** non-root container `USER`; **DB-resilient health** (make Prisma `$connect` non-fatal so `/api/health` + the container HEALTHCHECK don't depend on the DB — currently the app won't boot if the DB is unreachable); SHA-pin marketplace actions; `permissions:` block on the deploy job; branch protection on `main`.
 
 ## Conventions
