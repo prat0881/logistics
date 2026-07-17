@@ -4,6 +4,7 @@ import { ServeStaticModule } from "@nestjs/serve-static";
 import { join } from "node:path";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { CodeSequenceModule } from "./common/code-sequence.module";
 import { HealthModule } from "./modules/health/health.module";
 
 const staticImports =
@@ -22,6 +23,7 @@ const staticImports =
     ...staticImports,
     PrismaModule,
     AuthModule,
+    CodeSequenceModule,
     HealthModule,
   ],
 })
