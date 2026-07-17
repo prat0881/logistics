@@ -1,3 +1,7 @@
+# Production compose — the LIVE deployment. CI/CD (.github/workflows/deploy.yml) deploys this
+# file and the droplet at /opt/svyft-logistics runs it. Serves the API + built SPA over plain
+# HTTP on :4096 (no TLS yet — no domain). For the HTTPS/Caddy edge, see docker-compose.caddy.yml.
+# `IMAGE` is injected by the deploy job (pinned to the built git SHA); it defaults to :latest.
 services:
   api:
     image: ${IMAGE:-ghcr.io/sj132q/svyft-logistics:latest}
@@ -7,7 +11,7 @@ services:
       NODE_ENV: production
       SERVE_STATIC: "true"
       PORT: "4000"
-    expose: ["4000"]
+    ports: ["4096:4000"]
     volumes: ["svyft_uploads:/repo/apps/api/uploads"]
     mem_limit: 512m
     logging:
@@ -18,18 +22,5 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports: ["80:80", "443:443"]
-    environment:
-      SITE_ADDRESS: ${SITE_ADDRESS}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on: [api]
 volumes:
   svyft_uploads:
-  caddy_data:
-  caddy_config:
