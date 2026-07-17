@@ -12,12 +12,15 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@hookform/resolvers": "^3.9.0",
+    "@svyft/shared": "workspace:*",
     "@tanstack/react-query": "^5.59.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.451.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-hook-form": "^7.53.0",
     "react-router-dom": "^6.26.0",
     "tailwind-merge": "^2.5.3"
   },
