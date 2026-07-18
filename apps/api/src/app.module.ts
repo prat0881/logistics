@@ -10,6 +10,7 @@ import { ClientsModule } from "./modules/clients/clients.module";
 import { VesselsModule } from "./modules/vessels/vessels.module";
 import { ConfigDataModule } from "./modules/config/config-data.module";
 import { StatusModule } from "./modules/status/status.module";
+import { ChangesModule } from "./modules/changes/changes.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -32,6 +33,7 @@ const staticImports =
     VesselsModule,
     ConfigDataModule,
     StatusModule,
+    ChangesModule,
     HealthModule,
   ],
 })
