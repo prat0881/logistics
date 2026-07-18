@@ -50,7 +50,16 @@ jobs:
             export IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
             docker compose -f docker-compose.prod.yml pull
+            # Keep the droplet's local :latest tag pointing at the deployed image. A manual
+            # `docker compose run/up` with no IMAGE set falls back to the compose default
+            # (:latest); without this, that resolves to a stale locally-cached image — which is
+            # why a manually-run reference seed executed old code and left the tables empty.
+            docker tag "$IMAGE" ghcr.io/${{ github.repository }}:latest
             docker compose -f docker-compose.prod.yml run --rm -e IMAGE="$IMAGE" api pnpm exec prisma migrate deploy --schema prisma/schema.prisma
+            # Reference data (density factors + checklist definitions + code sequences).
+            # Idempotent/create-only, so it is guaranteed present on every deploy with no manual
+            # step to forget. The user seed stays manual (it needs the SEED_* credentials).
+            docker compose -f docker-compose.prod.yml run --rm -e IMAGE="$IMAGE" api node apps/api/dist/seed/reference-seed.cli.js
             # --force-recreate: replace the running container even when the image *reference* is
             # unchanged. Without it, `up -d` skips recreation and keeps serving the old image
             # (a freshly `pull`ed :latest digest is ignored), which is why deploys silently no-op'd.
