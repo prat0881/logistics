@@ -5,6 +5,9 @@ import {
   LegStatus,
   LegEvent,
   QueryStatus,
+  LEG_STATUSES,
+  LEG_EVENTS,
+  QUERY_STATUSES,
   type Machine,
 } from "./status";
 
@@ -110,5 +113,33 @@ describe("deriveQueryStatus (least-advanced gate + milestones, §9.1)", () => {
     expect(deriveQueryStatus([LegStatus.RFQ_SENT], { awaitingClientDecision: true })).toBe(
       QueryStatus.AWAITING_CLIENT_DECISION,
     );
+  });
+});
+
+describe("status vocabularies", () => {
+  it("pins the companion-array vocabularies (order matters for downstream Zod enums)", () => {
+    expect(LEG_STATUSES).toEqual([
+      "DRAFT",
+      "READY_FOR_RFQ",
+      "RFQ_SENT",
+      "PARTIALLY_QUOTED",
+      "FULLY_QUOTED",
+      "AWARDED",
+      "IN_TRANSIT",
+      "DELIVERED",
+      "CLOSED",
+    ]);
+    expect(LEG_EVENTS).toEqual(["validate.pass", "reopen"]);
+    expect(QUERY_STATUSES).toEqual([
+      "DRAFT",
+      "CREATED",
+      "RFQ_READY",
+      "RFQ_SENT",
+      "QUOTED",
+      "AWAITING_CLIENT_DECISION",
+      "WON",
+      "LOST",
+      "CLOSED",
+    ]);
   });
 });

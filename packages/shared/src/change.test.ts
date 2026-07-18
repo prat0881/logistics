@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ImpactClass, IMPACT_RANK, decidePath } from "./change";
+import { ImpactClass, IMPACT_CLASSES, IMPACT_RANK, decidePath } from "./change";
 
 describe("IMPACT_RANK ordering (§11.1, by downstream cost)", () => {
   it("orders Internal < Corrective < RfqDefining < PricingAwardDefining < Structural", () => {
@@ -7,6 +7,16 @@ describe("IMPACT_RANK ordering (§11.1, by downstream cost)", () => {
     expect(IMPACT_RANK.Corrective).toBeLessThan(IMPACT_RANK.RfqDefining);
     expect(IMPACT_RANK.RfqDefining).toBeLessThan(IMPACT_RANK.PricingAwardDefining);
     expect(IMPACT_RANK.PricingAwardDefining).toBeLessThan(IMPACT_RANK.Structural);
+  });
+
+  it("pins IMPACT_CLASSES order (by ascending downstream cost)", () => {
+    expect(IMPACT_CLASSES).toEqual([
+      "Internal",
+      "Corrective",
+      "RfqDefining",
+      "PricingAwardDefining",
+      "Structural",
+    ]);
   });
 });
 
