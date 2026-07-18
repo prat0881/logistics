@@ -66,6 +66,26 @@ describe("Status Machine (integration)", () => {
     expect(await prisma.statusTransition.count({ where: { entityId: id } })).toBe(0);
   });
 
+  it("blocks with a default Finding when routeValid is false and no findings are supplied", async () => {
+    const id = `${PREFIX}default-finding`;
+    let err: unknown;
+    try {
+      await status.fire("leg", id, LegEvent.VALIDATE_PASS, { routeValid: false });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TransitionBlockedError);
+    expect((err as TransitionBlockedError).findings).toEqual([
+      {
+        rule: "C1",
+        severity: "blocking",
+        scope: { type: "leg" },
+        message: "Leg is incomplete or its route is not valid",
+      },
+    ]);
+    expect(await prisma.statusTransition.count({ where: { entityId: id } })).toBe(0);
+  });
+
   it("rejects an illegal (state,event) pair with IllegalTransitionError, persisting nothing", async () => {
     const id = `${PREFIX}illegal`;
     await expect(status.fire("leg", id, LegEvent.REOPEN)).rejects.toBeInstanceOf(

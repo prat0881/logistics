@@ -13,7 +13,7 @@ import type { StatusMachine } from "./status.types";
     QueryStatusProjector,
     { provide: STATUS_STATE_STORE, useClass: LogBackedStateStore },
   ],
-  exports: [StatusService, StatusRegistry],
+  exports: [StatusService, StatusRegistry, QueryStatusProjector],
 })
 export class StatusModule implements OnModuleInit {
   constructor(private readonly registry: StatusRegistry) {}

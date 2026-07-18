@@ -43,6 +43,12 @@ export class StatusService {
     event: string,
     ctx: FireContext = {},
   ): Promise<FireResult> {
+    // Concurrency: current state is read then a new transition row is appended within one
+    // READ COMMITTED tx, without a row lock. Per spec §8.5 the system is last-write-wins with
+    // no record locking; two concurrent fires on the same (entity,entityId) can both append —
+    // a duplicate SAME-transition row is benign (end state is unchanged). Exclusivity hardening
+    // (row lock / serializable + retry) is deferred to Plan 4/5, where the change-order cascade
+    // reads prior state from this log and ordering starts to matter.
     const machine = this.registry.get(key);
 
     const { from, to, transitionId } = await this.prisma.$transaction(async (tx) => {
