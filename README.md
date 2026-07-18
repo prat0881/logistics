@@ -46,6 +46,19 @@ Admin-only). `pnpm exec prisma db seed` now seeds the reference data alongside t
 factors (ROAD/AIR/SEA), the 9 checklist items, and the `CLIENT`/`VESSEL` code sequences —
 idempotently.
 
+## Extensibility Core
+
+The framework future stages plug into (Technical Design §7). **Status Machine:** owned
+statuses move only through `StatusService.fire` (guarded, declarative transitions in a
+registry), which appends an operational `StatusTransition` log and emits in-process
+`${key}.status.changed` events; derived query status is a pure projection
+(`deriveQueryStatus`). **Change-Impact mediator:** every mutation flows through
+`ChangeMediator.apply`, which classifies impact and forks Free-path (built) vs
+Change-order (a stub that can never fire in Stage 3 — no downstream work exists). Generic
+types live in `@svyft/shared`; the services live in `apps/api`, and the `StatusTransition`
+model in the root `prisma/schema.prisma`.
+Stage-3 slice: leg `DRAFT ↔ READY_FOR_RFQ`, query status derived, Free path only.
+
 ## Verify
 
 ```bash
