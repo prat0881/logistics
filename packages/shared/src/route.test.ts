@@ -120,12 +120,19 @@ describe("R4 — no cycles", () => {
 });
 
 describe("R6 — mass balance", () => {
-  it("flags cargo stuck at an intermediate hub (enters, never leaves)", () => {
+  it("flags cargo mass-balance imbalance at a hub (enters, never leaves)", () => {
     const g = validGraph();
-    g.legs = [g.legs[0]]; // pu->sp only; c1 enters sp but never leaves
-    g.legCargo = [{ legId: "l1", cargoItemId: "c1" }];
-    const r = rules(g, "create");
-    expect(r.some((x) => x === "R2" || x === "R6")).toBe(true); // ends at a seaport, not a delivery
+    // Two legs feed the warehouse; nothing leaves it → wh has indeg 2, outdeg 0 (|diff| = 2).
+    g.points.push({ id: "pu2", type: "PICKUP", name: "S2", streetAddress: "2", city: "Pune", postalCode: "411001", country: "IN", contactName: "C", contactPhone: "+915555555", contactEmail: "c@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null });
+    g.legs = [
+      { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "wh", readyDate: READY, targetDelivery: MID },
+      { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "pu2", destinationPointId: "wh", readyDate: READY, targetDelivery: MID },
+    ];
+    g.legCargo = [
+      { legId: "l1", cargoItemId: "c1" },
+      { legId: "l2", cargoItemId: "c1" },
+    ];
+    expect(rules(g, "create")).toContain("R6");
   });
 });
 
@@ -188,5 +195,30 @@ describe("C1/C3 — completeness", () => {
     const g = validGraph();
     g.legs[0].mode = null;
     expect(rules(g, "create")).toContain("C1");
+  });
+
+  it("flags a cargo row whose legs are not all on one continuous chain (C2)", () => {
+    const g = validGraph();
+    g.points.push(
+      { id: "x", type: "WAREHOUSE", name: "X", streetAddress: "1", city: "c", postalCode: "1", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
+      { id: "y", type: "WAREHOUSE", name: "Y", streetAddress: "2", city: "c", postalCode: "1", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
+    );
+    g.legs = [
+      { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "de", readyDate: READY, targetDelivery: TARGET },
+      { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "x", destinationPointId: "y", readyDate: READY, targetDelivery: MID },
+      { id: "l3", legCode: "L3", mode: "ROAD", originPointId: "y", destinationPointId: "x", readyDate: MID, targetDelivery: TARGET },
+    ];
+    g.legCargo = [
+      { legId: "l1", cargoItemId: "c1" },
+      { legId: "l2", cargoItemId: "c1" },
+      { legId: "l3", cargoItemId: "c1" },
+    ];
+    expect(rules(g, "create")).toContain("C2");
+  });
+
+  it("flags a leg whose cargo cannot compute its roll-up (C3)", () => {
+    const g = validGraph();
+    g.cargo[0].grossWt = null;
+    expect(rules(g, "create")).toContain("C3");
   });
 });
