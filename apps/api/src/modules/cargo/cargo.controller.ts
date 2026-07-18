@@ -1,4 +1,15 @@
-import { Body, Controller, Delete, HttpCode, Param, Patch, Post } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  UploadedFile,
+  UseInterceptors,
+} from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import {
   cargoCreateSchema,
   cargoUpdateSchema,
@@ -8,6 +19,7 @@ import {
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { RequestUser } from "../auth/types";
+import type { MsdsUpload } from "../files/files.service";
 import { CargoService } from "./cargo.service";
 
 @Controller("queries/:id/cargo")
@@ -41,5 +53,16 @@ export class CargoController {
     @CurrentUser() user: RequestUser,
   ) {
     await this.cargo.remove(id, cid, user);
+  }
+
+  @Post(":cid/msds")
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  uploadMsds(
+    @Param("id") id: string,
+    @Param("cid") cid: string,
+    @UploadedFile() file: MsdsUpload,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.cargo.attachMsds(id, cid, file, user);
   }
 }

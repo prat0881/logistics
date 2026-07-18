@@ -127,4 +127,26 @@ describe("Cargo (e2e)", () => {
       .send({ productName: "X" })
       .expect(404);
   });
+
+  it("uploads an MSDS PDF, links it to the row, and rejects a non-PDF", async () => {
+    const created = await request(app.getHttpServer())
+      .post(`/api/queries/${queryId}/cargo`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ ...baseRow, isDangerous: true })
+      .expect(201);
+    const pdf = Buffer.from("%PDF-1.4\n%mock\n");
+    const up = await request(app.getHttpServer())
+      .post(`/api/queries/${queryId}/cargo/${created.body.id}/msds`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .attach("file", pdf, "msds.pdf")
+      .expect(201);
+    expect(up.body.msdsFileId).toBeTruthy();
+    const asset = await prisma.fileAsset.findUnique({ where: { id: up.body.msdsFileId } });
+    expect(asset!.kind).toBe("MSDS");
+    await request(app.getHttpServer())
+      .post(`/api/queries/${queryId}/cargo/${created.body.id}/msds`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .attach("file", Buffer.from("PNG"), "x.png")
+      .expect(400);
+  });
 });

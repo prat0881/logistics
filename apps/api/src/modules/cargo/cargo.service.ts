@@ -6,6 +6,7 @@ import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
+import { FilesService, type MsdsUpload } from "../files/files.service";
 import { QueriesService } from "../queries/queries.service";
 
 @Injectable()
@@ -15,6 +16,7 @@ export class CargoService {
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
     private readonly queries: QueriesService,
+    private readonly files: FilesService,
   ) {}
 
   private async assertQueryExists(queryId: string): Promise<void> {
@@ -107,5 +109,31 @@ export class CargoService {
         await this.queries.syncDgIndicator(queryId, tx);
       },
     );
+  }
+
+  // Store the PDF + FileAsset, then link cargo.msdsFileId through the mediator (Corrective).
+  // ORDERING IS LOAD-BEARING: `load` (queryId+cid scoped findFirst) MUST run before
+  // `storeMsds` — it verifies the cargo row exists under this exact query, so a
+  // malformed/mismatched queryId 404s/P2023s here rather than storeMsds ever writing a
+  // FileAsset (or interpolating an attacker-controlled queryId into the storage path) for a
+  // row that isn't there.
+  async attachMsds(queryId: string, cid: string, file: MsdsUpload | undefined, user: RequestUser) {
+    await this.load(queryId, cid);
+    const asset = await this.files.storeMsds(queryId, file, user.userId); // 400s a non-PDF/no-file
+    let updated: unknown;
+    await this.mediator.apply(
+      {
+        entity: "cargo",
+        id: cid,
+        field: "msdsFileId",
+        patch: { msdsFileId: asset.id },
+        queryId,
+        actorId: user.userId,
+      },
+      async (tx) => {
+        updated = await tx.cargoItem.update({ where: { id: cid }, data: { msdsFileId: asset.id } });
+      },
+    );
+    return updated;
   }
 }
