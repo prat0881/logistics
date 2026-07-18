@@ -70,6 +70,15 @@ describe("deriveQueryStatus (least-advanced gate + milestones, §9.1)", () => {
     expect(deriveQueryStatus([LegStatus.DRAFT, LegStatus.READY_FOR_RFQ])).toBe(QueryStatus.DRAFT);
   });
 
+  it("finds the least-advanced leg regardless of position (real reduce, not legStatuses[0])", () => {
+    expect(
+      deriveQueryStatus([LegStatus.FULLY_QUOTED, LegStatus.DRAFT, LegStatus.READY_FOR_RFQ]),
+    ).toBe(QueryStatus.DRAFT); // least-advanced out of position
+    expect(deriveQueryStatus([LegStatus.PARTIALLY_QUOTED, LegStatus.FULLY_QUOTED])).toBe(
+      QueryStatus.RFQ_SENT,
+    ); // PARTIALLY_QUOTED as the gate
+  });
+
   it("is CREATED when all legs are READY_FOR_RFQ and Create Query has not run", () => {
     expect(deriveQueryStatus([LegStatus.READY_FOR_RFQ, LegStatus.READY_FOR_RFQ])).toBe(
       QueryStatus.CREATED,

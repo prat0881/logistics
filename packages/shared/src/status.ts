@@ -54,6 +54,7 @@ export const LegEvent = {
   REOPEN: "reopen",
 } as const;
 export type LegEvent = (typeof LegEvent)[keyof typeof LegEvent];
+export const LEG_EVENTS = Object.values(LegEvent) as [LegEvent, ...LegEvent[]];
 
 // ── Query status vocabulary (§9.1) — derived/rollup, never hand-set ─────────────
 export const QueryStatus = {
@@ -68,6 +69,7 @@ export const QueryStatus = {
   CLOSED: "CLOSED",
 } as const;
 export type QueryStatus = (typeof QueryStatus)[keyof typeof QueryStatus];
+export const QUERY_STATUSES = Object.values(QueryStatus) as [QueryStatus, ...QueryStatus[]];
 
 // Query-level milestones layered on top of the leg rollup (client-facing events
 // that legs never have): Created, Awaiting Client Decision, Won, Lost, Closed.
