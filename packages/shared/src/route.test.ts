@@ -1,0 +1,192 @@
+// packages/shared/src/route.test.ts
+import { describe, it, expect } from "vitest";
+import { validateRoute, checkModeEndpoints, type RouteGraph } from "./route";
+
+// ── fixtures ────────────────────────────────────────────────────────────────
+const READY = "2026-08-01T00:00:00.000Z";
+const MID = "2026-08-05T00:00:00.000Z";
+const TARGET = "2026-08-10T00:00:00.000Z";
+
+// A fully-valid 2-leg ROAD route through a warehouse hub for one cargo row:
+// Pickup -> Warehouse -> Delivery. All-ROAD so V-M1 passes (SEA/AIR need matching hubs).
+function validGraph(): RouteGraph {
+  return {
+    query: { id: "q1", readyDate: READY, targetDelivery: TARGET },
+    points: [
+      { id: "pu", type: "PICKUP", name: "Shipper", streetAddress: "1 St", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
+      { id: "wh", type: "WAREHOUSE", name: "Hub", streetAddress: "5 Rd", city: "Delhi", postalCode: "110001", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
+      { id: "de", type: "DELIVERY", name: "Consignee", streetAddress: "9 Rd", city: "Hamburg", postalCode: "20095", country: "DE", contactName: "B", contactPhone: "+491234567", contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
+    ],
+    legs: [
+      { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "wh", readyDate: READY, targetDelivery: MID },
+      { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "wh", destinationPointId: "de", readyDate: MID, targetDelivery: TARGET },
+    ],
+    cargo: [{ id: "c1", poReference: "PO-1", isDangerous: false, msdsFileId: null, grossWt: 100, volumeCbm: 1 }],
+    legCargo: [
+      { legId: "l1", cargoItemId: "c1" },
+      { legId: "l2", cargoItemId: "c1" },
+    ],
+  };
+}
+const rules = (g: RouteGraph, phase: "draft" | "create") => validateRoute(g, phase).map((f) => f.rule);
+
+describe("validateRoute — valid route", () => {
+  it("returns no findings for a complete valid route at create phase", () => {
+    expect(validateRoute(validGraph(), "create")).toEqual([]);
+  });
+});
+
+describe("checkModeEndpoints (V-M1)", () => {
+  it("AIR needs both airport endpoints", () => {
+    expect(checkModeEndpoints("AIR", "AIRPORT", "AIRPORT")).toBe(true);
+    expect(checkModeEndpoints("AIR", "AIRPORT", "DELIVERY")).toBe(false);
+  });
+  it("SEA needs both seaport endpoints", () => {
+    expect(checkModeEndpoints("SEA", "SEAPORT", "SEAPORT")).toBe(true);
+    expect(checkModeEndpoints("SEA", "PICKUP", "SEAPORT")).toBe(false);
+  });
+  it("ROAD accepts any endpoints (incl. port drayage)", () => {
+    expect(checkModeEndpoints("ROAD", "PICKUP", "SEAPORT")).toBe(true);
+    expect(checkModeEndpoints("ROAD", "PICKUP", "DELIVERY")).toBe(true);
+  });
+});
+
+describe("V-M1 is always blocking (both phases)", () => {
+  it("blocks a SEA leg between non-seaports even in draft", () => {
+    const g = validGraph();
+    g.legs[1].mode = "SEA"; // wh(WAREHOUSE) -> de(DELIVERY) is invalid for SEA
+    const draft = validateRoute(g, "draft").filter((f) => f.rule === "V-M1");
+    expect(draft.length).toBe(1);
+    expect(draft[0].severity).toBe("blocking");
+  });
+});
+
+describe("R5 — need a pickup and a delivery", () => {
+  it("flags a graph with no delivery point", () => {
+    const g = validGraph();
+    g.points = g.points.filter((p) => p.type !== "DELIVERY");
+    g.legs = [g.legs[0]];
+    g.legCargo = [{ legId: "l1", cargoItemId: "c1" }];
+    expect(rules(g, "create")).toContain("R5");
+  });
+});
+
+describe("R3 — orphans", () => {
+  it("flags a leg with no cargo", () => {
+    const g = validGraph();
+    g.legCargo = g.legCargo.filter((lc) => lc.legId !== "l2");
+    expect(rules(g, "create")).toContain("R3");
+  });
+  it("flags a cargo row with no legs", () => {
+    const g = validGraph();
+    g.cargo.push({ id: "c2", poReference: "PO-2", isDangerous: false, msdsFileId: null, grossWt: 5, volumeCbm: 0.1 });
+    expect(rules(g, "create")).toContain("R3");
+  });
+  it("flags an unused point", () => {
+    const g = validGraph();
+    g.points.push({ id: "wh2", type: "WAREHOUSE", name: "WH2", streetAddress: "x", city: "c", postalCode: "1", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null });
+    expect(rules(g, "create")).toContain("R3");
+  });
+});
+
+describe("R1/R2 — continuity & endpoints", () => {
+  it("flags a broken chain (leg dest != next origin)", () => {
+    const g = validGraph();
+    g.legs[1].originPointId = "pu"; // l2 no longer starts where l1 ends (wh)
+    expect(rules(g, "create")).toContain("R1");
+  });
+  it("flags a chain not starting at a pickup", () => {
+    const g = validGraph();
+    g.points[0].type = "WAREHOUSE"; // starts at a warehouse
+    expect(rules(g, "create")).toContain("R2");
+  });
+});
+
+describe("R4 — no cycles", () => {
+  it("flags a cycle", () => {
+    const g = validGraph();
+    // pu->wh, wh->pu forms a cycle with no pickup source / delivery sink
+    g.legs = [
+      { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "wh", readyDate: READY, targetDelivery: MID },
+      { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "wh", destinationPointId: "pu", readyDate: MID, targetDelivery: TARGET },
+    ];
+    g.legCargo = [
+      { legId: "l1", cargoItemId: "c1" },
+      { legId: "l2", cargoItemId: "c1" },
+    ];
+    const r = rules(g, "create");
+    expect(r.some((x) => x === "R4" || x === "R1" || x === "R6")).toBe(true);
+  });
+});
+
+describe("R6 — mass balance", () => {
+  it("flags cargo stuck at an intermediate hub (enters, never leaves)", () => {
+    const g = validGraph();
+    g.legs = [g.legs[0]]; // pu->sp only; c1 enters sp but never leaves
+    g.legCargo = [{ legId: "l1", cargoItemId: "c1" }];
+    const r = rules(g, "create");
+    expect(r.some((x) => x === "R2" || x === "R6")).toBe(true); // ends at a seaport, not a delivery
+  });
+});
+
+describe("R7/R8 — downstream readiness", () => {
+  it("flags a missing country on an endpoint", () => {
+    const g = validGraph();
+    g.points[1].country = null;
+    expect(rules(g, "create")).toContain("R7");
+  });
+  it("flags a pickup missing mandatory fields", () => {
+    const g = validGraph();
+    g.points[0].contactEmail = null; // pickup requires email
+    expect(rules(g, "create")).toContain("R8");
+  });
+  it("does NOT flag R8 for a delivery missing email (email optional)", () => {
+    const g = validGraph();
+    g.points[2].contactEmail = null;
+    expect(rules(g, "create")).not.toContain("R8");
+  });
+});
+
+describe("R9 — DG needs MSDS on every carrying leg", () => {
+  it("flags DG cargo without an MSDS", () => {
+    const g = validGraph();
+    g.cargo[0].isDangerous = true;
+    g.cargo[0].msdsFileId = null;
+    expect(rules(g, "create")).toContain("R9");
+  });
+});
+
+describe("T1/T2/T3 — temporal", () => {
+  it("T1: warns in draft, blocks in create when a leg departs before the prior arrives", () => {
+    const g = validGraph();
+    g.legs[1].readyDate = "2026-08-03T00:00:00.000Z"; // before l1 target (MID = 08-05)
+    const draftT1 = validateRoute(g, "draft").filter((f) => f.rule === "T1");
+    expect(draftT1.length).toBeGreaterThan(0);
+    expect(draftT1[0].severity).toBe("warning");
+    const createT1 = validateRoute(g, "create").filter((f) => f.rule === "T1");
+    expect(createT1[0].severity).toBe("blocking");
+  });
+  it("T2: flags first leg readyDate != query readyDate", () => {
+    const g = validGraph();
+    g.legs[0].readyDate = "2026-08-02T00:00:00.000Z";
+    expect(rules(g, "create")).toContain("T2");
+  });
+  it("T3: flags an onward hub leg departing before the max feeding arrival", () => {
+    const g = validGraph();
+    // add a second feeding leg into sp with a later target than l1
+    g.points.push({ id: "pu2", type: "PICKUP", name: "S2", streetAddress: "2", city: "Pune", postalCode: "411001", country: "IN", contactName: "C", contactPhone: "+915555555", contactEmail: "c@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null });
+    g.cargo.push({ id: "c2", poReference: "PO-2", isDangerous: false, msdsFileId: null, grossWt: 50, volumeCbm: 0.5 });
+    g.legs.push({ id: "l3", legCode: "L3", mode: "ROAD", originPointId: "pu2", destinationPointId: "wh", readyDate: READY, targetDelivery: "2026-08-07T00:00:00.000Z" });
+    g.legCargo.push({ legId: "l3", cargoItemId: "c2" }, { legId: "l2", cargoItemId: "c2" });
+    // l2 departs wh at MID (08-05) < max feeding target (08-07)
+    expect(rules(g, "create")).toContain("T3");
+  });
+});
+
+describe("C1/C3 — completeness", () => {
+  it("C1: flags a leg missing its mode", () => {
+    const g = validGraph();
+    g.legs[0].mode = null;
+    expect(rules(g, "create")).toContain("C1");
+  });
+});
