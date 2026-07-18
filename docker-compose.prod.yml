@@ -11,8 +11,11 @@ services:
       NODE_ENV: production
       SERVE_STATIC: "true"
       PORT: "4000"
+      UPLOADS_DIR: /uploads
     ports: ["4096:4000"]
-    volumes: ["svyft_uploads:/repo/apps/api/uploads"]
+    volumes:
+      - svyft_uploads:/repo/apps/api/uploads
+      - uploads:/uploads
     mem_limit: 512m
     logging:
       driver: json-file
@@ -24,3 +27,4 @@ services:
       retries: 3
 volumes:
   svyft_uploads:
+  uploads:
