@@ -48,7 +48,9 @@ describe("Change Mediator (integration)", () => {
     expect(res.path).toBe("free");
     expect(res.class).toBe("RfqDefining");
     expect(res.scope).toEqual([{ type: "leg", id: "leg-a" }]);
-    expect(res.findings).toEqual([]); // no-op route validator
+    // Real RoutingRouteValidator now runs, but "q-1" is a synthetic pre-Prisma test id (not a
+    // real query row) — resilient revalidate() short-circuits to [] without hitting validateRoute.
+    expect(res.findings).toEqual([]);
     expect(applied).toEqual(["applied"]);
   });
 
