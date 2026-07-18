@@ -75,6 +75,7 @@ export const QUERY_STATUSES = Object.values(QueryStatus) as [QueryStatus, ...Que
 // that legs never have): Created, Awaiting Client Decision, Won, Lost, Closed.
 export interface QueryMilestones {
   created?: boolean;
+  rfqReady?: boolean;
   awaitingClientDecision?: boolean;
   won?: boolean;
   lost?: boolean;
@@ -107,7 +108,13 @@ export function deriveQueryStatus(
   if (milestones.lost) return QueryStatus.LOST;
   if (milestones.won) return QueryStatus.WON;
   if (milestones.awaitingClientDecision) return QueryStatus.AWAITING_CLIENT_DECISION;
-  if (legStatuses.length === 0) return QueryStatus.DRAFT;
+  if (legStatuses.length === 0) {
+    // No legs yet (Plan 4): query-level milestones drive status until the leg
+    // rollup lands in Plan 5. Downstream milestones are already handled above.
+    if (milestones.rfqReady) return QueryStatus.RFQ_READY;
+    if (milestones.created) return QueryStatus.CREATED;
+    return QueryStatus.DRAFT;
+  }
 
   switch (leastAdvanced(legStatuses)) {
     case LegStatus.DRAFT:

@@ -17,6 +17,7 @@ pnpm dev                                            # shared(watch) + api(:4000)
 
 - API: http://localhost:4000/api/health  ·  http://localhost:4000/api/health/db
 - Web: http://localhost:5173 → redirects to `/login`; sign in with a seeded account (default `admin@svyft.local` / `admin-dev-password`).
+- MSDS PDFs are written under `UPLOADS_DIR` (see `apps/api/.env.example`), defaulting to `./uploads` (gitignored); prod persists it via a named Docker volume (`docker-compose.prod.yml` / `docker-compose.caddy.yml`).
 
 ### `DEV_DB_PORT` (shared machines)
 

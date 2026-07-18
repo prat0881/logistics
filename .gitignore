@@ -41,5 +41,8 @@ Thumbs.db
 tmp/
 .turbo/
 
+# Local MSDS uploads (dev)
+uploads/
+
 # Subagent-driven-development scratch (briefs, reports, review packages, ledger)
 .superpowers/

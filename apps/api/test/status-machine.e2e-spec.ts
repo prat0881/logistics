@@ -132,10 +132,14 @@ describe("Status Machine (integration)", () => {
 
   it("emits leg.status.changed → QueryStatusProjector.recompute(queryId)", async () => {
     const id = `${PREFIX}event`;
+    // Valid-format-but-nonexistent uuid: recompute is now DB-backed (Task 6), so a
+    // non-uuid like the old "q-42" would P2023. findUnique finds no row → early
+    // return, no error, no log — the suite stays green AND pristine.
+    const queryId = "00000000-0000-0000-0000-000000000042";
     const spy = jest.spyOn(projector, "recompute");
-    await status.fire("leg", id, LegEvent.VALIDATE_PASS, { routeValid: true, queryId: "q-42" });
+    await status.fire("leg", id, LegEvent.VALIDATE_PASS, { routeValid: true, queryId });
     // EventEmitter2 emit is synchronous → the listener has already invoked recompute.
-    expect(spy).toHaveBeenCalledWith("q-42");
+    expect(spy).toHaveBeenCalledWith(queryId);
     spy.mockRestore();
   });
 
