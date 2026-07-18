@@ -12,6 +12,7 @@ import {
   formatQueryCode,
   Role,
   type ChangeRequest,
+  type ChecklistPatchInput,
   type QuerySaveInput,
 } from "@svyft/shared";
 import type { RequestUser } from "../auth/types";
@@ -187,5 +188,31 @@ export class QueriesService {
       select: { id: true, status: true },
     });
     return updated!;
+  }
+
+  // Checklist toggle (§5.2): not a QuerySaveInput field, not mediated — a lightweight
+  // per-item boolean flip on the 9 rows seeded at create. Missing/empty checklist (no such
+  // query) → 404; any itemKey not among the query's own rows → 400 before any write.
+  async patchChecklist(id: string, input: ChecklistPatchInput) {
+    const existing = await this.prisma.queryChecklistItem.findMany({
+      where: { queryId: id },
+      select: { itemKey: true },
+    });
+    if (existing.length === 0) throw new NotFoundException("Query not found");
+    const known = new Set(existing.map((e) => e.itemKey));
+    for (const item of input.items) {
+      if (!known.has(item.itemKey)) {
+        throw new BadRequestException(`Unknown checklist item '${item.itemKey}'`);
+      }
+    }
+    await this.prisma.$transaction(
+      input.items.map((item) =>
+        this.prisma.queryChecklistItem.updateMany({
+          where: { queryId: id, itemKey: item.itemKey },
+          data: { checked: item.checked },
+        }),
+      ),
+    );
+    return this.get(id);
   }
 }

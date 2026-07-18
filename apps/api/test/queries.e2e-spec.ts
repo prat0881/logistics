@@ -164,4 +164,26 @@ describe("Queries (e2e)", () => {
     expect(row!.status).toBe("RFQ_READY");
     expect(row!.rfqReadyAt).not.toBeNull();
   });
+
+  it("toggles checklist item checked state", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ clientId, shipmentDescription: `${PFX}checklist` }).expect(201);
+    const res = await request(app.getHttpServer())
+      .patch(`/api/queries/${created.body.id}/checklist`).set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ items: [{ itemKey: "weight-confirmed", checked: true }, { itemKey: "packing-list", checked: true }] })
+      .expect(200);
+    const checked = res.body.checklist.filter((c: { checked: boolean }) => c.checked).map((c: { itemKey: string }) => c.itemKey).sort();
+    expect(checked).toEqual(["packing-list", "weight-confirmed"]);
+  });
+
+  it("400s an unknown checklist itemKey", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ shipmentDescription: `${PFX}checklist2` }).expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${created.body.id}/checklist`).set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ items: [{ itemKey: "not-a-real-item", checked: true }] })
+      .expect(400);
+  });
 });
