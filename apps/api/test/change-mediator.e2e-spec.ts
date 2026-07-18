@@ -32,7 +32,7 @@ describe("Change Mediator (integration)", () => {
   });
 
   it("declares the leg impact classes at startup (§7.3)", () => {
-    expect(registry.classOf("leg", "origin")).toBe("RfqDefining");
+    expect(registry.classOf("leg", "originPointId")).toBe("RfqDefining");
     expect(registry.classOf("leg", "legName")).toBe("Corrective");
     expect(registry.classOf("leg", "@create")).toBe("Structural");
   });
@@ -40,7 +40,7 @@ describe("Change Mediator (integration)", () => {
   it("routes an RfqDefining leg edit down the FREE path (no downstream work), running the uow", async () => {
     const applied: string[] = [];
     const res = await mediator.apply(
-      { entity: "leg", id: "leg-a", field: "origin", queryId: "q-1", actorId: null },
+      { entity: "leg", id: "leg-a", field: "originPointId", queryId: "q-1", actorId: null },
       async () => {
         applied.push("applied");
       },
@@ -74,7 +74,7 @@ describe("Change Mediator (integration)", () => {
     jest.spyOn(resolver, "downstreamWork").mockResolvedValueOnce(true);
     const uow = jest.fn(async () => {});
     await expect(
-      mediator.apply({ entity: "leg", id: "leg-d", field: "origin", actorId: null }, uow),
+      mediator.apply({ entity: "leg", id: "leg-d", field: "originPointId", actorId: null }, uow),
     ).rejects.toBeInstanceOf(ChangeOrderNotAvailableError);
     expect(uow).not.toHaveBeenCalled(); // nothing applied on the change-order path in Stage 3
   });
