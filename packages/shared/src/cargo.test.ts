@@ -33,6 +33,9 @@ describe("cargoCreateSchema", () => {
       false,
     );
   });
+  it("rejects a dim beyond the max bound (DECIMAL(14,6) overflow guard)", () => {
+    expect(cargoCreateSchema.safeParse({ ...base, dimL: 200000 }).success).toBe(false);
+  });
 });
 
 describe("cargoUpdateSchema", () => {

@@ -106,7 +106,18 @@ export class QueriesService {
         // deferred per spec §8.5) so display order stays deterministic either way.
         cargo: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] },
         checklist: { orderBy: { itemKey: "asc" } },
-        files: true,
+        // select (not `files: true`) to keep the internal storageKey out of the API response.
+        files: {
+          select: {
+            id: true,
+            kind: true,
+            filename: true,
+            mime: true,
+            sizeBytes: true,
+            uploadedById: true,
+            createdAt: true,
+          },
+        },
       },
     });
     if (!query) throw new NotFoundException("Query not found");

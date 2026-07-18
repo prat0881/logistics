@@ -14,7 +14,6 @@ services:
       UPLOADS_DIR: /uploads
     ports: ["4096:4000"]
     volumes:
-      - svyft_uploads:/repo/apps/api/uploads
       - uploads:/uploads
     mem_limit: 512m
     logging:
@@ -26,5 +25,4 @@ services:
       timeout: 5s
       retries: 3
 volumes:
-  svyft_uploads:
   uploads:
