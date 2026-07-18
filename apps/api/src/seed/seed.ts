@@ -7,7 +7,6 @@ async function main(): Promise<void> {
   try {
     await runSeed(prisma, seedUsersFromEnv());
     await seedReferenceData(prisma);
-    // eslint-disable-next-line no-console
     console.log("Seed complete: users + reference data ensured.");
   } finally {
     await prisma.$disconnect();
