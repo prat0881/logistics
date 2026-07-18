@@ -143,3 +143,18 @@ describe("status vocabularies", () => {
     ]);
   });
 });
+
+describe("deriveQueryStatus — zero-leg query-level milestones (Plan 4)", () => {
+  it("stays DRAFT with no legs and no milestones", () => {
+    expect(deriveQueryStatus([])).toBe(QueryStatus.DRAFT);
+  });
+  it("is CREATED with no legs when only the created milestone is set", () => {
+    expect(deriveQueryStatus([], { created: true })).toBe(QueryStatus.CREATED);
+  });
+  it("is RFQ_READY with no legs when the rfqReady milestone is set", () => {
+    expect(deriveQueryStatus([], { rfqReady: true })).toBe(QueryStatus.RFQ_READY);
+  });
+  it("downstream milestones still override the zero-leg branch", () => {
+    expect(deriveQueryStatus([], { rfqReady: true, closed: true })).toBe(QueryStatus.CLOSED);
+  });
+});
