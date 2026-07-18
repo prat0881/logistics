@@ -23,6 +23,7 @@
     "@svyft/shared": "workspace:*",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
+    "exceljs": "^4.4.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",

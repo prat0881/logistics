@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { CargoCreateInput, CargoUpdateInput } from "@svyft/shared";
+import ExcelJS from "exceljs";
 import { randomUUID } from "node:crypto";
 import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -135,5 +136,65 @@ export class CargoService {
       },
     );
     return updated;
+  }
+
+  // Server-side exceljs stream, single worksheet "Product" (§7.3, §8.6). Excel IMPORT is out of
+  // scope for Stage 3. Same deterministic tie-break as QueriesService.getWithin (rowIndex asc,
+  // then createdAt/id asc) so export row order matches on-screen order even if the read-mitigated
+  // rowIndex duplicate race (see CargoService.create) ever produces one.
+  async exportXlsx(queryId: string): Promise<Buffer> {
+    await this.assertQueryExists(queryId);
+    const rows = await this.prisma.cargoItem.findMany({
+      where: { queryId },
+      orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Product");
+    ws.columns = [
+      { header: "#", key: "rowIndex", width: 6 },
+      { header: "PO / Reference", key: "poReference", width: 18 },
+      { header: "Product Name", key: "productName", width: 24 },
+      { header: "Reference Tags", key: "referenceTags", width: 20 },
+      { header: "HS / HSN Code", key: "hsCode", width: 14 },
+      { header: "Package Type", key: "packageType", width: 14 },
+      { header: "DG", key: "isDangerous", width: 6 },
+      { header: "Qty", key: "qty", width: 8 },
+      { header: "Dim L (cm)", key: "dimL", width: 12 },
+      { header: "Dim W (cm)", key: "dimW", width: 12 },
+      { header: "Dim H (cm)", key: "dimH", width: 12 },
+      { header: "Net Wt (kg)", key: "netWt", width: 12 },
+      { header: "Gross Wt (kg)", key: "grossWt", width: 12 },
+      { header: "Volume (CBM)", key: "volumeCbm", width: 14 },
+      { header: "Freight Density", key: "freightDensity", width: 14 },
+      { header: "Chargeable Wt (T)", key: "chargeableWeight", width: 16 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    for (const r of rows) {
+      ws.addRow({
+        rowIndex: r.rowIndex,
+        poReference: r.poReference,
+        productName: r.productName,
+        referenceTags: r.referenceTags.join(", "),
+        hsCode: r.hsCode ?? "",
+        packageType: r.packageType,
+        isDangerous: r.isDangerous ? "Yes" : "No",
+        qty: r.qty,
+        dimL: Number(r.dimL),
+        dimW: Number(r.dimW),
+        dimH: Number(r.dimH),
+        netWt: r.netWt == null ? "" : Number(r.netWt),
+        grossWt: Number(r.grossWt),
+        volumeCbm: r.volumeCbm == null ? "" : Number(r.volumeCbm),
+        freightDensity: "", // null/read-only in Stage 3 (D4)
+        chargeableWeight: "", // null/read-only in Stage 3 (D4)
+      });
+    }
+    // exceljs's own .d.ts declares a local `Buffer extends ArrayBuffer {}` for writeBuffer()'s
+    // return type (browser-compat artifact) rather than Node's real Buffer, so `as Buffer` fails
+    // strict structural overlap checking. At runtime (lib/utils/stream-buf.js) it always returns
+    // a genuine Node Buffer via Buffer.concat(...); Buffer.from(...) both satisfies tsc against
+    // the declared ArrayBuffer-shaped type and is a correct (if redundantly-copying) no-op on an
+    // already-real Buffer at runtime — no `any` needed.
+    return Buffer.from(await wb.xlsx.writeBuffer());
   }
 }

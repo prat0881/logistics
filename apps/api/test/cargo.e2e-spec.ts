@@ -149,4 +149,28 @@ describe("Cargo (e2e)", () => {
       .attach("file", Buffer.from("PNG"), "x.png")
       .expect(400);
   });
+
+  it("exports cargo to an .xlsx workbook whose single worksheet is named Product", async () => {
+    await request(app.getHttpServer())
+      .post(`/api/queries/${queryId}/cargo`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send(baseRow)
+      .expect(201);
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${queryId}/cargo/export`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on("data", (c: Buffer) => chunks.push(c));
+        r.on("end", () => cb(null, Buffer.concat(chunks)));
+      })
+      .expect(201);
+    expect(res.headers["content-type"]).toContain("spreadsheetml");
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.body);
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["Product"]);
+    expect(wb.getWorksheet("Product")!.getRow(1).getCell(1).value).toBe("#");
+  });
 });
