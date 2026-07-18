@@ -144,7 +144,10 @@ describe("Status Machine (integration)", () => {
   });
 
   it("projects derived query status from leg statuses (pure projection reused by Plan 4/5)", () => {
-    expect(projector.project([LegStatus.READY_FOR_RFQ], { created: true })).toBe("RFQ_READY");
+    // Plan 5 reconciliation: RFQ_READY is gated on the rfqReady milestone; CREATED now emerges
+    // from all-legs-READY_FOR_RFQ without it (previously this was gated on `created`).
+    expect(projector.project([LegStatus.READY_FOR_RFQ], { rfqReady: true })).toBe("RFQ_READY");
+    expect(projector.project([LegStatus.READY_FOR_RFQ], {})).toBe("CREATED");
     expect(projector.project([LegStatus.DRAFT, LegStatus.READY_FOR_RFQ])).toBe("DRAFT");
   });
 
