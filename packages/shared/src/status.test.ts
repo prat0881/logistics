@@ -88,10 +88,17 @@ describe("deriveQueryStatus (least-advanced gate + milestones, §9.1)", () => {
     );
   });
 
-  it("is RFQ_READY when all legs are READY_FOR_RFQ and the created milestone is set", () => {
-    expect(deriveQueryStatus([LegStatus.READY_FOR_RFQ], { created: true })).toBe(
-      QueryStatus.RFQ_READY,
+  it("gates RFQ_READY on the rfqReady milestone (not created); DELIVERED rollup closes the query", () => {
+    // All legs ready but no rfqReady milestone ⇒ CREATED (emergent).
+    expect(deriveQueryStatus([LegStatus.READY_FOR_RFQ, LegStatus.READY_FOR_RFQ], {})).toBe(
+      QueryStatus.CREATED,
     );
+    // The rfqReady milestone promotes it to RFQ_READY.
+    expect(
+      deriveQueryStatus([LegStatus.READY_FOR_RFQ, LegStatus.READY_FOR_RFQ], { rfqReady: true }),
+    ).toBe(QueryStatus.RFQ_READY);
+    // A single DELIVERED-least rollup closes the query.
+    expect(deriveQueryStatus([LegStatus.DELIVERED, LegStatus.DELIVERED])).toBe(QueryStatus.CLOSED);
   });
 
   it("is RFQ_SENT when the least leg is RFQ_SENT/PARTIALLY_QUOTED", () => {
