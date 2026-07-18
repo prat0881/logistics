@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { REFERENCE_TAGS, cargoCreateSchema } from "./cargo";
+import { REFERENCE_TAGS, cargoCreateSchema, cargoUpdateSchema } from "./cargo";
 
 describe("ReferenceTag vocabulary", () => {
   it("pins the tag order", () => {
@@ -32,5 +32,11 @@ describe("cargoCreateSchema", () => {
     expect(cargoCreateSchema.safeParse({ ...base, referenceTags: ["NUCLEAR"] }).success).toBe(
       false,
     );
+  });
+});
+
+describe("cargoUpdateSchema", () => {
+  it("rejects netWt > grossWt when both are present (F5)", () => {
+    expect(cargoUpdateSchema.safeParse({ netWt: 600, grossWt: 500 }).success).toBe(false);
   });
 });

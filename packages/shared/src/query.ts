@@ -29,8 +29,13 @@ export const FILE_KINDS = Object.values(FileKind) as [FileKind, ...FileKind[]];
 const isoDate = z.string().datetime({ offset: true });
 
 // Draft save (POST /queries, PATCH /queries/:id). Lenient: every field optional so a
-// Draft persists with no completeness gate (§13); formats validated WHEN present (F2/F3/F4).
-// The full mandatory gate is collectCreateFindings, run only at Create Query.
+// Draft persists with no completeness gate (§13); formats validated WHEN present:
+//   F2 — email / E.164 phone / 7-digit IMO formats (§10.1).
+//   F3 — ETA < ETB < ETD when present, incl. the ETA < ETD guard so an absent ETB
+//        can't hide an ETD before ETA.
+//   F4 — Response Deadline not in the past (date-only, compared to the start of today).
+// F1 mandatory-presence is enforced by collectCreateFindings, run only at Create Query —
+// not here.
 export const querySaveSchema = z
   .object({
     priority: z.enum(PRIORITIES),
@@ -60,7 +65,7 @@ export const querySaveSchema = z
     assignedUserId: z.string().uuid(),
   })
   .partial()
-  // F3: ETA < ETB < ETD when all present.
+  // F3: ETA < ETB < ETD when present.
   .refine((q) => !(q.eta && q.etb) || q.eta < q.etb, {
     message: "ETA must be before ETB",
     path: ["eta"],
@@ -68,7 +73,23 @@ export const querySaveSchema = z
   .refine((q) => !(q.etb && q.etd) || q.etb < q.etd, {
     message: "ETB must be before ETD",
     path: ["etb"],
-  });
+  })
+  // F3 (transitive): ETA < ETD independent of ETB, so an absent ETB can't hide an
+  // ETD before ETA (the two pairwise refines above only cover adjacent pairs).
+  .refine((q) => !(q.eta && q.etd) || q.eta < q.etd, {
+    message: "ETA must be before ETD",
+    path: ["eta"],
+  })
+  // F4: Response Deadline cannot be in the past.
+  .refine(
+    (q) => {
+      if (!q.responseDeadline) return true;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return new Date(q.responseDeadline) >= today;
+    },
+    { message: "Response Deadline cannot be in the past", path: ["responseDeadline"] },
+  );
 export type QuerySaveInput = z.infer<typeof querySaveSchema>;
 
 export const checklistPatchSchema = z.object({

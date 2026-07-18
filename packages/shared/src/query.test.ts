@@ -43,6 +43,75 @@ describe("querySaveSchema (draft — lenient, format-validated)", () => {
   it("rejects a shipmentDescription over 200 chars", () => {
     expect(querySaveSchema.safeParse({ shipmentDescription: "x".repeat(201) }).success).toBe(false);
   });
+
+  describe("F2: contactPhone (E.164) + imoNumber (7-digit) formats", () => {
+    it("rejects a malformed contactPhone", () => {
+      expect(querySaveSchema.safeParse({ contactPhone: "abc" }).success).toBe(false);
+    });
+    it("accepts a valid E.164 contactPhone", () => {
+      expect(querySaveSchema.safeParse({ contactPhone: "+911234567890" }).success).toBe(true);
+    });
+    it("rejects a malformed imoNumber", () => {
+      expect(querySaveSchema.safeParse({ imoNumber: "123" }).success).toBe(false);
+    });
+    it("accepts a valid 7-digit imoNumber", () => {
+      expect(querySaveSchema.safeParse({ imoNumber: "1234567" }).success).toBe(true);
+    });
+  });
+
+  describe("F3: ETA < ETB < ETD, incl. the ETA < ETD guard when ETB is absent", () => {
+    it("accepts ETA < ETB < ETD", () => {
+      expect(
+        querySaveSchema.safeParse({
+          eta: "2026-08-01T00:00:00.000Z",
+          etb: "2026-08-05T00:00:00.000Z",
+          etd: "2026-08-10T00:00:00.000Z",
+        }).success,
+      ).toBe(true);
+    });
+    it("rejects ETA >= ETB", () => {
+      expect(
+        querySaveSchema.safeParse({
+          eta: "2026-08-05T00:00:00.000Z",
+          etb: "2026-08-05T00:00:00.000Z",
+          etd: "2026-08-10T00:00:00.000Z",
+        }).success,
+      ).toBe(false);
+    });
+    it("rejects ETB >= ETD", () => {
+      expect(
+        querySaveSchema.safeParse({
+          eta: "2026-08-01T00:00:00.000Z",
+          etb: "2026-08-10T00:00:00.000Z",
+          etd: "2026-08-10T00:00:00.000Z",
+        }).success,
+      ).toBe(false);
+    });
+    it("rejects ETD before ETA when ETB is absent (transitive gap)", () => {
+      expect(
+        querySaveSchema.safeParse({
+          eta: "2026-08-10T00:00:00.000Z",
+          etd: "2026-08-01T00:00:00.000Z",
+        }).success,
+      ).toBe(false);
+    });
+  });
+
+  describe("F4: responseDeadline not in the past", () => {
+    it("rejects a past responseDeadline", () => {
+      expect(
+        querySaveSchema.safeParse({ responseDeadline: "2020-01-01T00:00:00.000Z" }).success,
+      ).toBe(false);
+    });
+    it("accepts a future responseDeadline", () => {
+      expect(
+        querySaveSchema.safeParse({ responseDeadline: "2099-01-01T00:00:00.000Z" }).success,
+      ).toBe(true);
+    });
+    it("accepts an absent responseDeadline", () => {
+      expect(querySaveSchema.safeParse({}).success).toBe(true);
+    });
+  });
 });
 
 describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Plan 5)", () => {
