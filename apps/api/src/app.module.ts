@@ -13,6 +13,7 @@ import { StatusModule } from "./modules/status/status.module";
 import { ChangesModule } from "./modules/changes/changes.module";
 import { FilesModule } from "./modules/files/files.module";
 import { QueriesModule } from "./modules/queries/queries.module";
+import { CargoModule } from "./modules/cargo/cargo.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -38,6 +39,7 @@ const staticImports =
     ChangesModule,
     FilesModule,
     QueriesModule,
+    CargoModule,
     HealthModule,
   ],
 })

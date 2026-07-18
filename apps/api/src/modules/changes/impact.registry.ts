@@ -1,5 +1,5 @@
-import { Injectable } from "@nestjs/common";
-import type { ImpactClass } from "@svyft/shared";
+import { BadRequestException, Injectable } from "@nestjs/common";
+import { IMPACT_RANK, type ImpactClass } from "@svyft/shared";
 
 // A field name, or the structural actions '@create' / '@delete'.
 export type ImpactKey = string;
@@ -17,5 +17,20 @@ export class ImpactRegistry {
 
   classOf(entity: string, key: ImpactKey): ImpactClass | undefined {
     return this.maps.get(entity)?.[key];
+  }
+
+  // Highest-impact field among `fields` — the field that names the ChangeRequest
+  // (Stage-3 is always Free path, but this is the class that would gate the Stage-4
+  // fork). Any field with no declared impact class is a 400, never a classifier 500.
+  // The accumulator carries its own class so classOf is looked up once per field,
+  // never recomputed on later reduce steps.
+  highestImpactField(entity: string, fields: string[]): string {
+    const best = fields.reduce<{ field: string; class: ImpactClass } | undefined>((hi, f) => {
+      const c = this.classOf(entity, f);
+      if (!c) throw new BadRequestException(`Field '${f}' is not editable`);
+      return !hi || IMPACT_RANK[c] > IMPACT_RANK[hi.class] ? { field: f, class: c } : hi;
+    }, undefined);
+    if (!best) throw new BadRequestException("No fields to classify");
+    return best.field;
   }
 }

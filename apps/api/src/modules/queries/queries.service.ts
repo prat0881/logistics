@@ -10,7 +10,6 @@ import { Prisma } from "@prisma/client";
 import {
   collectCreateFindings,
   formatQueryCode,
-  IMPACT_RANK,
   Role,
   type ChangeRequest,
   type QuerySaveInput,
@@ -110,18 +109,6 @@ export class QueriesService {
     return query;
   }
 
-  // Highest-impact changed field names the ChangeRequest (Stage-3 is always Free path,
-  // but this is the class that would gate the Stage-4 fork). Rejects any field with no
-  // declared impact class with a 400 (never a classifier 500).
-  private representativeField(entity: string, fields: string[]): string {
-    return fields.reduce((hi, f) => {
-      const c = this.impacts.classOf(entity, f);
-      if (!c) throw new BadRequestException(`Field '${f}' is not editable`);
-      const hc = this.impacts.classOf(entity, hi);
-      return hc && IMPACT_RANK[c] > IMPACT_RANK[hc] ? f : hi;
-    }, fields[0]);
-  }
-
   // PATCH /queries/:id (§5.2): one mediator call per PATCH (= per wizard step). Missing
   // query → 404 before the mediator runs; queryDate is Admin-only (backdate guard, §7.2);
   // an empty patch is a no-op read. The uow applies the whole validated patch + re-syncs
@@ -142,7 +129,7 @@ export class QueriesService {
     const req: ChangeRequest = {
       entity: "query",
       id,
-      field: this.representativeField("query", fields),
+      field: this.impacts.highestImpactField("query", fields),
       patch: input,
       queryId: id,
       actorId: user.userId,
