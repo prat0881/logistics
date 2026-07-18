@@ -1,12 +1,29 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { formatQueryCode, type QuerySaveInput } from "@svyft/shared";
+import {
+  formatQueryCode,
+  IMPACT_RANK,
+  Role,
+  type ChangeRequest,
+  type QuerySaveInput,
+} from "@svyft/shared";
 import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
+import { ChangeMediator } from "../changes/change-mediator";
+import { ImpactRegistry } from "../changes/impact.registry";
 
 @Injectable()
 export class QueriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mediator: ChangeMediator,
+    private readonly impacts: ImpactRegistry,
+  ) {}
 
   // Convert ISO-string date fields in the validated payload to Date for Prisma. Returns a
   // loose record (caller casts to the Prisma create/update input; if `tsc` rejects the
@@ -86,6 +103,50 @@ export class QueriesService {
     });
     if (!query) throw new NotFoundException("Query not found");
     return query;
+  }
+
+  // Highest-impact changed field names the ChangeRequest (Stage-3 is always Free path,
+  // but this is the class that would gate the Stage-4 fork). Rejects any field with no
+  // declared impact class with a 400 (never a classifier 500).
+  private representativeField(entity: string, fields: string[]): string {
+    return fields.reduce((hi, f) => {
+      const c = this.impacts.classOf(entity, f);
+      if (!c) throw new BadRequestException(`Field '${f}' is not editable`);
+      const hc = this.impacts.classOf(entity, hi);
+      return hc && IMPACT_RANK[c] > IMPACT_RANK[hc] ? f : hi;
+    }, fields[0]);
+  }
+
+  // PATCH /queries/:id (§5.2): one mediator call per PATCH (= per wizard step). Missing
+  // query → 404 before the mediator runs; queryDate is Admin-only (backdate guard, §7.2);
+  // an empty patch is a no-op read. The uow applies the whole validated patch + re-syncs
+  // dgIndicator inside the strategy's transaction (Free path → apply → revalidate → log).
+  async patch(id: string, input: QuerySaveInput, user: RequestUser) {
+    const existing = await this.prisma.query.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) throw new NotFoundException("Query not found");
+
+    if (input.queryDate !== undefined && user.role !== Role.ADMINISTRATOR) {
+      throw new ForbiddenException("Only an Administrator may edit the Query Date");
+    }
+    await this.assertRefsExist(input);
+
+    const fields = Object.keys(input);
+    if (fields.length === 0) return this.get(id);
+    const data = this.toData(input);
+
+    const req: ChangeRequest = {
+      entity: "query",
+      id,
+      field: this.representativeField("query", fields),
+      patch: input,
+      queryId: id,
+      actorId: user.userId,
+    };
+    await this.mediator.apply(req, async (tx) => {
+      await tx.query.update({ where: { id }, data: data as Prisma.QueryUncheckedUpdateInput });
+      await this.syncDgIndicator(id, tx);
+    });
+    return this.get(id);
   }
 
   // dgIndicator is auto-TRUE when any cargo is DG; manual true stands; never auto-cleared

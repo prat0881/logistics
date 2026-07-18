@@ -1,10 +1,14 @@
-import { ImpactClass } from "@svyft/shared";
-import type { EntityImpactMap } from "../changes/impact.registry";
+import { ImpactClass, type QuerySaveInput } from "@svyft/shared";
 
-// Field → impact class for the Query aggregate. Must cover EVERY field in
-// querySaveSchema, or the classifier throws. All Free-path in Stage 3 (no downstream
-// work); classes gate the fork once Stage 4 RFQs exist.
-export const queryImpactMap: EntityImpactMap = {
+// Field → impact class for the Query aggregate. Typed as Record<keyof QuerySaveInput,
+// ImpactClass> (rather than the looser EntityImpactMap) so the compiler REQUIRES an entry
+// for EVERY querySaveSchema field — a future field can't silently ship without a declared
+// impact class (previously only caught at runtime, by ImpactClassifier.classify throwing on
+// a missing key). A Record<keyof QuerySaveInput, ImpactClass> is structurally assignable to
+// ImpactRegistry.declare's EntityImpactMap (= Record<string, ImpactClass>) param, so
+// `declare("query", queryImpactMap)` still type-checks. All Free-path in Stage 3 (no
+// downstream work); classes gate the fork once Stage 4 RFQs exist.
+export const queryImpactMap: Record<keyof QuerySaveInput, ImpactClass> = {
   // Internal — no downstream cost (§11.1)
   priority: ImpactClass.Internal,
   responseDeadline: ImpactClass.Internal,

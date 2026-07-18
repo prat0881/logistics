@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post } from "@nestjs/common";
 import { querySaveSchema, type QuerySaveInput } from "@svyft/shared";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
@@ -20,5 +20,14 @@ export class QueriesController {
   @Get(":id")
   get(@Param("id") id: string) {
     return this.queries.get(id);
+  }
+
+  @Patch(":id")
+  patch(
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(querySaveSchema)) body: QuerySaveInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.queries.patch(id, body, user);
   }
 }

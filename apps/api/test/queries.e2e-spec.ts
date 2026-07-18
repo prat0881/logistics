@@ -21,7 +21,8 @@ describe("Queries (e2e)", () => {
   // sub is a UUID: it lands in @db.Uuid columns (assignedUserId). A synthetic non-uuid
   // sub would P2023 on insert.
   const EXEC_ID = "11111111-1111-1111-1111-111111111111";
-  const cookie = (role: Role, sub = EXEC_ID) => `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub, role, tenantId: null })}`;
+  const cookie = (role: Role, sub = EXEC_ID) =>
+    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub, role, tenantId: null })}`;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -33,7 +34,9 @@ describe("Queries (e2e)", () => {
     prisma = moduleRef.get(PrismaService);
     jwt = moduleRef.get(JwtService);
     await seedReferenceData(prisma); // 9 checklist definitions (CI is unseeded)
-    const client = await prisma.client.create({ data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN" } });
+    const client = await prisma.client.create({
+      data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN" },
+    });
     clientId = client.id;
   });
   afterAll(async () => {
@@ -77,5 +80,58 @@ describe("Queries (e2e)", () => {
       .set("Cookie", cookie(Role.EXECUTIVE))
       .send({ clientId: "00000000-0000-0000-0000-000000000000", shipmentDescription: `${PFX}fk` })
       .expect(400);
+  });
+
+  it("400s a non-existent vesselId (FK guarded, not a 500)", async () => {
+    await request(app.getHttpServer())
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({
+        vesselId: "00000000-0000-0000-0000-000000000000",
+        shipmentDescription: `${PFX}fk-vessel`,
+      })
+      .expect(400);
+  });
+
+  it("patches fields through the Free-path mediator and returns the updated query", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ clientId, shipmentDescription: `${PFX}patch` })
+      .expect(201);
+    const res = await request(app.getHttpServer())
+      .patch(`/api/queries/${created.body.id}`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ priority: "HIGH", incoterms: "CIF", internalNotes: "hello" })
+      .expect(200);
+    expect(res.body.priority).toBe("HIGH");
+    expect(res.body.incoterms).toBe("CIF");
+    expect(res.body.internalNotes).toBe("hello");
+  });
+
+  it("403s a non-Admin backdating queryDate, but lets an Admin", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ shipmentDescription: `${PFX}backdate` })
+      .expect(201);
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${created.body.id}`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ queryDate: "2020-01-01T00:00:00.000Z" })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${created.body.id}`)
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ queryDate: "2020-01-01T00:00:00.000Z" })
+      .expect(200);
+  });
+
+  it("404s a PATCH to a missing query", async () => {
+    await request(app.getHttpServer())
+      .patch(`/api/queries/00000000-0000-0000-0000-000000000000`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ priority: "LOW" })
+      .expect(404);
   });
 });
