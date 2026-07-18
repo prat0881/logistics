@@ -100,7 +100,10 @@ export class QueriesService {
     const query = await client.query.findUnique({
       where: { id },
       include: {
-        cargo: { orderBy: { rowIndex: "asc" } },
+        // rowIndex asc is the primary sort; createdAt/id are a stable tie-break for the rare
+        // case of a duplicate rowIndex (see CargoService.create — concurrent-create race,
+        // deferred per spec §8.5) so display order stays deterministic either way.
+        cargo: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] },
         checklist: { orderBy: { itemKey: "asc" } },
         files: true,
       },

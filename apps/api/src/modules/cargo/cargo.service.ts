@@ -37,6 +37,15 @@ export class CargoService {
     await this.mediator.apply(
       { entity: "cargo", id, action: "@create", queryId, actorId: user.userId },
       async (tx) => {
+        // KNOWN RACE (deferred, not fixed): this is a read-then-write (MAX(rowIndex)+1) inside
+        // a READ COMMITTED tx with no unique constraint on (queryId, rowIndex). Two concurrent
+        // POST /queries/:id/cargo on the *same* query can both read the same max and each
+        // create their own row with the same rowIndex — a duplicate ordinal, not data loss (both
+        // rows persist). Accepted for Stage 3 per spec §8.5 ("last-write-wins, no record
+        // locking"). Reads order by rowIndex with a createdAt/id tie-break (see
+        // QueriesService.getWithin), so display order stays deterministic even if a duplicate
+        // occurs. Follow-up (Stage 3, not scheduled): harden with a unique (queryId, rowIndex)
+        // constraint + retry-on-conflict, or a per-query atomic counter (à la QuerySequence).
         const max = await tx.cargoItem.aggregate({ where: { queryId }, _max: { rowIndex: true } });
         created = await tx.cargoItem.create({
           data: {
