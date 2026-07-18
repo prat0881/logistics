@@ -1,11 +1,14 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
+  collectCreateFindings,
   formatQueryCode,
   IMPACT_RANK,
   Role,
@@ -16,6 +19,7 @@ import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
+import { QueryStatusProjector } from "../status/query-status.projector";
 
 @Injectable()
 export class QueriesService {
@@ -23,6 +27,7 @@ export class QueriesService {
     private readonly prisma: PrismaService,
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
+    private readonly projector: QueryStatusProjector,
   ) {}
 
   // Convert ISO-string date fields in the validated payload to Date for Prisma. Returns a
@@ -154,5 +159,43 @@ export class QueriesService {
   async syncDgIndicator(queryId: string, tx: Prisma.TransactionClient): Promise<void> {
     const dgCount = await tx.cargoItem.count({ where: { queryId, isDangerous: true } });
     if (dgCount > 0) await tx.query.update({ where: { id: queryId }, data: { dgIndicator: true } });
+  }
+
+  // Create Query (§13): run the create-phase field/cargo catalogue (F1/F6; F2–F5 already
+  // enforced at save). Route rules R1–R9 + the leg rollup are Plan 5. On pass, set the
+  // rfqReadyAt milestone and let the projector persist RFQ_READY (never hand-write status).
+  async createQuery(id: string, _user: RequestUser) {
+    const q = await this.prisma.query.findUnique({
+      where: { id },
+      include: {
+        cargo: { select: { id: true, isDangerous: true, msdsFileId: true, poReference: true } },
+      },
+    });
+    if (!q) throw new NotFoundException("Query not found");
+
+    const findings = collectCreateFindings(
+      {
+        id: q.id,
+        clientId: q.clientId,
+        contactName: q.contactName,
+        contactEmail: q.contactEmail,
+        contactPhone: q.contactPhone,
+        readyDate: q.readyDate,
+        targetDelivery: q.targetDelivery,
+        incoterms: q.incoterms,
+      },
+      q.cargo,
+    );
+    if (findings.length > 0) throw new HttpException({ findings }, HttpStatus.UNPROCESSABLE_ENTITY);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.query.update({ where: { id }, data: { rfqReadyAt: new Date() } });
+      await this.projector.recompute(id, tx); // persists RFQ_READY
+    });
+    const updated = await this.prisma.query.findUnique({
+      where: { id },
+      select: { id: true, status: true },
+    });
+    return updated!;
   }
 }

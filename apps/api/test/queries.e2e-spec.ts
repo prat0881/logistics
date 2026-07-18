@@ -134,4 +134,34 @@ describe("Queries (e2e)", () => {
       .send({ priority: "LOW" })
       .expect(404);
   });
+
+  it("422s Create Query with F1/F6 findings when mandatory fields are missing", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ shipmentDescription: `${PFX}incomplete` }).expect(201);
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${created.body.id}/create`).set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(422);
+    expect(res.body.findings.length).toBeGreaterThan(0);
+    expect(res.body.findings.every((f: { severity: string }) => f.severity === "blocking")).toBe(true);
+    const still = await prisma.query.findUnique({ where: { id: created.body.id } });
+    expect(still!.status).toBe("DRAFT"); // unchanged on block
+  });
+
+  it("sets RFQ_READY through the projector when all mandatory fields are present", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
+      .send({
+        clientId, shipmentDescription: `${PFX}complete`, incoterms: "FOB",
+        contactName: "Jo", contactEmail: "jo@acme.test", contactPhone: "+911234567890",
+        readyDate: "2026-08-01T00:00:00.000Z", targetDelivery: "2026-08-20T00:00:00.000Z",
+      }).expect(201);
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${created.body.id}/create`).set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(201);
+    expect(res.body.status).toBe("RFQ_READY");
+    const row = await prisma.query.findUnique({ where: { id: created.body.id } });
+    expect(row!.status).toBe("RFQ_READY");
+    expect(row!.rfqReadyAt).not.toBeNull();
+  });
 });
