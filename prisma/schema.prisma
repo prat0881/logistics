@@ -196,6 +196,32 @@ enum FileKind {
   MSDS
 }
 
+enum PointType {
+  PICKUP
+  DELIVERY
+  WAREHOUSE
+  AIRPORT
+  SEAPORT
+}
+
+enum LegStatus {
+  DRAFT
+  READY_FOR_RFQ
+  RFQ_SENT
+  PARTIALLY_QUOTED
+  FULLY_QUOTED
+  AWARDED
+  IN_TRANSIT
+  DELIVERED
+  CLOSED
+}
+
+enum LegExecutionStatus {
+  PENDING
+  IN_TRANSIT
+  COMPLETED
+}
+
 model QuerySequence {
   year       Int @id
   lastNumber Int @default(0)
@@ -247,6 +273,8 @@ model Query {
   cargo     CargoItem[]
   checklist QueryChecklistItem[]
   files     FileAsset[]
+  points    Point[]
+  legs      Leg[]
 
   @@index([tenantId])
   @@index([clientId])
@@ -281,7 +309,86 @@ model CargoItem {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
+  legCargo LegCargo[]
+
   @@index([queryId])
+  @@index([tenantId])
+}
+
+model Point {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String?   @db.Uuid
+  queryId       String    @db.Uuid
+  query         Query     @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  type          PointType
+  name          String?
+  streetAddress String?
+  city          String?
+  postalCode    String?
+  country       String?
+  contactName   String?
+  contactPhone  String?
+  contactEmail  String?
+  warehouseType String?
+  iataCode      String?
+  icaoCode      String?
+  unLocode      String?
+  terminal      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Deleting a shared point nulls its referencing legs' endpoints; the route engine then
+  // flags the broken chain (spec §7.4.3 "re-validates and flags broken chains").
+  originLegs      Leg[] @relation("LegOrigin")
+  destinationLegs Leg[] @relation("LegDestination")
+
+  @@index([queryId])
+  @@index([tenantId])
+}
+
+model Leg {
+  id                    String             @id @default(uuid()) @db.Uuid
+  tenantId              String?            @db.Uuid
+  queryId               String             @db.Uuid
+  query                 Query              @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  legCode               String
+  legName               String?
+  originPointId         String?            @db.Uuid
+  originPoint           Point?             @relation("LegOrigin", fields: [originPointId], references: [id], onDelete: SetNull)
+  destinationPointId    String?            @db.Uuid
+  destinationPoint      Point?             @relation("LegDestination", fields: [destinationPointId], references: [id], onDelete: SetNull)
+  mode                  FreightMode?
+  readyDate             DateTime?
+  targetDelivery        DateTime?
+  status                LegStatus          @default(DRAFT)
+  executionStatus       LegExecutionStatus @default(PENDING)
+  totalChargeableWeight Decimal?           @db.Decimal(12, 3)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  legCargo LegCargo[]
+
+  @@unique([queryId, legCode])
+  @@index([queryId])
+  @@index([tenantId])
+  @@index([originPointId])
+  @@index([destinationPointId])
+}
+
+model LegCargo {
+  id               String    @id @default(uuid()) @db.Uuid
+  tenantId         String?   @db.Uuid
+  legId            String    @db.Uuid
+  leg              Leg       @relation(fields: [legId], references: [id], onDelete: Cascade)
+  cargoItemId      String    @db.Uuid
+  cargoItem        CargoItem @relation(fields: [cargoItemId], references: [id], onDelete: Cascade)
+  manifestSnapshot Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([legId, cargoItemId])
+  @@index([legId])
+  @@index([cargoItemId])
   @@index([tenantId])
 }
 
