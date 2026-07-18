@@ -9,7 +9,10 @@ export class StatusRegistry {
   private readonly machines = new Map<string, StatusMachine>();
 
   register(machine: StatusMachine): void {
-    this.machines.set(machine.key, machine);
+    // Store an isolated copy so later `contribute(...)` calls (the extension seam) append to
+    // the registry's own transitions array, never the module-level source singleton (e.g.
+    // `legTransitions`) — which onModuleInit re-registers on every AppModule boot.
+    this.machines.set(machine.key, { ...machine, transitions: [...machine.transitions] });
   }
 
   contribute(key: string, transitions: StatusMachine["transitions"]): void {

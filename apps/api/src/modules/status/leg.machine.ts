@@ -17,14 +17,16 @@ export const legTransitions: Transition<LegStatus, LegEvent, FireContext>[] = [
     guard: (ctx) =>
       ctx.routeValid === true
         ? true
-        : (ctx.findings ?? [
-            {
-              rule: "C1",
-              severity: "blocking",
-              scope: { type: "leg" },
-              message: "Leg is incomplete or its route is not valid",
-            },
-          ]),
+        : ctx.findings && ctx.findings.length > 0
+          ? ctx.findings
+          : [
+              {
+                rule: "C1",
+                severity: "blocking",
+                scope: { type: "leg" },
+                message: "Leg is incomplete or its route is not valid",
+              },
+            ],
   },
   {
     from: LegStatus.READY_FOR_RFQ,

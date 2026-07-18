@@ -122,7 +122,8 @@ export function deriveQueryStatus(
     case LegStatus.CLOSED:
       return QueryStatus.CLOSED;
     default:
-      // AWARDED / IN_TRANSIT / DELIVERED — driven by milestones + later stages.
+      // TODO(Plan 5): AWARDED/IN_TRANSIT/DELIVERED are unreachable in Stage 3; define real
+      // rollup semantics when those leg states are activated (placeholder maps to QUOTED).
       return QueryStatus.QUOTED;
   }
 }

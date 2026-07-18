@@ -18,7 +18,14 @@ export class QueryStatusProjector {
 
   @OnEvent("leg.status.changed")
   async onLegStatusChanged(event: StatusChangedEvent): Promise<void> {
-    await this.recompute(event.queryId);
+    // Query status is a derived-on-read projection, so a dropped recompute is staleness, not
+    // corruption. Swallow+log handler errors so a future (Plan 5) DB-backed recompute throw
+    // can't surface as an unhandledRejection out of the synchronous emit.
+    try {
+      await this.recompute(event.queryId);
+    } catch (err) {
+      this.logger.error(`query-status recompute failed for ${event.queryId}`, err as Error);
+    }
   }
 
   async recompute(queryId?: string): Promise<void> {

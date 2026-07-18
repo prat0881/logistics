@@ -8,6 +8,9 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { StatusService } from "../src/modules/status/status.service";
 import { QueryStatusProjector } from "../src/modules/status/query-status.projector";
+import { StatusRegistry } from "../src/modules/status/status.registry";
+import type { StatusMachine } from "../src/modules/status/status.types";
+import { legMachine, legTransitions } from "../src/modules/status/leg.machine";
 import { IllegalTransitionError, TransitionBlockedError } from "../src/modules/status/errors";
 
 const PREFIX = "p3-status-";
@@ -86,6 +89,26 @@ describe("Status Machine (integration)", () => {
     expect(await prisma.statusTransition.count({ where: { entityId: id } })).toBe(0);
   });
 
+  it("blocks with the default Finding when routeValid is false and findings is an empty array", async () => {
+    const id = `${PREFIX}empty-findings`;
+    let err: unknown;
+    try {
+      await status.fire("leg", id, LegEvent.VALIDATE_PASS, { routeValid: false, findings: [] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TransitionBlockedError);
+    expect((err as TransitionBlockedError).findings).toEqual([
+      {
+        rule: "C1",
+        severity: "blocking",
+        scope: { type: "leg" },
+        message: "Leg is incomplete or its route is not valid",
+      },
+    ]);
+    expect(await prisma.statusTransition.count({ where: { entityId: id } })).toBe(0);
+  });
+
   it("rejects an illegal (state,event) pair with IllegalTransitionError, persisting nothing", async () => {
     const id = `${PREFIX}illegal`;
     await expect(status.fire("leg", id, LegEvent.REOPEN)).rejects.toBeInstanceOf(
@@ -119,5 +142,16 @@ describe("Status Machine (integration)", () => {
   it("projects derived query status from leg statuses (pure projection reused by Plan 4/5)", () => {
     expect(projector.project([LegStatus.READY_FOR_RFQ], { created: true })).toBe("RFQ_READY");
     expect(projector.project([LegStatus.DRAFT, LegStatus.READY_FOR_RFQ])).toBe("DRAFT");
+  });
+
+  it("register() clones the machine so contribute() cannot mutate the source transitions singleton", () => {
+    const sourceLen = legTransitions.length;
+    const reg = new StatusRegistry();
+    reg.register(legMachine as StatusMachine);
+    reg.contribute("leg", [
+      { from: LegStatus.READY_FOR_RFQ, on: "rfq.send" as LegEvent, to: LegStatus.RFQ_SENT },
+    ]);
+    expect(reg.get("leg").transitions.length).toBe(sourceLen + 1); // the registry's own copy grew
+    expect(legTransitions.length).toBe(sourceLen); // the module-level source array is untouched
   });
 });
