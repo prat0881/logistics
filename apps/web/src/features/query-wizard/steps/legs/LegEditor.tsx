@@ -290,7 +290,7 @@ export function LegEditor({
               {showClientVm1Warning && (
                 <div
                   data-testid="vm1-client-warning"
-                  className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800"
+                  className="rounded-md bg-warning/10 border border-warning/20 px-3 py-2 text-sm text-warning"
                 >
                   <span className="font-mono font-semibold mr-2">V-M1</span>
                   {watchedMode === "AIR"

@@ -315,6 +315,65 @@ describe("Step1Client", () => {
     expect(patches.length).toBe(0);
   });
 
+  it("non-admin Save strips queryDate from PATCH body (existing query with queryDate)", async () => {
+    const patches: unknown[] = [];
+    const detailWithClient = {
+      ...draftDetail,
+      clientId: CLIENT_ID,
+      // queryDate is always present on an existing query
+      queryDate: "2026-01-01T00:00:00+00:00",
+    };
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes(`/api/clients/${CLIENT_ID}/contacts`)) return { status: 200, body: contacts };
+        if (url.includes(`/api/clients/${CLIENT_ID}`)) return { status: 200, body: client1 };
+        if (url.includes("/api/clients") && url.includes("q=acme"))
+          return { status: 200, body: { items: [client1], total: 1, page: 1, pageSize: 20 } };
+        if (url.includes("/api/clients"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/queries/q9") && init?.method === "PATCH") {
+          patches.push(JSON.parse(init.body as string));
+          return { status: 200, body: detailWithClient };
+        }
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithClient };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // Wait for the client name to appear (detail has clientId pre-set)
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Acme Corp/i })).toBeInTheDocument();
+    });
+
+    // Hit Save — as EXECUTIVE (non-admin)
+    await userEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+
+    await waitFor(
+      () => expect(patches.length).toBeGreaterThan(0),
+      { timeout: 3000 },
+    );
+
+    const body = patches[0] as Record<string, unknown>;
+    // queryDate must NOT be in the PATCH body for a non-admin user
+    expect(body).not.toHaveProperty("queryDate");
+    // Other editable fields should still be present
+    expect(body).toHaveProperty("priority");
+  });
+
   it("shows company name (not UUID) in client picker trigger when detail.clientId is pre-set", async () => {
     // Query detail that already has a clientId on the server
     const detailWithClient = {

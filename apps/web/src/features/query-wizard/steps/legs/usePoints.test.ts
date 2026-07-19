@@ -152,6 +152,40 @@ describe("usePoints", () => {
       const sentBody = JSON.parse((patchCall![1] as RequestInit).body as string);
       expect(sentBody.name).toBe("Gatwick");
     });
+
+    it("invalidates ['query', queryId] after a successful update", async () => {
+      const invalidateSpy = vi.fn();
+      const qc = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      qc.invalidateQueries = invalidateSpy;
+
+      const fetchMock = vi.fn((_url: string, _init?: RequestInit) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ...basePoint, name: "Gatwick" }),
+          text: () => Promise.resolve(JSON.stringify({ ...basePoint, name: "Gatwick" })),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const customWrapper = ({ children }: { children: ReactNode }) =>
+        createElement(QueryClientProvider, { client: qc }, children);
+
+      const { result } = renderHook(() => usePoints(QUERY_ID), {
+        wrapper: customWrapper,
+      });
+
+      await act(async () => {
+        await result.current.update(POINT_ID, { name: "Gatwick" });
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["query", QUERY_ID],
+      });
+    });
   });
 
   describe("remove()", () => {
@@ -179,6 +213,40 @@ describe("usePoints", () => {
           (init as RequestInit)?.method === "DELETE",
       );
       expect(deleteCall).toBeTruthy();
+    });
+
+    it("invalidates ['query', queryId] after a successful remove", async () => {
+      const invalidateSpy = vi.fn();
+      const qc = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      qc.invalidateQueries = invalidateSpy;
+
+      const fetchMock = vi.fn((_url: string, _init?: RequestInit) =>
+        Promise.resolve({
+          ok: true,
+          status: 204,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const customWrapper = ({ children }: { children: ReactNode }) =>
+        createElement(QueryClientProvider, { client: qc }, children);
+
+      const { result } = renderHook(() => usePoints(QUERY_ID), {
+        wrapper: customWrapper,
+      });
+
+      await act(async () => {
+        await result.current.remove(POINT_ID);
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["query", QUERY_ID],
+      });
     });
   });
 });

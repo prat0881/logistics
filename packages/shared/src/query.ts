@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Finding } from "./findings";
 import { QUERY_STATUSES } from "./status";
+import { FREIGHT_MODES } from "./config";
 import type { FreightMode } from "./config";
 import type { LegStatus } from "./status";
 import type { LegExecutionStatus } from "./legs";
@@ -179,7 +180,20 @@ export const queryListQuerySchema = z.object({
   status: z.enum(QUERY_STATUSES).optional(),
   priority: z.enum(PRIORITIES).optional(),
   assignedUserId: z.string().uuid().optional(),
-  freightMode: z.string().optional(),      // single value or CSV, split in the service
+  freightMode: z
+    .string()
+    .optional()
+    .refine(
+      (v) =>
+        v === undefined ||
+        v
+          .split(",")
+          .map((t) => t.trim())
+          .every((t) => (FREIGHT_MODES as readonly string[]).includes(t)),
+      {
+        message: `freightMode must be a single or comma-separated list of: ${FREIGHT_MODES.join(", ")}`,
+      },
+    ),       // single value or CSV, each token validated against FREIGHT_MODES
   country: z.string().trim().min(1).optional(),
   dateField: z.enum(["queryDate", "updatedAt"]).optional(),
   dateFrom: z.string().datetime({ offset: true }).optional(),

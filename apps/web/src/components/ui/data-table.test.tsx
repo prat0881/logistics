@@ -19,5 +19,5 @@ it("renders rows and fires onRowClick", async () => {
 
 it("shows an empty state", () => {
   render(<DataTable columns={columns} data={[]} />);
-  expect(screen.getByText(/No queries/i)).toBeInTheDocument();
+  expect(screen.getByText(/No results found/i)).toBeInTheDocument();
 });

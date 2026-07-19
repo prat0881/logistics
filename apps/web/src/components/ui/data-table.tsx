@@ -48,7 +48,7 @@ export function DataTable<TData>({
   sort,
   onSortChange,
   sortableColumns = [],
-  emptyMessage = "No queries match your filters.",
+  emptyMessage = "No results found.",
 }: DataTableProps<TData>) {
   const table = useReactTable({
     data,

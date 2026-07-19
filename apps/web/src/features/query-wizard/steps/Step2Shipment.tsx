@@ -73,8 +73,10 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
           return;
         }
 
+        // Self-persist: Step 2 patches directly, then resolves undefined so the shell
+        // skips its own PATCH (returning values would cause a double-write).
         patch(queryId, payload as QuerySaveInput)
-          .then(() => resolve(payload as QuerySaveInput))
+          .then(() => resolve(undefined))
           .catch(reject);
       });
     };

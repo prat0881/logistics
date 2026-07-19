@@ -28,6 +28,14 @@ import { toIsoOffset, isoToLocalInput } from "@/lib/dates";
 import { ClientPicker } from "../pickers/ClientPicker";
 import { VesselPicker } from "../pickers/VesselPicker";
 
+/**
+ * Contract for a step's save function registered with the wizard shell.
+ *
+ * A step MUST follow exactly one of two patterns — never both:
+ *   1. Return the patch values → the shell calls PATCH /api/queries/:id with them.
+ *   2. Self-persist (call patch internally) and return `undefined` → the shell skips
+ *      its own PATCH, avoiding a double-write (Step 2 and Step 5 use this pattern).
+ */
 export interface StepSaveFn {
   (): Promise<QuerySaveInput | void>;
 }
@@ -129,7 +137,13 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
       return new Promise<QuerySaveInput | void>((resolve, reject) => {
         const submitFn = form.handleSubmit(
           (values) => {
-            resolve(values);
+            if (!isAdmin) {
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { queryDate: _, ...rest } = values;
+              resolve(rest as typeof values);
+            } else {
+              resolve(values);
+            }
           },
           // On validation error, reject so the shell can catch
           (errors) => {

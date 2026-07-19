@@ -132,6 +132,39 @@ describe("queryListQuerySchema", () => {
     expect(parsed.page).toBe(1);
     expect(parsed.pageSize).toBe(20);
   });
+
+  describe("freightMode validation", () => {
+    it("accepts a single valid FreightMode", () => {
+      expect(queryListQuerySchema.safeParse({ freightMode: "SEA" }).success).toBe(true);
+      expect(queryListQuerySchema.safeParse({ freightMode: "AIR" }).success).toBe(true);
+      expect(queryListQuerySchema.safeParse({ freightMode: "ROAD" }).success).toBe(true);
+    });
+
+    it("accepts a CSV of valid FreightModes", () => {
+      expect(queryListQuerySchema.safeParse({ freightMode: "SEA,ROAD" }).success).toBe(true);
+      expect(queryListQuerySchema.safeParse({ freightMode: "AIR,SEA,ROAD" }).success).toBe(true);
+    });
+
+    it("rejects an invalid FreightMode token with a descriptive error", () => {
+      const result = queryListQuerySchema.safeParse({ freightMode: "TRUCK" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].message).toMatch(/freightMode must be/);
+      }
+    });
+
+    it("rejects a CSV containing an invalid token", () => {
+      const result = queryListQuerySchema.safeParse({ freightMode: "SEA,UNKNOWN" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].message).toMatch(/freightMode must be/);
+      }
+    });
+
+    it("accepts undefined freightMode (optional)", () => {
+      expect(queryListQuerySchema.safeParse({}).success).toBe(true);
+    });
+  });
 });
 
 describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Plan 5)", () => {

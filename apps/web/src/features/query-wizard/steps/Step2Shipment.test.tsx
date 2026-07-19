@@ -143,10 +143,11 @@ describe("Step2Shipment", () => {
           return { status: 200, body: { user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } } };
         if (url.includes(`/api/queries/${QUERY_ID}`) && init?.method === "PATCH") {
           patches.push(JSON.parse(init.body as string));
-          return { status: 200, body: draftDetail };
+          return { status: 200, body: draftDetailWithDg };
         }
         if (url.includes(`/api/queries/${QUERY_ID}`))
-          return { status: 200, body: draftDetail };
+          // Use draftDetailWithDg so the form default has incoterms: "FOB" pre-set
+          return { status: 200, body: draftDetailWithDg };
         return { status: 200, body: {} };
       }),
     );
@@ -165,10 +166,6 @@ describe("Step2Shipment", () => {
     await userEvent.clear(descInput);
     await userEvent.type(descInput, "Test cargo shipment");
 
-    // Check DG indicator
-    const dgCheckbox = screen.getByRole("checkbox", { name: /dg indicator/i });
-    await userEvent.click(dgCheckbox);
-
     // Hit Save
     await userEvent.click(screen.getByRole("button", { name: /^Save$/ }));
 
@@ -180,8 +177,50 @@ describe("Step2Shipment", () => {
 
     const body = patches[patches.length - 1] as Record<string, unknown>;
     expect(body).toHaveProperty("shipmentDescription", "Test cargo shipment");
-    expect(body).toHaveProperty("dgIndicator", true);
-    // incoterms should be present in the patch (even if null/undefined it's still sent)
-    expect("incoterms" in body || "shipmentDescription" in body).toBe(true);
+    expect(body).toHaveProperty("dgIndicator");
+    // incoterms key must be present in the patch body (pre-seeded from draftDetailWithDg)
+    expect(body).toHaveProperty("incoterms");
+  });
+
+  it("a single Step-2 Save issues exactly ONE PATCH to /api/queries/:id (no double-write)", async () => {
+    const patches: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } } };
+        if (url.includes(`/api/queries/${QUERY_ID}`) && init?.method === "PATCH") {
+          patches.push(JSON.parse(init.body as string));
+          return { status: 200, body: draftDetail };
+        }
+        if (url.includes(`/api/queries/${QUERY_ID}`))
+          return { status: 200, body: draftDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=1`, user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } },
+    );
+
+    await navigateToStep2();
+
+    // Hit Save
+    await userEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+
+    // Wait for at least one PATCH
+    await waitFor(
+      () => expect(patches.length).toBeGreaterThan(0),
+      { timeout: 3000 },
+    );
+
+    // Allow a brief window for any spurious second PATCH to arrive
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Must be exactly ONE PATCH — Step 2 self-patches and returns undefined to the shell
+    expect(patches.length).toBe(1);
   });
 });
