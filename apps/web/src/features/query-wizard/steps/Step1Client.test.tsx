@@ -314,4 +314,43 @@ describe("Step1Client", () => {
     // PATCH should NOT have been called
     expect(patches.length).toBe(0);
   });
+
+  it("shows company name (not UUID) in client picker trigger when detail.clientId is pre-set", async () => {
+    // Query detail that already has a clientId on the server
+    const detailWithClient = {
+      ...draftDetail,
+      clientId: CLIENT_ID,
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithClient };
+        // Single-client GET for the name lookup: /api/clients/:id (no trailing path segment)
+        if (url === `/api/clients/${CLIENT_ID}`) return { status: 200, body: client1 };
+        if (url.includes(`/api/clients/${CLIENT_ID}/contacts`)) return { status: 200, body: contacts };
+        if (url.includes("/api/clients"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // The client picker trigger should display "Acme Corp", not the raw UUID
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Acme Corp/i })).toBeInTheDocument();
+    });
+  });
 });

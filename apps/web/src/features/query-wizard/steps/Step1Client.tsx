@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { querySaveSchema, PRIORITIES, Role } from "@svyft/shared";
-import type { QuerySaveInput, ContactDto, QueryDetail } from "@svyft/shared";
+import type { QuerySaveInput, ContactDto, QueryDetail, ClientDto } from "@svyft/shared";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -99,6 +99,21 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
       setSelectedVesselName(detail.vesselName ?? undefined);
     }
   }, [detail, form]);
+
+  // When the wizard opens an existing query that already has a clientId, fetch the
+  // client record so the picker trigger shows "Acme Corp" rather than the raw UUID.
+  // Gated on selectedClientId being present AND selectedClientName not yet known
+  // (e.g. the user hasn't picked a new client interactively this session).
+  const { data: clientRecord } = useQuery({
+    queryKey: ["client-detail", selectedClientId],
+    queryFn: () => fetchJson<ClientDto>(`/api/clients/${selectedClientId}`),
+    enabled: !!selectedClientId && !selectedClientName,
+  });
+  useEffect(() => {
+    if (clientRecord?.companyName && !selectedClientName) {
+      setSelectedClientName(clientRecord.companyName);
+    }
+  }, [clientRecord, selectedClientName]);
 
   // Load contacts when clientId is set
   const { data: contacts } = useQuery({
