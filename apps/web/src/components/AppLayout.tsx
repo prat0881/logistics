@@ -9,8 +9,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const isAdmin = user?.role === Role.ADMINISTRATOR;
   return (
     <div className="min-h-screen bg-background">
-      <header className="flex items-center justify-between border-b border-b-primary/70 bg-card px-6 py-3">
-        <nav className="flex items-center gap-5 text-sm">
+      <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-b-primary/70 bg-card px-4 py-3 sm:px-6">
+        <nav className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
           <Link
             to="/"
             className="font-display text-base font-semibold tracking-tight text-foreground"
@@ -41,7 +41,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </Button>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl p-6">{children}</main>
+      <main className="mx-auto max-w-7xl p-4 sm:p-6">{children}</main>
     </div>
   );
 }

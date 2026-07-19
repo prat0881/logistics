@@ -80,6 +80,7 @@ export function QueriesListPage() {
         sort={params.sort}
         onSortChange={handleSortChange}
         sortableColumns={SORTABLE_COLS}
+        emptyMessage="No queries found. Adjust your filters or create a query to get started."
       />
 
       {/* Pagination */}

@@ -94,7 +94,7 @@ describe("QueriesListPage", () => {
       { route: "/queries" },
     );
 
-    expect(await screen.findByText(/No queries match/i)).toBeInTheDocument();
+    expect(await screen.findByText(/No queries found/i)).toBeInTheDocument();
   });
 
   it("filter change re-fetches with correct param in the URL", async () => {

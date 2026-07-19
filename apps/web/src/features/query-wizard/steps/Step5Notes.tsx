@@ -96,7 +96,6 @@ export function Step5Notes({ registerSave }: Step5NotesProps) {
     <div className="space-y-6 p-4">
       {/* Section: Internal Notes */}
       <div className="space-y-2">
-        <h2 className="text-base font-semibold">Internal Notes</h2>
         <label htmlFor="internalNotes" className="text-sm font-medium">
           Internal Notes
         </label>

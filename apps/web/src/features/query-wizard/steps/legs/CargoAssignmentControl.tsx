@@ -28,10 +28,10 @@ export function CargoAssignmentControl({
     return (
       <div className="space-y-2">
         <p className="text-sm text-muted-foreground">
-          No cargo yet — add rows in Step 3
+          No cargo yet — add rows in Step 3.
         </p>
-        <p className="text-xs text-amber-600">
-          Assign at least one cargo row before Create Query (D7)
+        <p className="text-xs text-muted-foreground">
+          Assign at least one cargo row before Create Query (D7).
         </p>
       </div>
     );
@@ -58,8 +58,8 @@ export function CargoAssignmentControl({
           </li>
         ))}
       </ul>
-      <p className="text-xs text-amber-600">
-        Assign at least one cargo row (D7)
+      <p className="text-xs text-muted-foreground">
+        Assign at least one cargo row before Create Query (D7).
       </p>
     </div>
   );

@@ -45,6 +45,7 @@ export function FindingsPanel({ findings, phase, onFindingClick }: FindingsPanel
                   className={cn(
                     "shrink-0 rounded px-1.5 py-0.5 text-xs font-mono",
                     "bg-destructive/20 hover:bg-destructive/30",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                     onFindingClick ? "cursor-pointer" : "cursor-default",
                   )}
                 >
@@ -75,6 +76,7 @@ export function FindingsPanel({ findings, phase, onFindingClick }: FindingsPanel
                   className={cn(
                     "shrink-0 rounded px-1.5 py-0.5 text-xs font-mono",
                     "bg-warning/20 hover:bg-warning/30",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                     onFindingClick ? "cursor-pointer" : "cursor-default",
                   )}
                 >

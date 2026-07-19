@@ -97,7 +97,7 @@ export function WizardShell({
   return (
     <div className="flex flex-col min-h-screen">
       {/* Header */}
-      <div className="border-b bg-background px-6 py-4 flex items-center gap-4">
+      <div className="border-b bg-background px-4 sm:px-6 py-4 flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="font-display text-lg font-semibold">
           <span className="font-mono">{detail?.queryCode ?? "New Query"}</span>
         </span>
@@ -125,7 +125,7 @@ export function WizardShell({
       </div>
 
       {/* Stepper */}
-      <div className="border-b px-6 py-3">
+      <div className="border-b px-4 sm:px-6 py-3 overflow-x-auto">
         <Stepper
           steps={STEPS.map((s) => ({ key: s.key, label: s.label }))}
           current={STEPS[step]?.key ?? STEPS[0].key}
@@ -138,7 +138,7 @@ export function WizardShell({
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-auto px-6 py-6">
+      <div className="flex-1 overflow-auto px-4 sm:px-6 py-6">
         {/* Findings */}
         {findings.length > 0 && (
           <div className="mb-4">
@@ -146,7 +146,7 @@ export function WizardShell({
             {onClearFindings && (
               <button
                 type="button"
-                className="mt-2 text-xs text-muted-foreground underline"
+                className="mt-2 rounded-sm text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 onClick={onClearFindings}
               >
                 Dismiss
@@ -158,9 +158,9 @@ export function WizardShell({
       </div>
 
       {/* Sticky action bar */}
-      <div className="sticky bottom-0 border-t bg-background px-6 py-3 flex items-center justify-end gap-3">
+      <div className="sticky bottom-0 border-t bg-background px-4 sm:px-6 py-3 flex flex-wrap items-center justify-end gap-2 sm:gap-3">
         {saveError && (
-          <span className="mr-auto text-sm text-destructive">
+          <span className="mr-auto w-full text-sm text-destructive sm:w-auto">
             Couldn't save — {saveError}
           </span>
         )}

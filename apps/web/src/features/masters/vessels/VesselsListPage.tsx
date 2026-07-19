@@ -44,24 +44,32 @@ export function VesselsListPage() {
               </tr>
             </thead>
             <tbody>
-              {data?.items.map((v) => (
-                <tr key={v.id} className="border-b border-border last:border-0 hover:bg-muted/50">
-                  <td className="px-4 py-2 font-mono text-muted-foreground">{v.vesselCode}</td>
-                  <td className="px-4 py-2">
-                    <Link
-                      to={`/masters/vessels/${v.id}`}
-                      className="font-medium text-primary hover:underline"
-                    >
-                      {v.name}
-                    </Link>
+              {data?.items.length ? (
+                data.items.map((v) => (
+                  <tr key={v.id} className="border-b border-border last:border-0 hover:bg-muted/50">
+                    <td className="px-4 py-2 font-mono tabular-nums text-muted-foreground">{v.vesselCode}</td>
+                    <td className="px-4 py-2">
+                      <Link
+                        to={`/masters/vessels/${v.id}`}
+                        className="font-medium text-primary hover:underline"
+                      >
+                        {v.name}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2 font-mono tabular-nums text-muted-foreground">
+                      {v.imoNumber}
+                    </td>
+                    <td className="px-4 py-2">{v.vesselType}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{v.status}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    {q ? "No vessels match your search." : "No vessels yet."}
                   </td>
-                  <td className="px-4 py-2 font-mono tabular-nums text-muted-foreground">
-                    {v.imoNumber}
-                  </td>
-                  <td className="px-4 py-2">{v.vesselType}</td>
-                  <td className="px-4 py-2 text-muted-foreground">{v.status}</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>

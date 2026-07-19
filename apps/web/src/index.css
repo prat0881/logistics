@@ -113,4 +113,32 @@
   .font-mono {
     font-feature-settings: "tnum" 1;
   }
+
+  /* RouteDiagram is SVG, so its keyboard-focusable <g> nodes/edges can't use the
+     box-shadow focus ring the DOM controls share. Give them a real cobalt
+     outline on :focus-visible so the signature element is keyboard-navigable. */
+  .route-focusable {
+    outline: none;
+  }
+  .route-focusable:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+
+  /* Quality floor: honor the OS "reduce motion" setting. The console's job is
+     to read as a calm instrument, so we drop transitions/animations (shadcn
+     enter-exit, the skeleton pulse, the RouteDiagram edge/node tweens) rather
+     than merely shortening them, while leaving a hair of duration so state
+     changes remain perceptible. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }

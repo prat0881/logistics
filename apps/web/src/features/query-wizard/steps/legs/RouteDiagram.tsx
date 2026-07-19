@@ -278,7 +278,7 @@ function Edge({
       data-mode={leg.mode ?? "NONE"}
       data-active={active ? "true" : undefined}
       data-finding={highlight.finding ?? undefined}
-      className={cn("group", interactive && "cursor-pointer")}
+      className={cn("group", interactive && "route-focusable cursor-pointer")}
       onClick={interactive ? () => onSelect?.({ type: "leg", id: leg.id }) : undefined}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
@@ -412,7 +412,7 @@ function Node({
       data-finding={highlight.finding ?? undefined}
       data-orphan={orphan ? "" : undefined}
       transform={`translate(${x}, ${y})`}
-      className={cn(interactive && "cursor-pointer")}
+      className={cn(interactive && "route-focusable cursor-pointer")}
       opacity={orphan && !highlight.finding && !active ? 0.6 : 1}
       onClick={
         interactive ? () => onSelect?.({ type: "point", id: point.id }) : undefined

@@ -43,21 +43,29 @@ export function ClientsListPage() {
               </tr>
             </thead>
             <tbody>
-              {data?.items.map((c) => (
-                <tr key={c.id} className="border-b border-border last:border-0 hover:bg-muted/50">
-                  <td className="px-4 py-2 font-mono text-muted-foreground">{c.clientCode}</td>
-                  <td className="px-4 py-2">
-                    <Link
-                      to={`/masters/clients/${c.id}`}
-                      className="font-medium text-primary hover:underline"
-                    >
-                      {c.companyName}
-                    </Link>
+              {data?.items.length ? (
+                data.items.map((c) => (
+                  <tr key={c.id} className="border-b border-border last:border-0 hover:bg-muted/50">
+                    <td className="px-4 py-2 font-mono tabular-nums text-muted-foreground">{c.clientCode}</td>
+                    <td className="px-4 py-2">
+                      <Link
+                        to={`/masters/clients/${c.id}`}
+                        className="font-medium text-primary hover:underline"
+                      >
+                        {c.companyName}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2">{c.country}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{c.status}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    {q ? "No clients match your search." : "No clients yet."}
                   </td>
-                  <td className="px-4 py-2">{c.country}</td>
-                  <td className="px-4 py-2 text-muted-foreground">{c.status}</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>

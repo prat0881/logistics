@@ -33,6 +33,8 @@ export interface DataTableProps<TData> {
   onSortChange?: (col: string) => void;
   /** Columns that should render a sort toggle. Defined at the call site. */
   sortableColumns?: string[];
+  /** Message shown when there are no rows. Defaults to a no-match message. */
+  emptyMessage?: string;
 }
 
 const SKELETON_ROWS = 5;
@@ -46,6 +48,7 @@ export function DataTable<TData>({
   sort,
   onSortChange,
   sortableColumns = [],
+  emptyMessage = "No queries match your filters.",
 }: DataTableProps<TData>) {
   const table = useReactTable({
     data,
@@ -118,7 +121,8 @@ export function DataTable<TData>({
                 key={row.id}
                 onClick={() => onRowClick?.(row.original)}
                 className={cn(
-                  onRowClick && "cursor-pointer hover:bg-muted/50",
+                  onRowClick &&
+                    "cursor-pointer hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                 )}
                 // keyboard accessibility: treat as a button when clickable
                 tabIndex={onRowClick ? 0 : undefined}
@@ -147,7 +151,7 @@ export function DataTable<TData>({
                 colSpan={columns.length}
                 className="h-24 text-center text-muted-foreground"
               >
-                No queries match your filters.
+                {emptyMessage}
               </TableCell>
             </TableRow>
           )}
