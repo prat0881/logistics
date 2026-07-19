@@ -196,15 +196,8 @@ describe("QueryWizardPage", () => {
     expect(await screen.findByText("YAL26-0009")).toBeInTheDocument();
   });
 
-  it("on Create Query → 422 shows blocking findings and status stays DRAFT", async () => {
-    const findings = [
-      {
-        rule: "F1",
-        severity: "blocking",
-        scope: { type: "query", id: "q9" },
-        message: "Client is required",
-      },
-    ];
+  it("Create Query with missing required fields → client preview blocks (no server call)", async () => {
+    const createCalls: string[] = [];
 
     vi.stubGlobal(
       "fetch",
@@ -214,8 +207,10 @@ describe("QueryWizardPage", () => {
             status: 200,
             body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
           };
-        if (url.includes("/api/queries/q9/create") && init?.method === "POST")
-          return { status: 422, body: { findings } };
+        if (url.includes("/api/queries/q9/create") && init?.method === "POST") {
+          createCalls.push(url);
+          return { status: 422, body: { findings: [] } };
+        }
         if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
         return { status: 200, body: {} };
       }),
@@ -235,11 +230,60 @@ describe("QueryWizardPage", () => {
     const createBtn = await screen.findByRole("button", { name: /Create Query/i });
     await userEvent.click(createBtn);
 
-    // Should show the blocking finding
+    // Client-side preview fires first — "Client is required" is an F1 blocking finding
     await waitFor(() =>
       expect(screen.getByText("Client is required")).toBeInTheDocument(),
     );
     // Status should still be DRAFT
+    expect(screen.getByText("DRAFT")).toBeInTheDocument();
+    // The server /create endpoint must NOT have been called — client preview blocked it
+    expect(createCalls.length).toBe(0);
+  });
+
+  it("Create Query → server returns 422 blocking findings → renders server finding, status stays DRAFT", async () => {
+    const serverFindings = [
+      {
+        rule: "R2",
+        severity: "blocking",
+        scope: { type: "cargo" },
+        message: "Cargo chain is invalid: missing pickup leg",
+      },
+    ];
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
+        if (url.includes("/api/queries/q9/create") && init?.method === "POST")
+          return { status: 422, body: { findings: serverFindings } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: fullDraftDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      {
+        route: "/queries/q9?step=4",
+        user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" },
+      },
+    );
+
+    // Wait for the page to load (fullDraftDetail passes client-side preview)
+    const createBtn = await screen.findByRole("button", { name: /Create Query/i });
+    await userEvent.click(createBtn);
+
+    // Server 422 finding should render
+    await waitFor(() =>
+      expect(screen.getByText("Cargo chain is invalid: missing pickup leg")).toBeInTheDocument(),
+    );
+    // Status badge should still be DRAFT
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
   });
 
@@ -294,6 +338,67 @@ describe("QueryWizardPage", () => {
     expect(screen.getByText("YAL26-0009")).toBeInTheDocument();
 
     vi.unstubAllGlobals();
+  });
+
+  it("Save Draft from optional-gaps dialog does NOT call /create and closes the dialog", async () => {
+    const createCalls: string[] = [];
+
+    // fullDraftDetail passes client-side preview; add an unchecked checklist item
+    // so the optional-gaps dialog opens
+    const detailWithUnchecked = {
+      ...fullDraftDetail,
+      checklist: [
+        { id: "c1", itemKey: "weight-confirmed", checked: false },
+        { id: "c2", itemKey: "dimensions-confirmed", checked: true },
+      ],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
+        if (url.includes("/api/queries/q9/create") && init?.method === "POST") {
+          createCalls.push(url);
+          return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
+        }
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithUnchecked };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      {
+        route: "/queries/q9?step=4",
+        user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" },
+      },
+    );
+
+    // Wait for the page and click Create Query — triggers optional-gaps dialog
+    const createBtn = await screen.findByRole("button", { name: /Create Query/i });
+    await userEvent.click(createBtn);
+
+    // Optional-gaps dialog should open
+    await waitFor(() =>
+      expect(screen.getByText(/Create query with missing optional info/i)).toBeInTheDocument(),
+    );
+
+    // Click "Save Draft"
+    const saveDraftBtn = screen.getByRole("button", { name: /^Save Draft$/i });
+    await userEvent.click(saveDraftBtn);
+
+    // Dialog should close
+    await waitFor(() =>
+      expect(screen.queryByText(/Create query with missing optional info/i)).not.toBeInTheDocument(),
+    );
+    // /create must NOT have been called
+    expect(createCalls.length).toBe(0);
   });
 
   it("on Create Query → 201 re-GETs and shows RFQ_READY + success banner", async () => {
