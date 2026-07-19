@@ -31,14 +31,16 @@ export function ConfigPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Reference data</h1>
+      <h1 className="font-display text-xl font-semibold tracking-tight">Reference data</h1>
       <section>
-        <h2 className="mb-2 font-medium">Freight density factors (kg/CBM)</h2>
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Freight density factors (kg/CBM)
+        </h2>
         {factors.data?.map((f) => (
           <div key={f.mode} className="flex items-center gap-3 py-1">
-            <span className="w-16">{f.mode}</span>
+            <span className="w-24 font-mono text-sm">{f.mode}</span>
             <Input
-              className="w-32"
+              className="w-32 font-mono tabular-nums"
               value={edits[f.mode] ?? String(f.kgPerCbm)}
               onChange={(e) => setEdits((s) => ({ ...s, [f.mode]: e.target.value }))}
             />
@@ -53,7 +55,9 @@ export function ConfigPage() {
         ))}
       </section>
       <section>
-        <h2 className="mb-2 font-medium">Missing-details checklist</h2>
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Missing-details checklist
+        </h2>
         <ol className="list-decimal space-y-1 pl-6 text-sm">
           {checklist.data?.map((c) => (
             <li key={c.itemKey}>

@@ -41,12 +41,14 @@ export function VesselFormPage() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="max-w-md space-y-4" aria-label="Vessel form">
-      <h1 className="text-xl font-semibold">{id ? "Edit vessel" : "New vessel"}</h1>
+      <h1 className="font-display text-xl font-semibold tracking-tight">
+        {id ? "Edit vessel" : "New vessel"}
+      </h1>
       <div className="space-y-1">
         <Label htmlFor="name">Name</Label>
         <Input id="name" {...register("name")} />
         {errors.name && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-destructive">
             {errors.name.message}
           </p>
         )}
@@ -58,7 +60,7 @@ export function VesselFormPage() {
           {...register("imoNumber", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
         />
         {errors.imoNumber && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-destructive">
             {errors.imoNumber.message}
           </p>
         )}
@@ -67,7 +69,7 @@ export function VesselFormPage() {
         <Label htmlFor="shippingLine">Shipping line</Label>
         <Input id="shippingLine" {...register("shippingLine")} />
         {errors.shippingLine && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-destructive">
             {errors.shippingLine.message}
           </p>
         )}
@@ -77,7 +79,7 @@ export function VesselFormPage() {
         <select
           id="vesselType"
           {...register("vesselType")}
-          className="h-10 w-full rounded-md border border-slate-300 px-3"
+          className="h-10 w-full rounded-md border border-border bg-card px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           {VESSEL_TYPES.map((t) => (
             <option key={t} value={t}>
@@ -86,7 +88,7 @@ export function VesselFormPage() {
           ))}
         </select>
         {errors.vesselType && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-destructive">
             {errors.vesselType.message}
           </p>
         )}

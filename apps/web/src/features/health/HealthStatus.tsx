@@ -26,14 +26,16 @@ export function HealthStatus() {
   const dbBadge = healthBadge(db.isPending, db.isError, db.data?.db);
 
   return (
-    <div className="space-y-2">
-      <h1 className="text-xl font-semibold">Svyft Logistics</h1>
-      <div className="flex items-center gap-2">
-        <span>API:</span>
+    <div className="max-w-sm space-y-3 rounded-md border border-border bg-card p-4">
+      <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        System status
+      </h2>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm text-muted-foreground">API</span>
         <Badge variant={apiBadge.variant}>{apiBadge.label}</Badge>
       </div>
-      <div className="flex items-center gap-2">
-        <span>DB:</span>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm text-muted-foreground">Database</span>
         <Badge variant={dbBadge.variant}>{dbBadge.label}</Badge>
       </div>
     </div>

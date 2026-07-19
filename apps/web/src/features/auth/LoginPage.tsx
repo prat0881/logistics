@@ -29,7 +29,14 @@ export function LoginPage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-6 p-8">
-      <h1 className="text-2xl font-semibold">Svyft Logistics</h1>
+      <div className="space-y-1">
+        <h1 className="font-display text-2xl font-semibold tracking-tight">
+          Svyft <span className="text-primary">Logistics</span>
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Sign in to the operations console.
+        </p>
+      </div>
       <form onSubmit={onSubmit} className="space-y-4" aria-label="Login">
         <div className="space-y-1">
           <Label htmlFor="email">Email</Label>
@@ -52,7 +59,7 @@ export function LoginPage() {
           />
         </div>
         {error && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
         )}

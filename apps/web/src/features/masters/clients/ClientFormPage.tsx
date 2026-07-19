@@ -40,12 +40,14 @@ export function ClientFormPage() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="max-w-md space-y-4" aria-label="Client form">
-      <h1 className="text-xl font-semibold">{id ? "Edit client" : "New client"}</h1>
+      <h1 className="font-display text-xl font-semibold tracking-tight">
+        {id ? "Edit client" : "New client"}
+      </h1>
       <div className="space-y-1">
         <Label htmlFor="companyName">Company name</Label>
         <Input id="companyName" {...register("companyName")} />
         {errors.companyName && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-destructive">
             {errors.companyName.message}
           </p>
         )}
@@ -54,7 +56,7 @@ export function ClientFormPage() {
         <Label htmlFor="country">Country</Label>
         <Input id="country" {...register("country")} />
         {errors.country && (
-          <p role="alert" className="text-sm text-red-600">
+          <p role="alert" className="text-sm text-destructive">
             {errors.country.message}
           </p>
         )}
