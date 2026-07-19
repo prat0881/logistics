@@ -100,8 +100,14 @@ export function RouteDiagram({
 
   const hasLegs = graph.legs.length > 0;
 
-  // Empty state — a calm prompt, not an error.
-  if (!hasLegs && graph.points.length === 0) {
+  // Guidance state — show whenever there are no legs, regardless of whether
+  // points exist. A valid intermediate state (points added but no legs yet)
+  // would otherwise render a cluster of unconnected, unexplained nodes.
+  if (!hasLegs) {
+    const msg =
+      graph.points.length > 0
+        ? "Add a leg to connect your points."
+        : "Add the first leg to build the route.";
     return (
       <div
         data-slot="route-diagram"
@@ -110,7 +116,7 @@ export function RouteDiagram({
           className,
         )}
       >
-        Add a leg to draw the route.
+        {msg}
       </div>
     );
   }

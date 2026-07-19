@@ -40,7 +40,7 @@ function fmtNum(n: number, decimals = 2): string {
  * versa via a shared `selected` scope.
  */
 function RouteSection({ detail }: { detail: QueryDetail }) {
-  const { all, validateOnServer, validating } = useRouteFindings(detail);
+  const { all, validateOnServer, validating, serverError } = useRouteFindings(detail);
   const [selected, setSelected] = useState<FindingScope | null>(null);
 
   const selectedLegId = selected?.type === "leg" ? selected.id ?? null : null;
@@ -58,19 +58,24 @@ function RouteSection({ detail }: { detail: QueryDetail }) {
         onSelect={setSelected}
       />
 
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          Live checks run as you build. Validate against the server before you
-          create the query.
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void validateOnServer()}
-          disabled={validating}
-        >
-          {validating ? "Validating…" : "Validate route"}
-        </Button>
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground">
+            Live checks run as you build. Validate against the server before you
+            create the query.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void validateOnServer()}
+            disabled={validating}
+          >
+            {validating ? "Validating…" : "Validate route"}
+          </Button>
+        </div>
+        {serverError && (
+          <p className="text-xs text-destructive">{serverError}</p>
+        )}
       </div>
 
       <FindingsPanel phase="draft" findings={all} onFindingClick={onFindingClick} />

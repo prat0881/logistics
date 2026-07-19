@@ -228,9 +228,28 @@ describe("RouteDiagram", () => {
     expect(container.querySelector('[data-leg-id="l2"][data-finding="warning"]')).not.toBeNull();
   });
 
-  it("renders an empty-state prompt when there are no legs", () => {
+  it("renders the truly-empty guidance when there are no points and no legs", () => {
     const detail = makeDetail({ points: [], legs: [] });
     const { getByText } = render(<RouteDiagram detail={detail} findings={[]} />);
-    expect(getByText(/add a leg to draw the route/i)).toBeInTheDocument();
+    expect(getByText(/add the first leg to build the route/i)).toBeInTheDocument();
+  });
+
+  it("renders guidance (not the SVG graph) when points exist but there are no legs", () => {
+    const detail = makeDetail({
+      points: [
+        { id: "p1", type: "PICKUP", name: "Sender" },
+        { id: "p2", type: "DELIVERY", name: "Receiver" },
+      ],
+      legs: [],
+    });
+    const { getByText, container } = render(
+      <RouteDiagram detail={detail} findings={[]} />,
+    );
+    // Guidance copy shown
+    expect(getByText(/add a leg to connect your points/i)).toBeInTheDocument();
+    // No SVG graph rendered
+    expect(container.querySelector("svg")).toBeNull();
+    // No point nodes rendered
+    expect(container.querySelector("[data-point-id]")).toBeNull();
   });
 });

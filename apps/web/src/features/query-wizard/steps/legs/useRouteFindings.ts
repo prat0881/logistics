@@ -17,7 +17,13 @@ export interface UseRouteFindings {
   all: Finding[];
   /** True while a server validation request is in flight. */
   validating: boolean;
-  /** POST /api/queries/:id/validate?phase=draft, store + return the deduped findings. */
+  /**
+   * Non-null when the last server validation call failed (network/5xx).
+   * The client-side `clientFindings` still show; this surfaces a soft
+   * fallback message near the "Validate route" button.
+   */
+  serverError: string | null;
+  /** POST /api/queries/:id/validate?phase=draft, store + return the deduped findings. Never throws. */
   validateOnServer: () => Promise<Finding[]>;
 }
 
@@ -34,6 +40,7 @@ export interface UseRouteFindings {
 export function useRouteFindings(detail: QueryDetail): UseRouteFindings {
   const [serverFindings, setServerFindings] = useState<Finding[]>([]);
   const [validating, setValidating] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
 
   const clientFindings = useMemo(
     () => dedupeFindings(validateRoute(toRouteGraph(detail), "draft")),
@@ -42,6 +49,7 @@ export function useRouteFindings(detail: QueryDetail): UseRouteFindings {
 
   const validateOnServer = useCallback(async (): Promise<Finding[]> => {
     setValidating(true);
+    setServerError(null);
     try {
       const res = await postJson<{ findings: Finding[] }>(
         `/api/queries/${detail.id}/validate?phase=draft`,
@@ -49,6 +57,11 @@ export function useRouteFindings(detail: QueryDetail): UseRouteFindings {
       const deduped = dedupeFindings(res.findings);
       setServerFindings(deduped);
       return deduped;
+    } catch {
+      setServerError(
+        "Couldn't reach the validation service — showing local checks only",
+      );
+      return [];
     } finally {
       setValidating(false);
     }
@@ -59,5 +72,5 @@ export function useRouteFindings(detail: QueryDetail): UseRouteFindings {
     [clientFindings, serverFindings],
   );
 
-  return { clientFindings, serverFindings, all, validating, validateOnServer };
+  return { clientFindings, serverFindings, all, validating, serverError, validateOnServer };
 }
