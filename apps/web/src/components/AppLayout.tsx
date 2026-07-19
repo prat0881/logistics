@@ -17,6 +17,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
           >
             Svyft <span className="text-primary">Logistics</span>
           </Link>
+          <Link to="/queries" className="text-muted-foreground hover:text-foreground">
+            Queries
+          </Link>
           <Link to="/masters/clients" className="text-muted-foreground hover:text-foreground">
             Clients
           </Link>
@@ -38,7 +41,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </Button>
         </div>
       </header>
-      <main className="mx-auto max-w-4xl p-6">{children}</main>
+      <main className="mx-auto max-w-7xl p-6">{children}</main>
     </div>
   );
 }

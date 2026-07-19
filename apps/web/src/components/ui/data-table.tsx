@@ -4,6 +4,7 @@ import {
   useReactTable,
   type ColumnDef,
 } from "@tanstack/react-table";
+import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Table,
@@ -14,12 +15,27 @@ import {
   TableRow,
 } from "./table";
 
+/** Sortable column keys. Must match the server-side whitelist. */
+export type SortableColumn =
+  | "queryCode"
+  | "queryDate"
+  | "responseDeadline"
+  | "priority"
+  | "status"
+  | "updatedAt";
+
 export interface DataTableProps<TData> {
   columns: ColumnDef<TData>[];
   data: TData[];
   onRowClick?: (row: TData) => void;
   isLoading?: boolean;
   className?: string;
+  /** Current sort string "<column>:<asc|desc>". Parent drives server-side sort. */
+  sort?: string;
+  /** Called when user clicks a sortable column header. Toggles asc/desc. */
+  onSortChange?: (col: SortableColumn) => void;
+  /** Columns that should render a sort toggle. */
+  sortableColumns?: SortableColumn[];
 }
 
 const SKELETON_ROWS = 5;
@@ -30,6 +46,9 @@ export function DataTable<TData>({
   onRowClick,
   isLoading,
   className,
+  sort,
+  onSortChange,
+  sortableColumns = [],
 }: DataTableProps<TData>) {
   const table = useReactTable({
     data,
@@ -40,22 +59,47 @@ export function DataTable<TData>({
     manualPagination: true,
   });
 
+  /** Parse current sort state for a given column key. */
+  function getSortDir(colId: string): "asc" | "desc" | null {
+    if (!sort) return null;
+    const [col, dir] = sort.split(":");
+    return col === colId ? (dir as "asc" | "desc") : null;
+  }
+
+  function renderSortIcon(colId: string) {
+    if (!sortableColumns.includes(colId as SortableColumn)) return null;
+    const dir = getSortDir(colId);
+    if (dir === "asc") return <ChevronUp className="ml-1 inline h-3.5 w-3.5" />;
+    if (dir === "desc") return <ChevronDown className="ml-1 inline h-3.5 w-3.5" />;
+    return <ChevronsUpDown className="ml-1 inline h-3.5 w-3.5 opacity-40" />;
+  }
+
   return (
     <div className={cn("rounded-md border", className)}>
       <Table>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <TableHead key={header.id}>
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext(),
-                      )}
-                </TableHead>
-              ))}
+              {headerGroup.headers.map((header) => {
+                const isSortable =
+                  sortableColumns.includes(header.column.id as SortableColumn) && !!onSortChange;
+                return (
+                  <TableHead
+                    key={header.id}
+                    onClick={
+                      isSortable
+                        ? () => onSortChange!(header.column.id as SortableColumn)
+                        : undefined
+                    }
+                    className={cn(isSortable && "cursor-pointer select-none hover:text-foreground")}
+                  >
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(header.column.columnDef.header, header.getContext())}
+                    {renderSortIcon(header.column.id)}
+                  </TableHead>
+                );
+              })}
             </TableRow>
           ))}
         </TableHeader>
