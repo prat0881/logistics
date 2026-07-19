@@ -72,6 +72,9 @@ export class StatusService {
         },
       });
 
+      // Owned statuses persist their column in the SAME tx (log-backed keys → no-op).
+      await this.store.save(key, entityId, transition.to, tx);
+
       if (transition.effect) await transition.effect({ ...ctx, tx });
 
       return { from: current, to: transition.to, transitionId: row.id };
