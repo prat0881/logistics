@@ -43,9 +43,10 @@ export function WizardShell({
   onCreateQuery,
 }: WizardShellProps) {
   const navigate = useNavigate();
-  const { detail, queryId, isNew, step, setStep, goNext, goBack } = useWizard();
+  const { detail, queryId, isNew, step, setStep, goNext, goBack, refresh } = useWizard();
   const { patch } = useSaveQuery();
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const completedSteps = new Set<string>(
     STEPS.slice(0, step).map((s) => s.key),
@@ -53,8 +54,11 @@ export function WizardShell({
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await onSave();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "unknown error");
     } finally {
       setSaving(false);
     }
@@ -62,19 +66,24 @@ export function WizardShell({
 
   const handleNext = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await onSave();
       goNext();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "unknown error");
     } finally {
       setSaving(false);
     }
   };
 
   const handleCancel = () => {
+    const confirmed = window.confirm("Discard unsaved changes?");
+    if (!confirmed) return;
     if (isNew) {
       navigate("/queries");
     } else {
-      navigate("/queries");
+      void refresh();
     }
   };
 
@@ -84,7 +93,6 @@ export function WizardShell({
   };
 
   const isFinalStep = step === STEPS.length - 1;
-  const currentStepKey = STEPS[step]?.key ?? STEPS[0].key;
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -120,7 +128,7 @@ export function WizardShell({
       <div className="border-b px-6 py-3">
         <Stepper
           steps={STEPS.map((s) => ({ key: s.key, label: s.label }))}
-          current={currentStepKey}
+          current={STEPS[step]?.key ?? STEPS[0].key}
           completed={completedSteps}
           onStepClick={detail ? (key) => {
             const idx = STEPS.findIndex((s) => s.key === key);
@@ -151,6 +159,11 @@ export function WizardShell({
 
       {/* Sticky action bar */}
       <div className="sticky bottom-0 border-t bg-background px-6 py-3 flex items-center justify-end gap-3">
+        {saveError && (
+          <span className="mr-auto text-sm text-destructive">
+            Couldn't save — {saveError}
+          </span>
+        )}
         <Button variant="ghost" onClick={handleCancel} disabled={saving}>
           Cancel
         </Button>

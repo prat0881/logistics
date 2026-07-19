@@ -134,6 +134,59 @@ describe("QueryWizardPage", () => {
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
   });
 
+  it("Cancel on existing query re-GETs (reverts) and does NOT navigate away", async () => {
+    let getCallCount = 0;
+
+    // Stub window.confirm to auto-confirm
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
+        if (url.includes("/api/queries/q9")) {
+          getCallCount++;
+          return { status: 200, body: draftDetail };
+        }
+        return { status: 200, body: {} };
+      }),
+    );
+
+    // Spy on react-router navigate — we use a real MemoryRouter so just check
+    // that the page still shows the query code (not navigated to /queries list).
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+        <Route path="/queries" element={<span>queries-list</span>} />
+      </Routes>,
+      {
+        route: "/queries/q9",
+        user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" },
+      },
+    );
+
+    // Wait for the detail to load (query code shown in header)
+    await screen.findByText("YAL26-0009");
+    const getCallsBeforeCancel = getCallCount;
+
+    // Click Cancel
+    await userEvent.click(screen.getByRole("button", { name: /^Cancel$/ }));
+
+    // Should have triggered a re-GET (invalidation → refetch)
+    await waitFor(() => expect(getCallCount).toBeGreaterThan(getCallsBeforeCancel));
+
+    // Should NOT have navigated to /queries list
+    expect(screen.queryByText("queries-list")).not.toBeInTheDocument();
+    // Query code header still visible
+    expect(screen.getByText("YAL26-0009")).toBeInTheDocument();
+
+    vi.unstubAllGlobals();
+  });
+
   it("on Create Query → 201 re-GETs and shows RFQ_READY + success banner", async () => {
     let getCallCount = 0;
 

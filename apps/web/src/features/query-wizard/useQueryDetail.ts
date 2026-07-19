@@ -23,6 +23,7 @@ export function useSaveQuery() {
       const d = await patchJson<QueryDetail>(`/api/queries/${id}`, input);
       qc.setQueryData(["query", id], d);
       qc.invalidateQueries({ queryKey: ["queries"] });
+      qc.invalidateQueries({ queryKey: ["query", id] });
       return d;
     },
   };

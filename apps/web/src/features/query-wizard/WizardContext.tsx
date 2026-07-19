@@ -51,7 +51,7 @@ export function WizardProvider({ id, children }: WizardProviderProps) {
     (n: number) => {
       const clamped = Math.max(0, Math.min(n, STEPS.length - 1));
       // Jump-to only allowed when detail exists (i.e., query has been created)
-      if (!detail && !isNew) return;
+      if (!detail) return;
       if (queryId) {
         setSearchParams((prev) => {
           const next = new URLSearchParams(prev);
@@ -62,7 +62,7 @@ export function WizardProvider({ id, children }: WizardProviderProps) {
         setLocalStep(clamped);
       }
     },
-    [detail, isNew, queryId, setSearchParams],
+    [detail, queryId, setSearchParams],
   );
 
   const goNext = useCallback(() => {
