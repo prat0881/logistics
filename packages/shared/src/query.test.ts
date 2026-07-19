@@ -6,6 +6,7 @@ import {
   PRIORITIES,
   querySaveSchema,
   collectCreateFindings,
+  queryListQuerySchema,
 } from "./query";
 
 describe("Query vocabularies", () => {
@@ -111,6 +112,25 @@ describe("querySaveSchema (draft — lenient, format-validated)", () => {
     it("accepts an absent responseDeadline", () => {
       expect(querySaveSchema.safeParse({}).success).toBe(true);
     });
+  });
+});
+
+describe("queryListQuerySchema", () => {
+  it("coerces page/pageSize and passes through filters", () => {
+    const parsed = queryListQuerySchema.parse({
+      q: "YAL26", status: "DRAFT", priority: "HIGH",
+      freightMode: "SEA,ROAD", page: "2", pageSize: "25", sort: "updatedAt:desc",
+    });
+    expect(parsed.page).toBe(2);
+    expect(parsed.pageSize).toBe(25);
+    expect(parsed.status).toBe("DRAFT");
+    expect(parsed.freightMode).toBe("SEA,ROAD");
+  });
+
+  it("defaults page=1 pageSize=20 when omitted", () => {
+    const parsed = queryListQuerySchema.parse({});
+    expect(parsed.page).toBe(1);
+    expect(parsed.pageSize).toBe(20);
   });
 });
 

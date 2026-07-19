@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { Finding } from "./findings";
+import { QUERY_STATUSES } from "./status";
+import type { FreightMode } from "./config";
+import type { LegStatus } from "./status";
+import type { LegExecutionStatus } from "./legs";
+import type { CargoDto } from "./cargo";
 
 export const Priority = { LOW: "LOW", MEDIUM: "MEDIUM", HIGH: "HIGH", URGENT: "URGENT" } as const;
 export type Priority = (typeof Priority)[keyof typeof Priority];
@@ -166,3 +171,149 @@ export interface QueryDto {
   dgIndicator: boolean;
   // …snapshot + shipment fields returned as-is from Prisma (dates ISO strings).
 }
+
+// ── Plan-6 list & detail types ────────────────────────────────────────────────
+
+export const queryListQuerySchema = z.object({
+  q: z.string().trim().min(1).optional(),
+  status: z.enum(QUERY_STATUSES).optional(),
+  priority: z.enum(PRIORITIES).optional(),
+  assignedUserId: z.string().uuid().optional(),
+  freightMode: z.string().optional(),      // single value or CSV, split in the service
+  country: z.string().trim().min(1).optional(),
+  dateField: z.enum(["queryDate", "updatedAt"]).optional(),
+  dateFrom: z.string().datetime({ offset: true }).optional(),
+  dateTo: z.string().datetime({ offset: true }).optional(),
+  sort: z.string().optional(),             // "<column>:<asc|desc>"
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type QueryListParams = z.infer<typeof queryListQuerySchema>;
+
+export type QueryListRow = {
+  id: string;
+  queryCode: string;
+  queryDate: string;
+  customerName: string | null;
+  contactName: string | null;
+  shipmentDescription: string | null;
+  freightMode: FreightMode[];
+  origin: string;
+  destination: string;
+  responseDeadline: string | null;
+  priority: Priority;
+  status: (typeof QUERY_STATUSES)[number];
+  assignedUserId: string | null;
+  assignedUserName: string | null;
+  updatedAt: string;
+};
+
+export type PointRef = {
+  id: string;
+  name: string | null;
+  city: string | null;
+  country: string | null;
+};
+
+export type LegRollup = {
+  totalPackages: number;
+  totalCbm: number;
+  totalGrossWt: number;
+  totalNetWt: number;
+};
+
+export type QueryLegDto = {
+  id: string;
+  legCode: string;
+  legName: string | null;
+  originPointId: string | null;
+  destinationPointId: string | null;
+  mode: FreightMode | null;
+  readyDate: string | null;
+  targetDelivery: string | null;
+  status: LegStatus;
+  executionStatus: LegExecutionStatus;
+  totalChargeableWeight: string | null;
+  assignedCargoIds: string[];
+  rollup: LegRollup;
+};
+
+export type QueryPointDto = {
+  id: string;
+  type: string;
+  name: string | null;
+  streetAddress: string | null;
+  city: string | null;
+  postalCode: string | null;
+  country: string | null;
+  contactName: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  warehouseType: string | null;
+  iataCode: string | null;
+  icaoCode: string | null;
+  unLocode: string | null;
+  terminal: string | null;
+};
+
+export type QueryChecklistItemDto = {
+  id: string;
+  itemKey: string;
+  checked: boolean;
+};
+
+export type QueryFileDto = {
+  id: string;
+  kind: string;
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+  uploadedById: string | null;
+  createdAt: string;
+};
+
+export type QueryDetail = {
+  // Core Query columns
+  id: string;
+  tenantId: string | null;
+  queryCode: string;
+  queryDate: string;
+  priority: Priority;
+  responseDeadline: string | null;
+  responseDeadlineRemarks: string | null;
+  clientId: string | null;
+  contactName: string | null;
+  contactDesignation: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  whatsappEnabled: boolean;
+  faxNumber: string | null;
+  vesselId: string | null;
+  vesselName: string | null;
+  imoNumber: string | null;
+  eta: string | null;
+  etb: string | null;
+  etd: string | null;
+  portOfCall: string | null;
+  incoterms: string | null;
+  shipmentDescription: string | null;
+  dgIndicator: boolean;
+  readyDate: string | null;
+  targetDelivery: string | null;
+  internalNotes: string | null;
+  status: (typeof QUERY_STATUSES)[number];
+  rfqReadyAt: string | null;
+  assignedUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  // Derived-on-read graph
+  cargo: CargoDto[];
+  checklist: QueryChecklistItemDto[];
+  files: QueryFileDto[];
+  points: QueryPointDto[];
+  legs: QueryLegDto[];
+  // Derived summaries
+  freightMode: FreightMode[];
+  origin: PointRef[];
+  destination: PointRef[];
+};
