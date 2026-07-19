@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWizard } from "../../WizardContext";
+import { useSaveQuery } from "../../useQueryDetail";
 import { useLegs } from "./useLegs";
 import { LegEditor } from "./LegEditor";
 import type { QueryLegDto, QueryPointDto } from "@svyft/shared";
@@ -34,17 +36,26 @@ function fmtNum(n: number, decimals = 2): string {
  * "+ Add leg" opens <LegEditor>.
  * Placeholder slots for route diagram (Task 12) and live findings (Task 12).
  */
+// Legs step index (0-based) matching STEPS array: client=0, shipment=1, cargo=2, legs=3, notes=4
+const LEGS_STEP_INDEX = 3;
+
 export function LegsStep() {
   const { detail, queryId } = useWizard();
-  const { remove } = useLegs(queryId ?? "");
+  const navigate = useNavigate();
+  const { create } = useSaveQuery();
+
+  // Only wire up leg mutations when we have a real queryId
+  const { remove } = useLegs(queryId ?? "NOOP");
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingLeg, setEditingLeg] = useState<QueryLegDto | undefined>(undefined);
+  const [minting, setMinting] = useState(false);
 
   const legs = detail?.legs ?? [];
   const points = detail?.points ?? [];
 
   const handleRemove = async (legId: string) => {
+    if (!queryId) return; // guard: no mutations without a real id
     const ok = window.confirm("Remove this leg?");
     if (!ok) return;
     await remove(legId);
@@ -55,7 +66,27 @@ export function LegsStep() {
     setEditorOpen(true);
   };
 
-  const handleAddLeg = () => {
+  /**
+   * handleAddLeg — spec §5 / §7.4.3: if the query has not been saved yet (isNew),
+   * mint it via POST /api/queries first, then navigate to /queries/:id?step=3.
+   * The navigation causes WizardProvider to re-render with a real queryId, making
+   * LegEditor fully usable. If the query already exists, open the editor directly.
+   */
+  const handleAddLeg = async () => {
+    if (!queryId) {
+      // Mint the query (empty body is valid for a DRAFT)
+      setMinting(true);
+      try {
+        const d = await create({});
+        navigate(`/queries/${d.id}?step=${LEGS_STEP_INDEX}`, { replace: true });
+        // After navigation WizardProvider will have a real queryId — editor can open
+        // on the newly-navigated page. We don't set editorOpen here because this
+        // component will unmount/remount after navigate.
+      } finally {
+        setMinting(false);
+      }
+      return;
+    }
     setEditingLeg(undefined);
     setEditorOpen(true);
   };
@@ -70,20 +101,12 @@ export function LegsStep() {
     setEditingLeg(undefined);
   };
 
-  if (!queryId) {
-    return (
-      <div className="p-4 text-sm text-muted-foreground">
-        Save the query first to add legs.
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Legs / Route</h2>
-        <Button size="sm" onClick={handleAddLeg}>
-          + Add leg
+        <Button size="sm" onClick={handleAddLeg} disabled={minting}>
+          {minting ? "Saving…" : "+ Add leg"}
         </Button>
       </div>
 
@@ -183,8 +206,8 @@ export function LegsStep() {
         </div>
       )}
 
-      {/* LegEditor dialog */}
-      {detail && (
+      {/* LegEditor dialog — only mounted when we have a real queryId and detail */}
+      {detail && queryId && (
         <LegEditor
           open={editorOpen}
           leg={editingLeg}

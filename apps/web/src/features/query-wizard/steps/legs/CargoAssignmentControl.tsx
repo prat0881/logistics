@@ -31,7 +31,7 @@ export function CargoAssignmentControl({
           No cargo yet — add rows in Step 3
         </p>
         <p className="text-xs text-amber-600">
-          Assign at least one cargo row (D7)
+          Assign at least one cargo row before Create Query (D7)
         </p>
       </div>
     );

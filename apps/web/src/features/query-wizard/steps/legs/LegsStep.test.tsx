@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
 import { QueryWizardPage } from "../../QueryWizardPage";
 import { renderWithProviders } from "@/test/renderWithProviders";
+import { mockFetch } from "@/test/mock-fetch";
 
 const QUERY_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const LEG_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -331,6 +332,63 @@ describe("LegsStep", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+  });
+
+  it("on a new (unsaved) query at Step 4, '+ Add leg' mints the query (POST /api/queries) and does NOT show the dead-end message", async () => {
+    const user = userEvent.setup();
+    const mintedDetail = {
+      ...baseDetail,
+      id: "new-minted-id",
+      queryCode: "YAL26-9999",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return {
+            status: 200,
+            body: { user: testUser },
+          };
+        // Mint: POST /api/queries → return a fresh detail
+        if (url === "/api/queries" && init?.method === "POST")
+          return { status: 201, body: mintedDetail };
+        // After navigation, the wizard GETs the newly minted query
+        if (url.includes(`/api/queries/${mintedDetail.id}`))
+          return { status: 200, body: mintedDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    // Render as a NEW query (no :id param) at step=3 (Legs / Route)
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/new" element={<QueryWizardPage />} />
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/new?step=3" },
+    );
+
+    // Navigate to step 4 in the shell (click the "Legs / Route" tab)
+    // On new query, tabs may not be clickable — but "+ Add leg" is always present
+    // because we removed the dead-end guard.
+    const addLegBtn = await screen.findByRole("button", { name: /add leg/i });
+
+    // The dead-end "Save the query first" message must NOT appear
+    expect(screen.queryByText(/save the query first/i)).not.toBeInTheDocument();
+
+    await user.click(addLegBtn);
+
+    // POST /api/queries must have been called (mint)
+    await waitFor(() => {
+      const calls: unknown[][] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+      const mintCall = calls.find(
+        (args) =>
+          (args[0] as string) === "/api/queries" &&
+          (args[1] as RequestInit)?.method === "POST",
+      );
+      expect(mintCall).toBeTruthy();
     });
   });
 
