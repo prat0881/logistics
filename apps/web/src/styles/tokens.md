@@ -76,6 +76,11 @@ you're on," it's a bug.
 
 Self-hosted via `@fontsource` (no runtime CDN). Imported in `main.tsx`.
 
+> **Package note:** The original brief listed `@fontsource-variable/ibm-plex-mono`
+> (variable-font edition). That package does **not exist** on npm (404 as of
+> 2026-07-19). The static `@fontsource/ibm-plex-mono` (400 + 500 weights) is
+> correct and intentional; no variable-font swap is needed.
+
 | Role | Face | Utility | Where |
 |---|---|---|---|
 | **Display** | **Space Grotesk** (500/600) | `font-display` | Wordmark, page H1s, step numbers — **only**. Tight tracking, weight 600, read as *stenciled equipment labeling*, not hero copy |

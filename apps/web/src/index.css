@@ -88,6 +88,7 @@
 @layer base {
   * {
     border-color: hsl(var(--border));
+    border-style: solid;
   }
 
   body {
