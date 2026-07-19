@@ -16,7 +16,7 @@ export class ChangeMediator {
   ) {}
 
   async apply(req: ChangeRequest, uow: UnitOfWork): Promise<ChangeResult> {
-    const { class: impactClass, scope } = this.classifier.classify(req);
+    const { class: impactClass, scope } = await this.classifier.classify(req);
     const hasDownstreamWork = await this.scope.downstreamWork(scope);
     const path = decidePath(impactClass, hasDownstreamWork);
     const decision: ImpactDecision = { class: impactClass, scope, path };
