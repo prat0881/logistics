@@ -21,6 +21,34 @@ describe("Status Machine (integration)", () => {
   let status: StatusService;
   let projector: QueryStatusProjector;
 
+  // Task 7: fire("leg", …) now reads AND writes the Leg.status column (DispatchingStateStore),
+  // so every fire against the real `leg` machine needs a real Leg row — Leg.id is @db.Uuid, so a
+  // synthetic non-uuid entityId would now throw P2023 on load, and a successful forward/reopen
+  // would 404 (P2025) trying to update a row that doesn't exist. Each test gets its OWN fresh
+  // Query+Leg (never reused across tests) so a persisted status change can't leak between tests.
+  async function makeLeg(label: string) {
+    const query = await prisma.query.create({
+      data: { queryCode: `${PREFIX}${label}-${Date.now()}` },
+    });
+    const leg = await prisma.leg.create({
+      data: { queryId: query.id, legCode: "L1", mode: "ROAD" },
+    });
+    return { query, leg };
+  }
+
+  async function cleanup(): Promise<void> {
+    const legs = await prisma.leg.findMany({
+      where: { query: { queryCode: { startsWith: PREFIX } } },
+      select: { id: true },
+    });
+    // StatusTransition has no FK to Leg (entity/entityId is a free-text log key) — Query's
+    // cascade delete won't touch it, so the log rows need an explicit sweep first.
+    await prisma.statusTransition.deleteMany({
+      where: { entity: "leg", entityId: { in: legs.map((l) => l.id) } },
+    });
+    await prisma.query.deleteMany({ where: { queryCode: { startsWith: PREFIX } } }); // cascades Leg
+  }
+
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
@@ -28,27 +56,33 @@ describe("Status Machine (integration)", () => {
     prisma = moduleRef.get(PrismaService);
     status = moduleRef.get(StatusService);
     projector = moduleRef.get(QueryStatusProjector);
-    await prisma.statusTransition.deleteMany({ where: { entityId: { startsWith: PREFIX } } });
+    await cleanup();
   });
 
   afterAll(async () => {
-    await prisma.statusTransition.deleteMany({ where: { entityId: { startsWith: PREFIX } } });
+    await cleanup();
     await app.close();
   });
 
   it("fires the forward edge (guard passes) → READY_FOR_RFQ + a StatusTransition row", async () => {
-    const id = `${PREFIX}forward`;
+    const { leg } = await makeLeg("forward");
+    const id = leg.id;
     const res = await status.fire("leg", id, LegEvent.VALIDATE_PASS, { routeValid: true });
-    expect(res.from).toBe(LegStatus.DRAFT); // no prior rows → machine.initial
+    expect(res.from).toBe(LegStatus.DRAFT); // no prior rows → machine.initial (matches the fresh leg's column)
     expect(res.to).toBe(LegStatus.READY_FOR_RFQ);
 
     const rows = await prisma.statusTransition.findMany({ where: { entityId: id } });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ from: "DRAFT", to: "READY_FOR_RFQ", event: "validate.pass" });
+
+    // Task 7's seam: fire also persisted the OWNED Leg.status column in the same tx.
+    const reloaded = await prisma.leg.findUnique({ where: { id } });
+    expect(reloaded?.status).toBe(LegStatus.READY_FOR_RFQ);
   });
 
   it("blocks the forward edge when the guard fails, carrying Finding[] and persisting nothing", async () => {
-    const id = `${PREFIX}blocked`;
+    const { leg } = await makeLeg("blocked");
+    const id = leg.id;
     const finding: Finding = {
       rule: "R1",
       severity: "blocking",
@@ -70,7 +104,8 @@ describe("Status Machine (integration)", () => {
   });
 
   it("blocks with a default Finding when routeValid is false and no findings are supplied", async () => {
-    const id = `${PREFIX}default-finding`;
+    const { leg } = await makeLeg("default-finding");
+    const id = leg.id;
     let err: unknown;
     try {
       await status.fire("leg", id, LegEvent.VALIDATE_PASS, { routeValid: false });
@@ -90,7 +125,8 @@ describe("Status Machine (integration)", () => {
   });
 
   it("blocks with the default Finding when routeValid is false and findings is an empty array", async () => {
-    const id = `${PREFIX}empty-findings`;
+    const { leg } = await makeLeg("empty-findings");
+    const id = leg.id;
     let err: unknown;
     try {
       await status.fire("leg", id, LegEvent.VALIDATE_PASS, { routeValid: false, findings: [] });
@@ -110,7 +146,8 @@ describe("Status Machine (integration)", () => {
   });
 
   it("rejects an illegal (state,event) pair with IllegalTransitionError, persisting nothing", async () => {
-    const id = `${PREFIX}illegal`;
+    const { leg } = await makeLeg("illegal");
+    const id = leg.id;
     await expect(status.fire("leg", id, LegEvent.REOPEN)).rejects.toBeInstanceOf(
       IllegalTransitionError,
     );
@@ -118,7 +155,8 @@ describe("Status Machine (integration)", () => {
   });
 
   it("drives the reopen reverse edge READY_FOR_RFQ → DRAFT (the seam's status half)", async () => {
-    const id = `${PREFIX}reopen`;
+    const { leg } = await makeLeg("reopen");
+    const id = leg.id;
     await status.fire("leg", id, LegEvent.VALIDATE_PASS, { routeValid: true });
     const res = await status.fire("leg", id, LegEvent.REOPEN);
     expect(res.from).toBe(LegStatus.READY_FOR_RFQ);
@@ -128,23 +166,36 @@ describe("Status Machine (integration)", () => {
       orderBy: { seq: "desc" },
     });
     expect(latest).toMatchObject({ from: "READY_FOR_RFQ", to: "DRAFT", event: "reopen" });
+
+    // Task 7's seam: the column moved forward AND back.
+    const reloaded = await prisma.leg.findUnique({ where: { id } });
+    expect(reloaded?.status).toBe(LegStatus.DRAFT);
   });
 
   it("emits leg.status.changed → QueryStatusProjector.recompute(queryId)", async () => {
-    const id = `${PREFIX}event`;
-    // Valid-format-but-nonexistent uuid: recompute is now DB-backed (Task 6), so a
-    // non-uuid like the old "q-42" would P2023. findUnique finds no row → early
-    // return, no error, no log — the suite stays green AND pristine.
-    const queryId = "00000000-0000-0000-0000-000000000042";
+    // Task 7: recompute is DB-backed (Task 6) AND fire now writes Leg.status (Task 7), so this
+    // needs a real Leg under a real Query — a well-formed-but-nonexistent uuid would no longer
+    // stay "pristine": the LOAD would resolve fine (null → DRAFT), but the forward transition's
+    // SAVE would 404 (P2025) trying to update a Leg row that isn't there.
+    const { query, leg } = await makeLeg("event");
     const spy = jest.spyOn(projector, "recompute");
-    await status.fire("leg", id, LegEvent.VALIDATE_PASS, { routeValid: true, queryId });
-    // EventEmitter2 emit is synchronous → the listener has already invoked recompute.
-    expect(spy).toHaveBeenCalledWith(queryId);
+    await status.fire("leg", leg.id, LegEvent.VALIDATE_PASS, {
+      routeValid: true,
+      queryId: query.id,
+    });
+    // fire() awaits emitAsync (not a fire-and-forget emit, Task 9) → by the time fire() has
+    // resolved above, the projector's recompute (the sole listener) has already run.
+    expect(spy).toHaveBeenCalledWith(query.id);
     spy.mockRestore();
+    // Let the async projector settle before the suite tears down (avoids a recompute racing cleanup).
+    await new Promise((r) => setTimeout(r, 50));
   });
 
   it("projects derived query status from leg statuses (pure projection reused by Plan 4/5)", () => {
-    expect(projector.project([LegStatus.READY_FOR_RFQ], { created: true })).toBe("RFQ_READY");
+    // Plan 5 reconciliation: RFQ_READY is gated on the rfqReady milestone; CREATED now emerges
+    // from all-legs-READY_FOR_RFQ without it (previously this was gated on `created`).
+    expect(projector.project([LegStatus.READY_FOR_RFQ], { rfqReady: true })).toBe("RFQ_READY");
+    expect(projector.project([LegStatus.READY_FOR_RFQ], {})).toBe("CREATED");
     expect(projector.project([LegStatus.DRAFT, LegStatus.READY_FOR_RFQ])).toBe("DRAFT");
   });
 

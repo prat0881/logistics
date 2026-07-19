@@ -8,3 +8,6 @@ export * from "./status";
 export * from "./change";
 export * from "./query";
 export * from "./cargo";
+export * from "./points";
+export * from "./legs";
+export * from "./route";

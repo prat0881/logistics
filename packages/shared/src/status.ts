@@ -98,8 +98,11 @@ function leastAdvanced(legStatuses: LegStatus[]): LegStatus {
   return legStatuses.reduce((m, s) => (LEG_RANK[s] < LEG_RANK[m] ? s : m), legStatuses[0]);
 }
 
-// Derived query status: query-level milestones win; otherwise the least-advanced
-// leg gates the rollup (the query only advances when ALL legs have, §9.1).
+// Derived query status: query-level milestones win; otherwise the least-advanced leg
+// gates the rollup (the query only advances when ALL legs have, §9.1). Plan 5: RFQ_READY
+// is gated on the `rfqReady` milestone in BOTH branches (was inconsistently `created` in
+// the leg branch); CREATED now EMERGES from the leg rollup (all legs READY_FOR_RFQ, no
+// rfqReady milestone) so `created` is no longer aliased to rfqReadyAt.
 export function deriveQueryStatus(
   legStatuses: LegStatus[],
   milestones: QueryMilestones = {},
@@ -108,9 +111,9 @@ export function deriveQueryStatus(
   if (milestones.lost) return QueryStatus.LOST;
   if (milestones.won) return QueryStatus.WON;
   if (milestones.awaitingClientDecision) return QueryStatus.AWAITING_CLIENT_DECISION;
+
   if (legStatuses.length === 0) {
-    // No legs yet (Plan 4): query-level milestones drive status until the leg
-    // rollup lands in Plan 5. Downstream milestones are already handled above.
+    // No legs (legacy Plan-4 drafts / pre-leg queries): query-level milestones only.
     if (milestones.rfqReady) return QueryStatus.RFQ_READY;
     if (milestones.created) return QueryStatus.CREATED;
     return QueryStatus.DRAFT;
@@ -120,17 +123,21 @@ export function deriveQueryStatus(
     case LegStatus.DRAFT:
       return QueryStatus.DRAFT;
     case LegStatus.READY_FOR_RFQ:
-      return milestones.created ? QueryStatus.RFQ_READY : QueryStatus.CREATED;
+      // All legs valid & ready ⇒ CREATED; RFQ_READY only once Create Query set the milestone.
+      return milestones.rfqReady ? QueryStatus.RFQ_READY : QueryStatus.CREATED;
     case LegStatus.RFQ_SENT:
     case LegStatus.PARTIALLY_QUOTED:
       return QueryStatus.RFQ_SENT;
     case LegStatus.FULLY_QUOTED:
       return QueryStatus.QUOTED;
+    case LegStatus.DELIVERED:
+      return QueryStatus.CLOSED; // all legs delivered (§9.1)
     case LegStatus.CLOSED:
       return QueryStatus.CLOSED;
     default:
-      // TODO(Plan 5): AWARDED/IN_TRANSIT/DELIVERED are unreachable in Stage 3; define real
-      // rollup semantics when those leg states are activated (placeholder maps to QUOTED).
+      // AWARDED / IN_TRANSIT: no query-level rollup status until Stage 5+/8–9 (advance via
+      // milestones — WON on PO, CLOSED on closure). Documented placeholder, unreachable in
+      // Stage 3 (no edges reach those states).
       return QueryStatus.QUOTED;
   }
 }

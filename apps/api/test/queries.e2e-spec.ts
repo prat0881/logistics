@@ -156,6 +156,15 @@ describe("Queries (e2e)", () => {
         contactName: "Jo", contactEmail: "jo@acme.test", contactPhone: "+911234567890",
         readyDate: "2026-08-01T00:00:00.000Z", targetDelivery: "2026-08-20T00:00:00.000Z",
       }).expect(201);
+    // Plan 5: Create Query also gates on the full route catalogue (R1-R9/T/C), so this query
+    // needs a complete Pickup->Delivery route (one cargo row on one leg) to pass — leg dates
+    // match the query's readyDate/targetDelivery above (T2: first/last leg dates = query dates).
+    const pu = await prisma.point.create({ data: { queryId: created.body.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com" } });
+    const de = await prisma.point.create({ data: { queryId: created.body.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555" } });
+    const cargo = await prisma.cargoItem.create({ data: { queryId: created.body.id, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } });
+    const leg = await prisma.leg.create({ data: { queryId: created.body.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: "2026-08-01T00:00:00.000Z", targetDelivery: "2026-08-20T00:00:00.000Z" } });
+    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo.id } });
+
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${created.body.id}/create`).set("Cookie", cookie(Role.EXECUTIVE))
       .expect(201);
@@ -163,6 +172,8 @@ describe("Queries (e2e)", () => {
     const row = await prisma.query.findUnique({ where: { id: created.body.id } });
     expect(row!.status).toBe("RFQ_READY");
     expect(row!.rfqReadyAt).not.toBeNull();
+    const firedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
+    expect(firedLeg!.status).toBe("READY_FOR_RFQ"); // Create Query fires every leg forward (Plan 5)
   });
 
   it("toggles checklist item checked state", async () => {

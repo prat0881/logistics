@@ -28,19 +28,18 @@ export class QueryStatusProjector {
   }
 
   // Persist the projected status. `client` lets a caller (Create Query) run this inside
-  // its own transaction. Plan 5 will load real leg statuses instead of [].
+  // its own transaction. Loads real leg statuses (Plan 5).
   async recompute(
     queryId?: string,
     client: Prisma.TransactionClient | PrismaService = this.prisma,
   ): Promise<void> {
     if (!queryId) return;
-    const q = await client.query.findUnique({
-      where: { id: queryId },
-      select: { rfqReadyAt: true },
-    });
+    const q = await client.query.findUnique({ where: { id: queryId }, select: { rfqReadyAt: true } });
     if (!q) return;
-    const legStatuses: LegStatus[] = []; // Plan 5: load the query's leg statuses
-    const status = this.project(legStatuses, { created: !!q.rfqReadyAt, rfqReady: !!q.rfqReadyAt });
+    const legs = await client.leg.findMany({ where: { queryId }, select: { status: true } });
+    const legStatuses = legs.map((l) => l.status) as LegStatus[];
+    // `created` is emergent from the leg rollup now — only the rfqReady milestone is passed.
+    const status = this.project(legStatuses, { rfqReady: !!q.rfqReadyAt });
     await client.query.update({ where: { id: queryId }, data: { status } });
   }
 }
