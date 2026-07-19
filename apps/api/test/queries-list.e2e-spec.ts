@@ -10,6 +10,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import bcrypt from "bcryptjs";
 
 const PFX = "P6LIST-";
 
@@ -19,9 +20,11 @@ describe("GET /queries list (e2e)", () => {
   let jwt: JwtService;
   let clientId: string;
   let authCookie: string;
+  let assignedUserId: string;
 
   // UUID sub — lands in @db.Uuid assignedUserId column without P2023
   const EXEC_ID = "22222222-2222-2222-2222-222222222222";
+  const ASSIGNED_USER_NAME = `${PFX}Bob`;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -40,6 +43,17 @@ describe("GET /queries list (e2e)", () => {
     });
     clientId = client.id;
 
+    // Create a real User whose name we can assert in assignedUserName
+    const assignedUser = await prisma.user.create({
+      data: {
+        name: ASSIGNED_USER_NAME,
+        email: `${PFX}bob@example.com`,
+        passwordHash: await bcrypt.hash("test-password", 1),
+        role: "EXECUTIVE",
+      },
+    });
+    assignedUserId = assignedUser.id;
+
     authCookie = `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: EXEC_ID, role: Role.EXECUTIVE, tenantId: null })}`;
 
     // Q1: priority HIGH, status DRAFT, no legs
@@ -54,6 +68,7 @@ describe("GET /queries list (e2e)", () => {
       .expect(201);
 
     // Q2: add a SEA leg (Pickup + Seaport points) → freightMode=[SEA]; contactName "Alice"
+    // Also assign to the seeded User so assignedUserName resolution is exercised
     const resQ2 = await request(app.getHttpServer())
       .post("/api/queries")
       .set("Cookie", authCookie)
@@ -62,6 +77,7 @@ describe("GET /queries list (e2e)", () => {
         shipmentDescription: `${PFX}q2-sea`,
         priority: "MEDIUM",
         contactName: "Alice",
+        assignedUserId,
       })
       .expect(201);
     const q2Id = resQ2.body.id as string;
@@ -112,15 +128,17 @@ describe("GET /queries list (e2e)", () => {
   afterAll(async () => {
     await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } });
     await prisma.client.deleteMany({ where: { companyName: { startsWith: PFX } } });
+    await prisma.user.deleteMany({ where: { email: { startsWith: PFX } } });
     await app.close();
   });
 
+  // Fix 3: scope the pagination test to this suite's prefix so total === 3 (not all DB rows)
   it("lists queries with pagination envelope", async () => {
     const res = await request(app.getHttpServer())
-      .get("/api/queries?pageSize=2&sort=queryDate:asc")
+      .get(`/api/queries?q=${PFX}&pageSize=2&sort=queryDate:asc`)
       .set("Cookie", authCookie)
       .expect(200);
-    expect(res.body).toMatchObject({ total: expect.any(Number), page: 1, pageSize: 2 });
+    expect(res.body).toMatchObject({ total: 3, page: 1, pageSize: 2 });
     expect(Array.isArray(res.body.items)).toBe(true);
     expect(res.body.items[0]).toHaveProperty("queryCode");
     expect(res.body.items[0]).toHaveProperty("freightMode");
@@ -146,6 +164,17 @@ describe("GET /queries list (e2e)", () => {
       .set("Cookie", authCookie)
       .expect(200);
     expect(sea.body.items.every((r: { freightMode: string[] }) => r.freightMode.includes("SEA"))).toBe(true);
+  });
+
+  // Fix 2: verify the batched assignedUserName resolution returns the seeded user's name
+  it("resolves assignedUserName via batched user.findMany", async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries?q=${PFX}q2-sea`)
+      .set("Cookie", authCookie)
+      .expect(200);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].assignedUserId).toBe(assignedUserId);
+    expect(res.body.items[0].assignedUserName).toBe(ASSIGNED_USER_NAME);
   });
 
   it("401s without auth", () =>

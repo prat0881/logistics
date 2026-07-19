@@ -223,23 +223,32 @@ export type LegRollup = {
 };
 
 export type QueryLegDto = {
+  // Every Leg column (shapeQuery spreads `...rest` after removing legCargo)
   id: string;
+  tenantId: string | null;
+  queryId: string;
   legCode: string;
   legName: string | null;
   originPointId: string | null;
   destinationPointId: string | null;
   mode: FreightMode | null;
-  readyDate: string | null;
-  targetDelivery: string | null;
+  readyDate: string | null;       // DateTime → ISO string in JSON
+  targetDelivery: string | null;  // DateTime → ISO string in JSON
   status: LegStatus;
   executionStatus: LegExecutionStatus;
-  totalChargeableWeight: string | null;
+  totalChargeableWeight: string | null; // Decimal → string in JSON
+  createdAt: string;
+  updatedAt: string;
+  // Derived fields added by shapeQuery
   assignedCargoIds: string[];
   rollup: LegRollup;
 };
 
 export type QueryPointDto = {
+  // Every Point column (QUERY_GRAPH_ARGS uses `points: true` — all columns)
   id: string;
+  tenantId: string | null;
+  queryId: string;
   type: string;
   name: string | null;
   streetAddress: string | null;
@@ -254,6 +263,8 @@ export type QueryPointDto = {
   icaoCode: string | null;
   unLocode: string | null;
   terminal: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type QueryChecklistItemDto = {
