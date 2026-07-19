@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { CargoDto, CargoCreateInput, CargoUpdateInput } from "@svyft/shared";
 import {
   Table,
@@ -138,8 +138,8 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
             </TableHeader>
             <TableBody>
               {cargoRows.map((row) => (
-                <>
-                  <TableRow key={row.id}>
+                <Fragment key={row.id}>
+                  <TableRow>
                     <TableCell className="font-mono tabular-nums text-muted-foreground">
                       {row.rowIndex + 1}
                     </TableCell>
@@ -197,7 +197,7 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
                       </TableCell>
                     </TableRow>
                   )}
-                </>
+                </Fragment>
               ))}
             </TableBody>
           </Table>
