@@ -27,6 +27,27 @@ export function formatDate(iso: string | null): string {
 }
 
 /**
+ * Converts an offset ISO string (e.g. "2024-03-15T14:30:00+05:30") to a
+ * datetime-local string (e.g. "2024-03-15T14:30") suitable for
+ * `<input type="datetime-local">`. Returns empty string for null/undefined/empty.
+ */
+export function isoToLocalInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const yyyy = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const HH = String(d.getHours()).padStart(2, "0");
+    const MM = String(d.getMinutes()).padStart(2, "0");
+    return `${yyyy}-${mo}-${dd}T${HH}:${MM}`;
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Converts a datetime-local value (e.g. "2024-03-15T14:30") to an offset ISO string.
  * Uses the local timezone offset so the server receives the correct moment.
  */

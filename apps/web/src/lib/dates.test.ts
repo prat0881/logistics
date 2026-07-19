@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatDateTime, formatDate, toIsoOffset } from "./dates";
+import { formatDateTime, formatDate, toIsoOffset, isoToLocalInput } from "./dates";
 
 describe("formatDateTime", () => {
   it("formats an ISO string to DD-MM-YYYY HH:mm", () => {
@@ -23,6 +23,32 @@ describe("formatDate", () => {
 
   it("returns empty string for null", () => {
     expect(formatDate(null)).toBe("");
+  });
+});
+
+describe("isoToLocalInput", () => {
+  it("converts an offset ISO string to datetime-local format", () => {
+    // The result should match the datetime-local format "yyyy-MM-ddTHH:mm"
+    const result = isoToLocalInput("2024-03-15T14:30:00+00:00");
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    // The resulting string should be parseable
+    expect(new Date(result).getTime()).not.toBeNaN();
+  });
+
+  it("returns empty string for null", () => {
+    expect(isoToLocalInput(null)).toBe("");
+  });
+
+  it("returns empty string for undefined", () => {
+    expect(isoToLocalInput(undefined)).toBe("");
+  });
+
+  it("returns empty string for empty string", () => {
+    expect(isoToLocalInput("")).toBe("");
+  });
+
+  it("returns empty string for invalid ISO", () => {
+    expect(isoToLocalInput("not-a-date")).toBe("");
   });
 });
 
