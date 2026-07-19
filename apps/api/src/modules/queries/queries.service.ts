@@ -14,8 +14,11 @@ import {
   Role,
   type ChangeRequest,
   type ChecklistPatchInput,
+  type QueryListParams,
+  type QueryListRow,
   type QuerySaveInput,
 } from "@svyft/shared";
+import type { Paginated } from "@svyft/shared";
 import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
@@ -59,6 +62,157 @@ export class QueriesService {
     private readonly legs: LegsService,
     private readonly routing: RoutingService,
   ) {}
+
+  // ── List (GET /queries) ────────────────────────────────────────────────────────
+  // Returns a paginated list of QueryListRow with search/filter/sort support.
+  // assignedUserId is a soft ref (no Prisma relation) so assignedUserName is resolved
+  // via a batched user.findMany over the page's rows.
+  async list(params: QueryListParams): Promise<Paginated<QueryListRow>> {
+    const {
+      q, status, priority, assignedUserId, freightMode, country,
+      dateField, dateFrom, dateTo, sort, page, pageSize,
+    } = params;
+
+    const modes = freightMode
+      ? freightMode.split(",").map((m) => m.trim()).filter(Boolean)
+      : undefined;
+
+    const where: Prisma.QueryWhereInput = {
+      ...(status ? { status } : {}),
+      ...(priority ? { priority } : {}),
+      ...(assignedUserId ? { assignedUserId } : {}),
+      ...(q
+        ? {
+            OR: [
+              { queryCode: { contains: q, mode: "insensitive" } },
+              { contactName: { contains: q, mode: "insensitive" } },
+              { shipmentDescription: { contains: q, mode: "insensitive" } },
+              { client: { companyName: { contains: q, mode: "insensitive" } } },
+            ],
+          }
+        : {}),
+      ...(dateFrom || dateTo
+        ? {
+            [dateField ?? "updatedAt"]: {
+              ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+              ...(dateTo ? { lte: new Date(dateTo) } : {}),
+            },
+          }
+        : {}),
+      ...(modes && modes.length
+        ? { legs: { some: { mode: { in: modes as Prisma.EnumFreightModeFilter["in"] } } } }
+        : {}),
+      ...(country
+        ? {
+            points: {
+              some: {
+                country: { equals: country, mode: "insensitive" },
+                type: { in: ["PICKUP", "DELIVERY"] as Prisma.EnumPointTypeFilter["in"] },
+              },
+            },
+          }
+        : {}),
+    };
+
+    const orderBy = this.parseSort(sort);
+
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.query.count({ where }),
+      this.prisma.query.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: {
+          client: { select: { companyName: true } },
+          legs: { select: { mode: true } },
+          points: { select: { type: true, name: true, city: true, country: true } },
+        },
+      }),
+    ]);
+
+    // Batch-resolve assignedUserName (soft ref — no Prisma relation)
+    const assignedUserIds = [...new Set(rows.map((r) => r.assignedUserId).filter((id): id is string => !!id))];
+    const userMap = new Map<string, string>();
+    if (assignedUserIds.length) {
+      const users = await this.prisma.user.findMany({
+        where: { id: { in: assignedUserIds } },
+        select: { id: true, name: true },
+      });
+      for (const u of users) userMap.set(u.id, u.name);
+    }
+
+    return {
+      items: rows.map((row) => this.toListRow(row, userMap)),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  private parseSort(sort?: string): Prisma.QueryOrderByWithRelationInput {
+    const allowed = new Set(["queryCode", "queryDate", "responseDeadline", "priority", "status", "updatedAt"]);
+    if (!sort) return { updatedAt: "desc" };
+    const [col, dir] = sort.split(":");
+    if (!col || !allowed.has(col)) return { updatedAt: "desc" };
+    return { [col]: dir === "asc" ? "asc" : "desc" } as Prisma.QueryOrderByWithRelationInput;
+  }
+
+  private toListRow(
+    row: {
+      id: string;
+      queryCode: string;
+      queryDate: Date;
+      priority: string;
+      status: string;
+      contactName: string | null;
+      shipmentDescription: string | null;
+      responseDeadline: Date | null;
+      assignedUserId: string | null;
+      updatedAt: Date;
+      client: { companyName: string } | null;
+      legs: { mode: string | null }[];
+      points: { type: string; name: string | null; city: string | null; country: string | null }[];
+    },
+    userMap: Map<string, string>,
+  ): QueryListRow {
+    const modes = [
+      ...new Set(row.legs.map((l) => l.mode).filter((m): m is string => !!m)),
+    ].sort((a, b) => {
+      const ORDER: Record<string, number> = { ROAD: 0, AIR: 1, SEA: 2 };
+      return (ORDER[a] ?? 99) - (ORDER[b] ?? 99);
+    }) as QueryListRow["freightMode"];
+
+    const label = (p: { name: string | null; city: string | null; country: string | null }) =>
+      [p.city, p.country].filter(Boolean).join(", ") || p.name || "";
+
+    const origin = row.points
+      .filter((p) => p.type === "PICKUP")
+      .map(label)
+      .join(" · ");
+    const destination = row.points
+      .filter((p) => p.type === "DELIVERY")
+      .map(label)
+      .join(" · ");
+
+    return {
+      id: row.id,
+      queryCode: row.queryCode,
+      queryDate: row.queryDate.toISOString(),
+      customerName: row.client?.companyName ?? null,
+      contactName: row.contactName,
+      shipmentDescription: row.shipmentDescription,
+      freightMode: modes,
+      origin,
+      destination,
+      responseDeadline: row.responseDeadline?.toISOString() ?? null,
+      priority: row.priority as QueryListRow["priority"],
+      status: row.status as QueryListRow["status"],
+      assignedUserId: row.assignedUserId,
+      assignedUserName: row.assignedUserId ? (userMap.get(row.assignedUserId) ?? null) : null,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
 
   // Convert ISO-string date fields in the validated payload to Date for Prisma. Returns a
   // loose record (caller casts to the Prisma create/update input; if `tsc` rejects the

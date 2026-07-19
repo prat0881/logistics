@@ -1,10 +1,14 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from "@nestjs/common";
 import {
   checklistPatchSchema,
+  queryListQuerySchema,
   querySaveSchema,
   type ChecklistPatchInput,
+  type QueryListParams,
   type QuerySaveInput,
 } from "@svyft/shared";
+import type { Paginated } from "@svyft/shared";
+import type { QueryListRow } from "@svyft/shared";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { RequestUser } from "../auth/types";
@@ -20,6 +24,13 @@ export class QueriesController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.queries.create(body, user);
+  }
+
+  @Get()
+  list(
+    @Query(new ZodValidationPipe(queryListQuerySchema)) params: QueryListParams,
+  ): Promise<Paginated<QueryListRow>> {
+    return this.queries.list(params);
   }
 
   @Get(":id")
