@@ -32,6 +32,13 @@
     --accent: 34 81% 48%; /* #E08A17 signal amber — route + highlights only */
     --accent-foreground: 34 76% 13%; /* #3A2408 */
 
+    /* RouteDiagram mode edges — one hue per freight mode, derived from the
+       mode's real-world material, kept distinct from cobalt/amber/green/red.
+       ROAD = asphalt graphite, SEA = chart-water teal, AIR = high-altitude indigo. */
+    --mode-road: 215 14% 34%; /* #4B5563 asphalt */
+    --mode-sea: 193 82% 31%; /* #0E7490 chart water */
+    --mode-air: 246 50% 54%; /* #5B4FC4 high-altitude sky */
+
     --success: 162 74% 27%; /* #12795A manifest green */
     --success-foreground: 152 81% 96%;
 
@@ -69,6 +76,11 @@
 
     --accent: 36 86% 59%; /* #F0A93B amber lifts on dark */
     --accent-foreground: 35 84% 7%;
+
+    /* Mode edges lifted for the night bridge. */
+    --mode-road: 215 20% 65%; /* #94A3B8 */
+    --mode-sea: 188 72% 47%; /* #22B8CF */
+    --mode-air: 244 68% 71%; /* #8B84E8 */
 
     --success: 160 59% 41%; /* #2BA57C */
     --success-foreground: 158 67% 5%;

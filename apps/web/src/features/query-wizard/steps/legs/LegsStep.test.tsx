@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
 import { QueryWizardPage } from "../../QueryWizardPage";
@@ -234,20 +234,29 @@ describe("LegsStep", () => {
 
     await navigateToStep4();
 
-    // legCode displayed as font-mono
+    // legCode displayed as font-mono in the leg-list row (the RouteDiagram also
+    // renders "L1" as an SVG edge label, so scope to the list <span>).
     await waitFor(() => {
-      expect(screen.getByText("L1")).toBeInTheDocument();
+      expect(screen.getByText("L1", { selector: "span" })).toBeInTheDocument();
     });
 
+    // Scope remaining assertions to the leg-list ROW — legCode, mode, and point
+    // names also legitimately appear in the RouteDiagram (SVG) and FindingsPanel.
+    const legRow = screen
+      .getByText("L1", { selector: "span" })
+      .closest("div.rounded-md") as HTMLElement;
+    expect(legRow).not.toBeNull();
+    const row = within(legRow);
+
     // mode badge
-    expect(screen.getByText("ROAD")).toBeInTheDocument();
+    expect(row.getByText("ROAD")).toBeInTheDocument();
 
     // origin → destination
-    expect(screen.getByText(/Sender HQ/)).toBeInTheDocument();
-    expect(screen.getByText(/Receiver Depot/)).toBeInTheDocument();
+    expect(row.getByText(/Sender HQ/)).toBeInTheDocument();
+    expect(row.getByText(/Receiver Depot/)).toBeInTheDocument();
 
     // Assigned cargo count
-    expect(screen.getByText(/1 cargo/i)).toBeInTheDocument();
+    expect(row.getByText(/1 cargo/i)).toBeInTheDocument();
   });
 
   it("shows rollup totals for a leg (totalPackages, totalCbm, totalGrossWt)", async () => {
@@ -285,7 +294,7 @@ describe("LegsStep", () => {
     await navigateToStep4();
 
     await waitFor(() => {
-      expect(screen.getByText("L1")).toBeInTheDocument();
+      expect(screen.getByText("L1", { selector: "span" })).toBeInTheDocument();
     });
 
     // rollup.totalPackages = 2
@@ -443,8 +452,9 @@ describe("LegsStep", () => {
 
     await navigateToStep4();
 
-    // Wait for the leg to appear
-    await screen.findByText("L1");
+    // Wait for the leg to appear (scope to the list <span>; the RouteDiagram
+    // also renders "L1" as an SVG edge label).
+    await screen.findByText("L1", { selector: "span" });
 
     // Click Remove
     const removeBtn = screen.getByRole("button", { name: /remove/i });

@@ -35,6 +35,12 @@ export default {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
         },
+        // RouteDiagram freight-mode edge hues (see src/styles/tokens.md signature).
+        mode: {
+          road: "hsl(var(--mode-road))",
+          sea: "hsl(var(--mode-sea))",
+          air: "hsl(var(--mode-air))",
+        },
         success: {
           DEFAULT: "hsl(var(--success))",
           foreground: "hsl(var(--success-foreground))",
