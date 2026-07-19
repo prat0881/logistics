@@ -49,7 +49,7 @@ describe("FindingsPanel", () => {
         findings={[blockingFinding, dup]}
       />,
     );
-    // Should only render one alert (deduplicated)
+    // Should only render one alert group (deduplicated)
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getAllByText(/must end at a delivery/)).toHaveLength(1);
   });
@@ -87,5 +87,30 @@ describe("FindingsPanel", () => {
     expect(screen.getByText(/must end at a delivery/)).toBeInTheDocument();
     expect(screen.getByText(/Check the departure time/)).toBeInTheDocument();
     expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("blocking group heading differs between create and draft phases", () => {
+    const { unmount } = render(
+      <FindingsPanel
+        phase="create"
+        findings={[blockingFinding, warningFinding]}
+      />,
+    );
+    const createHeading = screen.getByText(/resolve to create the query/i);
+    expect(createHeading).toBeInTheDocument();
+
+    unmount();
+
+    render(
+      <FindingsPanel
+        phase="draft"
+        findings={[blockingFinding, warningFinding]}
+      />,
+    );
+    // draft phase does NOT show the "resolve to create" text
+    expect(screen.queryByText(/resolve to create the query/i)).not.toBeInTheDocument();
+    // Both severities still render
+    expect(screen.getByText(/must end at a delivery/)).toBeInTheDocument();
+    expect(screen.getByText(/Check the departure time/)).toBeInTheDocument();
   });
 });

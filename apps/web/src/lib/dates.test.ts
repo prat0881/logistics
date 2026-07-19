@@ -17,7 +17,8 @@ describe("formatDateTime", () => {
 
 describe("formatDate", () => {
   it("formats an ISO string to DD-MM-YYYY", () => {
-    expect(formatDate("2024-03-15T00:00:00.000Z")).toMatch(/\d{2}-\d{2}-\d{4}/);
+    // Pin to exact expected date rather than a pattern that matches MM-DD-YYYY too
+    expect(formatDate("2024-03-15T00:00:00.000Z")).toMatch(/15-03-2024/);
   });
 
   it("returns empty string for null", () => {
@@ -33,14 +34,14 @@ describe("toIsoOffset", () => {
     expect(new Date(result).getTime()).not.toBeNaN();
   });
 
-  it("round-trips: parsed back to same local time", () => {
-    const localStr = "2024-06-20T09:00";
-    const iso = toIsoOffset(localStr);
-    // Parse back and format to compare
-    const parsed = new Date(iso);
-    expect(parsed.getTime()).not.toBeNaN();
-    // The ISO string should be parseable as a date
-    const reparsed = new Date(iso);
-    expect(reparsed.getTime()).toBe(parsed.getTime());
+  it("preserves the local hour in the output", () => {
+    // toIsoOffset should represent the same local hour regardless of timezone
+    const result = toIsoOffset("2024-06-20T09:00");
+    // The output is an offset-ISO string: extract the time portion (before the +/- offset)
+    const timePart = result.match(/T(\d{2}):(\d{2})/);
+    expect(timePart).not.toBeNull();
+    // Hour must be 09 — the same as the input local hour
+    expect(timePart![1]).toBe("09");
+    expect(timePart![2]).toBe("00");
   });
 });

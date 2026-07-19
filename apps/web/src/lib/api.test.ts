@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { postJson, ApiError } from "./api";
+import { postJson, patchJson, ApiError } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -16,6 +16,7 @@ describe("ApiError", () => {
         text: async () => "",
       }),
     );
+    await expect(postJson("/api/queries/x/create")).rejects.toBeInstanceOf(ApiError);
     await expect(postJson("/api/queries/x/create")).rejects.toMatchObject({
       status: 422,
       findings: [{ rule: "R1" }],
@@ -32,6 +33,7 @@ describe("ApiError", () => {
         text: async () => "",
       }),
     );
+    await expect(postJson("/api/x")).rejects.toBeInstanceOf(ApiError);
     await expect(postJson("/api/x")).rejects.toMatchObject({
       status: 400,
       issues: [{ path: ["email"] }],
@@ -39,6 +41,7 @@ describe("ApiError", () => {
   });
 
   it("ApiError is an instance of Error", async () => {
+    expect.assertions(3);
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -48,13 +51,9 @@ describe("ApiError", () => {
         text: async () => "",
       }),
     );
-    try {
-      await postJson("/api/x");
-    } catch (e) {
-      expect(e).toBeInstanceOf(Error);
-      expect(e).toBeInstanceOf(ApiError);
-      expect((e as ApiError).status).toBe(500);
-    }
+    await expect(postJson("/api/x")).rejects.toBeInstanceOf(Error);
+    await expect(postJson("/api/x")).rejects.toBeInstanceOf(ApiError);
+    await expect(postJson("/api/x")).rejects.toMatchObject({ status: 500 });
   });
 
   it("postJson tolerates 204 no-content response", async () => {
@@ -68,6 +67,20 @@ describe("ApiError", () => {
       }),
     );
     const result = await postJson("/api/x");
+    expect(result).toBeUndefined();
+  });
+
+  it("patchJson tolerates 204 no-content response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 204,
+        json: async () => { throw new Error("no body"); },
+        text: async () => "",
+      }),
+    );
+    const result = await patchJson("/api/x", { foo: "bar" });
     expect(result).toBeUndefined();
   });
 });
