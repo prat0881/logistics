@@ -80,7 +80,14 @@ export class StatusService {
       return { from: current, to: transition.to, transitionId: row.id };
     });
 
-    // Emit AFTER commit so subscribers observe committed state.
+    // Emit AFTER commit so subscribers observe committed state. Awaited (emitAsync, not
+    // emit) so `fire()` does not resolve until the projector's rollup has actually landed —
+    // a fire-and-forget emit here raced a caller that fires N legs then immediately does its
+    // OWN authoritative recompute (Create Query, Plan 5 Task 9): the projector's stale
+    // in-flight recompute (still reading rfqReadyAt as null) could commit AFTER the caller's
+    // final write and silently regress RFQ_READY back to CREATED. Only ever one listener
+    // (QueryStatusProjector.onLegStatusChanged), which already swallows its own errors, so
+    // awaiting it cannot turn a projector failure into a fire() failure.
     const payload: StatusChangedEvent = {
       entity: key,
       entityId,
@@ -90,7 +97,7 @@ export class StatusService {
       actorId: ctx.actorId ?? null,
       queryId: ctx.queryId,
     };
-    this.events.emit(`${key}.status.changed`, payload);
+    await this.events.emitAsync(`${key}.status.changed`, payload);
 
     return { entity: key, entityId, from, to, event, transitionId };
   }

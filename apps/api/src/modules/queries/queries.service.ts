@@ -20,6 +20,33 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
 import { QueryStatusProjector } from "../status/query-status.projector";
+import { LegsService } from "../legs/legs.service";
+import { RoutingService } from "../routing/routing.service";
+
+// Reusable derived-on-read graph shape (§4.5): cargo/checklist/files (Plan 4) + points/legs
+// (Plan 5, incl. each leg's legCargo join so `shapeQuery` can compute per-leg roll-ups).
+// A `Prisma.validator` (not a plain `satisfies`) is required here — a plain object literal
+// widens `"asc"` to `string`, which breaks `Prisma.QueryGetPayload`'s literal SortOrder typing.
+const QUERY_GRAPH_ARGS = Prisma.validator<Prisma.QueryDefaultArgs>()({
+  include: {
+    cargo: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] },
+    checklist: { orderBy: { itemKey: "asc" } },
+    files: {
+      select: {
+        id: true,
+        kind: true,
+        filename: true,
+        mime: true,
+        sizeBytes: true,
+        uploadedById: true,
+        createdAt: true,
+      },
+    },
+    points: true,
+    legs: { include: { legCargo: { select: { cargoItemId: true } } }, orderBy: { createdAt: "asc" } },
+  },
+});
+type QueryWithGraph = Prisma.QueryGetPayload<typeof QUERY_GRAPH_ARGS>;
 
 @Injectable()
 export class QueriesService {
@@ -28,6 +55,8 @@ export class QueriesService {
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
     private readonly projector: QueryStatusProjector,
+    private readonly legs: LegsService,
+    private readonly routing: RoutingService,
   ) {}
 
   // Convert ISO-string date fields in the validated payload to Date for Prisma. Returns a
@@ -97,31 +126,42 @@ export class QueriesService {
     return this.getWithin(this.prisma, id);
   }
 
-  private async getWithin(client: Prisma.TransactionClient | PrismaService, id: string) {
-    const query = await client.query.findUnique({
-      where: { id },
-      include: {
-        // rowIndex asc is the primary sort; createdAt/id are a stable tie-break for the rare
-        // case of a duplicate rowIndex (see CargoService.create — concurrent-create race,
-        // deferred per spec §8.5) so display order stays deterministic either way.
-        cargo: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] },
-        checklist: { orderBy: { itemKey: "asc" } },
-        // select (not `files: true`) to keep the internal storageKey out of the API response.
-        files: {
-          select: {
-            id: true,
-            kind: true,
-            filename: true,
-            mime: true,
-            sizeBytes: true,
-            uploadedById: true,
-            createdAt: true,
-          },
+  // rowIndex asc is the primary cargo sort; createdAt/id are a stable tie-break for the rare
+  // case of a duplicate rowIndex (see CargoService.create — concurrent-create race, deferred
+  // per spec §8.5) so display order stays deterministic either way. files uses `select` (not
+  // `files: true`) to keep the internal storageKey out of the API response.
+  async getWithin(client: Prisma.TransactionClient | PrismaService, id: string) {
+    const row = await client.query.findUnique({ where: { id }, ...QUERY_GRAPH_ARGS });
+    if (!row) throw new NotFoundException("Query not found");
+    return this.shapeQuery(row);
+  }
+
+  // Derived-on-read (§4.5), never stored: freightMode (distinct leg modes), origin/destination
+  // (pickup/delivery points), and per-leg roll-ups (packages/CBM/gross/net). Zero drift.
+  private shapeQuery(row: QueryWithGraph) {
+    const num = (d: Prisma.Decimal | null): number => (d == null ? 0 : Number(d));
+    const cargoById = new Map(row.cargo.map((c) => [c.id, c] as const));
+    const MODE_ORDER: Record<string, number> = { ROAD: 0, AIR: 1, SEA: 2 };
+    const freightMode = [...new Set(row.legs.map((l) => l.mode).filter((m): m is NonNullable<typeof m> => !!m))].sort(
+      (a, b) => MODE_ORDER[a] - MODE_ORDER[b],
+    );
+    const pick = (t: string) =>
+      row.points.filter((p) => p.type === t).map((p) => ({ id: p.id, name: p.name, city: p.city, country: p.country }));
+    const legs = row.legs.map((l) => {
+      const { legCargo, ...rest } = l;
+      const attached = legCargo.map((lc) => cargoById.get(lc.cargoItemId)).filter((c): c is NonNullable<typeof c> => !!c);
+      return {
+        ...rest,
+        assignedCargoIds: legCargo.map((lc) => lc.cargoItemId),
+        rollup: {
+          totalPackages: attached.reduce((s, c) => s + c.qty, 0),
+          totalCbm: attached.reduce((s, c) => s + num(c.volumeCbm), 0),
+          totalGrossWt: attached.reduce((s, c) => s + num(c.grossWt), 0),
+          totalNetWt: attached.reduce((s, c) => s + num(c.netWt), 0),
         },
-      },
+      };
     });
-    if (!query) throw new NotFoundException("Query not found");
-    return query;
+    return { ...row, freightMode, origin: pick("PICKUP"), destination: pick("DELIVERY"), legs };
   }
 
   // PATCH /queries/:id (§5.2): one mediator call per PATCH (= per wizard step). Missing
@@ -163,19 +203,17 @@ export class QueriesService {
     if (dgCount > 0) await tx.query.update({ where: { id: queryId }, data: { dgIndicator: true } });
   }
 
-  // Create Query (§13): run the create-phase field/cargo catalogue (F1/F6; F2–F5 already
-  // enforced at save). Route rules R1–R9 + the leg rollup are Plan 5. On pass, set the
-  // rfqReadyAt milestone and let the projector persist RFQ_READY (never hand-write status).
-  async createQuery(id: string, _user: RequestUser) {
+  // Create Query (§13): field catalogue (F1/F6) + the full route catalogue (R1–R9, V-M1, T1–T3,
+  // C1–C3) at create phase. On pass: fire every leg to READY_FOR_RFQ, then set the rfqReadyAt
+  // milestone and let the projector roll the query up to RFQ_READY (never hand-write status).
+  async createQuery(id: string, user: RequestUser) {
     const q = await this.prisma.query.findUnique({
       where: { id },
-      include: {
-        cargo: { select: { id: true, isDangerous: true, msdsFileId: true, poReference: true } },
-      },
+      include: { cargo: { select: { id: true, isDangerous: true, msdsFileId: true, poReference: true } } },
     });
     if (!q) throw new NotFoundException("Query not found");
 
-    const findings = collectCreateFindings(
+    const fieldFindings = collectCreateFindings(
       {
         id: q.id,
         clientId: q.clientId,
@@ -188,16 +226,23 @@ export class QueriesService {
       },
       q.cargo,
     );
-    if (findings.length > 0) throw new HttpException({ findings }, HttpStatus.UNPROCESSABLE_ENTITY);
+    const routeFindings = await this.routing.validate(id, "create");
+    const findings = [...fieldFindings, ...routeFindings];
+    if (findings.some((f) => f.severity === "blocking"))
+      throw new HttpException({ findings }, HttpStatus.UNPROCESSABLE_ENTITY);
+
+    // Fire each leg forward (own tx per fire — the route already validated, §8.5 last-write-wins).
+    const legs = await this.prisma.leg.findMany({ where: { queryId: id }, select: { id: true } });
+    for (const leg of legs) {
+      await this.legs.markReadyForRfq(leg.id, { queryId: id, actorId: user.userId, tenantId: user.tenantId });
+    }
 
     await this.prisma.$transaction(async (tx) => {
       await tx.query.update({ where: { id }, data: { rfqReadyAt: new Date() } });
-      await this.projector.recompute(id, tx); // persists RFQ_READY
+      await this.projector.recompute(id, tx); // all legs READY_FOR_RFQ + rfqReady ⇒ RFQ_READY
     });
-    const updated = await this.prisma.query.findUnique({
-      where: { id },
-      select: { id: true, status: true },
-    });
+
+    const updated = await this.prisma.query.findUnique({ where: { id }, select: { id: true, status: true } });
     return updated!;
   }
 
