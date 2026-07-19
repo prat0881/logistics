@@ -51,7 +51,116 @@ const draftDetail = {
   destination: [],
 };
 
-const rfqReadyDetail = { ...draftDetail, status: "RFQ_READY" };
+// ── A fully-populated detail that passes client-side preview (for 201 test) ──
+const READY_DATE_Q9 = "2026-09-01T00:00:00+00:00";
+const TARGET_DELIVERY_Q9 = "2026-09-15T00:00:00+00:00";
+const PICKUP_ID_Q9 = "aaaa0001-0000-0000-0000-000000000000";
+const DELIVERY_ID_Q9 = "aaaa0002-0000-0000-0000-000000000000";
+const CARGO_ID_Q9 = "aaaa0003-0000-0000-0000-000000000000";
+const LEG_ID_Q9 = "aaaa0004-0000-0000-0000-000000000000";
+
+const fullDraftDetail = {
+  ...draftDetail,
+  clientId: "aaaa0005-0000-0000-0000-000000000000",
+  contactName: "Alice Test",
+  contactEmail: "alice@test.com",
+  contactPhone: "+6591234567",
+  incoterms: "FOB",
+  readyDate: READY_DATE_Q9,
+  targetDelivery: TARGET_DELIVERY_Q9,
+  cargo: [
+    {
+      id: CARGO_ID_Q9,
+      rowIndex: 0,
+      poReference: "PO-Q9-001",
+      productName: "Widget",
+      referenceTags: [],
+      hsCode: null,
+      packageType: "Carton",
+      isDangerous: false,
+      msdsFileId: null,
+      qty: 5,
+      dimL: "30",
+      dimW: "20",
+      dimH: "10",
+      netWt: null,
+      grossWt: "10",
+      volumeCbm: "0.006",
+      freightDensity: null,
+      chargeableWeight: null,
+    },
+  ],
+  points: [
+    {
+      id: PICKUP_ID_Q9,
+      tenantId: null,
+      queryId: "q9",
+      type: "PICKUP",
+      name: "Origin",
+      streetAddress: "1 Main St",
+      city: "Singapore",
+      postalCode: "018989",
+      country: "SG",
+      contactName: "Sender",
+      contactPhone: "+6591234567",
+      contactEmail: "sender@test.com",
+      warehouseType: null,
+      iataCode: null,
+      icaoCode: null,
+      unLocode: null,
+      terminal: null,
+      createdAt: "2026-01-01T00:00:00+00:00",
+      updatedAt: "2026-01-01T00:00:00+00:00",
+    },
+    {
+      id: DELIVERY_ID_Q9,
+      tenantId: null,
+      queryId: "q9",
+      type: "DELIVERY",
+      name: "Destination",
+      streetAddress: "2 High St",
+      city: "Kuala Lumpur",
+      postalCode: "50000",
+      country: "MY",
+      contactName: "Receiver",
+      contactPhone: "+60123456789",
+      contactEmail: null,
+      warehouseType: null,
+      iataCode: null,
+      icaoCode: null,
+      unLocode: null,
+      terminal: null,
+      createdAt: "2026-01-01T00:00:00+00:00",
+      updatedAt: "2026-01-01T00:00:00+00:00",
+    },
+  ],
+  legs: [
+    {
+      id: LEG_ID_Q9,
+      tenantId: null,
+      queryId: "q9",
+      legCode: "L1",
+      legName: null,
+      originPointId: PICKUP_ID_Q9,
+      destinationPointId: DELIVERY_ID_Q9,
+      mode: "ROAD",
+      readyDate: READY_DATE_Q9,
+      targetDelivery: TARGET_DELIVERY_Q9,
+      status: "DRAFT",
+      executionStatus: "NOT_STARTED",
+      totalChargeableWeight: null,
+      createdAt: "2026-01-01T00:00:00+00:00",
+      updatedAt: "2026-01-01T00:00:00+00:00",
+      assignedCargoIds: [CARGO_ID_Q9],
+      rollup: { totalPackages: 5, totalCbm: 0.006, totalGrossWt: 10, totalNetWt: 0 },
+    },
+  ],
+  freightMode: ["ROAD"],
+  origin: [{ id: PICKUP_ID_Q9, name: "Origin", city: "Singapore", country: "SG" }],
+  destination: [{ id: DELIVERY_ID_Q9, name: "Destination", city: "Kuala Lumpur", country: "MY" }],
+};
+
+const fullRfqReadyDetail = { ...fullDraftDetail, status: "RFQ_READY" };
 
 describe("QueryWizardPage", () => {
   it("mints the Query ID on first Save of a new query and switches to edit", async () => {
@@ -202,8 +311,9 @@ describe("QueryWizardPage", () => {
           return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
         if (url.includes("/api/queries/q9")) {
           getCallCount++;
-          // First GET returns DRAFT, subsequent GETs return RFQ_READY
-          return { status: 200, body: getCallCount <= 1 ? draftDetail : rfqReadyDetail };
+          // First GET returns fully-populated DRAFT (passes client-side preview),
+          // subsequent GETs (after /create) return RFQ_READY
+          return { status: 200, body: getCallCount <= 1 ? fullDraftDetail : fullRfqReadyDetail };
         }
         return { status: 200, body: {} };
       }),

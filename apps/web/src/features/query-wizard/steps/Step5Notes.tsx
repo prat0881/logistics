@@ -13,7 +13,7 @@ interface Step5NotesProps {
 }
 
 /** Static label map keyed by the seeded checklist item keys */
-const CHECKLIST_LABELS: Record<string, string> = {
+export const CHECKLIST_LABELS: Record<string, string> = {
   "weight-confirmed": "Weight confirmed",
   "dimensions-confirmed": "Dimensions confirmed",
   "hs-code-received": "HS / HSN code received",
