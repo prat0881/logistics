@@ -1,22 +1,20 @@
 import { useEffect } from "react";
 import type { StepSaveFn } from "./Step1Client";
+import { LegsStep as LegsStepImpl } from "./legs/LegsStep";
 
 interface LegsStepProps {
   registerSave: (fn: StepSaveFn) => void;
 }
 
 /**
- * Step 4 — Legs / Route (placeholder)
- * Full implementation coming in a later task.
+ * Step 4 — Legs / Route.
+ * Delegates to the full implementation in ./legs/LegsStep.
+ * registerSave is a no-op here — leg writes happen immediately via useLegs.
  */
 export function LegsStep({ registerSave }: LegsStepProps) {
   useEffect(() => {
     registerSave(async () => undefined);
   }, [registerSave]);
 
-  return (
-    <div className="p-4">
-      <p className="text-sm text-muted-foreground">Step 4 — Legs / Route (placeholder, full form coming in a later task)</p>
-    </div>
-  );
+  return <LegsStepImpl />;
 }
