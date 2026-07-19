@@ -74,6 +74,20 @@ describe("Create Query route gating (e2e)", () => {
     expect(leg?.status).toBe(LegStatus.READY_FOR_RFQ);
   });
 
+  it("is idempotent: a second /create on an already-RFQ_READY query returns 201 RFQ_READY, not 500", async () => {
+    const { queryId, legId } = await validQuery();
+    const first = await api().post(`/api/queries/${queryId}/create`).set("Cookie", cookie()).expect(201);
+    expect(first.body.status).toBe(QueryStatus.RFQ_READY);
+
+    // Re-submit (double-click / retry / refresh-reclick): every leg is already READY_FOR_RFQ,
+    // so this must fire nothing and just re-project RFQ_READY — not 500 on IllegalTransitionError.
+    const second = await api().post(`/api/queries/${queryId}/create`).set("Cookie", cookie()).expect(201);
+    expect(second.body.status).toBe(QueryStatus.RFQ_READY);
+
+    const leg = await prisma.leg.findUnique({ where: { id: legId } });
+    expect(leg?.status).toBe(LegStatus.READY_FOR_RFQ);
+  });
+
   it("hard-blocks with 422 findings when the route is broken (no delivery)", async () => {
     const { queryId } = await validQuery();
     // Break it: delete the delivery point so R5/R2 fail.

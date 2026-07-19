@@ -183,7 +183,8 @@ describe("Status Machine (integration)", () => {
       routeValid: true,
       queryId: query.id,
     });
-    // EventEmitter2 emit is synchronous → the listener has already invoked recompute.
+    // fire() awaits emitAsync (not a fire-and-forget emit, Task 9) → by the time fire() has
+    // resolved above, the projector's recompute (the sole listener) has already run.
     expect(spy).toHaveBeenCalledWith(query.id);
     spy.mockRestore();
     // Let the async projector settle before the suite tears down (avoids a recompute racing cleanup).

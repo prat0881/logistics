@@ -10,6 +10,7 @@ import { Prisma } from "@prisma/client";
 import {
   collectCreateFindings,
   formatQueryCode,
+  LegStatus,
   Role,
   type ChangeRequest,
   type ChecklistPatchInput,
@@ -130,7 +131,7 @@ export class QueriesService {
   // case of a duplicate rowIndex (see CargoService.create — concurrent-create race, deferred
   // per spec §8.5) so display order stays deterministic either way. files uses `select` (not
   // `files: true`) to keep the internal storageKey out of the API response.
-  async getWithin(client: Prisma.TransactionClient | PrismaService, id: string) {
+  private async getWithin(client: Prisma.TransactionClient | PrismaService, id: string) {
     const row = await client.query.findUnique({ where: { id }, ...QUERY_GRAPH_ARGS });
     if (!row) throw new NotFoundException("Query not found");
     return this.shapeQuery(row);
@@ -204,8 +205,9 @@ export class QueriesService {
   }
 
   // Create Query (§13): field catalogue (F1/F6) + the full route catalogue (R1–R9, V-M1, T1–T3,
-  // C1–C3) at create phase. On pass: fire every leg to READY_FOR_RFQ, then set the rfqReadyAt
-  // milestone and let the projector roll the query up to RFQ_READY (never hand-write status).
+  // C1–C3) at create phase. On pass: fire every still-DRAFT leg to READY_FOR_RFQ, then set the
+  // rfqReadyAt milestone and let the projector roll the query up to RFQ_READY (never hand-write
+  // status). Idempotent: a re-submit finds zero DRAFT legs, fires nothing, and just re-projects.
   async createQuery(id: string, user: RequestUser) {
     const q = await this.prisma.query.findUnique({
       where: { id },
@@ -231,8 +233,13 @@ export class QueriesService {
     if (findings.some((f) => f.severity === "blocking"))
       throw new HttpException({ findings }, HttpStatus.UNPROCESSABLE_ENTITY);
 
+    // Fire only DRAFT legs — makes Create Query idempotent (a re-submit fires nothing and just
+    // re-projects RFQ_READY) and lets a partial-failure retry fire only the still-DRAFT legs.
+    const legs = await this.prisma.leg.findMany({
+      where: { queryId: id, status: LegStatus.DRAFT },
+      select: { id: true },
+    });
     // Fire each leg forward (own tx per fire — the route already validated, §8.5 last-write-wins).
-    const legs = await this.prisma.leg.findMany({ where: { queryId: id }, select: { id: true } });
     for (const leg of legs) {
       await this.legs.markReadyForRfq(leg.id, { queryId: id, actorId: user.userId, tenantId: user.tenantId });
     }
