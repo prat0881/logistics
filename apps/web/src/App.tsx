@@ -12,6 +12,7 @@ import { VesselsListPage } from "@/features/masters/vessels/VesselsListPage";
 import { VesselFormPage } from "@/features/masters/vessels/VesselFormPage";
 import { ConfigPage } from "@/features/admin/ConfigPage";
 import { QueriesListPage } from "@/features/query-list/QueriesListPage";
+import { QueryWizardPage } from "@/features/query-wizard/QueryWizardPage";
 
 function Protected({ children }: { children: ReactNode }) {
   return (
@@ -43,7 +44,7 @@ export function App() {
         path="/queries/new"
         element={
           <Protected>
-            <div>Create Query (Task 5)</div>
+            <QueryWizardPage />
           </Protected>
         }
       />
@@ -51,7 +52,7 @@ export function App() {
         path="/queries/:id"
         element={
           <Protected>
-            <div>Query Detail (Task 5)</div>
+            <QueryWizardPage />
           </Protected>
         }
       />
