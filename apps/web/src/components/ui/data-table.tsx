@@ -15,14 +15,11 @@ import {
   TableRow,
 } from "./table";
 
-/** Sortable column keys. Must match the server-side whitelist. */
-export type SortableColumn =
-  | "queryCode"
-  | "queryDate"
-  | "responseDeadline"
-  | "priority"
-  | "status"
-  | "updatedAt";
+/**
+ * Generic string type for sortable column identifiers.
+ * Call sites are responsible for maintaining their own domain-specific allowlists.
+ */
+export type SortableColumn = string;
 
 export interface DataTableProps<TData> {
   columns: ColumnDef<TData>[];
@@ -33,9 +30,9 @@ export interface DataTableProps<TData> {
   /** Current sort string "<column>:<asc|desc>". Parent drives server-side sort. */
   sort?: string;
   /** Called when user clicks a sortable column header. Toggles asc/desc. */
-  onSortChange?: (col: SortableColumn) => void;
-  /** Columns that should render a sort toggle. */
-  sortableColumns?: SortableColumn[];
+  onSortChange?: (col: string) => void;
+  /** Columns that should render a sort toggle. Defined at the call site. */
+  sortableColumns?: string[];
 }
 
 const SKELETON_ROWS = 5;
@@ -67,7 +64,7 @@ export function DataTable<TData>({
   }
 
   function renderSortIcon(colId: string) {
-    if (!sortableColumns.includes(colId as SortableColumn)) return null;
+    if (!sortableColumns.includes(colId)) return null;
     const dir = getSortDir(colId);
     if (dir === "asc") return <ChevronUp className="ml-1 inline h-3.5 w-3.5" />;
     if (dir === "desc") return <ChevronDown className="ml-1 inline h-3.5 w-3.5" />;
@@ -82,13 +79,13 @@ export function DataTable<TData>({
             <TableRow key={headerGroup.id}>
               {headerGroup.headers.map((header) => {
                 const isSortable =
-                  sortableColumns.includes(header.column.id as SortableColumn) && !!onSortChange;
+                  sortableColumns.includes(header.column.id) && !!onSortChange;
                 return (
                   <TableHead
                     key={header.id}
                     onClick={
                       isSortable
-                        ? () => onSortChange!(header.column.id as SortableColumn)
+                        ? () => onSortChange!(header.column.id)
                         : undefined
                     }
                     className={cn(isSortable && "cursor-pointer select-none hover:text-foreground")}

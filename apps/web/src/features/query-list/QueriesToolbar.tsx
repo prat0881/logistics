@@ -42,12 +42,17 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
     onChangeRef.current = onChange;
   });
 
+  // Shared debounce timer ref — cleared by clearFilters to prevent a stale emit.
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Debounce search
   useEffect(() => {
-    const t = setTimeout(() => {
+    searchTimerRef.current = setTimeout(() => {
       onChangeRef.current({ q: search || undefined });
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      if (searchTimerRef.current !== null) clearTimeout(searchTimerRef.current);
+    };
   }, [search]);
 
   const emitFilters = useCallback(
@@ -81,7 +86,7 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
       }
       onChange(params);
     },
-    [status, priority, freightMode, assignedToMe, country, dateField, dateRange, user],
+    [status, priority, freightMode, assignedToMe, country, dateField, dateRange, user, onChange],
   );
 
   function handleStatus(val: string) {
@@ -117,6 +122,11 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
   }
 
   function clearFilters() {
+    // Cancel any pending debounced search emit so it doesn't fire after the clear.
+    if (searchTimerRef.current !== null) {
+      clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = null;
+    }
     setSearch("");
     setStatus(EMPTY);
     setPriority(EMPTY);

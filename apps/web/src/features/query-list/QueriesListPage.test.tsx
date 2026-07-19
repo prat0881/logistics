@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useParams } from "react-router-dom";
 import { QueriesListPage } from "./QueriesListPage";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
+
+/** Renders the `:id` param so the test can assert which id the navigation used. */
+function QueryWizardStub() {
+  const { id } = useParams<{ id: string }>();
+  return <div>wizard {id}</div>;
+}
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -50,7 +56,7 @@ describe("QueriesListPage", () => {
     renderWithProviders(
       <Routes>
         <Route path="/queries" element={<QueriesListPage />} />
-        <Route path="/queries/:id" element={<div>wizard q1</div>} />
+        <Route path="/queries/:id" element={<QueryWizardStub />} />
       </Routes>,
       { route: "/queries" },
     );
@@ -62,7 +68,8 @@ describe("QueriesListPage", () => {
     );
 
     await userEvent.click(screen.getByText("YAL26-0001"));
-    expect(await screen.findByText(/wizard/)).toBeInTheDocument();
+    // Assert that the navigation used the row's actual id ("q1"), not just any text.
+    expect(await screen.findByText("wizard q1")).toBeInTheDocument();
   });
 
   it("renders freightMode badges and assignedUserName", async () => {

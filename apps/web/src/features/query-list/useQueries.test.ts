@@ -7,9 +7,12 @@ import { useQueries } from "./useQueries";
 
 afterEach(() => vi.unstubAllGlobals());
 
-const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-function wrapper({ children }: { children: ReactNode }) {
-  return createElement(QueryClientProvider, { client: qc }, children);
+/** Create a fresh QueryClient per test to prevent cache bleed between tests. */
+function makeWrapper() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return function wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: qc }, children);
+  };
 }
 
 describe("useQueries", () => {
@@ -24,7 +27,7 @@ describe("useQueries", () => {
 
     const { result } = renderHook(
       () => useQueries({ q: "YAL", status: "DRAFT", page: 1, pageSize: 20 }),
-      { wrapper },
+      { wrapper: makeWrapper() },
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(spy.mock.calls[0][0]).toContain("/api/queries?");
@@ -67,7 +70,7 @@ describe("useQueries", () => {
       }),
     );
 
-    const { result } = renderHook(() => useQueries({ page: 1, pageSize: 20 }), { wrapper });
+    const { result } = renderHook(() => useQueries({ page: 1, pageSize: 20 }), { wrapper: makeWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.total).toBe(1);
     expect(result.current.data?.items[0].queryCode).toBe("YAL26-0001");

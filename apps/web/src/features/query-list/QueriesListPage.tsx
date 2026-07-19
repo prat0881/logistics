@@ -3,12 +3,13 @@ import { useNavigate, Link } from "react-router-dom";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { QueryListParams } from "@svyft/shared";
 import { Button } from "@/components/ui/button";
-import { DataTable, type SortableColumn } from "@/components/ui/data-table";
+import { DataTable } from "@/components/ui/data-table";
 import { useQueries } from "./useQueries";
 import { queryColumns } from "./columns";
 import { QueriesToolbar } from "./QueriesToolbar";
 
-const SORTABLE_COLS: SortableColumn[] = [
+/** Query-domain sortable columns (server-side allowlist lives here, not in DataTable). */
+const SORTABLE_COLS: string[] = [
   "queryCode",
   "queryDate",
   "responseDeadline",
@@ -32,12 +33,12 @@ export function QueriesListPage() {
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / (params.pageSize ?? 20)));
 
-  function handleToolbarChange(partial: Partial<QueryListParams>) {
+  const handleToolbarChange = useCallback((partial: Partial<QueryListParams>) => {
     setParams((prev) => ({ ...prev, ...partial, page: 1 }));
-  }
+  }, []);
 
   const handleSortChange = useCallback(
-    (col: SortableColumn) => {
+    (col: string) => {
       setParams((prev) => {
         const [currentCol, currentDir] = (prev.sort ?? "updatedAt:desc").split(":");
         const newDir =
