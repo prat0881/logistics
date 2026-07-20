@@ -51,6 +51,12 @@ Plan 6 is deployed to `:4096` but was **never runtime-verified on the full stack
 - **Deferred by decision (Plan 8 / follow-up):** tighten phone to require a leading `+` (D1); make Net ≤ Gross an inline **warning** per §10 F5 instead of a hard block (D2); restrict ROAD leg endpoints to pickup/delivery/warehouse/drayage per §10.4 (D4); field-map server-400 Zod `issues` to individual inputs (G6). Bigger backlog: country dropdown (`PointEditor` TODO), `packageType` enum, HS-code format, IMO check-digit.
 - **⚠ Not yet browser-verified end-to-end** — fixes are unit/integration-tested + CI-green; a prod smoke-test of the hot paths is still the closing step before Plan 7.
 
+**Testing round 2 — Legs/Route rework** (same branch, 2026-07-21; testing-team findings; design at `docs/superpowers/specs/2026-07-21-legs-route-rework-design.md`). Step 4 shifts from draft-lenient to **complete-as-you-go**:
+- **Add/Edit Point & Leg hard-block incomplete saves** — per-type point fields (`POINT_REQUIRED_FIELDS`); leg origin/destination/mode/≥1 cargo/ready/target — overriding the D8 partial-draft allowance for points/legs.
+- **Findings at create-phase** (every route issue is blocking), live client-side + authoritative server validate on Save/Next. New `groupFindingsByScope` buckets findings by box (cargo findings fan onto carrying legs).
+- **Screen reordered** Notices → Points → Legs → Route; the Blocking/Advisory `FindingsPanel` list is replaced by a **top summary strip** (query-scoped findings + count) + **per-box ⚠ hover tooltips** on the Point/Leg cards *and* the diagram nodes/edges. The "Validate route" button is removed (validation runs on Save/Next).
+- **Save/Next gate**: Save persists + surfaces findings; **Next blocks advancing on any create-phase route error** ("Resolve the route issues…"). `pnpm run ci` green (web 177 · shared 125 · api 105).
+
 ## What's built so far (the foundation Plan 7 extends)
 - **Monorepo** (Plan 0): `apps/api` (NestJS + Prisma), `apps/web` (Vite/React/Tailwind/shadcn/TanStack Query), `packages/shared` (isomorphic zod schemas + types + enums + the `validateRoute` engine). Docker + GitHub Actions CI/CD.
 - **Auth/RBAC** (Plan 1): global secure-by-default guards + decorators in `apps/api/src/modules/auth/` — `@Roles(...Role[])`, `@Public()`, `@CurrentUser()` (→ `RequestUser {userId, role, tenantId}`); `JwtStrategy` (cookie); `AuthService`. `Role` enum + auth contracts in `@svyft/shared`.
