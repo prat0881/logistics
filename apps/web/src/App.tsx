@@ -11,6 +11,8 @@ import { ClientFormPage } from "@/features/masters/clients/ClientFormPage";
 import { VesselsListPage } from "@/features/masters/vessels/VesselsListPage";
 import { VesselFormPage } from "@/features/masters/vessels/VesselFormPage";
 import { ConfigPage } from "@/features/admin/ConfigPage";
+import { QueriesListPage } from "@/features/query-list/QueriesListPage";
+import { QueryWizardPage } from "@/features/query-wizard/QueryWizardPage";
 
 function Protected({ children }: { children: ReactNode }) {
   return (
@@ -29,8 +31,33 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/" element={<Navigate to="/queries" replace />} />
       <Route
-        path="/"
+        path="/queries"
+        element={
+          <Protected>
+            <QueriesListPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/queries/new"
+        element={
+          <Protected>
+            <QueryWizardPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/queries/:id"
+        element={
+          <Protected>
+            <QueryWizardPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/home"
         element={
           <Protected>
             <HomePage />

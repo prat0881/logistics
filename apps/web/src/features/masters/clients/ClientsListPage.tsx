@@ -13,12 +13,12 @@ export function ClientsListPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Clients</h1>
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="font-display text-xl font-semibold tracking-tight">Clients</h1>
         {canWrite && (
           <Link
             to="/masters/clients/new"
-            className="rounded-md bg-slate-900 px-3 py-2 text-sm text-slate-50"
+            className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
             New client
           </Link>
@@ -30,32 +30,45 @@ export function ClientsListPage() {
         onChange={(e) => setQ(e.target.value)}
       />
       {isLoading ? (
-        <p>Loading…</p>
+        <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b text-slate-500">
-              <th className="py-2">Code</th>
-              <th>Company</th>
-              <th>Country</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.items.map((c) => (
-              <tr key={c.id} className="border-b">
-                <td className="py-2">{c.clientCode}</td>
-                <td>
-                  <Link to={`/masters/clients/${c.id}`} className="underline">
-                    {c.companyName}
-                  </Link>
-                </td>
-                <td>{c.country}</td>
-                <td>{c.status}</td>
+        <div className="overflow-hidden rounded-md border border-border bg-card">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="px-4 py-2 font-medium">Code</th>
+                <th className="px-4 py-2 font-medium">Company</th>
+                <th className="px-4 py-2 font-medium">Country</th>
+                <th className="px-4 py-2 font-medium">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data?.items.length ? (
+                data.items.map((c) => (
+                  <tr key={c.id} className="border-b border-border last:border-0 hover:bg-muted/50">
+                    <td className="px-4 py-2 font-mono tabular-nums text-muted-foreground">{c.clientCode}</td>
+                    <td className="px-4 py-2">
+                      <Link
+                        to={`/masters/clients/${c.id}`}
+                        className="font-medium text-primary hover:underline"
+                      >
+                        {c.companyName}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2">{c.country}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{c.status}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    {q ? "No clients match your search." : "No clients yet."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

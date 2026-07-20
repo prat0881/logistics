@@ -46,3 +46,6 @@ uploads/
 
 # Subagent-driven-development scratch (briefs, reports, review packages, ledger)
 .superpowers/
+
+# Local Claude Code tooling (preview launch config, local settings)
+.claude/

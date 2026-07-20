@@ -1,3 +1,144 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ------------------------------------------------------------------
+   Svyft Logistics — design tokens (see src/styles/tokens.md)
+   Direction: "operations console" — a maritime-freight instrument.
+   Light = ledger under fluorescent light; dark = night bridge at sea.
+   HSL triplets, shadcn convention.
+   ------------------------------------------------------------------ */
+
+@layer base {
+  :root {
+    --background: 220 37% 97%; /* #F4F6FA cool blue-grey ledger ground */
+    --foreground: 215 46% 10%; /* #0E1826 near-navy ink */
+
+    --card: 0 0% 100%; /* #FFFFFF readout panel */
+    --card-foreground: 215 46% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 46% 10%;
+
+    --muted: 216 31% 94%; /* #EAEEF4 quiet fill */
+    --muted-foreground: 214 15% 40%; /* #586576 secondary ink */
+
+    --primary: 212 88% 33%; /* #0A4FA0 deep maritime cobalt */
+    --primary-foreground: 220 37% 97%;
+
+    --secondary: 216 31% 94%; /* #EAEEF4 */
+    --secondary-foreground: 211 30% 19%; /* #22303F */
+
+    --accent: 34 81% 48%; /* #E08A17 signal amber — route + highlights only */
+    --accent-foreground: 34 76% 13%; /* #3A2408 */
+
+    /* RouteDiagram mode edges — one hue per freight mode, derived from the
+       mode's real-world material, kept distinct from cobalt/amber/green/red.
+       ROAD = asphalt graphite, SEA = chart-water teal, AIR = high-altitude indigo. */
+    --mode-road: 215 14% 34%; /* #4B5563 asphalt */
+    --mode-sea: 193 82% 31%; /* #0E7490 chart water */
+    --mode-air: 246 50% 54%; /* #5B4FC4 high-altitude sky */
+
+    --success: 162 74% 27%; /* #12795A manifest green */
+    --success-foreground: 152 81% 96%;
+
+    --warning: 26 90% 37%; /* #B45309 amber-brown attention */
+    --warning-foreground: 48 100% 96%;
+
+    --destructive: 353 68% 44%; /* #BE2436 rejected / error stamp */
+    --destructive-foreground: 356 100% 97%;
+
+    --border: 216 27% 89%; /* #DCE2EB hairline */
+    --input: 216 27% 89%;
+    --ring: 212 88% 33%; /* focus = cobalt */
+
+    --radius: 0.5rem; /* base scale; interactive `rounded-md` resolves to 6px */
+  }
+
+  .dark {
+    --background: 214 49% 8%; /* #0B1420 deep navy console */
+    --foreground: 212 35% 93%; /* #E6ECF3 cool off-white */
+
+    --card: 215 46% 12%; /* #111D2E raised panel */
+    --card-foreground: 212 35% 93%;
+
+    --popover: 215 46% 12%;
+    --popover-foreground: 212 35% 93%;
+
+    --muted: 215 41% 16%; /* #18263A */
+    --muted-foreground: 214 19% 64%; /* #93A2B5 */
+
+    --primary: 211 72% 56%; /* #3D8BE0 cobalt lifted for dark */
+    --primary-foreground: 213 56% 7%;
+
+    --secondary: 215 41% 16%; /* #18263A */
+    --secondary-foreground: 212 38% 87%; /* #D3DEEB */
+
+    --accent: 36 86% 59%; /* #F0A93B amber lifts on dark */
+    --accent-foreground: 35 84% 7%;
+
+    /* Mode edges lifted for the night bridge. */
+    --mode-road: 215 20% 65%; /* #94A3B8 */
+    --mode-sea: 188 72% 47%; /* #22B8CF */
+    --mode-air: 244 68% 71%; /* #8B84E8 */
+
+    --success: 160 59% 41%; /* #2BA57C */
+    --success-foreground: 158 67% 5%;
+
+    --warning: 31 72% 50%; /* #D98324 */
+    --warning-foreground: 37 79% 6%;
+
+    --destructive: 352 72% 62%; /* #E4586A */
+    --destructive-foreground: 349 68% 6%;
+
+    --border: 214 38% 21%; /* #22344B */
+    --input: 214 38% 21%;
+    --ring: 211 72% 56%;
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+    border-style: solid;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Data face: tabular numerals so port codes, CBM, weights and dates align. */
+  .font-mono {
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* RouteDiagram is SVG, so its keyboard-focusable <g> nodes/edges can't use the
+     box-shadow focus ring the DOM controls share. Give them a real cobalt
+     outline on :focus-visible so the signature element is keyboard-navigable. */
+  .route-focusable {
+    outline: none;
+  }
+  .route-focusable:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+
+  /* Quality floor: honor the OS "reduce motion" setting. The console's job is
+     to read as a calm instrument, so we drop transitions/animations (shadcn
+     enter-exit, the skeleton pulse, the RouteDiagram edge/node tweens) rather
+     than merely shortening them, while leaving a hair of duration so state
+     changes remain perceptible. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
