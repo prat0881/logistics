@@ -286,4 +286,29 @@ describe("PointEditor", () => {
       );
     });
   });
+
+  it("uppercases a lowercased IATA code as it is typed (G9)", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response),
+      ),
+    );
+
+    renderWithProviders(
+      <PointEditor queryId={QUERY_ID} open type="AIRPORT" onSaved={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    const iataInput = await screen.findByLabelText(/iata code/i);
+    await user.clear(iataInput);
+    await user.type(iataInput, "lhr");
+    expect((iataInput as HTMLInputElement).value).toBe("LHR");
+  });
 });

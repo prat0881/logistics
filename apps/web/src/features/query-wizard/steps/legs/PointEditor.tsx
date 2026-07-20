@@ -279,6 +279,7 @@ export function PointEditor({
                       <Input
                         {...field}
                         value={field.value ?? ""}
+                        onChange={(e) => field.onChange(e.target.value.toUpperCase())}
                         placeholder="LHR"
                         maxLength={3}
                         className="font-mono uppercase"
@@ -302,6 +303,7 @@ export function PointEditor({
                       <Input
                         {...field}
                         value={field.value ?? ""}
+                        onChange={(e) => field.onChange(e.target.value.toUpperCase())}
                         placeholder="EGLL"
                         maxLength={4}
                         className="font-mono uppercase"
@@ -328,6 +330,7 @@ export function PointEditor({
                       <Input
                         {...field}
                         value={field.value ?? ""}
+                        onChange={(e) => field.onChange(e.target.value.toUpperCase())}
                         placeholder="GBFXT"
                         maxLength={5}
                         className="font-mono uppercase"

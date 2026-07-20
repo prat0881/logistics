@@ -96,4 +96,20 @@ describe("VesselPicker", () => {
     renderVesselPicker({ value: { id: "v1", name: "Pacific Star" }, onSelect: vi.fn() });
     expect(screen.getByText("Pacific Star")).toBeInTheDocument();
   });
+
+  it("restricts the vessel search to ACTIVE only (G7)", async () => {
+    let requested = "";
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/vessels")) requested = url;
+        return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+      }),
+    );
+    renderVesselPicker({ value: null, onSelect: vi.fn() });
+    await userEvent.click(screen.getByRole("button"));
+    await userEvent.type(screen.getByPlaceholderText(/search vessel/i), "pacific");
+    await waitFor(() => expect(requested).toContain("/api/vessels"));
+    expect(requested).toContain("status=ACTIVE");
+  });
 });
