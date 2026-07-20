@@ -567,4 +567,45 @@ describe("LegsStep", () => {
     const card = addr.closest("div.rounded-md") as HTMLElement;
     expect(card.getAttribute("title") ?? "").toMatch(/not used by any leg/i);
   });
+
+  it("shows route findings as a hover tooltip on the diagram edge (Legs rework step 4)", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ user: testUser }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve(detailWithLeg),
+          text: () => Promise.resolve(JSON.stringify(detailWithLeg)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=3` },
+    );
+    await navigateToStep4();
+
+    // legDto has null ready/target dates → create-phase C1 finding on leg L1.
+    await screen.findByText("L1", { selector: "span" });
+    const edge = document.querySelector(`[data-leg-id="${LEG_ID}"]`);
+    expect(edge).not.toBeNull();
+    const title = edge?.querySelector("title");
+    expect(title?.textContent ?? "").toMatch(/missing|ready date|target delivery/i);
+  });
 });

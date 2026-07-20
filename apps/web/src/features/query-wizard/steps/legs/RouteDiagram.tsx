@@ -177,6 +177,7 @@ export function RouteDiagram({
                 from={o}
                 to={d}
                 highlight={hl}
+                messages={highlights.legMsgs.get(leg.id) ?? []}
                 active={active}
                 reducedMotion={prefersReducedMotion}
                 onSelect={onSelect}
@@ -200,6 +201,7 @@ export function RouteDiagram({
                 x={at.x}
                 y={at.y}
                 highlight={hl}
+                messages={highlights.pointMsgs.get(p.id) ?? []}
                 orphan={orphan}
                 active={active}
                 reducedMotion={prefersReducedMotion}
@@ -225,6 +227,7 @@ function Edge({
   from,
   to,
   highlight,
+  messages,
   active,
   reducedMotion,
   onSelect,
@@ -233,6 +236,7 @@ function Edge({
   from: Pt;
   to: Pt;
   highlight: Highlight;
+  messages: string[];
   active: boolean;
   reducedMotion: boolean;
   onSelect?: (scope: FindingScope) => void;
@@ -294,6 +298,7 @@ function Edge({
       }
       aria-label={`Leg ${leg.legCode}${leg.mode ? ` (${leg.mode})` : ""}`}
     >
+      {messages.length > 0 && <title>{messages.join("\n")}</title>}
       {/* Fat invisible hit-target so thin edges are easy to click. */}
       <path d={path} stroke="transparent" strokeWidth={16} fill="none" />
       {/* Blocking edges get a soft destructive halo. */}
@@ -362,6 +367,7 @@ function Node({
   x,
   y,
   highlight,
+  messages,
   orphan,
   active,
   reducedMotion,
@@ -371,6 +377,7 @@ function Node({
   x: number;
   y: number;
   highlight: Highlight;
+  messages: string[];
   orphan: boolean;
   active: boolean;
   reducedMotion: boolean;
@@ -431,6 +438,7 @@ function Node({
       }
       aria-label={`${meta.label}${code ? ` ${code}` : ""} ${name}${orphan ? " (not used by any leg)" : ""}`}
     >
+      {messages.length > 0 && <title>{messages.join("\n")}</title>}
       {/* Active/selected gets a marigold halo behind the chip. */}
       {active && (
         <rect
@@ -654,6 +662,9 @@ interface Highlights {
   points: Map<string, Highlight>;
   legs: Map<string, Highlight>;
   orphans: Set<string>;
+  /** Finding messages per point/leg — rendered as the box's hover <title>. */
+  pointMsgs: Map<string, string[]>;
+  legMsgs: Map<string, string[]>;
 }
 
 /** Blocking outranks warning when several findings hit the same target. */
@@ -672,14 +683,21 @@ function resolveHighlights(
 ): Highlights {
   const points = new Map<string, Highlight>();
   const legs = new Map<string, Highlight>();
+  const pointMsgs = new Map<string, string[]>();
+  const legMsgs = new Map<string, string[]>();
 
-  const bumpPoint = (id: string, sev: "blocking" | "warning") => {
-    const cur = points.get(id)?.finding ?? null;
-    points.set(id, { finding: worse(cur, sev) });
+  const pushMsg = (map: Map<string, string[]>, id: string, msg: string) => {
+    const arr = map.get(id);
+    if (arr) arr.push(msg);
+    else map.set(id, [msg]);
   };
-  const bumpLeg = (id: string, sev: "blocking" | "warning") => {
-    const cur = legs.get(id)?.finding ?? null;
-    legs.set(id, { finding: worse(cur, sev) });
+  const bumpPoint = (id: string, f: Finding) => {
+    points.set(id, { finding: worse(points.get(id)?.finding ?? null, f.severity) });
+    pushMsg(pointMsgs, id, f.message);
+  };
+  const bumpLeg = (id: string, f: Finding) => {
+    legs.set(id, { finding: worse(legs.get(id)?.finding ?? null, f.severity) });
+    pushMsg(legMsgs, id, f.message);
   };
 
   // Cargo → the legs that carry it (via legCargo).
@@ -691,15 +709,14 @@ function resolveHighlights(
   }
 
   for (const f of findings) {
-    const sev = f.severity;
     const { type, id } = f.scope;
     if (!id) continue;
-    if (type === "point") bumpPoint(id, sev);
-    else if (type === "leg") bumpLeg(id, sev);
+    if (type === "point") bumpPoint(id, f);
+    else if (type === "leg") bumpLeg(id, f);
     else if (type === "cargo") {
-      for (const legId of legsByCargo.get(id) ?? []) bumpLeg(legId, sev);
+      for (const legId of legsByCargo.get(id) ?? []) bumpLeg(legId, f);
     }
-    // "query" / "field" scopes surface only in the FindingsPanel.
+    // "query" / "field" scopes surface only in the top notices strip.
   }
 
   // Orphans — points touched by no leg.
@@ -715,7 +732,7 @@ function resolveHighlights(
     for (const p of graph.points) if (!touched.has(p.id)) orphans.add(p.id);
   }
 
-  return { points, legs, orphans };
+  return { points, legs, orphans, pointMsgs, legMsgs };
 }
 
 // ── util ─────────────────────────────────────────────────────────────────────
