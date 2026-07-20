@@ -259,6 +259,11 @@ describe("PointEditor", () => {
     await user.clear(countryInput);
     await user.type(countryInput, "UK");
 
+    // Postal Code (mandatory for AIRPORT per #4)
+    const postalInput = screen.getByLabelText(/postal code/i);
+    await user.clear(postalInput);
+    await user.type(postalInput, "TW6 1EW");
+
     // Submit
     const saveBtn = screen.getByRole("button", { name: /save/i });
     await user.click(saveBtn);
@@ -310,5 +315,40 @@ describe("PointEditor", () => {
     await user.clear(iataInput);
     await user.type(iataInput, "lhr");
     expect((iataInput as HTMLInputElement).value).toBe("LHR");
+  });
+
+  it("blocks Save when a mandatory field for the type is missing (#4)", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <PointEditor queryId={QUERY_ID} open type="AIRPORT" onSaved={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    // Fill only name + IATA; leave the other AIRPORT-required fields (city/postal/country) empty
+    const nameInput = await screen.findByPlaceholderText(/airport name/i);
+    await user.type(nameInput, "Heathrow");
+    const iataInput = screen.getByLabelText(/iata code/i);
+    await user.type(iataInput, "LHR");
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    // Required messages appear and no POST is issued
+    await waitFor(() => expect(screen.getAllByText(/required/i).length).toBeGreaterThan(0));
+    const postCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        (url as string) === `/api/queries/${QUERY_ID}/points` &&
+        (init as RequestInit)?.method === "POST",
+    );
+    expect(postCall).toBeFalsy();
   });
 });

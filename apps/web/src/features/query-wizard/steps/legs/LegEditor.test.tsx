@@ -322,6 +322,11 @@ describe("LegEditor", () => {
     const checkbox = screen.getByRole("checkbox");
     await user.click(checkbox);
 
+    // Fill Ready Date + Target Delivery (mandatory per #4)
+    const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+    fireEvent.change(dateInputs[0], { target: { value: "2026-09-01T00:00" } });
+    fireEvent.change(dateInputs[1], { target: { value: "2026-09-15T00:00" } });
+
     // Submit
     const saveBtn = screen.getByRole("button", { name: /save leg/i });
     await user.click(saveBtn);
@@ -392,6 +397,11 @@ describe("LegEditor", () => {
     const checkbox = screen.getByRole("checkbox");
     await user.click(checkbox);
 
+    // Fill Ready Date + Target Delivery (mandatory per #4) so the request reaches the server
+    const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+    fireEvent.change(dateInputs[0], { target: { value: "2026-09-01T00:00" } });
+    fireEvent.change(dateInputs[1], { target: { value: "2026-09-15T00:00" } });
+
     // Submit
     const saveBtn = screen.getByRole("button", { name: /save leg/i });
     await user.click(saveBtn);
@@ -405,5 +415,41 @@ describe("LegEditor", () => {
 
     // Dialog should remain open
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("blocks Save when mandatory fields are missing (#4)", async () => {
+    const user = userEvent.setup();
+    const fetchMock = makeFetchMock({
+      "/legs": (_url, init) =>
+        Promise.resolve({
+          ok: true,
+          status: init?.method === "POST" ? 201 : 200,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve("{}"),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <LegEditor open detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
+    );
+    await screen.findByRole("dialog");
+
+    // Set origin + destination + mode, but leave cargo unchecked and dates empty
+    const selects = getHiddenSelects();
+    fireEvent.change(selects[0], { target: { value: PICKUP_POINT_ID } });
+    fireEvent.change(selects[1], { target: { value: DELIVERY_POINT_ID } });
+    fireEvent.change(selects[2], { target: { value: "ROAD" } });
+
+    await user.click(screen.getByRole("button", { name: /save leg/i }));
+
+    // Required messages appear (dates) and no POST is issued
+    await waitFor(() => expect(screen.getAllByText(/required/i).length).toBeGreaterThan(0));
+    const postCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        url === `/api/queries/${QUERY_ID}/legs` && (init as RequestInit)?.method === "POST",
+    );
+    expect(postCall).toBeFalsy();
   });
 });

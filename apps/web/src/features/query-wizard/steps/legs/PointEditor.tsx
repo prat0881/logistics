@@ -147,6 +147,18 @@ export function PointEditor({
   };
 
   const handleSubmit = form.handleSubmit(async (data) => {
+    // #4: hard-block save unless every mandatory field for this point type is present
+    // (overrides the earlier partial-draft allowance). Applies to Add and Edit.
+    const missing = (POINT_REQUIRED_FIELDS[activeType] as (keyof PointSaveInput)[]).filter(
+      (f) => {
+        const v = (data as Record<string, unknown>)[f as string];
+        return v == null || (typeof v === "string" && v.trim() === "");
+      },
+    );
+    if (missing.length) {
+      missing.forEach((f) => form.setError(f, { type: "required", message: "Required" }));
+      return;
+    }
     let saved: Record<string, unknown>;
     if (isEdit) {
       saved = await update(point!.id, data as PointUpdateInput);
