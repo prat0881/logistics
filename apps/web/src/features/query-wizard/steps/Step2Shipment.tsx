@@ -53,36 +53,43 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
     }
   }, [detail, form]);
 
-  const submitRef = useRef<() => Promise<QuerySaveInput | void>>();
+  const submitRef = useRef<StepSaveFn>();
 
   useEffect(() => {
-    submitRef.current = () => {
-      return new Promise<QuerySaveInput | void>((resolve, reject) => {
-        // Build the subset we care about from current form values
-        const values = form.getValues();
-        const payload: Partial<QuerySaveInput> = {
-          incoterms: values.incoterms,
-          shipmentDescription: values.shipmentDescription,
-          dgIndicator: values.dgIndicator ?? false,
-        };
+    submitRef.current = async (opts) => {
+      // G1: validate the fields this step owns before persisting. Previously Step 2
+      // read raw form values and PATCHed with no client-side validation at all.
+      const valid = await form.trigger(["incoterms", "shipmentDescription", "dgIndicator"]);
+      if (!valid) {
+        throw new Error("Please fix the highlighted fields.");
+      }
+      const values = form.getValues();
+      // U5: Incoterms is mandatory when advancing (Next).
+      if (opts?.enforceRequired && !values.incoterms) {
+        form.setError("incoterms", { type: "required", message: "Required to continue" });
+        throw new Error("Complete these required fields before continuing: Incoterms");
+      }
+      const payload: Partial<QuerySaveInput> = {
+        incoterms: values.incoterms,
+        shipmentDescription: values.shipmentDescription,
+        dgIndicator: values.dgIndicator ?? false,
+      };
 
-        if (!queryId) {
-          // Defensive guard: Step 2 should not be reachable before the query exists,
-          // but return payload anyway so the shell can decide.
-          resolve(payload as QuerySaveInput);
-          return;
-        }
+      if (!queryId) {
+        // Defensive guard: Step 2 should not be reachable before the query exists,
+        // but return payload anyway so the shell can decide.
+        return payload as QuerySaveInput;
+      }
 
-        // Self-persist: Step 2 patches directly, then resolves undefined so the shell
-        // skips its own PATCH (returning values would cause a double-write).
-        patch(queryId, payload as QuerySaveInput)
-          .then(() => resolve(undefined))
-          .catch(reject);
-      });
+      // Self-persist: Step 2 patches directly, then resolves undefined so the shell
+      // skips its own PATCH (returning values would cause a double-write).
+      await patch(queryId, payload as QuerySaveInput);
+      return undefined;
     };
 
-    registerSave(async () => {
-      if (submitRef.current) return submitRef.current();
+    registerSave((opts) => {
+      if (submitRef.current) return submitRef.current(opts);
+      return Promise.resolve();
     });
   }, [registerSave, form, queryId, patch]);
 
