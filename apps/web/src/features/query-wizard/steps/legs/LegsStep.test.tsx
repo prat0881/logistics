@@ -518,4 +518,53 @@ describe("LegsStep", () => {
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
     expect(screen.getByDisplayValue("Sender HQ")).toBeInTheDocument();
   });
+
+  it("hides the Validate button and shows a notices strip + per-box hover (Legs rework)", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ user: testUser }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve(baseDetail),
+          text: () => Promise.resolve(JSON.stringify(baseDetail)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=3` },
+    );
+    await navigateToStep4();
+
+    // (1) the "Validate route" button is gone (validation runs on Save/Next now)
+    await screen.findByText(/123 Main St/);
+    expect(screen.queryByRole("button", { name: /validate route/i })).not.toBeInTheDocument();
+
+    // (2) baseDetail has unused points + unassigned cargo → create-phase errors →
+    // the notices strip prompts hovering the boxes
+    await waitFor(() =>
+      expect(screen.getByText(/hover the highlighted boxes/i)).toBeInTheDocument(),
+    );
+
+    // (3) the problematic PICKUP point card carries a hover (title) message
+    const addr = screen.getByText(/123 Main St/);
+    const card = addr.closest("div.rounded-md") as HTMLElement;
+    expect(card.getAttribute("title") ?? "").toMatch(/not used by any leg/i);
+  });
 });

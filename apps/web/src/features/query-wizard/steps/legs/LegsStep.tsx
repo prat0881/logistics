@@ -2,7 +2,6 @@ import { useState, type ComponentProps } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FindingsPanel } from "@/components/FindingsPanel";
 import { useWizard } from "../../WizardContext";
 import { useSaveQuery } from "../../useQueryDetail";
 import { useLegs } from "./useLegs";
@@ -10,14 +9,14 @@ import { usePoints } from "./usePoints";
 import { LegEditor } from "./LegEditor";
 import { PointEditor } from "./PointEditor";
 import { RouteDiagram } from "./RouteDiagram";
-import { useRouteFindings } from "./useRouteFindings";
-import type { Finding, FindingScope, QueryDetail, QueryLegDto, QueryPointDto } from "@svyft/shared";
+import { useRouteFindings, type GroupedFindings } from "./useRouteFindings";
+import type { FindingScope, QueryDetail, QueryLegDto, QueryPointDto } from "@svyft/shared";
+
+// Legs step index (0-based) matching STEPS array: client=0, shipment=1, cargo=2, legs=3, notes=4
+const LEGS_STEP_INDEX = 3;
 
 /** Get point name/city for display */
-function pointName(
-  pointId: string | null | undefined,
-  points: QueryPointDto[],
-): string {
+function pointName(pointId: string | null | undefined, points: QueryPointDto[]): string {
   if (!pointId) return "—";
   const p = points.find((pt) => pt.id === pointId);
   return p?.name ?? p?.city ?? pointId;
@@ -35,140 +34,83 @@ function pointAddress(p: QueryPointDto): string {
   return parts.length ? parts.join(" · ") : "No address yet";
 }
 
-/**
- * RouteSection — the signature RouteDiagram + live isomorphic findings.
- *
- * Split into its own component so `useRouteFindings` (which needs a concrete
- * `QueryDetail`) only mounts once the query exists — before the first save,
- * `LegsStep` shows the "+ Add leg" mint flow instead.
- *
- * The diagram is a pure function of `detail`, so it (and the findings) recompute
- * automatically after every point / leg / cargo mutation refreshes the wizard.
- * Client-side findings are instant; "Validate route" adds the authoritative
- * server pass. Clicking a node/edge cross-highlights the FindingsPanel and vice
- * versa via a shared `selected` scope.
- */
-function RouteSection({ detail }: { detail: QueryDetail }) {
-  const { all, validateOnServer, validating, serverError } = useRouteFindings(detail);
-  const [selected, setSelected] = useState<FindingScope | null>(null);
-
-  const selectedLegId = selected?.type === "leg" ? selected.id ?? null : null;
-  const selectedPointId = selected?.type === "point" ? selected.id ?? null : null;
-
-  const onFindingClick = (f: Finding) => setSelected(f.scope);
-
+/** Small inline "⚠ N" indicator shown on a box that has route findings. */
+function WarningBadge({ count }: { count: number }) {
   return (
-    <div className="space-y-3">
-      <RouteDiagram
-        detail={detail}
-        findings={all}
-        selectedLegId={selectedLegId}
-        selectedPointId={selectedPointId}
-        onSelect={setSelected}
-      />
+    <span className="inline-flex items-center gap-1 rounded-sm bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
+      ⚠ {count}
+    </span>
+  );
+}
 
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">
-            Live checks run as you build. Validate against the server before you
-            create the query.
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void validateOnServer()}
-            disabled={validating}
-          >
-            {validating ? "Validating…" : "Validate route"}
-          </Button>
-        </div>
-        {serverError && (
-          <p className="text-xs text-destructive">{serverError}</p>
-        )}
-      </div>
-
-      <FindingsPanel phase="draft" findings={all} onFindingClick={onFindingClick} />
+/**
+ * RouteNoticesStrip — the top summary strip (replaces the old FindingsPanel list).
+ * Shows a one-line count + the query-scoped findings that don't map to a single box
+ * (e.g. "At least one Pickup point is required"). Per-box detail lives on hover.
+ */
+function RouteNoticesStrip({ grouped }: { grouped: GroupedFindings }) {
+  if (grouped.blocking.length === 0) return null;
+  const n = grouped.blocking.length;
+  return (
+    <div
+      role="alert"
+      className="space-y-1 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+    >
+      <p className="font-medium">
+        ⚠ {n} issue{n === 1 ? "" : "s"} to resolve — hover the highlighted boxes for details.
+      </p>
+      {grouped.queryScoped.length > 0 && (
+        <ul className="list-disc space-y-0.5 pl-5">
+          {grouped.queryScoped.map((f, i) => (
+            <li key={i}>
+              <span className="mr-1 font-mono text-xs">{f.rule}</span>
+              {f.message}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
 /**
- * LegsStep — Step 4 body.
+ * LegsStepBody — Step 4 content once the query exists (detail is guaranteed).
  *
- * Displays the leg list from `detail.legs` with:
- *   - legCode (font-mono), mode badge, origin→destination point names
- *   - assigned cargo count
- *   - rollup.totalPackages / totalCbm / totalGrossWt (font-mono tabular-nums)
- *   - status badge
- *   - edit / remove actions
- *
- * "+ Add leg" opens <LegEditor>.
- * Placeholder slots for route diagram (Task 12) and live findings (Task 12).
+ * Layout (top→bottom): notices strip · Points · Legs · Route diagram. Findings run
+ * live at create-phase (`useRouteFindings`); the top strip carries the summary +
+ * query-scoped findings, and each Point/Leg card shows a ⚠ badge + hover tooltip
+ * for the findings on that box. The "Validate route" button is gone — validation
+ * runs on Save/Next (the Next-gate lives in the wizard shell).
  */
-// Legs step index (0-based) matching STEPS array: client=0, shipment=1, cargo=2, legs=3, notes=4
-const LEGS_STEP_INDEX = 3;
-
-export function LegsStep() {
-  const { detail, queryId } = useWizard();
-  const navigate = useNavigate();
-  const { create } = useSaveQuery();
-
-  // Only wire up leg/point mutations when we have a real queryId
-  const { remove } = useLegs(queryId ?? "NOOP");
-  const { remove: removePoint } = usePoints(queryId ?? "NOOP");
-
+function LegsStepBody({ detail, queryId }: { detail: QueryDetail; queryId: string }) {
+  const { remove } = useLegs(queryId);
+  const { remove: removePoint } = usePoints(queryId);
+  const { all, grouped } = useRouteFindings(detail);
+  const [selected, setSelected] = useState<FindingScope | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingLeg, setEditingLeg] = useState<QueryLegDto | undefined>(undefined);
-  const [minting, setMinting] = useState(false);
   const [pointEditorOpen, setPointEditorOpen] = useState(false);
   const [editingPoint, setEditingPoint] = useState<QueryPointDto | undefined>(undefined);
 
-  const legs = detail?.legs ?? [];
-  const points = detail?.points ?? [];
+  const legs = detail.legs;
+  const points = detail.points;
+
+  const selectedLegId = selected?.type === "leg" ? selected.id ?? null : null;
+  const selectedPointId = selected?.type === "point" ? selected.id ?? null : null;
 
   const handleRemove = async (legId: string) => {
-    if (!queryId) return; // guard: no mutations without a real id
-    const ok = window.confirm("Remove this leg?");
-    if (!ok) return;
+    if (!window.confirm("Remove this leg?")) return;
     await remove(legId);
   };
-
   const handleEdit = (leg: QueryLegDto) => {
     setEditingLeg(leg);
     setEditorOpen(true);
   };
-
-  /**
-   * handleAddLeg — spec §5 / §7.4.3: if the query has not been saved yet (isNew),
-   * mint it via POST /api/queries first, then navigate to /queries/:id?step=3.
-   * The navigation causes WizardProvider to re-render with a real queryId, making
-   * LegEditor fully usable. If the query already exists, open the editor directly.
-   */
-  const handleAddLeg = async () => {
-    if (!queryId) {
-      // Mint the query (empty body is valid for a DRAFT)
-      setMinting(true);
-      try {
-        const d = await create({});
-        navigate(`/queries/${d.id}?step=${LEGS_STEP_INDEX}`, { replace: true });
-        // After navigation WizardProvider will have a real queryId — editor can open
-        // on the newly-navigated page. We don't set editorOpen here because this
-        // component will unmount/remount after navigate.
-      } finally {
-        setMinting(false);
-      }
-      return;
-    }
+  const handleAddLeg = () => {
     setEditingLeg(undefined);
     setEditorOpen(true);
   };
-
-  const handleEditorSaved = () => {
-    setEditorOpen(false);
-    setEditingLeg(undefined);
-  };
-
-  const handleEditorClose = () => {
+  const closeLegEditor = () => {
     setEditorOpen(false);
     setEditingLeg(undefined);
   };
@@ -177,65 +119,48 @@ export function LegsStep() {
     setEditingPoint(undefined);
     setPointEditorOpen(true);
   };
-
   const handleEditPoint = (pt: QueryPointDto) => {
     setEditingPoint(pt);
     setPointEditorOpen(true);
   };
-
   const handleRemovePoint = async (pointId: string) => {
-    if (!queryId) return;
     if (!window.confirm("Remove this point?")) return;
     await removePoint(pointId);
   };
-
-  const handlePointSaved = () => {
-    setPointEditorOpen(false);
-    setEditingPoint(undefined);
-  };
-
-  const handlePointClose = () => {
+  const closePointEditor = () => {
     setPointEditorOpen(false);
     setEditingPoint(undefined);
   };
 
   return (
     <div className="space-y-4 p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Legs / Route</h2>
-        <Button size="sm" onClick={handleAddLeg} disabled={minting}>
-          {minting ? "Saving…" : "+ Add leg"}
-        </Button>
-      </div>
+      {/* Notices strip (top) */}
+      <RouteNoticesStrip grouped={grouped} />
 
-      {/* Signature RouteDiagram + live isomorphic findings (mounted once the
-          query exists; the pre-save mint flow lives on "+ Add leg"). */}
-      {detail && <RouteSection detail={detail} />}
-
-      {/* Points list (U6) — each point's type + name + address, editable/removable.
-          Previously points had no on-screen list and no edit affordance: PointEditor's
-          edit mode + usePoints.update existed but were unreachable from the UI, and
-          leg rows showed only the point name (never the address). */}
-      {detail && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Points</h3>
-            {queryId && (
-              <Button size="sm" variant="outline" onClick={handleAddPoint}>
-                + Add point
-              </Button>
-            )}
+      {/* Points */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Points</h3>
+          <Button size="sm" variant="outline" onClick={handleAddPoint}>
+            + Add point
+          </Button>
+        </div>
+        {points.length === 0 ? (
+          <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+            No points yet. Add one here, or via a leg's “+ New point”.
           </div>
-          {points.length === 0 ? (
-            <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-              No points yet. Add one here, or via a leg's “+ New point”.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {points.map((pt) => (
+        ) : (
+          <div className="space-y-2">
+            {points.map((pt) => {
+              const pf = grouped.byPoint.get(pt.id) ?? [];
+              const hasErr = pf.length > 0;
+              return (
                 <div
                   key={pt.id}
-                  className="rounded-md border p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+                  title={hasErr ? pf.map((f) => f.message).join("\n") : undefined}
+                  className={`rounded-md border p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${
+                    hasErr ? "border-destructive" : ""
+                  }`}
                 >
                   <div className="flex flex-col gap-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -243,146 +168,182 @@ export function LegsStep() {
                         {pt.type}
                       </Badge>
                       <span className="text-sm font-medium truncate">{pt.name ?? "—"}</span>
+                      {hasErr && <WarningBadge count={pf.length} />}
                     </div>
                     <span className="text-xs text-muted-foreground truncate">
                       {pointAddress(pt)}
                     </span>
                   </div>
-                  {queryId && (
-                    <div className="flex gap-1 shrink-0">
-                      <Button variant="outline" size="sm" onClick={() => handleEditPoint(pt)}>
-                        Edit
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => handleRemovePoint(pt.id)}
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Leg list */}
-      {legs.length === 0 ? (
-        <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Add the first leg to build the route.
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {legs.map((leg) => {
-            const originName = pointName(leg.originPointId, points);
-            const destName = pointName(leg.destinationPointId, points);
-            const cargoCount = leg.assignedCargoIds.length;
-            const rollup = leg.rollup;
-
-            return (
-              <div
-                key={leg.id}
-                className="rounded-md border p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
-              >
-                {/* Left side: leg info */}
-                <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-                  {/* Leg code */}
-                  <span className="font-mono text-sm font-semibold shrink-0">
-                    {leg.legCode}
-                  </span>
-
-                  {/* Mode badge */}
-                  {leg.mode && (
-                    <Badge variant="outline" className="shrink-0 text-xs">
-                      {leg.mode}
-                    </Badge>
-                  )}
-
-                  {/* Origin → Destination */}
-                  <span className="text-sm truncate">
-                    <span>{originName}</span>
-                    <span className="mx-1 text-muted-foreground">→</span>
-                    <span>{destName}</span>
-                  </span>
-
-                  {/* Status */}
-                  <Badge
-                    variant={leg.status === "READY_FOR_RFQ" ? "success" : "secondary"}
-                    className="shrink-0 text-xs"
-                  >
-                    {leg.status}
-                  </Badge>
-                </div>
-
-                {/* Right side: metrics + actions */}
-                <div className="flex flex-wrap items-center gap-3 shrink-0">
-                  {/* Cargo count */}
-                  <span className="text-xs text-muted-foreground">
-                    {cargoCount} cargo
-                  </span>
-
-                  {/* Rollup metrics */}
-                  <span className="font-mono tabular-nums text-xs text-muted-foreground">
-                    {rollup.totalPackages} pkg
-                  </span>
-                  <span className="font-mono tabular-nums text-xs text-muted-foreground">
-                    {fmtNum(rollup.totalCbm, 4)} CBM
-                  </span>
-                  <span className="font-mono tabular-nums text-xs text-muted-foreground">
-                    {fmtNum(rollup.totalGrossWt, 2)} kg
-                  </span>
-
-                  {/* Actions */}
-                  <div className="flex gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleEdit(leg)}
-                    >
+                  <div className="flex gap-1 shrink-0">
+                    <Button variant="outline" size="sm" onClick={() => handleEditPoint(pt)}>
                       Edit
                     </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleRemove(leg.id)}
-                    >
+                    <Button variant="destructive" size="sm" onClick={() => handleRemovePoint(pt.id)}>
                       Remove
                     </Button>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Legs */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Legs</h3>
+          <Button size="sm" onClick={handleAddLeg}>
+            + Add leg
+          </Button>
         </div>
-      )}
+        {legs.length === 0 ? (
+          <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+            Add the first leg to build the route.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {legs.map((leg) => {
+              const lf = grouped.byLeg.get(leg.id) ?? [];
+              const hasErr = lf.length > 0;
+              const originName = pointName(leg.originPointId, points);
+              const destName = pointName(leg.destinationPointId, points);
+              const cargoCount = leg.assignedCargoIds.length;
+              const rollup = leg.rollup;
 
-      {/* LegEditor dialog — only mounted when we have a real queryId and detail */}
-      {detail && queryId && (
-        <LegEditor
-          open={editorOpen}
-          leg={editingLeg}
+              return (
+                <div
+                  key={leg.id}
+                  title={hasErr ? lf.map((f) => f.message).join("\n") : undefined}
+                  className={`rounded-md border p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${
+                    hasErr ? "border-destructive" : ""
+                  }`}
+                >
+                  {/* Left side: leg info */}
+                  <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+                    <span className="font-mono text-sm font-semibold shrink-0">{leg.legCode}</span>
+                    {leg.mode && (
+                      <Badge variant="outline" className="shrink-0 text-xs">
+                        {leg.mode}
+                      </Badge>
+                    )}
+                    <span className="text-sm truncate">
+                      <span>{originName}</span>
+                      <span className="mx-1 text-muted-foreground">→</span>
+                      <span>{destName}</span>
+                    </span>
+                    <Badge
+                      variant={leg.status === "READY_FOR_RFQ" ? "success" : "secondary"}
+                      className="shrink-0 text-xs"
+                    >
+                      {leg.status}
+                    </Badge>
+                    {hasErr && <WarningBadge count={lf.length} />}
+                  </div>
+
+                  {/* Right side: metrics + actions */}
+                  <div className="flex flex-wrap items-center gap-3 shrink-0">
+                    <span className="text-xs text-muted-foreground">{cargoCount} cargo</span>
+                    <span className="font-mono tabular-nums text-xs text-muted-foreground">
+                      {rollup.totalPackages} pkg
+                    </span>
+                    <span className="font-mono tabular-nums text-xs text-muted-foreground">
+                      {fmtNum(rollup.totalCbm, 4)} CBM
+                    </span>
+                    <span className="font-mono tabular-nums text-xs text-muted-foreground">
+                      {fmtNum(rollup.totalGrossWt, 2)} kg
+                    </span>
+                    <div className="flex gap-1">
+                      <Button variant="outline" size="sm" onClick={() => handleEdit(leg)}>
+                        Edit
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => handleRemove(leg.id)}>
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Route diagram (bottom) — the signature SVG; findings cross-highlight on click. */}
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold">Route</h3>
+        <RouteDiagram
           detail={detail}
-          queryId={queryId}
-          onSaved={handleEditorSaved}
-          onClose={handleEditorClose}
+          findings={all}
+          selectedLegId={selectedLegId}
+          selectedPointId={selectedPointId}
+          onSelect={setSelected}
         />
-      )}
+      </section>
 
-      {/* PointEditor dialog (U6) — create or edit a point directly from the list.
-          Keyed on the point id so the form re-initialises when switching points. */}
-      {detail && queryId && (
-        <PointEditor
-          key={editingPoint?.id ?? "new-point"}
-          queryId={queryId}
-          open={pointEditorOpen}
-          point={editingPoint as unknown as ComponentProps<typeof PointEditor>["point"]}
-          onSaved={handlePointSaved}
-          onClose={handlePointClose}
-        />
-      )}
+      {/* LegEditor dialog */}
+      <LegEditor
+        open={editorOpen}
+        leg={editingLeg}
+        detail={detail}
+        queryId={queryId}
+        onSaved={closeLegEditor}
+        onClose={closeLegEditor}
+      />
+
+      {/* PointEditor dialog (U6) — keyed on the point id so the form re-initialises. */}
+      <PointEditor
+        key={editingPoint?.id ?? "new-point"}
+        queryId={queryId}
+        open={pointEditorOpen}
+        point={editingPoint as unknown as ComponentProps<typeof PointEditor>["point"]}
+        onSaved={closePointEditor}
+        onClose={closePointEditor}
+      />
+    </div>
+  );
+}
+
+/**
+ * LegsStep — Step 4. Thin wrapper: before the query is minted (new query) it shows
+ * the "+ Add leg" mint entry point; once `detail` exists it renders LegsStepBody
+ * (which owns the findings feed + all the point/leg UI).
+ *
+ * §5 / §7.4.3: the first persist mints the query — here "+ Add leg" on a brand-new
+ * query POSTs an empty DRAFT then navigates to /queries/:id?step=3, which re-renders
+ * with a real queryId.
+ */
+export function LegsStep() {
+  const { detail, queryId } = useWizard();
+  const navigate = useNavigate();
+  const { create } = useSaveQuery();
+  const [minting, setMinting] = useState(false);
+
+  if (detail && queryId) {
+    return <LegsStepBody detail={detail} queryId={queryId} />;
+  }
+
+  const handleMint = async () => {
+    setMinting(true);
+    try {
+      const d = await create({});
+      navigate(`/queries/${d.id}?step=${LEGS_STEP_INDEX}`, { replace: true });
+    } finally {
+      setMinting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold">Legs / Route</h2>
+        <Button size="sm" onClick={handleMint} disabled={minting}>
+          {minting ? "Saving…" : "+ Add leg"}
+        </Button>
+      </div>
+      <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+        Add the first leg to build the route.
+      </div>
     </div>
   );
 }
