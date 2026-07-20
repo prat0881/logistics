@@ -1,9 +1,10 @@
-import { useState, type ComponentProps } from "react";
+import { useEffect, useState, type ComponentProps } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWizard } from "../../WizardContext";
 import { useSaveQuery } from "../../useQueryDetail";
+import type { StepSaveFn } from "../Step1Client";
 import { useLegs } from "./useLegs";
 import { usePoints } from "./usePoints";
 import { LegEditor } from "./LegEditor";
@@ -82,11 +83,36 @@ function RouteNoticesStrip({ grouped }: { grouped: GroupedFindings }) {
  * for the findings on that box. The "Validate route" button is gone — validation
  * runs on Save/Next (the Next-gate lives in the wizard shell).
  */
-function LegsStepBody({ detail, queryId }: { detail: QueryDetail; queryId: string }) {
+function LegsStepBody({
+  detail,
+  queryId,
+  registerSave,
+}: {
+  detail: QueryDetail;
+  queryId: string;
+  registerSave: (fn: StepSaveFn) => void;
+}) {
   const { remove } = useLegs(queryId);
   const { remove: removePoint } = usePoints(queryId);
-  const { all, grouped } = useRouteFindings(detail);
+  const { all, grouped, validateOnServer } = useRouteFindings(detail);
   const [selected, setSelected] = useState<FindingScope | null>(null);
+
+  // Next-gate (#3): Save/Next run the authoritative server validate; Next blocks
+  // advancing when any create-phase route finding is blocking. Save still resolves —
+  // legs/points persist eagerly, so there is nothing to write from here.
+  useEffect(() => {
+    registerSave(async (opts) => {
+      const serverFindings = await validateOnServer();
+      if (opts?.enforceRequired) {
+        const blocked =
+          serverFindings.some((f) => f.severity === "blocking") || grouped.blocking.length > 0;
+        if (blocked) {
+          throw new Error("Resolve the route issues on this screen before continuing.");
+        }
+      }
+      return undefined;
+    });
+  }, [registerSave, validateOnServer, grouped]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingLeg, setEditingLeg] = useState<QueryLegDto | undefined>(undefined);
   const [pointEditorOpen, setPointEditorOpen] = useState(false);
@@ -313,14 +339,21 @@ function LegsStepBody({ detail, queryId }: { detail: QueryDetail; queryId: strin
  * query POSTs an empty DRAFT then navigates to /queries/:id?step=3, which re-renders
  * with a real queryId.
  */
-export function LegsStep() {
+export function LegsStep({ registerSave }: { registerSave: (fn: StepSaveFn) => void }) {
   const { detail, queryId } = useWizard();
   const navigate = useNavigate();
   const { create } = useSaveQuery();
   const [minting, setMinting] = useState(false);
 
+  const hasBody = Boolean(detail && queryId);
+  // Pre-mint / loading: register a no-op so the shell's Save/Next don't invoke a
+  // stale step fn. Once detail exists, LegsStepBody registers the real Next-gate.
+  useEffect(() => {
+    if (!hasBody) registerSave(() => Promise.resolve());
+  }, [hasBody, registerSave]);
+
   if (detail && queryId) {
-    return <LegsStepBody detail={detail} queryId={queryId} />;
+    return <LegsStepBody detail={detail} queryId={queryId} registerSave={registerSave} />;
   }
 
   const handleMint = async () => {

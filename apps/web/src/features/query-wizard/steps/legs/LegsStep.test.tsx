@@ -148,6 +148,22 @@ const legDto = {
 
 const detailWithLeg = { ...baseDetail, legs: [legDto] };
 
+// A fully-valid route (passes create-phase validateRoute): complete points, one
+// PICKUP→DELIVERY leg with dates == query dates, cargo assigned + volumeCbm set.
+const RD = "2026-09-01T00:00:00+00:00";
+const TD = "2026-09-15T00:00:00+00:00";
+const validRouteDetail = {
+  ...baseDetail,
+  readyDate: RD,
+  targetDelivery: TD,
+  points: [
+    { ...baseDetail.points[0], contactName: "Sender", contactPhone: "+6591234500", contactEmail: "sender@x.com" },
+    { ...baseDetail.points[1], contactName: "Receiver", contactPhone: "+6591234501" },
+  ],
+  cargo: [{ ...baseDetail.cargo[0], volumeCbm: "0.024" }],
+  legs: [{ ...legDto, readyDate: RD, targetDelivery: TD }],
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -607,5 +623,58 @@ describe("LegsStep", () => {
     expect(edge).not.toBeNull();
     const title = edge?.querySelector("title");
     expect(title?.textContent ?? "").toMatch(/missing|ready date|target delivery/i);
+  });
+
+  it("blocks Next from Step 4 when the route has errors (Legs rework step 5)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url.includes("/validate")) return { status: 200, body: { findings: [] } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: baseDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=3` },
+    );
+    await navigateToStep4();
+    await screen.findByText(/123 Main St/);
+
+    await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+
+    // Blocked — error shown, still on Step 4 (Step-5 Internal Notes not visible)
+    await waitFor(() => expect(screen.getByText(/before continuing/i)).toBeInTheDocument());
+    expect(screen.queryByText(/internal notes/i)).not.toBeInTheDocument();
+  });
+
+  it("Next from Step 4 advances when the route is valid (Legs rework step 5)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url.includes("/validate")) return { status: 200, body: { findings: [] } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: validRouteDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=3` },
+    );
+    await navigateToStep4();
+    await screen.findByText(/123 Main St/);
+
+    await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+
+    // Advances to Step 5 — the Internal Notes field appears
+    await waitFor(() => expect(screen.getByText(/internal notes/i)).toBeInTheDocument());
   });
 });

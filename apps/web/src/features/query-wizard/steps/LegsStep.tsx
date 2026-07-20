@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import type { StepSaveFn } from "./Step1Client";
 import { LegsStep as LegsStepImpl } from "./legs/LegsStep";
 
@@ -7,14 +6,10 @@ interface LegsStepProps {
 }
 
 /**
- * Step 4 — Legs / Route.
- * Delegates to the full implementation in ./legs/LegsStep.
- * registerSave is a no-op here — leg writes happen immediately via useLegs.
+ * Step 4 — Legs / Route. Thin pass-through to the full implementation in
+ * ./legs/LegsStep, which registers the Save/Next validation gate: Save persists +
+ * surfaces route findings; Next blocks advancing on any create-phase route error.
  */
 export function LegsStep({ registerSave }: LegsStepProps) {
-  useEffect(() => {
-    registerSave(async () => undefined);
-  }, [registerSave]);
-
-  return <LegsStepImpl />;
+  return <LegsStepImpl registerSave={registerSave} />;
 }
