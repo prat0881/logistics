@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import type { QueryDetail } from "@svyft/shared";
-import { useRouteFindings } from "./useRouteFindings";
+import type { QueryDetail, Finding } from "@svyft/shared";
+import { useRouteFindings, groupFindingsByScope } from "./useRouteFindings";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -141,5 +141,37 @@ describe("useRouteFindings", () => {
     expect(result.current.validating).toBe(false);
     // At least one finding returned
     expect((returned as unknown[]).length).toBeGreaterThan(0);
+  });
+});
+
+describe("groupFindingsByScope", () => {
+  const legs = [
+    { id: "leg1", assignedCargoIds: ["cargoA"] },
+    { id: "leg2", assignedCargoIds: ["cargoA", "cargoB"] },
+  ];
+
+  it("groups leg/point/query findings and fans cargo findings onto carrying legs", () => {
+    const findings: Finding[] = [
+      { rule: "C1", severity: "blocking", scope: { type: "leg", id: "leg1" }, message: "leg1 issue" },
+      { rule: "R8", severity: "blocking", scope: { type: "point", id: "p1" }, message: "point issue" },
+      { rule: "R5", severity: "blocking", scope: { type: "query" }, message: "need a pickup" },
+      { rule: "R1", severity: "blocking", scope: { type: "cargo", id: "cargoA" }, message: "cargoA chain" },
+    ];
+    const g = groupFindingsByScope(findings, legs);
+    // leg1 = its own C1 + the cargoA fan-out; leg2 = cargoA fan-out only
+    expect(g.byLeg.get("leg1")?.map((f) => f.rule)).toEqual(["C1", "R1"]);
+    expect(g.byLeg.get("leg2")?.map((f) => f.rule)).toEqual(["R1"]);
+    expect(g.byPoint.get("p1")?.map((f) => f.rule)).toEqual(["R8"]);
+    expect(g.queryScoped.map((f) => f.rule)).toEqual(["R5"]);
+    expect(g.blocking).toHaveLength(4);
+  });
+
+  it("puts a cargo finding with no carrying leg into queryScoped", () => {
+    const findings: Finding[] = [
+      { rule: "R3", severity: "blocking", scope: { type: "cargo", id: "orphan" }, message: "x" },
+    ];
+    const g = groupFindingsByScope(findings, legs);
+    expect(g.queryScoped.map((f) => f.rule)).toEqual(["R3"]);
+    expect(g.byLeg.size).toBe(0);
   });
 });
