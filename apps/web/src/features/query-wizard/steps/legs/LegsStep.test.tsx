@@ -454,10 +454,12 @@ describe("LegsStep", () => {
 
     // Wait for the leg to appear (scope to the list <span>; the RouteDiagram
     // also renders "L1" as an SVG edge label).
-    await screen.findByText("L1", { selector: "span" });
+    const legSpan = await screen.findByText("L1", { selector: "span" });
 
-    // Click Remove
-    const removeBtn = screen.getByRole("button", { name: /remove/i });
+    // Click the leg's Remove — scope to the leg row, since points now also
+    // render Remove buttons (U6).
+    const legRow = legSpan.closest("div.rounded-md") as HTMLElement;
+    const removeBtn = within(legRow).getByRole("button", { name: /remove/i });
     await user.click(removeBtn);
 
     // Verify DELETE was called
@@ -469,5 +471,51 @@ describe("LegsStep", () => {
       );
       expect(deleteCall).toBeTruthy();
     });
+  });
+
+  it("lists points with their address and lets you edit an existing one (U6)", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ user: testUser }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve(baseDetail),
+          text: () => Promise.resolve(JSON.stringify(baseDetail)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=3` },
+    );
+
+    await navigateToStep4();
+
+    // (1) the pickup point's street address is now shown on the main screen
+    const addr = await screen.findByText(/123 Main St/);
+
+    // (2) that point row has an Edit button that opens PointEditor pre-filled
+    const pointRow = addr.closest("div.rounded-md") as HTMLElement;
+    expect(pointRow).not.toBeNull();
+    await user.click(within(pointRow).getByRole("button", { name: /edit/i }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    expect(screen.getByDisplayValue("Sender HQ")).toBeInTheDocument();
   });
 });

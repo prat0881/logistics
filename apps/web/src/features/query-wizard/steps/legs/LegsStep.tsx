@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,9 @@ import { FindingsPanel } from "@/components/FindingsPanel";
 import { useWizard } from "../../WizardContext";
 import { useSaveQuery } from "../../useQueryDetail";
 import { useLegs } from "./useLegs";
+import { usePoints } from "./usePoints";
 import { LegEditor } from "./LegEditor";
+import { PointEditor } from "./PointEditor";
 import { RouteDiagram } from "./RouteDiagram";
 import { useRouteFindings } from "./useRouteFindings";
 import type { Finding, FindingScope, QueryDetail, QueryLegDto, QueryPointDto } from "@svyft/shared";
@@ -24,6 +26,13 @@ function pointName(
 /** Format a number for tabular display */
 function fmtNum(n: number, decimals = 2): string {
   return n.toFixed(decimals);
+}
+
+/** Compact one-line address/identity for a point row (U6). */
+function pointAddress(p: QueryPointDto): string {
+  const code = p.iataCode ?? p.unLocode ?? p.icaoCode ?? null;
+  const parts = [code, p.streetAddress, p.city, p.postalCode, p.country].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "No address yet";
 }
 
 /**
@@ -104,12 +113,15 @@ export function LegsStep() {
   const navigate = useNavigate();
   const { create } = useSaveQuery();
 
-  // Only wire up leg mutations when we have a real queryId
+  // Only wire up leg/point mutations when we have a real queryId
   const { remove } = useLegs(queryId ?? "NOOP");
+  const { remove: removePoint } = usePoints(queryId ?? "NOOP");
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingLeg, setEditingLeg] = useState<QueryLegDto | undefined>(undefined);
   const [minting, setMinting] = useState(false);
+  const [pointEditorOpen, setPointEditorOpen] = useState(false);
+  const [editingPoint, setEditingPoint] = useState<QueryPointDto | undefined>(undefined);
 
   const legs = detail?.legs ?? [];
   const points = detail?.points ?? [];
@@ -161,6 +173,32 @@ export function LegsStep() {
     setEditingLeg(undefined);
   };
 
+  const handleAddPoint = () => {
+    setEditingPoint(undefined);
+    setPointEditorOpen(true);
+  };
+
+  const handleEditPoint = (pt: QueryPointDto) => {
+    setEditingPoint(pt);
+    setPointEditorOpen(true);
+  };
+
+  const handleRemovePoint = async (pointId: string) => {
+    if (!queryId) return;
+    if (!window.confirm("Remove this point?")) return;
+    await removePoint(pointId);
+  };
+
+  const handlePointSaved = () => {
+    setPointEditorOpen(false);
+    setEditingPoint(undefined);
+  };
+
+  const handlePointClose = () => {
+    setPointEditorOpen(false);
+    setEditingPoint(undefined);
+  };
+
   return (
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
@@ -173,6 +211,63 @@ export function LegsStep() {
       {/* Signature RouteDiagram + live isomorphic findings (mounted once the
           query exists; the pre-save mint flow lives on "+ Add leg"). */}
       {detail && <RouteSection detail={detail} />}
+
+      {/* Points list (U6) — each point's type + name + address, editable/removable.
+          Previously points had no on-screen list and no edit affordance: PointEditor's
+          edit mode + usePoints.update existed but were unreachable from the UI, and
+          leg rows showed only the point name (never the address). */}
+      {detail && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Points</h3>
+            {queryId && (
+              <Button size="sm" variant="outline" onClick={handleAddPoint}>
+                + Add point
+              </Button>
+            )}
+          </div>
+          {points.length === 0 ? (
+            <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+              No points yet. Add one here, or via a leg's “+ New point”.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {points.map((pt) => (
+                <div
+                  key={pt.id}
+                  className="rounded-md border p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="shrink-0 text-xs">
+                        {pt.type}
+                      </Badge>
+                      <span className="text-sm font-medium truncate">{pt.name ?? "—"}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground truncate">
+                      {pointAddress(pt)}
+                    </span>
+                  </div>
+                  {queryId && (
+                    <div className="flex gap-1 shrink-0">
+                      <Button variant="outline" size="sm" onClick={() => handleEditPoint(pt)}>
+                        Edit
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleRemovePoint(pt.id)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Leg list */}
       {legs.length === 0 ? (
@@ -273,6 +368,19 @@ export function LegsStep() {
           queryId={queryId}
           onSaved={handleEditorSaved}
           onClose={handleEditorClose}
+        />
+      )}
+
+      {/* PointEditor dialog (U6) — create or edit a point directly from the list.
+          Keyed on the point id so the form re-initialises when switching points. */}
+      {detail && queryId && (
+        <PointEditor
+          key={editingPoint?.id ?? "new-point"}
+          queryId={queryId}
+          open={pointEditorOpen}
+          point={editingPoint as unknown as ComponentProps<typeof PointEditor>["point"]}
+          onSaved={handlePointSaved}
+          onClose={handlePointClose}
         />
       )}
     </div>
