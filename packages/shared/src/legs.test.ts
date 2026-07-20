@@ -21,6 +21,36 @@ describe("legSaveSchema", () => {
         .success,
     ).toBe(true);
   });
+  it("rejects a readyDate after targetDelivery (G10)", () => {
+    expect(
+      legSaveSchema.safeParse({
+        readyDate: "2026-08-10T00:00:00.000Z",
+        targetDelivery: "2026-08-01T00:00:00.000Z",
+      }).success,
+    ).toBe(false);
+  });
+  it("accepts a readyDate before targetDelivery (G10)", () => {
+    expect(
+      legSaveSchema.safeParse({
+        readyDate: "2026-08-01T00:00:00.000Z",
+        targetDelivery: "2026-08-10T00:00:00.000Z",
+      }).success,
+    ).toBe(true);
+  });
+  it("rejects a self-loop leg (origin === destination) (G12)", () => {
+    const id = "11111111-1111-1111-1111-111111111111";
+    expect(legSaveSchema.safeParse({ originPointId: id, destinationPointId: id }).success).toBe(
+      false,
+    );
+  });
+  it("accepts distinct origin/destination points (G12)", () => {
+    expect(
+      legSaveSchema.safeParse({
+        originPointId: "11111111-1111-1111-1111-111111111111",
+        destinationPointId: "22222222-2222-2222-2222-222222222222",
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("formatLegCode", () => {

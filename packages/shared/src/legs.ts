@@ -19,15 +19,33 @@ const isoDate = z.string().datetime({ offset: true });
 // All optional — legs are saved individually and may be partial/draft (D8, spec §7.4.3).
 // legCode is minted server-side (never client-supplied). mode reuses FreightMode (D3).
 // assignedCargoIds are the D7 tick → LegCargo rows.
-export const legSaveSchema = z.object({
-  legName: z.string().max(120).optional(),
-  originPointId: z.string().uuid().optional(),
-  destinationPointId: z.string().uuid().optional(),
-  mode: z.enum(FREIGHT_MODES).optional(),
-  readyDate: isoDate.optional(),
-  targetDelivery: isoDate.optional(),
-  assignedCargoIds: z.array(z.string().uuid()).optional(),
-});
+export const legSaveSchema = z
+  .object({
+    legName: z.string().max(120).optional(),
+    originPointId: z.string().uuid().optional(),
+    destinationPointId: z.string().uuid().optional(),
+    mode: z.enum(FREIGHT_MODES).optional(),
+    readyDate: isoDate.optional(),
+    targetDelivery: isoDate.optional(),
+    assignedCargoIds: z.array(z.string().uuid()).optional(),
+  })
+  // G10: Ready Date must be on or before Target Delivery (when both are present).
+  .refine(
+    (l) =>
+      !(l.readyDate && l.targetDelivery) ||
+      new Date(l.readyDate).getTime() <= new Date(l.targetDelivery).getTime(),
+    { message: "Ready Date must be on or before Target Delivery", path: ["targetDelivery"] },
+  )
+  // G12: a leg's origin and destination must be different points (no self-loop).
+  .refine(
+    (l) =>
+      !(l.originPointId && l.destinationPointId) ||
+      l.originPointId !== l.destinationPointId,
+    {
+      message: "A leg's origin and destination must be different points",
+      path: ["destinationPointId"],
+    },
+  );
 export type LegSaveInput = z.infer<typeof legSaveSchema>;
 
 // Stable, never reused within a query (spec §7.4.2). Minted from a per-query counter.

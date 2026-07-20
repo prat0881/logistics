@@ -33,19 +33,19 @@ const phone = z.string().regex(/^\+?[1-9]\d{6,14}$/, "Phone must be E.164");
 // field is optional here so drafts persist (matches querySaveSchema.partial()).
 export const pointSaveSchema = z.object({
   type: z.enum(POINT_TYPES),
-  name: z.string().min(1).max(200).optional(),
-  streetAddress: z.string().min(1).max(300).optional(),
-  city: z.string().min(1).max(120).optional(),
-  postalCode: z.string().min(1).max(30).optional(),
-  country: z.string().min(1).max(80).optional(),
-  contactName: z.string().min(1).max(120).optional(),
+  name: z.string().trim().min(1).max(200).optional(),
+  streetAddress: z.string().trim().min(1).max(300).optional(),
+  city: z.string().trim().min(1).max(120).optional(),
+  postalCode: z.string().trim().min(1).max(30).optional(),
+  country: z.string().trim().min(1).max(80).optional(),
+  contactName: z.string().trim().min(1).max(120).optional(),
   contactPhone: phone.optional(),
   contactEmail: z.string().email().optional(),
   warehouseType: z.enum(WAREHOUSE_TYPES).optional(),
   iataCode: iata.optional(),
   icaoCode: icao.optional(),
   unLocode: unLocode.optional(),
-  terminal: z.string().min(1).max(120).optional(),
+  terminal: z.string().trim().min(1).max(120).optional(),
 });
 export type PointSaveInput = z.infer<typeof pointSaveSchema>;
 

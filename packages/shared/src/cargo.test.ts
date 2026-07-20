@@ -36,6 +36,11 @@ describe("cargoCreateSchema", () => {
   it("rejects a dim beyond the max bound (DECIMAL(14,6) overflow guard)", () => {
     expect(cargoCreateSchema.safeParse({ ...base, dimL: 200000 }).success).toBe(false);
   });
+  it("rejects whitespace-only required text (G8)", () => {
+    expect(cargoCreateSchema.safeParse({ ...base, poReference: "   " }).success).toBe(false);
+    expect(cargoCreateSchema.safeParse({ ...base, productName: "  " }).success).toBe(false);
+    expect(cargoCreateSchema.safeParse({ ...base, packageType: " " }).success).toBe(false);
+  });
 });
 
 describe("cargoUpdateSchema", () => {

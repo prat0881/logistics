@@ -40,6 +40,10 @@ describe("pointSaveSchema", () => {
       pointSaveSchema.safeParse({ type: PointType.SEAPORT, unLocode: "TOOLONG" }).success,
     ).toBe(false);
   });
+  it("rejects whitespace-only text fields (G8)", () => {
+    expect(pointSaveSchema.safeParse({ type: PointType.PICKUP, name: "   " }).success).toBe(false);
+    expect(pointSaveSchema.safeParse({ type: PointType.PICKUP, city: "  " }).success).toBe(false);
+  });
 });
 
 describe("POINT_REQUIRED_FIELDS", () => {
