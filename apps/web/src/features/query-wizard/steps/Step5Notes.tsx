@@ -26,7 +26,7 @@ export const CHECKLIST_LABELS: Record<string, string> = {
 };
 
 /** msds-received is only applicable when dgIndicator is true */
-const DG_CONDITIONAL_KEY = "msds-received";
+export const DG_CONDITIONAL_KEY = "msds-received";
 
 export function Step5Notes({ registerSave }: Step5NotesProps) {
   const { detail, queryId } = useWizard();

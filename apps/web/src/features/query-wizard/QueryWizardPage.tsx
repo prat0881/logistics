@@ -21,7 +21,7 @@ import type { StepSaveFn } from "./steps";
 import { toRouteGraph } from "./steps/legs/routeGraph";
 import { CreateQueryDialog } from "./CreateQueryDialog";
 import type { CreateQueryDialogResult, UncheckedItem } from "./CreateQueryDialog";
-import { CHECKLIST_LABELS } from "./steps/Step5Notes";
+import { CHECKLIST_LABELS, DG_CONDITIONAL_KEY } from "./steps/Step5Notes";
 
 /**
  * stepComponents registry — keyed by step key (order O2: client · shipment · cargo · legs · notes).
@@ -172,7 +172,11 @@ function WizardInner({ id }: { id?: string }) {
     }
 
     // ── 2. Optional-gaps prompt ──────────────────────────────────────────────
-    const uncheckedOptional = detail.checklist.filter((c) => !c.checked);
+    // G5: the DG-conditional MSDS item is un-checkable on a non-DG query, so it must
+    // not count as a "missing optional" gap (else the prompt always nags about it).
+    const uncheckedOptional = detail.checklist.filter(
+      (c) => !c.checked && !(c.itemKey === DG_CONDITIONAL_KEY && !detail.dgIndicator),
+    );
     if (uncheckedOptional.length) {
       const choice = await confirmCreateDialog(uncheckedOptional);
       if (choice === "cancel") return; // User bailed

@@ -561,4 +561,45 @@ describe("QueryWizardPage", () => {
     await waitFor(() => expect(screen.getByText(/internal error/i)).toBeInTheDocument());
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
   });
+
+  it("does not prompt for the un-checkable MSDS item on a non-DG query (G5)", async () => {
+    const createCalls: string[] = [];
+    // Non-DG query whose ONLY unchecked checklist item is msds-received — which is
+    // un-checkable when dgIndicator is false, so it must not count as a missing gap.
+    const detailNonDgMsds = {
+      ...fullDraftDetail,
+      dgIndicator: false,
+      checklist: [{ id: "c1", itemKey: "msds-received", checked: false }],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/q9/create") && init?.method === "POST") {
+          createCalls.push(url);
+          return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
+        }
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailNonDgMsds };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9?step=4", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    const createBtn = await screen.findByRole("button", { name: /Create Query/i });
+    await userEvent.click(createBtn);
+
+    // No optional-gaps dialog appears; Create proceeds straight to POST /create.
+    await waitFor(() => expect(createCalls.length).toBe(1));
+    expect(
+      screen.queryByText(/Create query with missing optional info/i),
+    ).not.toBeInTheDocument();
+  });
 });
