@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { fetchJson, postJson } from "@/lib/api";
+import { fetchJson, postJson, queryClient, setUnauthorizedHandler } from "@/lib/api";
 
 export interface AuthUser {
   id: string;
@@ -30,6 +30,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
+  }, []);
+
+  // U1: on a mid-session 401 from a protected request, clear the user + query
+  // cache so ProtectedRoute redirects to /login (previously a stale user kept us
+  // on a dead screen and clicks threw unhandled 401s).
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+      queryClient.clear();
+    });
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   async function login(email: string, password: string) {
