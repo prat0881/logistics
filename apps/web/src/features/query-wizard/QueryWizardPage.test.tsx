@@ -472,6 +472,51 @@ describe("QueryWizardPage", () => {
     expect(screen.queryByText(/required fields before continuing/i)).not.toBeInTheDocument();
   });
 
+  it("mints a new query on Next even when Step-1 phone field has a format-invalid value (Final-review fix #1)", async () => {
+    const posts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
+        if (url.endsWith("/api/queries") && init?.method === "POST") {
+          posts.push(JSON.parse(init.body as string));
+          return { status: 201, body: draftDetail };
+        }
+        if (url.includes("/api/clients"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/new" element={<QueryWizardPage />} />
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/new", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    // Type a format-invalid phone into the Phone (E.164) field
+    const phoneInput = await screen.findByPlaceholderText("+6591234567");
+    await userEvent.clear(phoneInput);
+    await userEvent.type(phoneInput, "abc");
+
+    // Click Next — must mint the query even though the phone value is invalid
+    await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+
+    // POST /api/queries must have been called (the query was minted)
+    await waitFor(() => expect(posts.length).toBe(1));
+    // And the app navigated to the real query (queryCode appears)
+    expect(await screen.findByText("YAL26-0009")).toBeInTheDocument();
+  });
+
   it("Save shows a success message at the top (U3)", async () => {
     vi.stubGlobal(
       "fetch",

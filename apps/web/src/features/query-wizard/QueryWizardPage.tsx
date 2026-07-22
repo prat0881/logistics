@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import type { Finding, QueryForValidation, CargoForValidation } from "@svyft/shared";
+import type { Finding, QueryForValidation, CargoForValidation, QuerySaveInput } from "@svyft/shared";
 import {
   collectCreateFindings,
   validateRoute,
@@ -127,12 +127,22 @@ function WizardInner({ id }: { id?: string }) {
    */
   const handleSave = useCallback(
     async () => {
-      const input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
       if (isNew) {
-        // First save mints the queryCode; even an empty body is valid
+        // A new query mints on the first Save/Next even if the step's own format
+        // validation rejected (Next never blocks; the query must exist before we can
+        // advance). Inline field errors still surface the format issue.
+        let input: QuerySaveInput | void;
+        try {
+          input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
+        } catch {
+          input = undefined;
+        }
         const d = await create(input ?? {});
         navigate(`/queries/${d.id}?step=0`, { replace: true });
-      } else if (id && input) {
+        return;
+      }
+      const input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
+      if (id && input) {
         await patch(id, input);
         await refresh();
       }
