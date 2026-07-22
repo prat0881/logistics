@@ -282,6 +282,14 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
     const f = collectCreateFindings({ ...ready, contactName: "   " }, []);
     expect(f.map((x) => x.rule)).toEqual(["F1"]);
   });
+  it("emits the incoterms finding with a field/incoterms scope (buckets to Shipment)", () => {
+    const findings = collectCreateFindings(
+      { id: "q1", clientId: "c", contactName: "n", contactEmail: "e@x.com", contactPhone: "+6591234567", readyDate: "2026-08-01T00:00:00Z", targetDelivery: "2026-08-02T00:00:00Z", incoterms: null },
+      [],
+    );
+    const inco = findings.find((f) => f.message === "Incoterms is required");
+    expect(inco?.scope).toEqual({ type: "field", id: "incoterms" });
+  });
 });
 
 describe("defaultResponseDeadline (priority → deadline offset)", () => {

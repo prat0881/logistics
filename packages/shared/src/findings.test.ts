@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dedupeFindings } from "./findings";
+import { dedupeFindings, findingTabKey } from "./findings";
 import type { Finding } from "./findings";
 
 const leg1: Finding = { rule: "T1", severity: "blocking", scope: { type: "leg", id: "l1" }, message: "broken" };
@@ -47,5 +47,31 @@ describe("dedupeFindings", () => {
     const noIdDup: Finding = { rule: "T1", severity: "blocking", scope: { type: "leg" }, message: "broken" };
     const result = dedupeFindings([noId, noIdDup]);
     expect(result).toHaveLength(1);
+  });
+});
+
+const f = (over: Partial<Finding>): Finding => ({
+  rule: "F1", severity: "blocking", scope: { type: "query" }, message: "x", ...over,
+});
+
+describe("findingTabKey", () => {
+  it("F1 query-mandatory → client", () => {
+    expect(findingTabKey(f({ rule: "F1", scope: { type: "query", id: "q1" } }))).toBe("client");
+  });
+  it("incoterms field finding → shipment", () => {
+    expect(findingTabKey(f({ rule: "F1", scope: { type: "field", id: "incoterms" } }))).toBe("shipment");
+  });
+  it("F6 / cargo → cargo", () => {
+    expect(findingTabKey(f({ rule: "F6", scope: { type: "cargo", id: "c1" } }))).toBe("cargo");
+    expect(findingTabKey(f({ rule: "R2", scope: { type: "cargo", id: "c1" } }))).toBe("cargo");
+  });
+  it("leg / point / query-scoped route rule → legs", () => {
+    expect(findingTabKey(f({ rule: "R1", scope: { type: "leg", id: "l1" } }))).toBe("legs");
+    expect(findingTabKey(f({ rule: "R8", scope: { type: "point", id: "p1" } }))).toBe("legs");
+    expect(findingTabKey(f({ rule: "R3", scope: { type: "query", id: "q1" } }))).toBe("legs");
+  });
+  it("checklist / notes field findings → notes", () => {
+    expect(findingTabKey(f({ rule: "F7", scope: { type: "field", id: "notes" } }))).toBe("notes");
+    expect(findingTabKey(f({ rule: "F7", scope: { type: "field", id: "checklist:weight-confirmed" } }))).toBe("notes");
   });
 });

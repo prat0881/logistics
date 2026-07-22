@@ -178,7 +178,19 @@ export function collectCreateFindings(
   need(q.contactPhone, "Contact phone is required");
   need(q.readyDate, "Ready Date is required");
   need(q.targetDelivery, "Target Delivery is required");
-  need(q.incoterms, "Incoterms is required");
+  // Incoterms buckets to the Shipment tab → field-scoped (not the generic query-scoped `need`).
+  {
+    const v = q.incoterms;
+    const missing = v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+    if (missing) {
+      findings.push({
+        rule: "F1",
+        severity: "blocking",
+        scope: { type: "field", id: "incoterms" },
+        message: "Incoterms is required",
+      });
+    }
+  }
   for (const c of cargo) {
     if (c.isDangerous && !c.msdsFileId) {
       findings.push({
