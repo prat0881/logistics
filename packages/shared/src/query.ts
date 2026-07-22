@@ -178,7 +178,19 @@ export function collectCreateFindings(
   need(q.contactPhone, "Contact phone is required");
   need(q.readyDate, "Ready Date is required");
   need(q.targetDelivery, "Target Delivery is required");
-  need(q.incoterms, "Incoterms is required");
+  // Incoterms buckets to the Shipment tab → field-scoped (not the generic query-scoped `need`).
+  {
+    const v = q.incoterms;
+    const missing = v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+    if (missing) {
+      findings.push({
+        rule: "F1",
+        severity: "blocking",
+        scope: { type: "field", id: "incoterms" },
+        message: "Incoterms is required",
+      });
+    }
+  }
   for (const c of cargo) {
     if (c.isDangerous && !c.msdsFileId) {
       findings.push({
@@ -188,6 +200,44 @@ export function collectCreateFindings(
         message: `Cargo ${c.poReference}: a dangerous-goods row requires an MSDS (PDF)`,
       });
     }
+  }
+  return findings;
+}
+
+export interface ChecklistItemForValidation {
+  key: string;
+  checked: boolean;
+  label: string;
+}
+
+/**
+ * Notes + all-checklist-boxes manual gate (Round-1 Issue 2, Notes & Checklist tab).
+ * Pure/isomorphic; run in the Create-Query preview. Every provided box must be
+ * checked and internalNotes must be non-empty. No DG-conditional exemption — all
+ * boxes are required (the DG-conditional disable is dropped).
+ */
+export function collectChecklistFindings(
+  items: ChecklistItemForValidation[],
+  notes: string | null | undefined,
+): Finding[] {
+  const findings: Finding[] = [];
+  for (const it of items) {
+    if (!it.checked) {
+      findings.push({
+        rule: "F7",
+        severity: "blocking",
+        scope: { type: "field", id: `checklist:${it.key}` },
+        message: `${it.label} must be confirmed`,
+      });
+    }
+  }
+  if (notes === null || notes === undefined || notes.trim() === "") {
+    findings.push({
+      rule: "F7",
+      severity: "blocking",
+      scope: { type: "field", id: "notes" },
+      message: "Internal notes are required",
+    });
   }
   return findings;
 }

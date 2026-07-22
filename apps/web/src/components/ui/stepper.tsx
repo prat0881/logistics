@@ -5,6 +5,7 @@ import { Check } from "lucide-react";
 export interface StepDef {
   key: string;
   label: string;
+  badgeCount?: number;
 }
 
 export interface StepperProps {
@@ -100,6 +101,14 @@ export function Stepper({
                 )}
               </span>
               <span>{step.label}</span>
+              {step.badgeCount != null && step.badgeCount > 0 && (
+                <span
+                  aria-label={`${step.label}: ${step.badgeCount} issue${step.badgeCount === 1 ? "" : "s"}`}
+                  className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold leading-none text-destructive-foreground"
+                >
+                  {step.badgeCount}
+                </span>
+              )}
             </button>
 
             {/* Connector line between steps */}

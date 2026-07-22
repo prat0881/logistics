@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import type { Finding, QueryForValidation, CargoForValidation, QuerySaveInput } from "@svyft/shared";
 import {
   collectCreateFindings,
+  collectChecklistFindings,
   validateRoute,
   dedupeFindings,
 } from "@svyft/shared";
@@ -19,9 +20,7 @@ import {
 } from "./steps";
 import type { StepSaveFn } from "./steps";
 import { toRouteGraph } from "./steps/legs/routeGraph";
-import { CreateQueryDialog } from "./CreateQueryDialog";
-import type { CreateQueryDialogResult, UncheckedItem } from "./CreateQueryDialog";
-import { CHECKLIST_LABELS, DG_CONDITIONAL_KEY } from "./steps/Step5Notes";
+import { CHECKLIST_LABELS } from "./steps/Step5Notes";
 
 /**
  * stepComponents registry — keyed by step key (order O2: client · shipment · cargo · legs · notes).
@@ -78,47 +77,12 @@ function WizardInner({ id }: { id?: string }) {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
-  // Optional-gaps dialog state
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [dialogItems, setDialogItems] = useState<UncheckedItem[]>([]);
-  // A promise resolver to await the dialog result imperatively
-  const dialogResolveRef = useRef<((r: CreateQueryDialogResult) => void) | null>(null);
-
   // Holds the current step's save fn
   const stepSaveRef = useRef<StepSaveFn | null>(null);
 
   const registerSave = useCallback((fn: StepSaveFn) => {
     stepSaveRef.current = fn;
   }, []);
-
-  /**
-   * confirmCreateDialog — opens the optional-gaps dialog and waits for user choice.
-   */
-  const confirmCreateDialog = useCallback(
-    (unchecked: NonNullable<typeof detail>["checklist"]): Promise<CreateQueryDialogResult> => {
-      const items: UncheckedItem[] = unchecked.map((c) => ({
-        itemKey: c.itemKey,
-        label: CHECKLIST_LABELS[c.itemKey] ?? c.itemKey,
-      }));
-      setDialogItems(items);
-      setDialogOpen(true);
-      return new Promise<CreateQueryDialogResult>((resolve) => {
-        dialogResolveRef.current = resolve;
-      });
-    },
-    [],
-  );
-
-  const handleDialogResult = useCallback(
-    (result: CreateQueryDialogResult) => {
-      setDialogOpen(false);
-      if (dialogResolveRef.current) {
-        dialogResolveRef.current(result);
-        dialogResolveRef.current = null;
-      }
-    },
-    [],
-  );
 
   /**
    * handleSave — called by the shell's Save (and Next).
@@ -155,10 +119,9 @@ function WizardInner({ id }: { id?: string }) {
    *
    * Flow:
    *   1. Client-side preview: compute blocking findings from collectCreateFindings +
-   *      validateRoute. If any blocking → render them inline and abort.
-   *   2. Optional-gaps prompt: if no blocking but checklist has unchecked items →
-   *      open CreateQueryDialog. User can cancel, save draft, or send anyway.
-   *   3. POST /api/queries/:id/create. On 422 → store server findings.
+   *      validateRoute + collectChecklistFindings. If any blocking → render them
+   *      inline and abort (Create is the single gate).
+   *   2. POST /api/queries/:id/create. On 422 → store server findings.
    *      On 201 → re-GET (refresh) → banner.
    */
   const handleCreateQuery = useCallback(async () => {
@@ -168,37 +131,26 @@ function WizardInner({ id }: { id?: string }) {
 
     // ── 1. Client-side preview ───────────────────────────────────────────────
     const graph = toRouteGraph(detail);
+    const checklistItems = detail.checklist.map((c) => ({
+      key: c.itemKey,
+      checked: c.checked,
+      label: CHECKLIST_LABELS[c.itemKey] ?? c.itemKey,
+    }));
     const preview = dedupeFindings([
       ...collectCreateFindings(
         toQueryForValidation(detail),
         detail.cargo.map(toCargoForValidation),
       ),
       ...validateRoute(graph, "create"),
+      ...collectChecklistFindings(checklistItems, detail.internalNotes),
     ]);
     const blocking = preview.filter((f) => f.severity === "blocking");
     if (blocking.length) {
       setFindings(blocking);
-      return; // Hard block — do NOT call the server
+      return; // Create is the single gate — abort before the server call
     }
 
-    // ── 2. Optional-gaps prompt ──────────────────────────────────────────────
-    // G5: the DG-conditional MSDS item is un-checkable on a non-DG query, so it must
-    // not count as a "missing optional" gap (else the prompt always nags about it).
-    const uncheckedOptional = detail.checklist.filter(
-      (c) => !c.checked && !(c.itemKey === DG_CONDITIONAL_KEY && !detail.dgIndicator),
-    );
-    if (uncheckedOptional.length) {
-      const choice = await confirmCreateDialog(uncheckedOptional);
-      if (choice === "cancel") return; // User bailed
-      if (choice === "draft") {
-        // G2: persist the current step before closing (previously this saved nothing).
-        await handleSave();
-        return;
-      }
-      // choice === "send" → fall through to create
-    }
-
-    // ── 3. POST /create ──────────────────────────────────────────────────────
+    // ── 2. POST /create ──────────────────────────────────────────────────────
     try {
       await createQuery.mutateAsync(id);
       // On success, re-GET to refresh status (POST only returns { id, status })
@@ -213,37 +165,28 @@ function WizardInner({ id }: { id?: string }) {
         throw err;
       }
     }
-  }, [id, detail, createQuery, refresh, confirmCreateDialog, handleSave]);
+  }, [id, detail, createQuery, refresh]);
 
   const currentStepKey = STEPS[step]?.key ?? STEPS[0].key;
   const StepComponent = stepComponents[currentStepKey];
 
   return (
-    <>
-      <WizardShell
-        findings={findings}
-        onClearFindings={() => setFindings([])}
-        onCreateQuery={handleCreateQuery}
-        onSave={handleSave}
-      >
-        {successBanner && (
-          <div
-            role="status"
-            className="mb-4 rounded-md bg-success/10 px-4 py-3 text-sm text-success font-medium"
-          >
-            {successBanner}
-          </div>
-        )}
-        <StepComponent registerSave={registerSave} />
-      </WizardShell>
-
-      {/* Optional-gaps dialog — rendered outside WizardShell to avoid nesting issues */}
-      <CreateQueryDialog
-        open={dialogOpen}
-        items={dialogItems}
-        onResult={handleDialogResult}
-      />
-    </>
+    <WizardShell
+      findings={findings}
+      onClearFindings={() => setFindings([])}
+      onCreateQuery={handleCreateQuery}
+      onSave={handleSave}
+    >
+      {successBanner && (
+        <div
+          role="status"
+          className="mb-4 rounded-md bg-success/10 px-4 py-3 text-sm text-success font-medium"
+        >
+          {successBanner}
+        </div>
+      )}
+      <StepComponent registerSave={registerSave} />
+    </WizardShell>
   );
 }
 

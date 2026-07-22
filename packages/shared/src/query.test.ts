@@ -6,6 +6,7 @@ import {
   PRIORITIES,
   querySaveSchema,
   collectCreateFindings,
+  collectChecklistFindings,
   queryListQuerySchema,
   defaultResponseDeadline,
   RESPONSE_DEADLINE_HOURS,
@@ -282,6 +283,14 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
     const f = collectCreateFindings({ ...ready, contactName: "   " }, []);
     expect(f.map((x) => x.rule)).toEqual(["F1"]);
   });
+  it("emits the incoterms finding with a field/incoterms scope (buckets to Shipment)", () => {
+    const findings = collectCreateFindings(
+      { id: "q1", clientId: "c", contactName: "n", contactEmail: "e@x.com", contactPhone: "+6591234567", readyDate: "2026-08-01T00:00:00Z", targetDelivery: "2026-08-02T00:00:00Z", incoterms: null },
+      [],
+    );
+    const inco = findings.find((f) => f.message === "Incoterms is required");
+    expect(inco?.scope).toEqual({ type: "field", id: "incoterms" });
+  });
 });
 
 describe("defaultResponseDeadline (priority → deadline offset)", () => {
@@ -295,5 +304,24 @@ describe("defaultResponseDeadline (priority → deadline offset)", () => {
     expect(t("LOW")).toBe(new Date("2026-07-24T00:00:00.000Z").getTime());
     expect(t("HIGH")).toBe(new Date("2026-07-22T18:00:00.000Z").getTime());
     expect(t("URGENT")).toBe(new Date("2026-07-22T12:00:00.000Z").getTime());
+  });
+});
+
+describe("collectChecklistFindings (Notes + all boxes mandatory, Create-enforced)", () => {
+  const items = (checked: boolean) =>
+    [{ key: "weight-confirmed", checked, label: "Weight confirmed" }, { key: "packing-list", checked, label: "Packing list received" }];
+  it("no findings when all boxes checked + notes present", () => {
+    expect(collectChecklistFindings(items(true), "ok").length).toBe(0);
+  });
+  it("one blocking finding per unchecked box (field/checklist scope)", () => {
+    const f = collectChecklistFindings(items(false), "ok");
+    expect(f).toHaveLength(2);
+    expect(f[0]).toMatchObject({ rule: "F7", severity: "blocking", scope: { type: "field", id: "checklist:weight-confirmed" } });
+    expect(f[0].message).toMatch(/Weight confirmed/);
+  });
+  it("blocking finding for empty / whitespace notes (field/notes scope)", () => {
+    expect(collectChecklistFindings(items(true), "").some((f) => f.scope.id === "notes")).toBe(true);
+    expect(collectChecklistFindings(items(true), "   ").some((f) => f.scope.id === "notes")).toBe(true);
+    expect(collectChecklistFindings(items(true), null).some((f) => f.scope.id === "notes")).toBe(true);
   });
 });
