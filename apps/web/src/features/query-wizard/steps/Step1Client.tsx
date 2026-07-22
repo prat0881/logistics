@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { querySaveSchema, PRIORITIES, Role } from "@svyft/shared";
+import { querySaveSchema, PRIORITIES, Role, defaultResponseDeadline } from "@svyft/shared";
 import type { QuerySaveInput, ContactDto, QueryDetail, ClientDto } from "@svyft/shared";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -98,6 +98,10 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
     defaultValues: fromDetail(detail),
   });
 
+  // Tracks whether the exec has manually edited the Response Deadline field.
+  // When false, the field is recomputed from queryDate + priority on every priority change.
+  const deadlineTouchedRef = useRef(false);
+
   // Reset form when detail loads/changes
   useEffect(() => {
     if (detail) {
@@ -105,8 +109,22 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
       setSelectedClientId(detail.clientId ?? undefined);
       setSelectedVesselId(detail.vesselId ?? undefined);
       setSelectedVesselName(detail.vesselName ?? undefined);
+      // If the loaded detail already has a deadline, treat it as "touched" so we
+      // don't overwrite the server-persisted value.
+      if (detail.responseDeadline) {
+        deadlineTouchedRef.current = true;
+      }
     }
   }, [detail, form]);
+
+  // Auto-default Response Deadline = queryDate + priority-hours (recompute until touched).
+  const watchedPriority = form.watch("priority");
+  const watchedQueryDate = form.watch("queryDate");
+  useEffect(() => {
+    if (deadlineTouchedRef.current) return;
+    if (!watchedQueryDate || !watchedPriority) return;
+    form.setValue("responseDeadline", defaultResponseDeadline(watchedQueryDate, watchedPriority));
+  }, [watchedPriority, watchedQueryDate, form]);
 
   // When the wizard opens an existing query that already has a clientId, fetch the
   // client record so the picker trigger shows "Acme Corp" rather than the raw UUID.
@@ -258,6 +276,7 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
                     type="datetime-local"
                     value={isoToLocalInput(field.value ?? null)}
                     onChange={(e) => {
+                      deadlineTouchedRef.current = true;
                       const v = e.target.value;
                       field.onChange(v ? toIsoOffset(v) : undefined);
                     }}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
 import { QueryWizardPage } from "../QueryWizardPage";
@@ -15,7 +15,7 @@ const draftDetail = {
   priority: "MEDIUM",
   dgIndicator: false,
   whatsappEnabled: false,
-  queryDate: "2026-01-01T00:00:00+00:00",
+  queryDate: "2026-08-01T00:00:00+00:00",
   responseDeadline: null,
   responseDeadlineRemarks: null,
   clientId: null,
@@ -321,7 +321,7 @@ describe("Step1Client", () => {
       ...draftDetail,
       clientId: CLIENT_ID,
       // queryDate is always present on an existing query
-      queryDate: "2026-01-01T00:00:00+00:00",
+      queryDate: "2026-08-01T00:00:00+00:00",
     };
     vi.stubGlobal(
       "fetch",
@@ -372,6 +372,72 @@ describe("Step1Client", () => {
     expect(body).not.toHaveProperty("queryDate");
     // Other editable fields should still be present
     expect(body).toHaveProperty("priority");
+  });
+
+  it("defaults Response Deadline to Query Date + 24h for MEDIUM and recomputes on priority change until edited", async () => {
+    const user = userEvent.setup();
+
+    // queryDate 2026-07-22T09:00:00Z, priority MEDIUM, responseDeadline null
+    const detailNoDeadline = {
+      ...draftDetail,
+      queryDate: "2026-07-22T09:00:00Z",
+      priority: "MEDIUM",
+      responseDeadline: null,
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailNoDeadline };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // Response Deadline should be auto-filled (MEDIUM = queryDate + 24h)
+    // Use exact match to avoid matching "Response Deadline Remarks"
+    const deadline = screen.getByLabelText("Response Deadline") as HTMLInputElement;
+    await waitFor(() => expect(deadline.value).not.toBe(""));
+
+    const mediumValue = deadline.value;
+    expect(mediumValue).not.toBe("");
+
+    // Switch priority to URGENT via the Radix Select (URGENT = +12h, different from MEDIUM +24h)
+    const priorityTrigger = screen.getByRole("combobox", { name: /Priority/i });
+    await user.click(priorityTrigger);
+    const urgentOption = await screen.findByRole("option", { name: "URGENT" });
+    await user.click(urgentOption);
+
+    // Deadline should recompute (still filled, but a different value)
+    await waitFor(() => {
+      expect(deadline.value).not.toBe("");
+      expect(deadline.value).not.toBe(mediumValue);
+    });
+
+    // Manual edit marks it touched — after this, priority changes should NOT recompute
+    await user.clear(deadline);
+    await user.type(deadline, "2026-07-30T10:00");
+    expect(deadline.value).toBe("2026-07-30T10:00");
+
+    // Switch priority again — deadline should stay at the manually typed value
+    await user.click(priorityTrigger);
+    const mediumOption = await screen.findByRole("option", { name: "MEDIUM" });
+    await user.click(mediumOption);
+
+    // Deadline must not change after manual edit
+    expect(deadline.value).toBe("2026-07-30T10:00");
   });
 
   it("shows company name (not UUID) in client picker trigger when detail.clientId is pre-set", async () => {
