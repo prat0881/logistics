@@ -72,6 +72,7 @@ const fullDraftDetail = {
   incoterms: "FOB",
   readyDate: READY_DATE_Q9,
   targetDelivery: TARGET_DELIVERY_Q9,
+  internalNotes: "Ready for RFQ",
   cargo: [
     {
       id: CARGO_ID_Q9,
@@ -328,14 +329,14 @@ describe("QueryWizardPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("Save Draft from optional-gaps dialog persists the draft (PATCH) and does NOT call /create (G2)", async () => {
+  it("Create Query blocks with a validation summary when the checklist is incomplete", async () => {
     const createCalls: string[] = [];
-    const patchCalls: string[] = [];
 
-    // fullDraftDetail passes client-side preview; add an unchecked checklist item
-    // so the optional-gaps dialog opens
-    const detailWithUnchecked = {
+    // fullDraftDetail has all required fields; add an unchecked checklist item +
+    // empty notes → collectChecklistFindings returns blocking findings
+    const detailWithIncompleteChecklist = {
       ...fullDraftDetail,
+      internalNotes: "",
       checklist: [
         { id: "c1", itemKey: "weight-confirmed", checked: false },
         { id: "c2", itemKey: "dimensions-confirmed", checked: true },
@@ -354,11 +355,7 @@ describe("QueryWizardPage", () => {
           createCalls.push(url);
           return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
         }
-        if (url.includes("/api/queries/q9") && init?.method === "PATCH") {
-          patchCalls.push(url);
-          return { status: 200, body: detailWithUnchecked };
-        }
-        if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithUnchecked };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithIncompleteChecklist };
         return { status: 200, body: {} };
       }),
     );
@@ -373,26 +370,16 @@ describe("QueryWizardPage", () => {
       },
     );
 
-    // Wait for the page and click Create Query — triggers optional-gaps dialog
     const createBtn = await screen.findByRole("button", { name: /Create Query/i });
     await userEvent.click(createBtn);
 
-    // Optional-gaps dialog should open
-    await waitFor(() =>
-      expect(screen.getByText(/Create query with missing optional info/i)).toBeInTheDocument(),
-    );
+    // Findings panel should appear with blocking findings
+    await screen.findByText(/resolve to create the query/i);
+    const blockingItems = await screen.findAllByText(/Internal notes are required|must be confirmed/i);
+    expect(blockingItems.length).toBeGreaterThan(0);
 
-    // Click "Save Draft"
-    const saveDraftBtn = screen.getByRole("button", { name: /^Save Draft$/i });
-    await userEvent.click(saveDraftBtn);
-
-    // Dialog should close
-    await waitFor(() =>
-      expect(screen.queryByText(/Create query with missing optional info/i)).not.toBeInTheDocument(),
-    );
-    // /create must NOT have been called, but the draft WAS persisted (G2)
+    // Server was NOT called — gate aborted before the request
     expect(createCalls.length).toBe(0);
-    await waitFor(() => expect(patchCalls.length).toBeGreaterThan(0));
   });
 
   it("on Create Query → 201 re-GETs and shows RFQ_READY + success banner", async () => {
@@ -575,10 +562,9 @@ describe("QueryWizardPage", () => {
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
   });
 
-  it("does not prompt for the un-checkable MSDS item on a non-DG query (G5)", async () => {
+  it("Create Query blocks when msds-received is unchecked (all checklist items are required, no DG exemption)", async () => {
     const createCalls: string[] = [];
-    // Non-DG query whose ONLY unchecked checklist item is msds-received — which is
-    // un-checkable when dgIndicator is false, so it must not count as a missing gap.
+    // Under the new gate, all checklist items must be confirmed — there is no DG exemption.
     const detailNonDgMsds = {
       ...fullDraftDetail,
       dgIndicator: false,
@@ -609,10 +595,11 @@ describe("QueryWizardPage", () => {
     const createBtn = await screen.findByRole("button", { name: /Create Query/i });
     await userEvent.click(createBtn);
 
-    // No optional-gaps dialog appears; Create proceeds straight to POST /create.
-    await waitFor(() => expect(createCalls.length).toBe(1));
-    expect(
-      screen.queryByText(/Create query with missing optional info/i),
-    ).not.toBeInTheDocument();
+    // Gate blocks: msds-received unchecked is a blocking finding (no DG exemption)
+    await waitFor(() =>
+      expect(screen.getByText(/MSDS received must be confirmed/i)).toBeInTheDocument(),
+    );
+    // Server was NOT called
+    expect(createCalls.length).toBe(0);
   });
 });

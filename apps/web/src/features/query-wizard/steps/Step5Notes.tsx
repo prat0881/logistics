@@ -25,8 +25,6 @@ export const CHECKLIST_LABELS: Record<string, string> = {
   "delivery-address": "Delivery address confirmed",
 };
 
-/** msds-received is only applicable when dgIndicator is true */
-export const DG_CONDITIONAL_KEY = "msds-received";
 
 export function Step5Notes({ registerSave }: Step5NotesProps) {
   const { detail, queryId } = useWizard();

@@ -68,8 +68,6 @@ const baseDetail = {
   destination: [],
 };
 
-const detailWithDg = { ...baseDetail, dgIndicator: true };
-
 /** Navigate to Step 5 (Notes & Checklist) via the stepper button. */
 async function navigateToStep5() {
   await screen.findByText("YAL26-0055");
