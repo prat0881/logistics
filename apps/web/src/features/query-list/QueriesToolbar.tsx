@@ -73,12 +73,16 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
       const df = overrides.dateField ?? dateField;
       const dr = overrides.dateRange !== undefined ? overrides.dateRange : dateRange;
 
-      const params: Partial<QueryListParams> = {};
-      if (s) params.status = s as QueryListParams["status"];
-      if (p) params.priority = p as QueryListParams["priority"];
-      if (fm) params.freightMode = fm;
-      if (atm && user?.id) params.assignedUserId = user.id;
-      if (c) params.country = c;
+      const params: Partial<QueryListParams> = {
+        status: (s || undefined) as QueryListParams["status"],
+        priority: (p || undefined) as QueryListParams["priority"],
+        freightMode: fm || undefined,
+        assignedUserId: atm && user?.id ? user.id : undefined,
+        country: c || undefined,
+        dateField: undefined,
+        dateFrom: undefined,
+        dateTo: undefined,
+      };
       if (dr?.from) {
         params.dateField = df;
         params.dateFrom = toIsoOffset(dr.from.toISOString().slice(0, 16));
