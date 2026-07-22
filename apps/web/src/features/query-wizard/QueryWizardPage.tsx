@@ -21,7 +21,7 @@ import type { StepSaveFn } from "./steps";
 import { toRouteGraph } from "./steps/legs/routeGraph";
 import { CreateQueryDialog } from "./CreateQueryDialog";
 import type { CreateQueryDialogResult, UncheckedItem } from "./CreateQueryDialog";
-import { CHECKLIST_LABELS } from "./steps/Step5Notes";
+import { CHECKLIST_LABELS, DG_CONDITIONAL_KEY } from "./steps/Step5Notes";
 
 /**
  * stepComponents registry — keyed by step key (order O2: client · shipment · cargo · legs · notes).
@@ -125,17 +125,20 @@ function WizardInner({ id }: { id?: string }) {
    * - new query: call the step's save, then POST → navigate to /queries/:id?step=0
    * - existing query: call the step's save (step returns a QuerySaveInput patch or void)
    */
-  const handleSave = useCallback(async () => {
-    const input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
-    if (isNew) {
-      // First save mints the queryCode; even an empty body is valid
-      const d = await create(input ?? {});
-      navigate(`/queries/${d.id}?step=0`, { replace: true });
-    } else if (id && input) {
-      await patch(id, input);
-      await refresh();
-    }
-  }, [isNew, id, create, patch, navigate, refresh]);
+  const handleSave = useCallback(
+    async (opts?: { enforceRequired?: boolean }) => {
+      const input = stepSaveRef.current ? await stepSaveRef.current(opts) : undefined;
+      if (isNew) {
+        // First save mints the queryCode; even an empty body is valid
+        const d = await create(input ?? {});
+        navigate(`/queries/${d.id}?step=0`, { replace: true });
+      } else if (id && input) {
+        await patch(id, input);
+        await refresh();
+      }
+    },
+    [isNew, id, create, patch, navigate, refresh],
+  );
 
   /**
    * handleCreateQuery — fired on the final step's "Create Query" button.
@@ -169,11 +172,19 @@ function WizardInner({ id }: { id?: string }) {
     }
 
     // ── 2. Optional-gaps prompt ──────────────────────────────────────────────
-    const uncheckedOptional = detail.checklist.filter((c) => !c.checked);
+    // G5: the DG-conditional MSDS item is un-checkable on a non-DG query, so it must
+    // not count as a "missing optional" gap (else the prompt always nags about it).
+    const uncheckedOptional = detail.checklist.filter(
+      (c) => !c.checked && !(c.itemKey === DG_CONDITIONAL_KEY && !detail.dgIndicator),
+    );
     if (uncheckedOptional.length) {
       const choice = await confirmCreateDialog(uncheckedOptional);
       if (choice === "cancel") return; // User bailed
-      if (choice === "draft") return;  // Save draft — already saved, just close
+      if (choice === "draft") {
+        // G2: persist the current step before closing (previously this saved nothing).
+        await handleSave();
+        return;
+      }
       // choice === "send" → fall through to create
     }
 
@@ -192,7 +203,7 @@ function WizardInner({ id }: { id?: string }) {
         throw err;
       }
     }
-  }, [id, detail, createQuery, refresh, confirmCreateDialog]);
+  }, [id, detail, createQuery, refresh, confirmCreateDialog, handleSave]);
 
   const currentStepKey = STEPS[step]?.key ?? STEPS[0].key;
   const StepComponent = stepComponents[currentStepKey];

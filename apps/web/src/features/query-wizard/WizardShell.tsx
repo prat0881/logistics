@@ -19,8 +19,9 @@ import { useSaveQuery } from "./useQueryDetail";
 
 interface WizardShellProps {
   children: ReactNode;
-  /** Called when Save or Next is pressed — provided by QueryWizardPage */
-  onSave: () => Promise<void>;
+  /** Called when Save or Next is pressed — provided by QueryWizardPage.
+   *  enforceRequired=true (Next) makes the current step's mandatory fields blocking. */
+  onSave: (opts?: { enforceRequired?: boolean }) => Promise<void>;
   findings?: Finding[];
   onClearFindings?: () => void;
   /** Called by the final step's "Create Query" button — provided by QueryWizardPage */
@@ -43,53 +44,60 @@ export function WizardShell({
   onCreateQuery,
 }: WizardShellProps) {
   const navigate = useNavigate();
-  const { detail, queryId, isNew, step, setStep, goNext, goBack, refresh } = useWizard();
+  const { detail, queryId, step, setStep, goNext, goBack } = useWizard();
   const { patch } = useSaveQuery();
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
   const completedSteps = new Set<string>(
     STEPS.slice(0, step).map((s) => s.key),
   );
 
-  const handleSave = async () => {
+  // Runs the current step's save. enforceRequired=true (Next) makes the step's
+  // mandatory fields blocking; false (Save) persists a partial draft. Returns
+  // whether it succeeded so callers can decide to advance.
+  const runSave = async (enforceRequired: boolean): Promise<boolean> => {
     setSaving(true);
     setSaveError(null);
+    setSaveSuccess(null);
     try {
-      await onSave();
+      await onSave(enforceRequired ? { enforceRequired: true } : undefined);
+      return true;
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "unknown error");
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
+  const handleSave = async () => {
+    if (await runSave(false)) setSaveSuccess("Changes saved."); // U3
+  };
+
   const handleNext = async () => {
-    setSaving(true);
-    setSaveError(null);
-    try {
-      await onSave();
-      goNext();
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "unknown error");
-    } finally {
-      setSaving(false);
-    }
+    // U5: advancing enforces the current step's mandatory fields.
+    if (await runSave(true)) goNext();
   };
 
   const handleCancel = () => {
     const confirmed = window.confirm("Discard unsaved changes?");
     if (!confirmed) return;
-    if (isNew) {
-      navigate("/queries");
-    } else {
-      void refresh();
-    }
+    // U2: Cancel always returns to the Queries list (previously an existing query
+    // just reverted in place).
+    navigate("/queries");
   };
 
   const handlePriorityChange = async (value: string) => {
     if (!queryId) return;
-    await patch(queryId, { priority: value as (typeof PRIORITIES)[number] });
+    setSaveError(null);
+    try {
+      await patch(queryId, { priority: value as (typeof PRIORITIES)[number] });
+    } catch (err) {
+      // G4: surface a failed priority change instead of failing silently.
+      setSaveError(err instanceof Error ? err.message : "unknown error");
+    }
   };
 
   const isFinalStep = step === STEPS.length - 1;
@@ -139,6 +147,24 @@ export function WizardShell({
 
       {/* Body */}
       <div className="flex-1 overflow-auto px-4 sm:px-6 py-6">
+        {/* Notices (U4): success, errors, and findings all render here — at the top
+            of the page (below the nav/stepper, above the step fields). */}
+        {saveSuccess && (
+          <div
+            role="status"
+            className="mb-4 rounded-md bg-success/10 px-4 py-3 text-sm font-medium text-success"
+          >
+            {saveSuccess}
+          </div>
+        )}
+        {saveError && (
+          <div
+            role="alert"
+            className="mb-4 rounded-md bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive"
+          >
+            {saveError}
+          </div>
+        )}
         {/* Findings */}
         {findings.length > 0 && (
           <div className="mb-4">
@@ -159,11 +185,6 @@ export function WizardShell({
 
       {/* Sticky action bar */}
       <div className="sticky bottom-0 border-t bg-background px-4 sm:px-6 py-3 flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-        {saveError && (
-          <span className="mr-auto w-full text-sm text-destructive sm:w-auto">
-            Couldn't save — {saveError}
-          </span>
-        )}
         <Button variant="ghost" onClick={handleCancel} disabled={saving}>
           Cancel
         </Button>
@@ -178,13 +199,17 @@ export function WizardShell({
         {isFinalStep ? (
           <Button
             onClick={async () => {
-              if (onCreateQuery) {
-                setSaving(true);
-                try {
-                  await onCreateQuery();
-                } finally {
-                  setSaving(false);
-                }
+              if (!onCreateQuery) return;
+              setSaving(true);
+              setSaveError(null);
+              setSaveSuccess(null);
+              try {
+                await onCreateQuery();
+              } catch (err) {
+                // G3: surface non-422 create failures instead of swallowing them.
+                setSaveError(err instanceof Error ? err.message : "unknown error");
+              } finally {
+                setSaving(false);
               }
             }}
             disabled={saving || !queryId}

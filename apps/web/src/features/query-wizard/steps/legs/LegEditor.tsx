@@ -61,6 +61,16 @@ function pointLabel(p: QueryPointDto): string {
   return `${p.type} — ${name}`;
 }
 
+/** Leg mandatory fields (§7.4.2 / C1) — hard-required before save (#4). Assigned
+ *  cargo (≥1) is checked separately since it's an array. */
+const LEG_REQUIRED: (keyof LegSaveInput)[] = [
+  "originPointId",
+  "destinationPointId",
+  "mode",
+  "readyDate",
+  "targetDelivery",
+];
+
 /**
  * LegEditor — create/edit dialog for a single Leg.
  *
@@ -136,6 +146,23 @@ export function LegEditor({
     );
 
   const handleSubmit = form.handleSubmit(async (data) => {
+    // #4: hard-block save unless all mandatory leg fields are present (Add and Edit).
+    let hasMissing = false;
+    for (const field of LEG_REQUIRED) {
+      if (!data[field]) {
+        form.setError(field, { type: "required", message: "Required" });
+        hasMissing = true;
+      }
+    }
+    if (!data.assignedCargoIds || data.assignedCargoIds.length === 0) {
+      form.setError("assignedCargoIds", {
+        type: "required",
+        message: "Assign at least one cargo row",
+      });
+      hasMissing = true;
+    }
+    if (hasMissing) return;
+
     setServerFindings([]);
     try {
       if (isEdit && leg) {
@@ -316,6 +343,11 @@ export function LegEditor({
                     />
                   )}
                 />
+                {form.formState.errors.assignedCargoIds && (
+                  <p className="text-sm font-medium text-destructive">
+                    {form.formState.errors.assignedCargoIds.message}
+                  </p>
+                )}
               </div>
 
               {/* Ready Date */}

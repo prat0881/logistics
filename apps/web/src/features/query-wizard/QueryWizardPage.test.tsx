@@ -287,10 +287,7 @@ describe("QueryWizardPage", () => {
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
   });
 
-  it("Cancel on existing query re-GETs (reverts) and does NOT navigate away", async () => {
-    let getCallCount = 0;
-
-    // Stub window.confirm to auto-confirm
+  it("Cancel navigates back to the Queries list (U2)", async () => {
     vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
 
     vi.stubGlobal(
@@ -301,16 +298,11 @@ describe("QueryWizardPage", () => {
             status: 200,
             body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
           };
-        if (url.includes("/api/queries/q9")) {
-          getCallCount++;
-          return { status: 200, body: draftDetail };
-        }
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
         return { status: 200, body: {} };
       }),
     );
 
-    // Spy on react-router navigate — we use a real MemoryRouter so just check
-    // that the page still shows the query code (not navigated to /queries list).
     renderWithProviders(
       <Routes>
         <Route path="/queries/:id" element={<QueryWizardPage />} />
@@ -322,26 +314,19 @@ describe("QueryWizardPage", () => {
       },
     );
 
-    // Wait for the detail to load (query code shown in header)
     await screen.findByText("YAL26-0009");
-    const getCallsBeforeCancel = getCallCount;
 
-    // Click Cancel
+    // Click Cancel → confirm → navigate to the Queries list (U2)
     await userEvent.click(screen.getByRole("button", { name: /^Cancel$/ }));
 
-    // Should have triggered a re-GET (invalidation → refetch)
-    await waitFor(() => expect(getCallCount).toBeGreaterThan(getCallsBeforeCancel));
-
-    // Should NOT have navigated to /queries list
-    expect(screen.queryByText("queries-list")).not.toBeInTheDocument();
-    // Query code header still visible
-    expect(screen.getByText("YAL26-0009")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("queries-list")).toBeInTheDocument());
 
     vi.unstubAllGlobals();
   });
 
-  it("Save Draft from optional-gaps dialog does NOT call /create and closes the dialog", async () => {
+  it("Save Draft from optional-gaps dialog persists the draft (PATCH) and does NOT call /create (G2)", async () => {
     const createCalls: string[] = [];
+    const patchCalls: string[] = [];
 
     // fullDraftDetail passes client-side preview; add an unchecked checklist item
     // so the optional-gaps dialog opens
@@ -364,6 +349,10 @@ describe("QueryWizardPage", () => {
         if (url.includes("/api/queries/q9/create") && init?.method === "POST") {
           createCalls.push(url);
           return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
+        }
+        if (url.includes("/api/queries/q9") && init?.method === "PATCH") {
+          patchCalls.push(url);
+          return { status: 200, body: detailWithUnchecked };
         }
         if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithUnchecked };
         return { status: 200, body: {} };
@@ -397,8 +386,9 @@ describe("QueryWizardPage", () => {
     await waitFor(() =>
       expect(screen.queryByText(/Create query with missing optional info/i)).not.toBeInTheDocument(),
     );
-    // /create must NOT have been called
+    // /create must NOT have been called, but the draft WAS persisted (G2)
     expect(createCalls.length).toBe(0);
+    await waitFor(() => expect(patchCalls.length).toBeGreaterThan(0));
   });
 
   it("on Create Query → 201 re-GETs and shows RFQ_READY + success banner", async () => {
@@ -446,5 +436,170 @@ describe("QueryWizardPage", () => {
     await waitFor(() =>
       expect(screen.getByText("RFQ_READY")).toBeInTheDocument(),
     );
+  });
+
+  it("Next on Step 1 with missing required fields blocks navigation and flags them (U5)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/clients"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // Click Next with every required field empty
+    await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+
+    // A required-fields message appears and we do NOT advance to Step 2 (no Incoterms)
+    await waitFor(() => expect(screen.getByText(/required fields/i)).toBeInTheDocument());
+    expect(screen.queryByLabelText(/incoterms/i)).not.toBeInTheDocument();
+  });
+
+  it("Next on Step 1 with all required fields present advances to Step 2 (U5)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url === `/api/clients/${fullDraftDetail.clientId}`)
+          return { status: 200, body: { id: fullDraftDetail.clientId, companyName: "Acme", country: "SG", status: "ACTIVE" } };
+        if (url.includes("/api/clients"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/queries/q9") && init?.method === "PATCH")
+          return { status: 200, body: fullDraftDetail };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: fullDraftDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+
+    // Advances to Step 2 — the Incoterms control becomes visible
+    await waitFor(() => expect(screen.getByLabelText(/incoterms/i)).toBeInTheDocument());
+  });
+
+  it("Save shows a success message at the top (U3)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/clients"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/queries/q9") && init?.method === "PATCH")
+          return { status: 200, body: draftDetail };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+    await userEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+
+    await waitFor(() => expect(screen.getByText(/saved/i)).toBeInTheDocument());
+  });
+
+  it("Create Query surfaces a non-422 server error instead of swallowing it (G3)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/q9/create") && init?.method === "POST")
+          return { status: 500, body: { message: "Internal error" } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: fullDraftDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9?step=4", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    const createBtn = await screen.findByRole("button", { name: /Create Query/i });
+    await userEvent.click(createBtn);
+
+    // The 500 error is shown to the user (not swallowed); status stays DRAFT
+    await waitFor(() => expect(screen.getByText(/internal error/i)).toBeInTheDocument());
+    expect(screen.getByText("DRAFT")).toBeInTheDocument();
+  });
+
+  it("does not prompt for the un-checkable MSDS item on a non-DG query (G5)", async () => {
+    const createCalls: string[] = [];
+    // Non-DG query whose ONLY unchecked checklist item is msds-received — which is
+    // un-checkable when dgIndicator is false, so it must not count as a missing gap.
+    const detailNonDgMsds = {
+      ...fullDraftDetail,
+      dgIndicator: false,
+      checklist: [{ id: "c1", itemKey: "msds-received", checked: false }],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/q9/create") && init?.method === "POST") {
+          createCalls.push(url);
+          return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
+        }
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailNonDgMsds };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9?step=4", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    const createBtn = await screen.findByRole("button", { name: /Create Query/i });
+    await userEvent.click(createBtn);
+
+    // No optional-gaps dialog appears; Create proceeds straight to POST /create.
+    await waitFor(() => expect(createCalls.length).toBe(1));
+    expect(
+      screen.queryByText(/Create query with missing optional info/i),
+    ).not.toBeInTheDocument();
   });
 });

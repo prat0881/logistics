@@ -113,6 +113,50 @@ describe("querySaveSchema (draft — lenient, format-validated)", () => {
       expect(querySaveSchema.safeParse({}).success).toBe(true);
     });
   });
+
+  describe("readyDate ≤ targetDelivery (G10)", () => {
+    it("rejects a readyDate after targetDelivery", () => {
+      expect(
+        querySaveSchema.safeParse({
+          readyDate: "2026-08-10T00:00:00.000Z",
+          targetDelivery: "2026-08-01T00:00:00.000Z",
+        }).success,
+      ).toBe(false);
+    });
+    it("accepts readyDate before or equal to targetDelivery", () => {
+      expect(
+        querySaveSchema.safeParse({
+          readyDate: "2026-08-01T00:00:00.000Z",
+          targetDelivery: "2026-08-10T00:00:00.000Z",
+        }).success,
+      ).toBe(true);
+      expect(
+        querySaveSchema.safeParse({
+          readyDate: "2026-08-01T00:00:00.000Z",
+          targetDelivery: "2026-08-01T00:00:00.000Z",
+        }).success,
+      ).toBe(true);
+    });
+    it("accepts when only one of the two dates is present", () => {
+      expect(querySaveSchema.safeParse({ readyDate: "2026-08-01T00:00:00.000Z" }).success).toBe(
+        true,
+      );
+      expect(
+        querySaveSchema.safeParse({ targetDelivery: "2026-08-01T00:00:00.000Z" }).success,
+      ).toBe(true);
+    });
+  });
+
+  describe("trims required text + rejects whitespace-only (G8)", () => {
+    it("rejects a whitespace-only contactName", () => {
+      expect(querySaveSchema.safeParse({ contactName: "   " }).success).toBe(false);
+    });
+    it("trims surrounding whitespace on contactName", () => {
+      const r = querySaveSchema.safeParse({ contactName: "  Jo  " });
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data.contactName).toBe("Jo");
+    });
+  });
 });
 
 describe("queryListQuerySchema", () => {
@@ -165,6 +209,28 @@ describe("queryListQuerySchema", () => {
       expect(queryListQuerySchema.safeParse({}).success).toBe(true);
     });
   });
+
+  describe("dateFrom ≤ dateTo (G11)", () => {
+    it("rejects an inverted date range", () => {
+      expect(
+        queryListQuerySchema.safeParse({
+          dateFrom: "2026-08-10T00:00:00.000Z",
+          dateTo: "2026-08-01T00:00:00.000Z",
+        }).success,
+      ).toBe(false);
+    });
+    it("accepts a valid range and single-sided ranges", () => {
+      expect(
+        queryListQuerySchema.safeParse({
+          dateFrom: "2026-08-01T00:00:00.000Z",
+          dateTo: "2026-08-10T00:00:00.000Z",
+        }).success,
+      ).toBe(true);
+      expect(queryListQuerySchema.safeParse({ dateFrom: "2026-08-01T00:00:00.000Z" }).success).toBe(
+        true,
+      );
+    });
+  });
 });
 
 describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Plan 5)", () => {
@@ -196,5 +262,9 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
       severity: "blocking",
       scope: { type: "cargo", id: "cg1" },
     });
+  });
+  it("treats a whitespace-only contactName as missing (F1) (G8)", () => {
+    const f = collectCreateFindings({ ...ready, contactName: "   " }, []);
+    expect(f.map((x) => x.rule)).toEqual(["F1"]);
   });
 });

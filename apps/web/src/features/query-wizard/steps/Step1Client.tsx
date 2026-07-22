@@ -37,8 +37,18 @@ import { VesselPicker } from "../pickers/VesselPicker";
  *      its own PATCH, avoiding a double-write (Step 2 and Step 5 use this pattern).
  */
 export interface StepSaveFn {
-  (): Promise<QuerySaveInput | void>;
+  (opts?: { enforceRequired?: boolean }): Promise<QuerySaveInput | void>;
 }
+
+/** Step-1 mandatory fields (the F1 subset this step owns) — enforced on Next (U5). */
+const STEP1_REQUIRED: { field: keyof QuerySaveInput; label: string }[] = [
+  { field: "clientId", label: "Client" },
+  { field: "contactName", label: "Contact Name" },
+  { field: "contactEmail", label: "Email" },
+  { field: "contactPhone", label: "Phone" },
+  { field: "readyDate", label: "Ready Date" },
+  { field: "targetDelivery", label: "Target Delivery" },
+];
 
 interface Step1ClientProps {
   registerSave: (fn: StepSaveFn) => void;
@@ -130,13 +140,33 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
     enabled: !!selectedClientId,
   });
 
-  const submitRef = useRef<() => Promise<QuerySaveInput | void>>();
+  const submitRef = useRef<StepSaveFn>();
 
   useEffect(() => {
-    submitRef.current = () => {
+    submitRef.current = (opts) => {
       return new Promise<QuerySaveInput | void>((resolve, reject) => {
         const submitFn = form.handleSubmit(
           (values) => {
+            // U5/D3: on advance (Next), this step's mandatory fields must be present.
+            // Plain Save (no enforce) still persists a partial draft.
+            if (opts?.enforceRequired) {
+              const missing = STEP1_REQUIRED.filter(({ field }) => {
+                const v = values[field];
+                return v == null || (typeof v === "string" && v.trim() === "");
+              });
+              if (missing.length) {
+                missing.forEach(({ field }) =>
+                  form.setError(field, { type: "required", message: "Required to continue" }),
+                );
+                reject(
+                  new Error(
+                    "Complete these required fields before continuing: " +
+                      missing.map((m) => m.label).join(", "),
+                  ),
+                );
+                return;
+              }
+            }
             if (!isAdmin) {
               // eslint-disable-next-line @typescript-eslint/no-unused-vars
               const { queryDate: _, ...rest } = values;
@@ -145,19 +175,21 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
               resolve(values);
             }
           },
-          // On validation error, reject so the shell can catch
-          (errors) => {
-            reject(new Error("Validation failed: " + JSON.stringify(errors)));
+          // On format-validation error, reject so the shell surfaces it (the inline
+          // FormMessages carry the per-field specifics).
+          () => {
+            reject(new Error("Please fix the highlighted fields."));
           },
         );
         // Call the handler and propagate any unexpected errors
         submitFn().catch(reject);
       });
     };
-    registerSave(async () => {
-      if (submitRef.current) return submitRef.current();
+    registerSave((opts) => {
+      if (submitRef.current) return submitRef.current(opts);
+      return Promise.resolve();
     });
-  }, [registerSave, form]);
+  }, [registerSave, form, isAdmin]);
 
   const handleContactSelect = (contactId: string) => {
     const contact = contacts?.find((c) => c.id === contactId);

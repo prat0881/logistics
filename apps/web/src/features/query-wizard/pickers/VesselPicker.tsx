@@ -27,7 +27,7 @@ export function VesselPicker({ value, onSelect }: VesselPickerProps) {
     queryKey: ["vessels", q],
     queryFn: () =>
       fetchJson<Paginated<VesselDto>>(
-        `/api/vessels?q=${encodeURIComponent(q)}`,
+        `/api/vessels?q=${encodeURIComponent(q)}&status=ACTIVE`,
       ),
     enabled: q.length > 0,
   });

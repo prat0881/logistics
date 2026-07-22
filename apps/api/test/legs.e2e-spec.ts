@@ -20,6 +20,7 @@ describe("Legs (e2e)", () => {
   let pickupId: string;
   let deliveryId: string;
   let seaportId: string;
+  let seaport2Id: string;
   let cargoId: string;
   const cookie = () => `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: EXEC_ID, role: Role.EXECUTIVE, tenantId: null })}`;
   const api = () => request(app.getHttpServer());
@@ -39,6 +40,7 @@ describe("Legs (e2e)", () => {
     pickupId = (await prisma.point.create({ data: { queryId, type: "PICKUP", name: "PU", country: "IN" } })).id;
     deliveryId = (await prisma.point.create({ data: { queryId, type: "DELIVERY", name: "DE", country: "DE" } })).id;
     seaportId = (await prisma.point.create({ data: { queryId, type: "SEAPORT", name: "SP", country: "IN" } })).id;
+    seaport2Id = (await prisma.point.create({ data: { queryId, type: "SEAPORT", name: "SP2", country: "SG" } })).id;
     cargoId = (await prisma.cargoItem.create({ data: { queryId, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } })).id;
   });
   afterAll(async () => {
@@ -58,7 +60,7 @@ describe("Legs (e2e)", () => {
     const l2 = await api()
       .post(`/api/queries/${queryId}/legs`)
       .set("Cookie", cookie())
-      .send({ mode: "SEA", originPointId: seaportId, destinationPointId: seaportId })
+      .send({ mode: "SEA", originPointId: seaportId, destinationPointId: seaport2Id })
       .expect(201);
     expect(l2.body.legCode).toBe("L2");
   });

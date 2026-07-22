@@ -8,13 +8,64 @@ import {
 import { postJson } from "@/lib/api";
 import { toRouteGraph } from "./routeGraph";
 
+export interface GroupedFindings {
+  /** Findings for each leg id (leg-scoped + cargo-scoped fanned onto carrying legs). */
+  byLeg: Map<string, Finding[]>;
+  /** Findings for each point id. */
+  byPoint: Map<string, Finding[]>;
+  /** Findings not tied to a specific box — rendered in the top strip. */
+  queryScoped: Finding[];
+  /** All blocking findings (strip count + Next-gate). */
+  blocking: Finding[];
+}
+
+/**
+ * Group findings by the box they belong to. Cargo-scoped findings fan onto the
+ * legs carrying that cargo (mirrors the RouteDiagram). A cargo finding with no
+ * carrying leg, and any query/field-scoped finding, go to `queryScoped` (the top
+ * strip). Pure — exported for tests.
+ */
+export function groupFindingsByScope(
+  findings: Finding[],
+  legs: { id: string; assignedCargoIds: string[] }[],
+): GroupedFindings {
+  const byLeg = new Map<string, Finding[]>();
+  const byPoint = new Map<string, Finding[]>();
+  const queryScoped: Finding[] = [];
+  const push = (map: Map<string, Finding[]>, id: string, f: Finding) => {
+    const arr = map.get(id);
+    if (arr) arr.push(f);
+    else map.set(id, [f]);
+  };
+  for (const f of findings) {
+    const { type, id } = f.scope;
+    if (type === "leg" && id) push(byLeg, id, f);
+    else if (type === "point" && id) push(byPoint, id, f);
+    else if (type === "cargo" && id) {
+      const carrying = legs.filter((l) => l.assignedCargoIds.includes(id));
+      if (carrying.length) carrying.forEach((l) => push(byLeg, l.id, f));
+      else queryScoped.push(f);
+    } else {
+      queryScoped.push(f);
+    }
+  }
+  return {
+    byLeg,
+    byPoint,
+    queryScoped,
+    blocking: findings.filter((f) => f.severity === "blocking"),
+  };
+}
+
 export interface UseRouteFindings {
-  /** Client-side findings — pure `validateRoute` at "draft" phase, deduped. */
+  /** Client-side findings — pure `validateRoute` at "create" phase, deduped. */
   clientFindings: Finding[];
   /** Findings returned by the last server validation (empty until run). */
   serverFindings: Finding[];
   /** Merged + deduped client ∪ server findings. */
   all: Finding[];
+  /** `all` grouped by box scope (for the top strip + per-box hover). */
+  grouped: GroupedFindings;
   /** True while a server validation request is in flight. */
   validating: boolean;
   /**
@@ -23,7 +74,7 @@ export interface UseRouteFindings {
    * fallback message near the "Validate route" button.
    */
   serverError: string | null;
-  /** POST /api/queries/:id/validate?phase=draft, store + return the deduped findings. Never throws. */
+  /** POST /api/queries/:id/validate?phase=create, store + return the deduped findings. Never throws. */
   validateOnServer: () => Promise<Finding[]>;
 }
 
@@ -43,7 +94,7 @@ export function useRouteFindings(detail: QueryDetail): UseRouteFindings {
   const [serverError, setServerError] = useState<string | null>(null);
 
   const clientFindings = useMemo(
-    () => dedupeFindings(validateRoute(toRouteGraph(detail), "draft")),
+    () => dedupeFindings(validateRoute(toRouteGraph(detail), "create")),
     [detail],
   );
 
@@ -52,7 +103,7 @@ export function useRouteFindings(detail: QueryDetail): UseRouteFindings {
     setServerError(null);
     try {
       const res = await postJson<{ findings: Finding[] }>(
-        `/api/queries/${detail.id}/validate?phase=draft`,
+        `/api/queries/${detail.id}/validate?phase=create`,
       );
       const deduped = dedupeFindings(res.findings);
       setServerFindings(deduped);
@@ -72,5 +123,7 @@ export function useRouteFindings(detail: QueryDetail): UseRouteFindings {
     [clientFindings, serverFindings],
   );
 
-  return { clientFindings, serverFindings, all, validating, serverError, validateOnServer };
+  const grouped = useMemo(() => groupFindingsByScope(all, detail.legs), [all, detail.legs]);
+
+  return { clientFindings, serverFindings, all, grouped, validating, serverError, validateOnServer };
 }

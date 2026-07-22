@@ -14,11 +14,11 @@ export const REFERENCE_TAGS = Object.values(ReferenceTag) as [ReferenceTag, ...R
 // are Stage-4 (never sent here); volumeCbm is DB-generated (never sent here).
 export const cargoCreateSchema = z
   .object({
-    poReference: z.string().min(1).max(120),
-    productName: z.string().min(1).max(200),
+    poReference: z.string().trim().min(1).max(120),
+    productName: z.string().trim().min(1).max(200),
     referenceTags: z.array(z.enum(REFERENCE_TAGS)).optional(),
     hsCode: z.string().max(40).optional(),
-    packageType: z.string().min(1).max(60),
+    packageType: z.string().trim().min(1).max(60),
     isDangerous: z.boolean().optional(),
     qty: z.number().int().positive().max(1000000), // F5: qty > 0
     dimL: z.number().positive().max(100000),
@@ -36,11 +36,11 @@ export type CargoCreateInput = z.infer<typeof cargoCreateSchema>;
 // Update: all fields optional; keep the Net ≤ Gross guard when both are present.
 export const cargoUpdateSchema = z
   .object({
-    poReference: z.string().min(1).max(120),
-    productName: z.string().min(1).max(200),
+    poReference: z.string().trim().min(1).max(120),
+    productName: z.string().trim().min(1).max(200),
     referenceTags: z.array(z.enum(REFERENCE_TAGS)),
     hsCode: z.string().max(40).nullable(),
-    packageType: z.string().min(1).max(60),
+    packageType: z.string().trim().min(1).max(60),
     isDangerous: z.boolean(),
     qty: z.number().int().positive().max(1000000),
     dimL: z.number().positive().max(100000),

@@ -49,7 +49,7 @@ export const querySaveSchema = z
     responseDeadline: isoDate,
     responseDeadlineRemarks: z.string().max(200),
     clientId: z.string().uuid(),
-    contactName: z.string().min(1).max(160),
+    contactName: z.string().trim().min(1).max(160),
     contactDesignation: z.string().max(120),
     contactEmail: z.string().email(), // F2
     contactPhone: z.string().regex(/^\+?[1-9]\d{6,14}$/, "Phone must be E.164"), // F2
@@ -95,6 +95,13 @@ export const querySaveSchema = z
       return new Date(q.responseDeadline) >= today;
     },
     { message: "Response Deadline cannot be in the past", path: ["responseDeadline"] },
+  )
+  // G10: Ready Date must be on or before Target Delivery (when both are present).
+  .refine(
+    (q) =>
+      !(q.readyDate && q.targetDelivery) ||
+      new Date(q.readyDate).getTime() <= new Date(q.targetDelivery).getTime(),
+    { message: "Ready Date must be on or before Target Delivery", path: ["targetDelivery"] },
   );
 export type QuerySaveInput = z.infer<typeof querySaveSchema>;
 
@@ -134,7 +141,11 @@ export function collectCreateFindings(
 ): Finding[] {
   const findings: Finding[] = [];
   const need = (present: unknown, message: string) => {
-    if (present === null || present === undefined || present === "") {
+    const missing =
+      present === null ||
+      present === undefined ||
+      (typeof present === "string" && present.trim() === "");
+    if (missing) {
       findings.push({
         rule: "F1",
         severity: "blocking",
@@ -201,7 +212,13 @@ export const queryListQuerySchema = z.object({
   sort: z.string().optional(),             // "<column>:<asc|desc>"
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-});
+}).refine(
+  // G11: dateFrom must be on or before dateTo (when both are present).
+  (p) =>
+    !(p.dateFrom && p.dateTo) ||
+    new Date(p.dateFrom).getTime() <= new Date(p.dateTo).getTime(),
+  { message: "dateFrom must be on or before dateTo", path: ["dateTo"] },
+);
 export type QueryListParams = z.infer<typeof queryListQuerySchema>;
 
 export type QueryListRow = {
