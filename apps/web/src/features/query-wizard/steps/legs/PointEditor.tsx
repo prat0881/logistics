@@ -108,7 +108,7 @@ export function PointEditor({
   onClose,
 }: PointEditorProps) {
   const isEdit = Boolean(point);
-  const { add, update } = usePoints(queryId);
+  const { add, update, remove } = usePoints(queryId);
 
   // Local controlled state for type (when creating a new point).
   const [selectedType, setSelectedType] = useState<PointType>(
@@ -144,6 +144,13 @@ export function PointEditor({
   const handleTypeChange = (t: string) => {
     setSelectedType(t as PointType);
     form.setValue("type", t as PointType);
+  };
+
+  const handleDelete = async () => {
+    if (!point || !window.confirm("Delete this point?")) return;
+    await remove(point.id);
+    onSaved(point as unknown as Record<string, unknown>);
+    onClose();
   };
 
   const handleSubmit = form.handleSubmit(async (data) => {
@@ -612,6 +619,11 @@ export function PointEditor({
             )}
 
             <DialogFooter>
+              {isEdit && (
+                <Button type="button" variant="destructive" onClick={handleDelete} className="mr-auto">
+                  Delete
+                </Button>
+              )}
               <Button type="button" variant="ghost" onClick={onClose}>
                 Cancel
               </Button>

@@ -82,7 +82,7 @@ export function LegEditor({
   onClose,
 }: LegEditorProps) {
   const isEdit = Boolean(leg);
-  const { add, update } = useLegs(queryId);
+  const { add, update, remove } = useLegs(queryId);
 
   const [serverFindings, setServerFindings] = useState<Finding[]>([]);
   const [showPointEditor, setShowPointEditor] = useState<"origin" | "destination" | null>(null);
@@ -134,6 +134,13 @@ export function LegEditor({
       originPoint.type as Parameters<typeof checkModeEndpoints>[1],
       destPoint.type as Parameters<typeof checkModeEndpoints>[2],
     );
+
+  const handleDelete = async () => {
+    if (!leg || !window.confirm("Delete this leg?")) return;
+    await remove(leg.id);
+    onSaved();
+    onClose();
+  };
 
   const handleSubmit = form.handleSubmit(async (data) => {
     setServerFindings([]);
@@ -380,6 +387,11 @@ export function LegEditor({
               )}
 
               <DialogFooter>
+                {isEdit && (
+                  <Button type="button" variant="destructive" onClick={handleDelete} className="mr-auto">
+                    Delete
+                  </Button>
+                )}
                 <Button type="button" variant="ghost" onClick={onClose}>
                   Cancel
                 </Button>
