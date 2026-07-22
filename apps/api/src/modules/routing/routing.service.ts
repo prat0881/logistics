@@ -52,6 +52,7 @@ export class RoutingService {
           icaoCode: p.icaoCode,
           unLocode: p.unLocode,
           terminal: p.terminal,
+          timezone: p.timezone,
         }),
       ),
       legs: legs.map(

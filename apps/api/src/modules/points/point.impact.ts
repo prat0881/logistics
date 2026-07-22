@@ -18,6 +18,7 @@ export const pointImpactMap: Record<keyof PointSaveInput | "@create" | "@delete"
   icaoCode: ImpactClass.Corrective,
   unLocode: ImpactClass.RfqDefining,
   terminal: ImpactClass.Corrective,
+  timezone: ImpactClass.RfqDefining,
   "@create": ImpactClass.Structural,
   "@delete": ImpactClass.Structural,
 };

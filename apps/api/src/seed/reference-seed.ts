@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { ORG_TIMEZONE_KEY, DEFAULT_ORG_TIMEZONE } from "@svyft/shared";
 
 const DENSITY: { mode: "ROAD" | "AIR" | "SEA"; kgPerCbm: number }[] = [
   { mode: "ROAD", kgPerCbm: 333 },
@@ -37,4 +38,9 @@ export async function seedReferenceData(prisma: PrismaClient): Promise<void> {
       update: {},
     });
   }
+  await prisma.appSetting.upsert({
+    where: { key: ORG_TIMEZONE_KEY },
+    create: { key: ORG_TIMEZONE_KEY, value: DEFAULT_ORG_TIMEZONE },
+    update: {},
+  });
 }
