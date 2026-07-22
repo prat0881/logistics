@@ -13,9 +13,9 @@ function validGraph(): RouteGraph {
   return {
     query: { id: "q1", readyDate: READY, targetDelivery: TARGET },
     points: [
-      { id: "pu", type: "PICKUP", name: "Shipper", streetAddress: "1 St", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
-      { id: "wh", type: "WAREHOUSE", name: "Hub", streetAddress: "5 Rd", city: "Delhi", postalCode: "110001", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
-      { id: "de", type: "DELIVERY", name: "Consignee", streetAddress: "9 Rd", city: "Hamburg", postalCode: "20095", country: "DE", contactName: "B", contactPhone: "+491234567", contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
+      { id: "pu", type: "PICKUP", name: "Shipper", streetAddress: "1 St", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Asia/Kolkata" },
+      { id: "wh", type: "WAREHOUSE", name: "Hub", streetAddress: "5 Rd", city: "Delhi", postalCode: "110001", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Asia/Kolkata" },
+      { id: "de", type: "DELIVERY", name: "Consignee", streetAddress: "9 Rd", city: "Hamburg", postalCode: "20095", country: "DE", contactName: "B", contactPhone: "+491234567", contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Europe/Berlin" },
     ],
     legs: [
       { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "wh", readyDate: READY, targetDelivery: MID },
@@ -84,7 +84,7 @@ describe("R3 — orphans", () => {
   });
   it("flags an unused point", () => {
     const g = validGraph();
-    g.points.push({ id: "wh2", type: "WAREHOUSE", name: "WH2", streetAddress: "x", city: "c", postalCode: "1", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null });
+    g.points.push({ id: "wh2", type: "WAREHOUSE", name: "WH2", streetAddress: "x", city: "c", postalCode: "1", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Asia/Kolkata" });
     expect(rules(g, "create")).toContain("R3");
   });
 });
@@ -123,7 +123,7 @@ describe("R6 — mass balance", () => {
   it("flags cargo mass-balance imbalance at a hub (enters, never leaves)", () => {
     const g = validGraph();
     // Two legs feed the warehouse; nothing leaves it → wh has indeg 2, outdeg 0 (|diff| = 2).
-    g.points.push({ id: "pu2", type: "PICKUP", name: "S2", streetAddress: "2", city: "Pune", postalCode: "411001", country: "IN", contactName: "C", contactPhone: "+915555555", contactEmail: "c@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null });
+    g.points.push({ id: "pu2", type: "PICKUP", name: "S2", streetAddress: "2", city: "Pune", postalCode: "411001", country: "IN", contactName: "C", contactPhone: "+915555555", contactEmail: "c@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Asia/Kolkata" });
     g.legs = [
       { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "wh", readyDate: READY, targetDelivery: MID },
       { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "pu2", destinationPointId: "wh", readyDate: READY, targetDelivery: MID },
@@ -154,6 +154,19 @@ describe("R7/R8 — downstream readiness", () => {
   });
 });
 
+describe("R8 — timezone is required for every point type at create phase", () => {
+  it("flags a create-phase PICKUP missing timezone as an R8 finding", () => {
+    const g = validGraph();
+    // Remove timezone from the pickup point (it has none — until we add it to the fixture)
+    // The point will be missing timezone when it's required in POINT_REQUIRED_FIELDS
+    const pickupPoint = g.points.find((p) => p.type === "PICKUP")!;
+    (pickupPoint as Record<string, unknown>).timezone = undefined;
+    const findings = validateRoute(g, "create").filter((f) => f.rule === "R8");
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.some((f) => f.scope.id === pickupPoint.id)).toBe(true);
+  });
+});
+
 describe("R9 — DG needs MSDS on every carrying leg", () => {
   it("flags DG cargo without an MSDS", () => {
     const g = validGraph();
@@ -181,7 +194,7 @@ describe("T1/T2/T3 — temporal", () => {
   it("T3: flags an onward hub leg departing before the max feeding arrival", () => {
     const g = validGraph();
     // add a second feeding leg into sp with a later target than l1
-    g.points.push({ id: "pu2", type: "PICKUP", name: "S2", streetAddress: "2", city: "Pune", postalCode: "411001", country: "IN", contactName: "C", contactPhone: "+915555555", contactEmail: "c@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null });
+    g.points.push({ id: "pu2", type: "PICKUP", name: "S2", streetAddress: "2", city: "Pune", postalCode: "411001", country: "IN", contactName: "C", contactPhone: "+915555555", contactEmail: "c@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Asia/Kolkata" });
     g.cargo.push({ id: "c2", poReference: "PO-2", isDangerous: false, msdsFileId: null, grossWt: 50, volumeCbm: 0.5 });
     g.legs.push({ id: "l3", legCode: "L3", mode: "ROAD", originPointId: "pu2", destinationPointId: "wh", readyDate: READY, targetDelivery: "2026-08-07T00:00:00.000Z" });
     g.legCargo.push({ legId: "l3", cargoItemId: "c2" }, { legId: "l2", cargoItemId: "c2" });
@@ -200,8 +213,8 @@ describe("C1/C3 — completeness", () => {
   it("flags a cargo row whose legs are not all on one continuous chain (C2)", () => {
     const g = validGraph();
     g.points.push(
-      { id: "x", type: "WAREHOUSE", name: "X", streetAddress: "1", city: "c", postalCode: "1", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
-      { id: "y", type: "WAREHOUSE", name: "Y", streetAddress: "2", city: "c", postalCode: "1", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null },
+      { id: "x", type: "WAREHOUSE", name: "X", streetAddress: "1", city: "c", postalCode: "1", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Asia/Kolkata" },
+      { id: "y", type: "WAREHOUSE", name: "Y", streetAddress: "2", city: "c", postalCode: "1", country: "IN", contactName: null, contactPhone: null, contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Asia/Kolkata" },
     );
     g.legs = [
       { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "de", readyDate: READY, targetDelivery: TARGET },

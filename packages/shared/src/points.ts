@@ -1,5 +1,6 @@
 // packages/shared/src/points.ts
 import { z } from "zod";
+import { isValidIanaZone } from "./timezone";
 
 // Five reusable point types (D2). Single-table inheritance in the DB;
 // per-type required fields enforced in the route engine (R8), not DB nullability.
@@ -46,6 +47,10 @@ export const pointSaveSchema = z.object({
   icaoCode: icao.optional(),
   unLocode: unLocode.optional(),
   terminal: z.string().trim().min(1).max(120).optional(),
+  timezone: z
+    .string()
+    .refine(isValidIanaZone, { message: "Must be a valid IANA timezone" })
+    .optional(),
 });
 export type PointSaveInput = z.infer<typeof pointSaveSchema>;
 
@@ -65,6 +70,7 @@ export const POINT_REQUIRED_FIELDS: Record<PointType, (keyof PointSaveInput)[]> 
     "contactName",
     "contactPhone",
     "contactEmail",
+    "timezone",
   ],
   DELIVERY: [
     "name",
@@ -74,8 +80,9 @@ export const POINT_REQUIRED_FIELDS: Record<PointType, (keyof PointSaveInput)[]> 
     "country",
     "contactName",
     "contactPhone",
+    "timezone",
   ],
-  WAREHOUSE: ["name", "streetAddress", "city", "postalCode", "country"],
-  AIRPORT: ["name", "iataCode", "city", "postalCode", "country"],
-  SEAPORT: ["name", "unLocode", "city", "postalCode", "country"],
+  WAREHOUSE: ["name", "streetAddress", "city", "postalCode", "country", "timezone"],
+  AIRPORT: ["name", "iataCode", "city", "postalCode", "country", "timezone"],
+  SEAPORT: ["name", "unLocode", "city", "postalCode", "country", "timezone"],
 };

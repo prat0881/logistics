@@ -307,6 +307,25 @@ describe("defaultResponseDeadline (priority → deadline offset)", () => {
   });
 });
 
+describe("F3 compares real instants across zones", () => {
+  it("accepts ETA<ETB<ETD even when the offset strings sort differently than the instants", () => {
+    // ETA 10:00+05:30 = 04:30Z ; ETB 06:00Z ; ETD 07:00Z — instants ordered, strings are not.
+    const ok = querySaveSchema.safeParse({
+      eta: "2026-06-15T10:00:00+05:30",
+      etb: "2026-06-15T06:00:00+00:00",
+      etd: "2026-06-15T07:00:00+00:00",
+    });
+    expect(ok.success).toBe(true);
+  });
+  it("rejects when the real instants are out of order", () => {
+    const bad = querySaveSchema.safeParse({
+      eta: "2026-06-15T06:00:00+00:00",
+      etb: "2026-06-15T10:00:00+05:30", // = 04:30Z, before ETA
+    });
+    expect(bad.success).toBe(false);
+  });
+});
+
 describe("collectChecklistFindings (Notes + all boxes mandatory, Create-enforced)", () => {
   const items = (checked: boolean) =>
     [{ key: "weight-confirmed", checked, label: "Weight confirmed" }, { key: "packing-list", checked, label: "Packing list received" }];
