@@ -14,7 +14,7 @@ export type QueryZonedField =
   | "etd";
 
 const viewer = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-const zoneOf = (p?: PointLike, org?: string) => p?.timezone || org || "UTC";
+const zoneOf = (p?: PointLike, org?: string) => p?.timezone || org || "UTC"; // || (not ??): empty-string timezone is invalid → fall through to org
 
 export function resolveQueryFieldZone(
   field: QueryZonedField,

@@ -46,4 +46,8 @@ describe("resolveLegFieldZone", () => {
   it("falls back to org zone when the endpoint (or its zone) is missing", () => {
     expect(resolveLegFieldZone("readyDate", {}, points, ORG)).toBe(ORG);
   });
+  it("falls back to org zone when the matched point has a null timezone", () => {
+    const nullTzPoints = [{ id: "p1", timezone: null }, { id: "p2", timezone: "Asia/Singapore" }];
+    expect(resolveLegFieldZone("readyDate", { originPointId: "p1" }, nullTzPoints, ORG)).toBe(ORG);
+  });
 });

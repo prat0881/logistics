@@ -362,6 +362,7 @@ export type QueryPointDto = {
   icaoCode: string | null;
   unLocode: string | null;
   terminal: string | null;
+  timezone: string | null;
   createdAt: string;
   updatedAt: string;
 };
