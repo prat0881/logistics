@@ -58,6 +58,12 @@ describe("querySaveSchema (draft — lenient, format-validated)", () => {
     it("accepts a valid 7-digit imoNumber", () => {
       expect(querySaveSchema.safeParse({ imoNumber: "1234567" }).success).toBe(true);
     });
+    it("rejects a contactPhone without a leading +", () => {
+      expect(querySaveSchema.safeParse({ contactPhone: "911234567890" }).success).toBe(false);
+    });
+    it("accepts a valid E.164 contactPhone with +", () => {
+      expect(querySaveSchema.safeParse({ contactPhone: "+911234567890" }).success).toBe(true);
+    });
   });
 
   describe("F3: ETA < ETB < ETD, incl. the ETA < ETD guard when ETB is absent", () => {

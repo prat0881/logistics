@@ -52,7 +52,7 @@ export const querySaveSchema = z
     contactName: z.string().trim().min(1).max(160),
     contactDesignation: z.string().max(120),
     contactEmail: z.string().email(), // F2
-    contactPhone: z.string().regex(/^\+?[1-9]\d{6,14}$/, "Phone must be E.164"), // F2
+    contactPhone: z.string().regex(/^\+[1-9]\d{6,14}$/, "Phone must be E.164"), // F2 (strict — leading + required)
     whatsappEnabled: z.boolean(),
     faxNumber: z.string().max(40),
     vesselId: z.string().uuid(),

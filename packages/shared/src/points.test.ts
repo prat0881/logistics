@@ -56,3 +56,15 @@ describe("POINT_REQUIRED_FIELDS", () => {
     expect(POINT_REQUIRED_FIELDS.SEAPORT).toContain("unLocode");
   });
 });
+
+describe("pointSaveSchema.contactPhone (strict E.164)", () => {
+  it("rejects a phone without a leading +", () => {
+    expect(pointSaveSchema.safeParse({ type: "PICKUP", contactPhone: "6591234567" }).success).toBe(false);
+  });
+  it("accepts a +-prefixed E.164 phone", () => {
+    expect(pointSaveSchema.safeParse({ type: "PICKUP", contactPhone: "+6591234567" }).success).toBe(true);
+  });
+  it("allows contactPhone to be absent (draft)", () => {
+    expect(pointSaveSchema.safeParse({ type: "PICKUP" }).success).toBe(true);
+  });
+});

@@ -27,7 +27,7 @@ export const WAREHOUSE_TYPES = Object.values(WarehouseType) as [WarehouseType, .
 const iata = z.string().regex(/^[A-Z]{3}$/, "IATA must be 3 uppercase letters");
 const icao = z.string().regex(/^[A-Z]{4}$/, "ICAO must be 4 uppercase letters");
 const unLocode = z.string().regex(/^[A-Z]{2}[A-Z0-9]{3}$/, "UN/LOCODE must be 5 characters");
-const phone = z.string().regex(/^\+?[1-9]\d{6,14}$/, "Phone must be E.164");
+const phone = z.string().regex(/^\+[1-9]\d{6,14}$/, "Phone must be E.164");
 
 // `type` is the required discriminant (you pick a point type up front); every other
 // field is optional here so drafts persist (matches querySaveSchema.partial()).

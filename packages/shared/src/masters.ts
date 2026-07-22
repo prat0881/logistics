@@ -31,7 +31,7 @@ export type ClientUpdateInput = z.infer<typeof clientUpdateSchema>;
 export const contactCreateSchema = z.object({
   name: z.string().min(1).max(160),
   designation: z.string().max(120).optional(),
-  contactNo: z.string().max(40).optional(),
+  contactNo: z.string().regex(/^\+[1-9]\d{6,14}$/, "Phone must be E.164").optional(),
   email: z.string().email().optional(),
   isPrimary: z.boolean().optional(),
 });
