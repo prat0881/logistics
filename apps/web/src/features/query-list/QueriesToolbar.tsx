@@ -121,8 +121,22 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
   }
   function handleDateRange(range: DateRange | undefined) {
     setDateRange(range);
-    emitFilters({ dateRange: range });
-    if (range?.from && range?.to) setCalendarOpen(false);
+    // Only apply + close once BOTH distinct endpoints are chosen.
+    // react-day-picker v10 range mode sets from === to on the first click (single-day
+    // selection), so we gate on from and to being DIFFERENT dates. A partial or
+    // single-day selection stays open and un-emitted.
+    if (
+      range?.from &&
+      range?.to &&
+      range.from.toDateString() !== range.to.toDateString()
+    ) {
+      emitFilters({ dateRange: range });
+      setCalendarOpen(false);
+    }
+  }
+  function clearDateRange() {
+    setDateRange(undefined);
+    emitFilters({ dateRange: undefined });
   }
 
   function clearFilters() {
@@ -256,6 +270,11 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
             onSelect={handleDateRange}
             numberOfMonths={2}
           />
+          <div className="flex justify-end border-t p-2">
+            <Button size="sm" variant="ghost" onClick={clearDateRange}>
+              Clear
+            </Button>
+          </div>
         </PopoverContent>
       </Popover>
 
