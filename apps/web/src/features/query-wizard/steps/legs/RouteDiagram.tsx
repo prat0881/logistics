@@ -43,6 +43,10 @@ interface RouteDiagramProps {
   /** The point the user is focused on — rendered with the marigold accent. */
   selectedPointId?: string | null;
   onSelect?: (scope: FindingScope) => void;
+  /** Task 2: preferred handler — clicking a point node opens the point editor. */
+  onEditPoint?: (pointId: string) => void;
+  /** Task 2: preferred handler — clicking a leg edge opens the leg editor. */
+  onEditLeg?: (legId: string) => void;
   className?: string;
 }
 
@@ -78,6 +82,8 @@ export function RouteDiagram({
   selectedLegId,
   selectedPointId,
   onSelect,
+  onEditPoint,
+  onEditLeg,
   className,
 }: RouteDiagramProps) {
   const graph = useMemo(() => toRouteGraph(detail), [detail]);
@@ -177,6 +183,7 @@ export function RouteDiagram({
                 active={active}
                 reducedMotion={prefersReducedMotion}
                 onSelect={onSelect}
+                onEditLeg={onEditLeg}
               />
             );
           })}
@@ -202,6 +209,7 @@ export function RouteDiagram({
                 active={active}
                 reducedMotion={prefersReducedMotion}
                 onSelect={onSelect}
+                onEditPoint={onEditPoint}
               />
             );
           })}
@@ -227,6 +235,7 @@ function Edge({
   active,
   reducedMotion,
   onSelect,
+  onEditLeg,
 }: {
   leg: ReturnType<typeof toRouteGraph>["legs"][number];
   from: Pt;
@@ -236,6 +245,7 @@ function Edge({
   active: boolean;
   reducedMotion: boolean;
   onSelect?: (scope: FindingScope) => void;
+  onEditLeg?: (legId: string) => void;
 }) {
   // Anchor at the right edge of origin node and left edge of destination node.
   const x1 = from.x + NODE_W;
@@ -270,7 +280,9 @@ function Edge({
   const mid = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
   const dash = modeDash(leg.mode);
 
-  const interactive = !!onSelect;
+  const activate = () =>
+    onEditLeg ? onEditLeg(leg.id) : onSelect?.({ type: "leg", id: leg.id });
+  const interactive = !!onEditLeg || !!onSelect;
 
   return (
     <g
@@ -279,7 +291,7 @@ function Edge({
       data-active={active ? "true" : undefined}
       data-finding={highlight.finding ?? undefined}
       className={cn("group", interactive && "route-focusable cursor-pointer")}
-      onClick={interactive ? () => onSelect?.({ type: "leg", id: leg.id }) : undefined}
+      onClick={interactive ? activate : undefined}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
       onKeyDown={
@@ -287,7 +299,7 @@ function Edge({
           ? (e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                onSelect?.({ type: "leg", id: leg.id });
+                activate();
               }
             }
           : undefined
@@ -368,6 +380,7 @@ function Node({
   active,
   reducedMotion,
   onSelect,
+  onEditPoint,
 }: {
   point: ReturnType<typeof toRouteGraph>["points"][number];
   x: number;
@@ -378,6 +391,7 @@ function Node({
   active: boolean;
   reducedMotion: boolean;
   onSelect?: (scope: FindingScope) => void;
+  onEditPoint?: (pointId: string) => void;
 }) {
   const meta = POINT_GLYPH[point.type] ?? { glyph: "•", label: point.type };
   const code =
@@ -405,7 +419,9 @@ function Node({
     strokeWidth = 2.25;
   }
 
-  const interactive = !!onSelect;
+  const activate = () =>
+    onEditPoint ? onEditPoint(point.id) : onSelect?.({ type: "point", id: point.id });
+  const interactive = !!onEditPoint || !!onSelect;
 
   return (
     <g
@@ -417,9 +433,7 @@ function Node({
       transform={`translate(${x}, ${y})`}
       className={cn(interactive && "route-focusable cursor-pointer")}
       opacity={orphan && !highlight.finding && !active ? 0.6 : 1}
-      onClick={
-        interactive ? () => onSelect?.({ type: "point", id: point.id }) : undefined
-      }
+      onClick={interactive ? activate : undefined}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
       onKeyDown={
@@ -427,7 +441,7 @@ function Node({
           ? (e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                onSelect?.({ type: "point", id: point.id });
+                activate();
               }
             }
           : undefined

@@ -253,4 +253,32 @@ describe("RouteDiagram", () => {
     render(<RouteDiagram detail={detailEmpty} findings={[]} />);
     expect(screen.getByText(/add a point or leg to start the route/i)).toBeInTheDocument();
   });
+
+  // ── Task 2: onEditPoint / onEditLeg ─────────────────────────────────────────
+
+  const detailWithRoute = makeDetail({
+    points: [
+      { id: "p1", type: "PICKUP", name: "Sender" },
+      { id: "p2", type: "DELIVERY", name: "Receiver" },
+    ],
+    legs: [
+      { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "p1", destinationPointId: "p2", assignedCargoIds: [] },
+    ],
+  });
+
+  it("clicking a point box calls onEditPoint with the point id", async () => {
+    const onEditPoint = vi.fn();
+    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={onEditPoint} onEditLeg={() => {}} />);
+    const node = document.querySelector('[data-point-id]') as SVGGElement;
+    await userEvent.click(node);
+    expect(onEditPoint).toHaveBeenCalledWith(node.getAttribute("data-point-id"));
+  });
+
+  it("clicking a leg line calls onEditLeg with the leg id", async () => {
+    const onEditLeg = vi.fn();
+    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={onEditLeg} />);
+    const edge = document.querySelector('[data-leg-id]') as SVGGElement;
+    await userEvent.click(edge);
+    expect(onEditLeg).toHaveBeenCalledWith(edge.getAttribute("data-leg-id"));
+  });
 });
