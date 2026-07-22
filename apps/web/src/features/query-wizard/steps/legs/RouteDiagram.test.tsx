@@ -12,7 +12,7 @@ afterEach(() => {
 /** Build a QueryDetail with the given points / legs; cargo defaults to empty. */
 function makeDetail(over: {
   points?: Array<{ id: string; type: string; name?: string | null; city?: string | null; country?: string | null; unLocode?: string | null; iataCode?: string | null; streetAddress?: string | null; postalCode?: string | null; contactName?: string | null; contactPhone?: string | null; contactEmail?: string | null }>;
-  legs?: Array<{ id: string; legCode: string; mode?: string | null; originPointId?: string | null; destinationPointId?: string | null; assignedCargoIds?: string[]; rollup?: { totalPackages: number; totalCbm: number | string; totalGrossWt: number | string; totalNetWt: number | string } }>;
+  legs?: Array<{ id: string; legCode: string; mode?: string | null; originPointId?: string | null; destinationPointId?: string | null; assignedCargoIds?: string[]; rollup?: { totalPackages: number; totalCbm: number; totalGrossWt: number; totalNetWt: number } }>;
   cargo?: Array<{ id: string; poReference?: string }>;
 } = {}): QueryDetail {
   const points = (over.points ?? []).map((p) => ({
@@ -171,41 +171,6 @@ describe("RouteDiagram", () => {
     expect(getByText("INNSA")).toBeInTheDocument();
   });
 
-  it("fires onSelect with the leg scope when an edge is clicked", async () => {
-    const detail = makeDetail({
-      points: [
-        { id: "p1", type: "PICKUP", name: "Sender" },
-        { id: "p2", type: "DELIVERY", name: "Receiver" },
-      ],
-      legs: [
-        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "p1", destinationPointId: "p2", assignedCargoIds: [] },
-      ],
-    });
-    const onSelect = vi.fn();
-    const { container } = render(<RouteDiagram detail={detail} findings={[]} onSelect={onSelect} />);
-    const edge = container.querySelector('[data-leg-id="l1"]');
-    expect(edge).not.toBeNull();
-    await userEvent.click(edge as Element);
-    expect(onSelect).toHaveBeenCalledWith({ type: "leg", id: "l1" });
-  });
-
-  it("marks the active leg (selectedLegId) with data-active for the marigold treatment", () => {
-    const detail = makeDetail({
-      points: [
-        { id: "p1", type: "PICKUP", name: "Sender" },
-        { id: "p2", type: "DELIVERY", name: "Receiver" },
-      ],
-      legs: [
-        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "p1", destinationPointId: "p2", assignedCargoIds: [] },
-      ],
-    });
-    const { container } = render(
-      <RouteDiagram detail={detail} findings={[]} selectedLegId="l1" />,
-    );
-    const edge = container.querySelector('[data-leg-id="l1"][data-active="true"]');
-    expect(edge).not.toBeNull();
-  });
-
   it("highlights cargo-scoped findings on every edge carrying that cargo", () => {
     const detail = makeDetail({
       points: [
@@ -277,7 +242,7 @@ describe("RouteDiagram", () => {
         originPointId: "p1",
         destinationPointId: "p2",
         assignedCargoIds: [],
-        rollup: { totalPackages: 5, totalCbm: "1.2345", totalGrossWt: "100.50", totalNetWt: "90.00" },
+        rollup: { totalPackages: 2, totalCbm: 1.2345, totalGrossWt: 100.5, totalNetWt: 0 },
       },
     ],
   });
@@ -318,6 +283,9 @@ describe("RouteDiagram", () => {
     expect(tip).toHaveTextContent(/pkg/i);
     expect(tip).toHaveTextContent(/CBM/i);
     expect(tip).toHaveTextContent(/kg/i);
+    // Value-level: rollup numbers are formatted correctly (catches toFixed regressions).
+    expect(tip).toHaveTextContent("2 pkg");
+    expect(tip).toHaveTextContent("1.2345 CBM");
   });
 
   it("tooltip shows red finding messages for a point with blocking findings", async () => {

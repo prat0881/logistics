@@ -3,7 +3,6 @@ import {
   FreightMode,
   PointType,
   type Finding,
-  type FindingScope,
   type QueryDetail,
 } from "@svyft/shared";
 import { cn } from "@/lib/utils";
@@ -15,11 +14,12 @@ import { toRouteGraph } from "./routeGraph";
  * A query *is* a path through ports, so we render it as a literal node-graph:
  * port nodes wired left-to-right by mode-typed leg edges, read like a
  * bill-of-lading routing table drawn as an instrument schematic. The field is
- * kept quiet (cobalt/graphite) so the ONE bold thing — the marigold `--accent`
- * on the active/selected leg + its nodes — reads as the live signal.
+ * kept quiet (cobalt/graphite) so validation highlights (blocking red,
+ * warning amber) surface clearly against the neutral ground.
  *
- * It is a visualization + validation aid, not an input surface: clicking a node
- * or edge fires `onSelect(scope)` to cross-highlight the FindingsPanel.
+ * Clicking a point box opens the Point editor (`onEditPoint`).
+ * Clicking a leg line opens the Leg editor (`onEditLeg`).
+ * Hovering either shows a details tooltip with address / cargo rollup.
  *
  * Pure function of `detail` + `findings`, so it redraws automatically whenever
  * the wizard refreshes the query graph after any point/leg/cargo mutation.
@@ -38,14 +38,9 @@ type Highlight = { finding: "blocking" | "warning" | null };
 interface RouteDiagramProps {
   detail: QueryDetail;
   findings: Finding[];
-  /** The leg the user is focused on — rendered with the marigold accent. */
-  selectedLegId?: string | null;
-  /** The point the user is focused on — rendered with the marigold accent. */
-  selectedPointId?: string | null;
-  onSelect?: (scope: FindingScope) => void;
-  /** Task 2: preferred handler — clicking a point node opens the point editor. */
+  /** Clicking a point node opens the point editor. */
   onEditPoint?: (pointId: string) => void;
-  /** Task 2: preferred handler — clicking a leg edge opens the leg editor. */
+  /** Clicking a leg edge opens the leg editor. */
   onEditLeg?: (legId: string) => void;
   className?: string;
 }
@@ -79,9 +74,6 @@ const MODES: FreightMode[] = [FreightMode.ROAD, FreightMode.SEA, FreightMode.AIR
 export function RouteDiagram({
   detail,
   findings,
-  selectedLegId,
-  selectedPointId,
-  onSelect,
   onEditPoint,
   onEditLeg,
   className,
@@ -161,7 +153,6 @@ export function RouteDiagram({
           <Arrow id="arrow-unset" color="hsl(var(--muted-foreground))" />
           <Arrow id="arrow-blocking" color="hsl(var(--destructive))" />
           <Arrow id="arrow-warning" color="hsl(var(--warning))" />
-          <Arrow id="arrow-active" color="hsl(var(--accent))" />
         </defs>
 
         {/* Edges first, so nodes paint on top. */}
@@ -173,7 +164,6 @@ export function RouteDiagram({
               : undefined;
             if (!o || !d) return null; // incomplete leg — C1 flags it in the panel
             const hl = highlights.legs.get(leg.id) ?? { finding: null };
-            const active = selectedLegId === leg.id;
             return (
               <Edge
                 key={leg.id}
@@ -182,9 +172,7 @@ export function RouteDiagram({
                 to={d}
                 highlight={hl}
                 messages={highlights.legMsgs.get(leg.id) ?? []}
-                active={active}
                 reducedMotion={prefersReducedMotion}
-                onSelect={onSelect}
                 onEditLeg={onEditLeg}
                 onHover={() => setHovered({ kind: "leg", id: leg.id })}
                 onLeave={() => setHovered(null)}
@@ -200,7 +188,6 @@ export function RouteDiagram({
             if (!at) return null;
             const hl = highlights.points.get(p.id) ?? { finding: null };
             const orphan = highlights.orphans.has(p.id);
-            const active = selectedPointId === p.id;
             return (
               <Node
                 key={p.id}
@@ -210,9 +197,7 @@ export function RouteDiagram({
                 highlight={hl}
                 messages={highlights.pointMsgs.get(p.id) ?? []}
                 orphan={orphan}
-                active={active}
                 reducedMotion={prefersReducedMotion}
-                onSelect={onSelect}
                 onEditPoint={onEditPoint}
                 onHover={() => setHovered({ kind: "point", id: p.id })}
                 onLeave={() => setHovered(null)}
@@ -248,9 +233,7 @@ function Edge({
   to,
   highlight,
   messages,
-  active,
   reducedMotion,
-  onSelect,
   onEditLeg,
   onHover,
   onLeave,
@@ -260,9 +243,7 @@ function Edge({
   to: Pt;
   highlight: Highlight;
   messages: string[];
-  active: boolean;
   reducedMotion: boolean;
-  onSelect?: (scope: FindingScope) => void;
   onEditLeg?: (legId: string) => void;
   onHover?: () => void;
   onLeave?: () => void;
@@ -277,7 +258,7 @@ function Edge({
   const dx = Math.max(40, (x2 - x1) / 2);
   const path = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
 
-  // Highlight precedence: blocking > active > warning > mode default.
+  // Highlight precedence: blocking > warning > mode default.
   let stroke = modeColor(leg.mode);
   let markerId = leg.mode ? `arrow-${leg.mode}` : "arrow-unset";
   let width = 2.25;
@@ -285,11 +266,6 @@ function Edge({
     stroke = "hsl(var(--warning))";
     markerId = "arrow-warning";
     width = 2.75;
-  }
-  if (active) {
-    stroke = "hsl(var(--accent))";
-    markerId = "arrow-active";
-    width = 3.25;
   }
   if (highlight.finding === "blocking") {
     stroke = "hsl(var(--destructive))";
@@ -300,15 +276,13 @@ function Edge({
   const mid = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
   const dash = modeDash(leg.mode);
 
-  const activate = () =>
-    onEditLeg ? onEditLeg(leg.id) : onSelect?.({ type: "leg", id: leg.id });
-  const interactive = !!onEditLeg || !!onSelect;
+  const activate = () => onEditLeg?.(leg.id);
+  const interactive = !!onEditLeg;
 
   return (
     <g
       data-leg-id={leg.id}
       data-mode={leg.mode ?? "NONE"}
-      data-active={active ? "true" : undefined}
       data-finding={highlight.finding ?? undefined}
       className={cn("group", interactive && "route-focusable cursor-pointer")}
       onClick={interactive ? activate : undefined}
@@ -339,16 +313,6 @@ function Edge({
           d={path}
           stroke="hsl(var(--destructive))"
           strokeOpacity={0.18}
-          strokeWidth={width + 6}
-          fill="none"
-          strokeLinecap="round"
-        />
-      )}
-      {active && (
-        <path
-          d={path}
-          stroke="hsl(var(--accent))"
-          strokeOpacity={0.16}
           strokeWidth={width + 6}
           fill="none"
           strokeLinecap="round"
@@ -401,9 +365,7 @@ function Node({
   highlight,
   messages,
   orphan,
-  active,
   reducedMotion,
-  onSelect,
   onEditPoint,
   onHover,
   onLeave,
@@ -414,9 +376,7 @@ function Node({
   highlight: Highlight;
   messages: string[];
   orphan: boolean;
-  active: boolean;
   reducedMotion: boolean;
-  onSelect?: (scope: FindingScope) => void;
   onEditPoint?: (pointId: string) => void;
   onHover?: () => void;
   onLeave?: () => void;
@@ -427,7 +387,7 @@ function Node({
   const name = point.name ?? point.city ?? "—";
   const locality = [point.city, point.country].filter(Boolean).join(", ");
 
-  // Stroke precedence: blocking > active > warning > orphan > normal.
+  // Stroke precedence: blocking > warning > orphan > normal.
   let stroke = "hsl(var(--border))";
   let strokeWidth = 1;
   if (orphan) {
@@ -438,29 +398,23 @@ function Node({
     stroke = "hsl(var(--warning))";
     strokeWidth = 2;
   }
-  if (active) {
-    stroke = "hsl(var(--accent))";
-    strokeWidth = 2.25;
-  }
   if (highlight.finding === "blocking") {
     stroke = "hsl(var(--destructive))";
     strokeWidth = 2.25;
   }
 
-  const activate = () =>
-    onEditPoint ? onEditPoint(point.id) : onSelect?.({ type: "point", id: point.id });
-  const interactive = !!onEditPoint || !!onSelect;
+  const activate = () => onEditPoint?.(point.id);
+  const interactive = !!onEditPoint;
 
   return (
     <g
       data-point-id={point.id}
       data-type={point.type}
-      data-active={active ? "true" : undefined}
       data-finding={highlight.finding ?? undefined}
       data-orphan={orphan ? "" : undefined}
       transform={`translate(${x}, ${y})`}
       className={cn(interactive && "route-focusable cursor-pointer")}
-      opacity={orphan && !highlight.finding && !active ? 0.6 : 1}
+      opacity={orphan && !highlight.finding ? 0.6 : 1}
       onClick={interactive ? activate : undefined}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
@@ -481,18 +435,6 @@ function Node({
       aria-label={`${meta.label}${code ? ` ${code}` : ""} ${name}${orphan ? " (not used by any leg)" : ""}`}
     >
       {messages.length > 0 && <title>{messages.join("\n")}</title>}
-      {/* Active/selected gets a marigold halo behind the chip. */}
-      {active && (
-        <rect
-          x={-3}
-          y={-3}
-          width={NODE_W + 6}
-          height={NODE_H + 6}
-          rx={9}
-          fill="hsl(var(--accent))"
-          fillOpacity={0.1}
-        />
-      )}
       <rect
         x={0}
         y={0}
@@ -669,14 +611,6 @@ function Legend() {
           <span className="font-mono">{m}</span>
         </span>
       ))}
-      <span className="inline-flex items-center gap-1">
-        <span
-          className="inline-block h-2 w-2 rounded-full"
-          style={{ background: "hsl(var(--accent))" }}
-          aria-hidden
-        />
-        active
-      </span>
       <span className="inline-flex items-center gap-1">
         <span
           className="inline-block h-2 w-2 rounded-full"
