@@ -12,7 +12,9 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { FindingsPanel } from "@/components/FindingsPanel";
+import { ValidationSummary } from "@/components/ValidationSummary";
+import { findingTabKey } from "@svyft/shared";
+import type { FindingTab } from "@svyft/shared";
 import { STEPS } from "./WizardContext";
 import { useWizard } from "./WizardContext";
 import { useSaveQuery } from "./useQueryDetail";
@@ -52,6 +54,13 @@ export function WizardShell({
   const completedSteps = new Set<string>(
     STEPS.slice(0, step).map((s) => s.key),
   );
+
+  const tabCounts = findings.reduce<Record<string, number>>((acc, f) => {
+    if (f.severity !== "blocking") return acc;
+    const t = findingTabKey(f);
+    acc[t] = (acc[t] ?? 0) + 1;
+    return acc;
+  }, {});
 
   const runSave = async (): Promise<boolean> => {
     setSaving(true);
@@ -140,7 +149,7 @@ export function WizardShell({
       {/* Stepper */}
       <div className="border-b px-4 sm:px-6 py-3 overflow-x-auto">
         <Stepper
-          steps={STEPS.map((s) => ({ key: s.key, label: s.label }))}
+          steps={STEPS.map((s) => ({ key: s.key, label: s.label, badgeCount: tabCounts[s.key] ?? 0 }))}
           current={STEPS[step]?.key ?? STEPS[0].key}
           completed={completedSteps}
           onStepClick={detail ? (key) => {
@@ -173,7 +182,13 @@ export function WizardShell({
         {/* Findings */}
         {findings.length > 0 && (
           <div className="mb-4">
-            <FindingsPanel findings={findings} phase="create" />
+            <ValidationSummary
+              findings={findings}
+              onNavigate={(tab: FindingTab) => {
+                const idx = STEPS.findIndex((s) => s.key === tab);
+                if (idx !== -1) setStep(idx);
+              }}
+            />
             {onClearFindings && (
               <button
                 type="button"

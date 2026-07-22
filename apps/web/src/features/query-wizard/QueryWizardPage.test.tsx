@@ -373,8 +373,8 @@ describe("QueryWizardPage", () => {
     const createBtn = await screen.findByRole("button", { name: /Create Query/i });
     await userEvent.click(createBtn);
 
-    // Findings panel should appear with blocking findings
-    await screen.findByText(/resolve to create the query/i);
+    // ValidationSummary should appear with blocking findings
+    await screen.findByText(/Resolve .* to create this query/i);
     const blockingItems = await screen.findAllByText(/Internal notes are required|must be confirmed/i);
     expect(blockingItems.length).toBeGreaterThan(0);
 
