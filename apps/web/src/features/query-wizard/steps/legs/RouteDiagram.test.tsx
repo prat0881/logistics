@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Finding, QueryDetail } from "@svyft/shared";
 import { RouteDiagram } from "./RouteDiagram";
@@ -231,25 +231,26 @@ describe("RouteDiagram", () => {
   it("renders the truly-empty guidance when there are no points and no legs", () => {
     const detail = makeDetail({ points: [], legs: [] });
     const { getByText } = render(<RouteDiagram detail={detail} findings={[]} />);
-    expect(getByText(/add the first leg to build the route/i)).toBeInTheDocument();
+    expect(getByText(/add a point or leg to start the route/i)).toBeInTheDocument();
   });
 
-  it("renders guidance (not the SVG graph) when points exist but there are no legs", () => {
-    const detail = makeDetail({
+  it("renders point boxes even when there are no legs yet", () => {
+    const detailPointsNoLegs = makeDetail({
       points: [
         { id: "p1", type: "PICKUP", name: "Sender" },
         { id: "p2", type: "DELIVERY", name: "Receiver" },
       ],
       legs: [],
     });
-    const { getByText, container } = render(
-      <RouteDiagram detail={detail} findings={[]} />,
-    );
-    // Guidance copy shown
-    expect(getByText(/add a leg to connect your points/i)).toBeInTheDocument();
-    // No SVG graph rendered
-    expect(container.querySelector("svg")).toBeNull();
-    // No point nodes rendered
-    expect(container.querySelector("[data-point-id]")).toBeNull();
+    render(<RouteDiagram detail={detailPointsNoLegs} findings={[]} />);
+    // both point boxes are drawn (data-point-id present), and the "add a leg" placeholder is NOT the whole surface
+    expect(document.querySelectorAll("[data-point-id]").length).toBe(2);
+    expect(screen.queryByText(/add the first leg to build the route/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the empty placeholder only when there are no points and no legs", () => {
+    const detailEmpty = makeDetail({ points: [], legs: [] });
+    render(<RouteDiagram detail={detailEmpty} findings={[]} />);
+    expect(screen.getByText(/add a point or leg to start the route/i)).toBeInTheDocument();
   });
 });

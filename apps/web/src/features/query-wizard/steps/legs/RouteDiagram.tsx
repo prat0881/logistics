@@ -99,15 +99,11 @@ export function RouteDiagram({
   );
 
   const hasLegs = graph.legs.length > 0;
+  const hasPoints = graph.points.length > 0;
 
-  // Guidance state — show whenever there are no legs, regardless of whether
-  // points exist. A valid intermediate state (points added but no legs yet)
-  // would otherwise render a cluster of unconnected, unexplained nodes.
-  if (!hasLegs) {
-    const msg =
-      graph.points.length > 0
-        ? "Add a leg to connect your points."
-        : "Add the first leg to build the route.";
+  // Render the canvas whenever there is anything to draw. A points-only graph
+  // (added points, no legs yet) draws the boxes so the user can wire them.
+  if (!hasLegs && !hasPoints) {
     return (
       <div
         data-slot="route-diagram"
@@ -116,7 +112,7 @@ export function RouteDiagram({
           className,
         )}
       >
-        {msg}
+        Add a point or leg to start the route.
       </div>
     );
   }
