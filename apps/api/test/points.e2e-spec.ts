@@ -63,6 +63,23 @@ describe("Points (e2e)", () => {
       .expect(404);
   });
 
+  it("persists and returns a point timezone", async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${queryId}/points`)
+      .set("Cookie", cookie())
+      .send({ type: "PICKUP", name: "Shipper", timezone: "Asia/Singapore" })
+      .expect(201);
+    expect(res.body.timezone).toBe("Asia/Singapore");
+  });
+
+  it("rejects an invalid point timezone (Zod 400)", async () => {
+    await request(app.getHttpServer())
+      .post(`/api/queries/${queryId}/points`)
+      .set("Cookie", cookie())
+      .send({ type: "PICKUP", timezone: "Bad/Zone" })
+      .expect(400);
+  });
+
   it("patches and deletes a point", async () => {
     const created = await request(app.getHttpServer())
       .post(`/api/queries/${queryId}/points`)
