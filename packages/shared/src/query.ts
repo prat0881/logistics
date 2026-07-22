@@ -24,6 +24,7 @@ export const Incoterms = {
   DAP: "DAP",
   DPU: "DPU",
   DDP: "DDP",
+  NA: "N/A",
 } as const;
 export type Incoterms = (typeof Incoterms)[keyof typeof Incoterms];
 export const INCOTERMS = Object.values(Incoterms) as [Incoterms, ...Incoterms[]];

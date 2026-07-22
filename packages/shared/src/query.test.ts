@@ -10,7 +10,7 @@ import {
 } from "./query";
 
 describe("Query vocabularies", () => {
-  it("pins the 11 Incoterms", () => {
+  it("pins the 12 Incoterms", () => {
     expect(INCOTERMS).toEqual([
       "EXW",
       "FCA",
@@ -23,7 +23,11 @@ describe("Query vocabularies", () => {
       "DAP",
       "DPU",
       "DDP",
+      "N/A",
     ]);
+  });
+  it("accepts N/A as a valid incoterms value", () => {
+    expect(querySaveSchema.safeParse({ incoterms: "N/A" }).success).toBe(true);
   });
   it("pins priorities", () => {
     expect(PRIORITIES).toEqual(["LOW", "MEDIUM", "HIGH", "URGENT"]);
