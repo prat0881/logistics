@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Finding, QueryDetail } from "@svyft/shared";
 import { RouteDiagram } from "./RouteDiagram";
@@ -11,21 +11,21 @@ afterEach(() => {
 
 /** Build a QueryDetail with the given points / legs; cargo defaults to empty. */
 function makeDetail(over: {
-  points?: Array<{ id: string; type: string; name?: string | null; city?: string | null; country?: string | null; unLocode?: string | null; iataCode?: string | null }>;
-  legs?: Array<{ id: string; legCode: string; mode?: string | null; originPointId?: string | null; destinationPointId?: string | null; assignedCargoIds?: string[] }>;
+  points?: Array<{ id: string; type: string; name?: string | null; city?: string | null; country?: string | null; unLocode?: string | null; iataCode?: string | null; streetAddress?: string | null; postalCode?: string | null; contactName?: string | null; contactPhone?: string | null; contactEmail?: string | null }>;
+  legs?: Array<{ id: string; legCode: string; mode?: string | null; originPointId?: string | null; destinationPointId?: string | null; assignedCargoIds?: string[]; rollup?: { totalPackages: number; totalCbm: number | string; totalGrossWt: number | string; totalNetWt: number | string } }>;
   cargo?: Array<{ id: string; poReference?: string }>;
 } = {}): QueryDetail {
   const points = (over.points ?? []).map((p) => ({
     tenantId: null,
     queryId: "q1",
     name: p.name ?? null,
-    streetAddress: null,
+    streetAddress: p.streetAddress ?? null,
     city: p.city ?? null,
-    postalCode: null,
+    postalCode: p.postalCode ?? null,
     country: p.country ?? null,
-    contactName: null,
-    contactPhone: null,
-    contactEmail: null,
+    contactName: p.contactName ?? null,
+    contactPhone: p.contactPhone ?? null,
+    contactEmail: p.contactEmail ?? null,
     warehouseType: null,
     iataCode: p.iataCode ?? null,
     icaoCode: null,
@@ -258,11 +258,27 @@ describe("RouteDiagram", () => {
 
   const detailWithRoute = makeDetail({
     points: [
-      { id: "p1", type: "PICKUP", name: "Sender" },
+      {
+        id: "p1",
+        type: "PICKUP",
+        name: "Sender Warehouse",
+        city: "London",
+        country: "GB",
+        streetAddress: "123 Main St",
+        postalCode: "EC1A 1BB",
+      },
       { id: "p2", type: "DELIVERY", name: "Receiver" },
     ],
     legs: [
-      { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "p1", destinationPointId: "p2", assignedCargoIds: [] },
+      {
+        id: "l1",
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: "p1",
+        destinationPointId: "p2",
+        assignedCargoIds: [],
+        rollup: { totalPackages: 5, totalCbm: "1.2345", totalGrossWt: "100.50", totalNetWt: "90.00" },
+      },
     ],
   });
 
@@ -280,5 +296,55 @@ describe("RouteDiagram", () => {
     const edge = document.querySelector('[data-leg-id]') as SVGGElement;
     await userEvent.click(edge);
     expect(onEditLeg).toHaveBeenCalledWith(edge.getAttribute("data-leg-id"));
+  });
+
+  // ── Task 3: hover tooltip ────────────────────────────────────────────────────
+
+  it("hovering a point box shows its full address in a tooltip", async () => {
+    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    const node = document.querySelector('[data-point-id="p1"]') as SVGGElement;
+    fireEvent.mouseEnter(node);
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent(/123 Main St/i);
+    expect(tip).toHaveTextContent(/London/i);
+    expect(tip).toHaveTextContent(/Pickup/i);
+  });
+
+  it("hovering a leg line shows its rollup pkg / CBM / kg", async () => {
+    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    const edge = document.querySelector('[data-leg-id="l1"]') as SVGGElement;
+    fireEvent.mouseEnter(edge);
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent(/pkg/i);
+    expect(tip).toHaveTextContent(/CBM/i);
+    expect(tip).toHaveTextContent(/kg/i);
+  });
+
+  it("tooltip shows red finding messages for a point with blocking findings", async () => {
+    const blockingFindings: Finding[] = [
+      { rule: "R1", severity: "blocking", scope: { type: "point", id: "p1" }, message: "Missing contact email" },
+    ];
+    render(<RouteDiagram detail={detailWithRoute} findings={blockingFindings} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    const node = document.querySelector('[data-point-id="p1"]') as SVGGElement;
+    fireEvent.mouseEnter(node);
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent(/Missing contact email/i);
+  });
+
+  it("tooltip disappears when mouse leaves the node", async () => {
+    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    const node = document.querySelector('[data-point-id="p1"]') as SVGGElement;
+    fireEvent.mouseEnter(node);
+    await screen.findByRole("tooltip");
+    fireEvent.mouseLeave(node);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("tooltip is pointer-events-none so it never blocks underlying click", async () => {
+    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    const node = document.querySelector('[data-point-id="p1"]') as SVGGElement;
+    fireEvent.mouseEnter(node);
+    const tip = await screen.findByRole("tooltip");
+    expect(tip.className).toMatch(/pointer-events-none/);
   });
 });

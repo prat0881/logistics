@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   FreightMode,
   PointType,
@@ -86,6 +86,8 @@ export function RouteDiagram({
   onEditLeg,
   className,
 }: RouteDiagramProps) {
+  const [hovered, setHovered] = useState<{ kind: "point" | "leg"; id: string } | null>(null);
+
   const graph = useMemo(() => toRouteGraph(detail), [detail]);
 
   const layout = useMemo(() => computeLayout(graph), [graph]);
@@ -184,6 +186,8 @@ export function RouteDiagram({
                 reducedMotion={prefersReducedMotion}
                 onSelect={onSelect}
                 onEditLeg={onEditLeg}
+                onHover={() => setHovered({ kind: "leg", id: leg.id })}
+                onLeave={() => setHovered(null)}
               />
             );
           })}
@@ -210,11 +214,23 @@ export function RouteDiagram({
                 reducedMotion={prefersReducedMotion}
                 onSelect={onSelect}
                 onEditPoint={onEditPoint}
+                onHover={() => setHovered({ kind: "point", id: p.id })}
+                onLeave={() => setHovered(null)}
               />
             );
           })}
         </g>
       </svg>
+
+      {hovered && (
+        <RouteTooltip
+          detail={detail}
+          hovered={hovered}
+          pos={pos}
+          pointMsgs={highlights.pointMsgs}
+          legMsgs={highlights.legMsgs}
+        />
+      )}
     </figure>
   );
 }
@@ -236,6 +252,8 @@ function Edge({
   reducedMotion,
   onSelect,
   onEditLeg,
+  onHover,
+  onLeave,
 }: {
   leg: ReturnType<typeof toRouteGraph>["legs"][number];
   from: Pt;
@@ -246,6 +264,8 @@ function Edge({
   reducedMotion: boolean;
   onSelect?: (scope: FindingScope) => void;
   onEditLeg?: (legId: string) => void;
+  onHover?: () => void;
+  onLeave?: () => void;
 }) {
   // Anchor at the right edge of origin node and left edge of destination node.
   const x1 = from.x + NODE_W;
@@ -304,6 +324,10 @@ function Edge({
             }
           : undefined
       }
+      onMouseEnter={onHover}
+      onMouseLeave={onLeave}
+      onFocus={onHover}
+      onBlur={onLeave}
       aria-label={`Leg ${leg.legCode}${leg.mode ? ` (${leg.mode})` : ""}`}
     >
       {messages.length > 0 && <title>{messages.join("\n")}</title>}
@@ -381,6 +405,8 @@ function Node({
   reducedMotion,
   onSelect,
   onEditPoint,
+  onHover,
+  onLeave,
 }: {
   point: ReturnType<typeof toRouteGraph>["points"][number];
   x: number;
@@ -392,6 +418,8 @@ function Node({
   reducedMotion: boolean;
   onSelect?: (scope: FindingScope) => void;
   onEditPoint?: (pointId: string) => void;
+  onHover?: () => void;
+  onLeave?: () => void;
 }) {
   const meta = POINT_GLYPH[point.type] ?? { glyph: "•", label: point.type };
   const code =
@@ -446,6 +474,10 @@ function Node({
             }
           : undefined
       }
+      onMouseEnter={onHover}
+      onMouseLeave={onLeave}
+      onFocus={onHover}
+      onBlur={onLeave}
       aria-label={`${meta.label}${code ? ` ${code}` : ""} ${name}${orphan ? " (not used by any leg)" : ""}`}
     >
       {messages.length > 0 && <title>{messages.join("\n")}</title>}
@@ -515,6 +547,103 @@ function Node({
         {code ? truncate(name, 24) : truncate(locality || "—", 24)}
       </text>
     </g>
+  );
+}
+
+// ── tooltip ───────────────────────────────────────────────────────────────────
+
+function RouteTooltip({
+  detail,
+  hovered,
+  pos,
+  pointMsgs,
+  legMsgs,
+}: {
+  detail: QueryDetail;
+  hovered: { kind: "point" | "leg"; id: string };
+  pos: Map<string, Pt>;
+  pointMsgs: Map<string, string[]>;
+  legMsgs: Map<string, string[]>;
+}) {
+  const GLYPH_LABELS: Record<string, string> = {
+    [PointType.PICKUP]: "Pickup",
+    [PointType.DELIVERY]: "Delivery",
+    [PointType.WAREHOUSE]: "Warehouse",
+    [PointType.AIRPORT]: "Airport",
+    [PointType.SEAPORT]: "Seaport",
+  };
+
+  if (hovered.kind === "point") {
+    const point = detail.points.find((p) => p.id === hovered.id);
+    if (!point) return null;
+
+    const at = pos.get(hovered.id);
+    const left = Math.max(0, (at?.x ?? 0) + NODE_W + 8);
+    const top = Math.max(0, at?.y ?? 0);
+
+    const cityPostal = [point.city, point.postalCode].filter(Boolean).join(" ");
+    const code = point.unLocode ?? point.iataCode ?? point.icaoCode ?? point.terminal;
+    const typeLabel = GLYPH_LABELS[point.type] ?? point.type;
+    const msgs = pointMsgs.get(hovered.id) ?? [];
+
+    return (
+      <div
+        role="tooltip"
+        className="pointer-events-none z-10 rounded-md border bg-popover px-3 py-2 text-xs shadow-md max-w-[240px] space-y-1"
+        style={{ position: "absolute", left, top }}
+      >
+        <div className="font-semibold">{typeLabel}{code ? ` · ${code}` : ""}</div>
+        {point.name && <div>{point.name}</div>}
+        {point.streetAddress && <div>{point.streetAddress}</div>}
+        {cityPostal && <div>{cityPostal}</div>}
+        {point.country && <div>{point.country}</div>}
+        {point.contactName && <div>{point.contactName}</div>}
+        {point.contactPhone && <div>{point.contactPhone}</div>}
+        {point.contactEmail && <div>{point.contactEmail}</div>}
+        {msgs.map((m, i) => (
+          <div key={i} className="text-destructive">{m}</div>
+        ))}
+      </div>
+    );
+  }
+
+  // kind === "leg"
+  const leg = detail.legs.find((l) => l.id === hovered.id);
+  if (!leg) return null;
+
+  const oPos = leg.originPointId ? pos.get(leg.originPointId) : undefined;
+  const dPos = leg.destinationPointId ? pos.get(leg.destinationPointId) : undefined;
+  const midX = oPos && dPos ? (oPos.x + NODE_W + dPos.x) / 2 : (oPos?.x ?? 0) + NODE_W;
+  const midY = oPos && dPos ? (oPos.y + NODE_H / 2 + dPos.y + NODE_H / 2) / 2 : (oPos?.y ?? 0) + NODE_H / 2;
+  const left = Math.max(0, midX + 8);
+  const top = Math.max(0, midY - 20);
+
+  const originName = leg.originPointId
+    ? (detail.points.find((p) => p.id === leg.originPointId)?.name ?? leg.originPointId)
+    : "—";
+  const destName = leg.destinationPointId
+    ? (detail.points.find((p) => p.id === leg.destinationPointId)?.name ?? leg.destinationPointId)
+    : "—";
+
+  const rollup = leg.rollup;
+  const rollupLine = `${rollup.totalPackages} pkg · ${Number(rollup.totalCbm).toFixed(4)} CBM · ${Number(rollup.totalGrossWt).toFixed(2)} kg`;
+  const msgs = legMsgs.get(hovered.id) ?? [];
+
+  return (
+    <div
+      role="tooltip"
+      className="pointer-events-none z-10 rounded-md border bg-popover px-3 py-2 text-xs shadow-md max-w-[240px] space-y-1"
+      style={{ position: "absolute", left, top }}
+    >
+      <div className="font-semibold">{leg.legCode} · {leg.mode ?? "no mode"}</div>
+      <div>{leg.status}</div>
+      <div>{originName} → {destName}</div>
+      <div>{leg.assignedCargoIds.length} cargo</div>
+      <div>{rollupLine}</div>
+      {msgs.map((m, i) => (
+        <div key={i} className="text-destructive">{m}</div>
+      ))}
+    </div>
   );
 }
 
