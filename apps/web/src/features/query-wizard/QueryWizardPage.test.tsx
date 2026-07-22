@@ -8,6 +8,10 @@ import { mockFetch } from "@/test/mock-fetch";
 
 afterEach(() => vi.unstubAllGlobals());
 
+// Use a dynamic date ~7 days in the future so the auto-filled Response Deadline
+// (queryDate + up to 48h) always passes the F4 "not in the past" check.
+const FUTURE_QUERY_DATE = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
 const draftDetail = {
   id: "q9",
   queryCode: "YAL26-0009",
@@ -15,7 +19,7 @@ const draftDetail = {
   priority: "MEDIUM",
   dgIndicator: false,
   whatsappEnabled: false,
-  queryDate: "2026-01-01T00:00:00+00:00",
+  queryDate: FUTURE_QUERY_DATE,
   responseDeadline: null,
   responseDeadlineRemarks: null,
   clientId: null,
@@ -438,7 +442,7 @@ describe("QueryWizardPage", () => {
     );
   });
 
-  it("Next on Step 1 with missing required fields blocks navigation and flags them (U5)", async () => {
+  it("Next advances to Step 2 even when Step-1 mandatory fields are empty (Round-1 Common #5)", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url) => {
@@ -462,46 +466,55 @@ describe("QueryWizardPage", () => {
 
     await screen.findByText("YAL26-0009");
 
-    // Click Next with every required field empty
     await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
 
-    // A required-fields message appears and we do NOT advance to Step 2 (no Incoterms)
-    await waitFor(() => expect(screen.getByText(/required fields/i)).toBeInTheDocument());
-    expect(screen.queryByLabelText(/incoterms/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(/Shipment Details/i)).toBeInTheDocument();
+    expect(screen.queryByText(/required fields before continuing/i)).not.toBeInTheDocument();
   });
 
-  it("Next on Step 1 with all required fields present advances to Step 2 (U5)", async () => {
+  it("mints a new query on Next even when Step-1 phone field has a format-invalid value (Final-review fix #1)", async () => {
+    const posts: unknown[] = [];
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
         if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
-        if (url === `/api/clients/${fullDraftDetail.clientId}`)
-          return { status: 200, body: { id: fullDraftDetail.clientId, companyName: "Acme", country: "SG", status: "ACTIVE" } };
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
+        if (url.endsWith("/api/queries") && init?.method === "POST") {
+          posts.push(JSON.parse(init.body as string));
+          return { status: 201, body: draftDetail };
+        }
         if (url.includes("/api/clients"))
           return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
         if (url.includes("/api/vessels"))
           return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
-        if (url.includes("/api/queries/q9") && init?.method === "PATCH")
-          return { status: 200, body: fullDraftDetail };
-        if (url.includes("/api/queries/q9")) return { status: 200, body: fullDraftDetail };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
         return { status: 200, body: {} };
       }),
     );
 
     renderWithProviders(
       <Routes>
+        <Route path="/queries/new" element={<QueryWizardPage />} />
         <Route path="/queries/:id" element={<QueryWizardPage />} />
       </Routes>,
-      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+      { route: "/queries/new", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
     );
 
-    await screen.findByText("YAL26-0009");
+    // Type a format-invalid phone into the Phone (E.164) field
+    const phoneInput = await screen.findByPlaceholderText("+6591234567");
+    await userEvent.clear(phoneInput);
+    await userEvent.type(phoneInput, "abc");
 
+    // Click Next — must mint the query even though the phone value is invalid
     await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
 
-    // Advances to Step 2 — the Incoterms control becomes visible
-    await waitFor(() => expect(screen.getByLabelText(/incoterms/i)).toBeInTheDocument());
+    // POST /api/queries must have been called (the query was minted)
+    await waitFor(() => expect(posts.length).toBe(1));
+    // And the app navigated to the real query (queryCode appears)
+    expect(await screen.findByText("YAL26-0009")).toBeInTheDocument();
   });
 
   it("Save shows a success message at the top (U3)", async () => {

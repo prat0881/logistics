@@ -11,6 +11,23 @@ export const Priority = { LOW: "LOW", MEDIUM: "MEDIUM", HIGH: "HIGH", URGENT: "U
 export type Priority = (typeof Priority)[keyof typeof Priority];
 export const PRIORITIES = Object.values(Priority) as [Priority, ...Priority[]];
 
+/**
+ * Response-Deadline default by priority (Round-1 Common Rules / Step-1).
+ * Deadline = Query Date + N hours. Recompute-until-touched wiring lives in the wizard.
+ * NOTE: pure instant math (base + N h). Timezone-anchored display + the "≥ Query Date"
+ * real-instant comparison are the separate timezone increment — not here.
+ */
+export const RESPONSE_DEADLINE_HOURS: Record<Priority, number> = {
+  LOW: 48,
+  MEDIUM: 24,
+  HIGH: 18,
+  URGENT: 12,
+};
+export function defaultResponseDeadline(queryDate: string, priority: Priority): string {
+  const ms = new Date(queryDate).getTime() + RESPONSE_DEADLINE_HOURS[priority] * 3_600_000;
+  return new Date(ms).toISOString();
+}
+
 // §7.2 — fixed 11-value Incoterms enum.
 export const Incoterms = {
   EXW: "EXW",
@@ -24,6 +41,7 @@ export const Incoterms = {
   DAP: "DAP",
   DPU: "DPU",
   DDP: "DDP",
+  NA: "N/A",
 } as const;
 export type Incoterms = (typeof Incoterms)[keyof typeof Incoterms];
 export const INCOTERMS = Object.values(Incoterms) as [Incoterms, ...Incoterms[]];
@@ -52,7 +70,7 @@ export const querySaveSchema = z
     contactName: z.string().trim().min(1).max(160),
     contactDesignation: z.string().max(120),
     contactEmail: z.string().email(), // F2
-    contactPhone: z.string().regex(/^\+?[1-9]\d{6,14}$/, "Phone must be E.164"), // F2
+    contactPhone: z.string().regex(/^\+[1-9]\d{6,14}$/, "Phone must be E.164"), // F2 (strict — leading + required)
     whatsappEnabled: z.boolean(),
     faxNumber: z.string().max(40),
     vesselId: z.string().uuid(),
@@ -211,7 +229,7 @@ export const queryListQuerySchema = z.object({
   dateTo: z.string().datetime({ offset: true }).optional(),
   sort: z.string().optional(),             // "<column>:<asc|desc>"
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  pageSize: z.coerce.number().int().min(1).max(100).default(10),
 }).refine(
   // G11: dateFrom must be on or before dateTo (when both are present).
   (p) =>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { querySaveSchema, PRIORITIES, Role } from "@svyft/shared";
+import { querySaveSchema, PRIORITIES, Role, defaultResponseDeadline } from "@svyft/shared";
 import type { QuerySaveInput, ContactDto, QueryDetail, ClientDto } from "@svyft/shared";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -37,18 +37,8 @@ import { VesselPicker } from "../pickers/VesselPicker";
  *      its own PATCH, avoiding a double-write (Step 2 and Step 5 use this pattern).
  */
 export interface StepSaveFn {
-  (opts?: { enforceRequired?: boolean }): Promise<QuerySaveInput | void>;
+  (): Promise<QuerySaveInput | void>;
 }
-
-/** Step-1 mandatory fields (the F1 subset this step owns) — enforced on Next (U5). */
-const STEP1_REQUIRED: { field: keyof QuerySaveInput; label: string }[] = [
-  { field: "clientId", label: "Client" },
-  { field: "contactName", label: "Contact Name" },
-  { field: "contactEmail", label: "Email" },
-  { field: "contactPhone", label: "Phone" },
-  { field: "readyDate", label: "Ready Date" },
-  { field: "targetDelivery", label: "Target Delivery" },
-];
 
 interface Step1ClientProps {
   registerSave: (fn: StepSaveFn) => void;
@@ -108,6 +98,10 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
     defaultValues: fromDetail(detail),
   });
 
+  // Tracks whether the exec has manually edited the Response Deadline field.
+  // When false, the field is recomputed from queryDate + priority on every priority change.
+  const deadlineTouchedRef = useRef(false);
+
   // Reset form when detail loads/changes
   useEffect(() => {
     if (detail) {
@@ -115,8 +109,22 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
       setSelectedClientId(detail.clientId ?? undefined);
       setSelectedVesselId(detail.vesselId ?? undefined);
       setSelectedVesselName(detail.vesselName ?? undefined);
+      // If the loaded detail already has a deadline, treat it as "touched" so we
+      // don't overwrite the server-persisted value.
+      if (detail.responseDeadline) {
+        deadlineTouchedRef.current = true;
+      }
     }
   }, [detail, form]);
+
+  // Auto-default Response Deadline = queryDate + priority-hours (recompute until touched).
+  const watchedPriority = form.watch("priority");
+  const watchedQueryDate = form.watch("queryDate");
+  useEffect(() => {
+    if (deadlineTouchedRef.current) return;
+    if (!watchedQueryDate || !watchedPriority) return;
+    form.setValue("responseDeadline", defaultResponseDeadline(watchedQueryDate, watchedPriority));
+  }, [watchedPriority, watchedQueryDate, form]);
 
   // When the wizard opens an existing query that already has a clientId, fetch the
   // client record so the picker trigger shows "Acme Corp" rather than the raw UUID.
@@ -143,30 +151,10 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
   const submitRef = useRef<StepSaveFn>();
 
   useEffect(() => {
-    submitRef.current = (opts) => {
+    submitRef.current = () => {
       return new Promise<QuerySaveInput | void>((resolve, reject) => {
         const submitFn = form.handleSubmit(
           (values) => {
-            // U5/D3: on advance (Next), this step's mandatory fields must be present.
-            // Plain Save (no enforce) still persists a partial draft.
-            if (opts?.enforceRequired) {
-              const missing = STEP1_REQUIRED.filter(({ field }) => {
-                const v = values[field];
-                return v == null || (typeof v === "string" && v.trim() === "");
-              });
-              if (missing.length) {
-                missing.forEach(({ field }) =>
-                  form.setError(field, { type: "required", message: "Required to continue" }),
-                );
-                reject(
-                  new Error(
-                    "Complete these required fields before continuing: " +
-                      missing.map((m) => m.label).join(", "),
-                  ),
-                );
-                return;
-              }
-            }
             if (!isAdmin) {
               // eslint-disable-next-line @typescript-eslint/no-unused-vars
               const { queryDate: _, ...rest } = values;
@@ -185,8 +173,8 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
         submitFn().catch(reject);
       });
     };
-    registerSave((opts) => {
-      if (submitRef.current) return submitRef.current(opts);
+    registerSave(() => {
+      if (submitRef.current) return submitRef.current();
       return Promise.resolve();
     });
   }, [registerSave, form, isAdmin]);
@@ -202,13 +190,13 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
 
   return (
     <Form {...form}>
-      <form className="space-y-6 p-4">
+      <form className="space-y-5 p-4">
         {/* Section: Query Details */}
-        <div className="space-y-4">
-          <h2 className="text-base font-semibold">Query Details</h2>
+        <div>
+          <h2 className="text-base font-semibold mb-4">Query Details</h2>
 
-          {/* Query ID (read-only) */}
-          <div className="space-y-2">
+          {/* Query ID (read-only) — full width */}
+          <div className="mb-4 space-y-2">
             <label className="text-sm font-medium">Query ID</label>
             <Input
               value={detail?.queryCode ?? "—"}
@@ -217,145 +205,150 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
             />
           </div>
 
-          {/* Query Date */}
-          <FormField
-            control={form.control}
-            name="queryDate"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Query Date</FormLabel>
-                <FormControl>
-                  {isAdmin ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Query Date */}
+            <FormField
+              control={form.control}
+              name="queryDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Query Date</FormLabel>
+                  <FormControl>
+                    {isAdmin ? (
+                      <Input
+                        type="datetime-local"
+                        value={isoToLocalInput(field.value ?? null)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          field.onChange(v ? toIsoOffset(v) : undefined);
+                        }}
+                      />
+                    ) : (
+                      <Input
+                        value={isoToLocalInput(field.value ?? null)}
+                        readOnly
+                        className="bg-muted"
+                      />
+                    )}
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* Priority */}
+            <FormField
+              control={form.control}
+              name="priority"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Priority</FormLabel>
+                  <Select
+                    value={field.value ?? "MEDIUM"}
+                    onValueChange={field.onChange}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select priority" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {PRIORITIES.map((p) => (
+                        <SelectItem key={p} value={p}>
+                          {p}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* Response Deadline */}
+            <FormField
+              control={form.control}
+              name="responseDeadline"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Response Deadline</FormLabel>
+                  <FormControl>
                     <Input
                       type="datetime-local"
                       value={isoToLocalInput(field.value ?? null)}
                       onChange={(e) => {
+                        deadlineTouchedRef.current = true;
                         const v = e.target.value;
                         field.onChange(v ? toIsoOffset(v) : undefined);
                       }}
                     />
-                  ) : (
-                    <Input
-                      value={isoToLocalInput(field.value ?? null)}
-                      readOnly
-                      className="bg-muted"
-                    />
-                  )}
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          {/* Priority */}
-          <FormField
-            control={form.control}
-            name="priority"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Priority</FormLabel>
-                <Select
-                  value={field.value ?? "MEDIUM"}
-                  onValueChange={field.onChange}
-                >
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select priority" />
-                    </SelectTrigger>
                   </FormControl>
-                  <SelectContent>
-                    {PRIORITIES.map((p) => (
-                      <SelectItem key={p} value={p}>
-                        {p}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* Response Deadline */}
-          <FormField
-            control={form.control}
-            name="responseDeadline"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Response Deadline</FormLabel>
-                <FormControl>
-                  <Input
-                    type="datetime-local"
-                    value={isoToLocalInput(field.value ?? null)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      field.onChange(v ? toIsoOffset(v) : undefined);
-                    }}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          {/* Response Deadline Remarks */}
-          <FormField
-            control={form.control}
-            name="responseDeadlineRemarks"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Response Deadline Remarks</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    value={field.value ?? ""}
-                    placeholder="Remarks"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* Response Deadline Remarks */}
+            <FormField
+              control={form.control}
+              name="responseDeadlineRemarks"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Response Deadline Remarks</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      placeholder="Remarks"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
 
         {/* Section: Client & Contact */}
-        <div className="space-y-4">
-          <h2 className="text-base font-semibold">Client &amp; Contact</h2>
+        <div>
+          <h2 className="text-base font-semibold mb-4">Client &amp; Contact</h2>
 
-          {/* Company / Client Picker */}
-          <FormField
-            control={form.control}
-            name="clientId"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Company / Client</FormLabel>
-                <FormControl>
-                  <ClientPicker
-                    value={
-                      selectedClientId
-                        ? { id: selectedClientId, companyName: selectedClientName ?? selectedClientId }
-                        : null
-                    }
-                    onSelect={(c) => {
-                      setSelectedClientId(c.id);
-                      setSelectedClientName(c.companyName);
-                      field.onChange(c.id);
-                      // Clear contact fields when client changes
-                      form.setValue("contactName", undefined);
-                      form.setValue("contactDesignation", undefined);
-                      form.setValue("contactEmail", undefined);
-                      form.setValue("contactPhone", undefined);
-                    }}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          {/* Company / Client Picker — full width */}
+          <div className="mb-4">
+            <FormField
+              control={form.control}
+              name="clientId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Company / Client</FormLabel>
+                  <FormControl>
+                    <ClientPicker
+                      value={
+                        selectedClientId
+                          ? { id: selectedClientId, companyName: selectedClientName ?? selectedClientId }
+                          : null
+                      }
+                      onSelect={(c) => {
+                        setSelectedClientId(c.id);
+                        setSelectedClientName(c.companyName);
+                        field.onChange(c.id);
+                        // Clear contact fields when client changes
+                        form.setValue("contactName", undefined);
+                        form.setValue("contactDesignation", undefined);
+                        form.setValue("contactEmail", undefined);
+                        form.setValue("contactPhone", undefined);
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
 
-          {/* Contact Person */}
+          {/* Contact Person — full width, only when contacts exist */}
           {contacts && contacts.length > 0 && (
-            <div className="space-y-2">
+            <div className="mb-4 space-y-2">
               <label htmlFor="contact-person-select" className="text-sm font-medium">
                 Contact Person
               </label>
@@ -374,328 +367,336 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
             </div>
           )}
 
-          {/* Contact Name */}
-          <FormField
-            control={form.control}
-            name="contactName"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Contact Name</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    value={field.value ?? ""}
-                    placeholder="Contact name"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Contact Name */}
+            <FormField
+              control={form.control}
+              name="contactName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Contact Name</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      placeholder="Contact name"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* Contact Designation */}
-          <FormField
-            control={form.control}
-            name="contactDesignation"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Designation</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    value={field.value ?? ""}
-                    placeholder="Designation"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* Contact Designation */}
+            <FormField
+              control={form.control}
+              name="contactDesignation"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Designation</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      placeholder="Designation"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* Contact Email */}
-          <FormField
-            control={form.control}
-            name="contactEmail"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Email</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    type="email"
-                    value={field.value ?? ""}
-                    placeholder="email@example.com"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* Contact Email */}
+            <FormField
+              control={form.control}
+              name="contactEmail"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      type="email"
+                      value={field.value ?? ""}
+                      placeholder="email@example.com"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* Contact Phone */}
-          <FormField
-            control={form.control}
-            name="contactPhone"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Phone (E.164)</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    value={field.value ?? ""}
-                    placeholder="+6591234567"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* Contact Phone */}
+            <FormField
+              control={form.control}
+              name="contactPhone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Phone (E.164)</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      placeholder="+6591234567"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* WhatsApp */}
-          <FormField
-            control={form.control}
-            name="whatsappEnabled"
-            render={({ field }) => (
-              <FormItem className="flex items-center gap-2 space-y-0">
-                <FormControl>
-                  <Checkbox
-                    checked={field.value ?? false}
-                    onCheckedChange={field.onChange}
-                  />
-                </FormControl>
-                <FormLabel className="cursor-pointer">WhatsApp enabled</FormLabel>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* WhatsApp */}
+            <FormField
+              control={form.control}
+              name="whatsappEnabled"
+              render={({ field }) => (
+                <FormItem className="flex items-center gap-2 space-y-0">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value ?? false}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                  <FormLabel className="cursor-pointer">WhatsApp enabled</FormLabel>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* Fax */}
-          <FormField
-            control={form.control}
-            name="faxNumber"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Fax</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    value={field.value ?? ""}
-                    placeholder="Fax number"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* Fax */}
+            <FormField
+              control={form.control}
+              name="faxNumber"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Fax</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      placeholder="Fax number"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
 
         {/* Section: Vessel & Schedule */}
-        <div className="space-y-4">
-          <h2 className="text-base font-semibold">Vessel &amp; Schedule</h2>
+        <div>
+          <h2 className="text-base font-semibold mb-4">Vessel &amp; Schedule</h2>
 
-          {/* Vessel Picker */}
-          <FormField
-            control={form.control}
-            name="vesselId"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Vessel</FormLabel>
-                <FormControl>
-                  <VesselPicker
-                    value={
-                      selectedVesselId
-                        ? { id: selectedVesselId, name: selectedVesselName ?? selectedVesselId }
-                        : null
-                    }
-                    onSelect={(v) => {
-                      setSelectedVesselId(v.id);
-                      setSelectedVesselName(v.name);
-                      field.onChange(v.id);
-                      form.setValue("vesselName", v.name);
-                      form.setValue("imoNumber", v.imoNumber ?? undefined);
-                    }}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          {/* Vessel Picker — full width */}
+          <div className="mb-4">
+            <FormField
+              control={form.control}
+              name="vesselId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Vessel</FormLabel>
+                  <FormControl>
+                    <VesselPicker
+                      value={
+                        selectedVesselId
+                          ? { id: selectedVesselId, name: selectedVesselName ?? selectedVesselId }
+                          : null
+                      }
+                      onSelect={(v) => {
+                        setSelectedVesselId(v.id);
+                        setSelectedVesselName(v.name);
+                        field.onChange(v.id);
+                        form.setValue("vesselName", v.name);
+                        form.setValue("imoNumber", v.imoNumber ?? undefined);
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
 
-          {/* Vessel Name */}
-          <FormField
-            control={form.control}
-            name="vesselName"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Vessel Name</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    value={field.value ?? ""}
-                    placeholder="Vessel name"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Vessel Name */}
+            <FormField
+              control={form.control}
+              name="vesselName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Vessel Name</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      placeholder="Vessel name"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* IMO Number */}
-          <FormField
-            control={form.control}
-            name="imoNumber"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>IMO Number</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    value={field.value ?? ""}
-                    placeholder="1234567"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* IMO Number */}
+            <FormField
+              control={form.control}
+              name="imoNumber"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>IMO Number</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      placeholder="1234567"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* ETA */}
-          <FormField
-            control={form.control}
-            name="eta"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>ETA</FormLabel>
-                <FormControl>
-                  <Input
-                    type="datetime-local"
-                    value={isoToLocalInput(field.value ?? null)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      field.onChange(v ? toIsoOffset(v) : undefined);
-                    }}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* ETA */}
+            <FormField
+              control={form.control}
+              name="eta"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>ETA</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="datetime-local"
+                      value={isoToLocalInput(field.value ?? null)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        field.onChange(v ? toIsoOffset(v) : undefined);
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* ETB */}
-          <FormField
-            control={form.control}
-            name="etb"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>ETB</FormLabel>
-                <FormControl>
-                  <Input
-                    type="datetime-local"
-                    value={isoToLocalInput(field.value ?? null)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      field.onChange(v ? toIsoOffset(v) : undefined);
-                    }}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* ETB */}
+            <FormField
+              control={form.control}
+              name="etb"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>ETB</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="datetime-local"
+                      value={isoToLocalInput(field.value ?? null)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        field.onChange(v ? toIsoOffset(v) : undefined);
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* ETD */}
-          <FormField
-            control={form.control}
-            name="etd"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>ETD</FormLabel>
-                <FormControl>
-                  <Input
-                    type="datetime-local"
-                    value={isoToLocalInput(field.value ?? null)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      field.onChange(v ? toIsoOffset(v) : undefined);
-                    }}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* ETD */}
+            <FormField
+              control={form.control}
+              name="etd"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>ETD</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="datetime-local"
+                      value={isoToLocalInput(field.value ?? null)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        field.onChange(v ? toIsoOffset(v) : undefined);
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* Port of Call */}
-          <FormField
-            control={form.control}
-            name="portOfCall"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Port of Call</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    value={field.value ?? ""}
-                    placeholder="Port of call"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* Port of Call */}
+            <FormField
+              control={form.control}
+              name="portOfCall"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Port of Call</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value ?? ""}
+                      placeholder="Port of call"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
 
         {/* Section: Delivery */}
-        <div className="space-y-4">
-          <h2 className="text-base font-semibold">Delivery</h2>
+        <div>
+          <h2 className="text-base font-semibold mb-4">Delivery</h2>
 
-          {/* Ready Date */}
-          <FormField
-            control={form.control}
-            name="readyDate"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>
-                  Ready Date <span className="text-destructive">*</span>
-                </FormLabel>
-                <FormControl>
-                  <Input
-                    type="datetime-local"
-                    value={isoToLocalInput(field.value ?? null)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      field.onChange(v ? toIsoOffset(v) : undefined);
-                    }}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Ready Date */}
+            <FormField
+              control={form.control}
+              name="readyDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Ready Date <span className="text-destructive">*</span>
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      type="datetime-local"
+                      value={isoToLocalInput(field.value ?? null)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        field.onChange(v ? toIsoOffset(v) : undefined);
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* Target Delivery */}
-          <FormField
-            control={form.control}
-            name="targetDelivery"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>
-                  Target Delivery <span className="text-destructive">*</span>
-                </FormLabel>
-                <FormControl>
-                  <Input
-                    type="datetime-local"
-                    value={isoToLocalInput(field.value ?? null)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      field.onChange(v ? toIsoOffset(v) : undefined);
-                    }}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+            {/* Target Delivery */}
+            <FormField
+              control={form.control}
+              name="targetDelivery"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Target Delivery <span className="text-destructive">*</span>
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      type="datetime-local"
+                      value={isoToLocalInput(field.value ?? null)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        field.onChange(v ? toIsoOffset(v) : undefined);
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
       </form>
     </Form>

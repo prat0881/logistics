@@ -328,7 +328,7 @@ describe("LegEditor", () => {
     fireEvent.change(dateInputs[1], { target: { value: "2026-09-15T00:00" } });
 
     // Submit
-    const saveBtn = screen.getByRole("button", { name: /save leg/i });
+    const saveBtn = screen.getByRole("button", { name: /^save$/i });
     await user.click(saveBtn);
 
     await waitFor(() => {
@@ -403,7 +403,7 @@ describe("LegEditor", () => {
     fireEvent.change(dateInputs[1], { target: { value: "2026-09-15T00:00" } });
 
     // Submit
-    const saveBtn = screen.getByRole("button", { name: /save leg/i });
+    const saveBtn = screen.getByRole("button", { name: /^save$/i });
     await user.click(saveBtn);
 
     // Server findings should appear in the dialog (via the findings list, not just the client warning)
@@ -417,15 +417,17 @@ describe("LegEditor", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("blocks Save when mandatory fields are missing (#4)", async () => {
+  it("saves a partial leg without hard-blocking (Round-1 Common #5)", async () => {
     const user = userEvent.setup();
+
+    const legResponse = { id: "…uuid…" };
     const fetchMock = makeFetchMock({
       "/legs": (_url, init) =>
         Promise.resolve({
           ok: true,
           status: init?.method === "POST" ? 201 : 200,
-          json: () => Promise.resolve({}),
-          text: () => Promise.resolve("{}"),
+          json: () => Promise.resolve(legResponse),
+          text: () => Promise.resolve(JSON.stringify(legResponse)),
           blob: () => Promise.resolve(new Blob()),
         } as Response),
     });
@@ -436,20 +438,22 @@ describe("LegEditor", () => {
     );
     await screen.findByRole("dialog");
 
-    // Set origin + destination + mode, but leave cargo unchecked and dates empty
+    // Set origin + destination + mode, but leave cargo unchecked and dates empty (partial leg)
     const selects = getHiddenSelects();
     fireEvent.change(selects[0], { target: { value: PICKUP_POINT_ID } });
     fireEvent.change(selects[1], { target: { value: DELIVERY_POINT_ID } });
     fireEvent.change(selects[2], { target: { value: "ROAD" } });
 
-    await user.click(screen.getByRole("button", { name: /save leg/i }));
+    // Button name is now "Save" (not "Save Leg")
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
 
-    // Required messages appear (dates) and no POST is issued
-    await waitFor(() => expect(screen.getAllByText(/required/i).length).toBeGreaterThan(0));
-    const postCall = fetchMock.mock.calls.find(
-      ([url, init]) =>
-        url === `/api/queries/${QUERY_ID}/legs` && (init as RequestInit)?.method === "POST",
-    );
-    expect(postCall).toBeFalsy();
+    // Partial leg should proceed to POST without being blocked
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          url === `/api/queries/${QUERY_ID}/legs` && (init as RequestInit)?.method === "POST",
+      );
+      expect(postCall).toBeTruthy();
+    });
   });
 });

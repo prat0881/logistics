@@ -8,6 +8,10 @@ import { mockFetch } from "@/test/mock-fetch";
 
 afterEach(() => vi.unstubAllGlobals());
 
+// Dynamic date ~7 days ahead so auto-filled Response Deadline (queryDate + up to 48h)
+// always passes the F4 "not in the past" schema check regardless of when tests run.
+const FUTURE_QUERY_DATE = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
 const draftDetail = {
   id: "q9",
   queryCode: "YAL26-0009",
@@ -15,7 +19,7 @@ const draftDetail = {
   priority: "MEDIUM",
   dgIndicator: false,
   whatsappEnabled: false,
-  queryDate: "2026-01-01T00:00:00+00:00",
+  queryDate: FUTURE_QUERY_DATE,
   responseDeadline: null,
   responseDeadlineRemarks: null,
   clientId: null,
@@ -108,6 +112,22 @@ describe("Step1Client", () => {
     // Check that the form shows key field labels
     expect(screen.getByText(/Query ID/i)).toBeInTheDocument();
     expect(screen.getByText(/Priority/i)).toBeInTheDocument();
+
+    // Regression: all key Step-1 fields must still render after any layout change
+    for (const label of [
+      /Query Date/i,
+      /Priority/i,
+      /Company \/ Client/i,
+      /Contact Name/i,
+      /Email/i,
+      /Phone/i,
+      /Ready Date/i,
+      /Target Delivery/i,
+    ]) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
+    // "Response Deadline" also matches "Response Deadline Remarks" — use getAllByText
+    expect(screen.getAllByText(/Response Deadline/i).length).toBeGreaterThan(0);
   });
 
   it("selecting a client loads its contacts into the Contact Person select", async () => {
@@ -320,8 +340,8 @@ describe("Step1Client", () => {
     const detailWithClient = {
       ...draftDetail,
       clientId: CLIENT_ID,
-      // queryDate is always present on an existing query
-      queryDate: "2026-01-01T00:00:00+00:00",
+      // queryDate is always present on an existing query; keep dynamic to avoid F4 failures
+      queryDate: FUTURE_QUERY_DATE,
     };
     vi.stubGlobal(
       "fetch",
@@ -372,6 +392,76 @@ describe("Step1Client", () => {
     expect(body).not.toHaveProperty("queryDate");
     // Other editable fields should still be present
     expect(body).toHaveProperty("priority");
+  });
+
+  it("defaults Response Deadline to Query Date + 24h for MEDIUM and recomputes on priority change until edited", async () => {
+    const user = userEvent.setup();
+
+    // Use a dynamic future queryDate so auto-filled deadline (queryDate + 24h) passes F4.
+    const detailNoDeadline = {
+      ...draftDetail,
+      queryDate: FUTURE_QUERY_DATE,
+      priority: "MEDIUM",
+      responseDeadline: null,
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailNoDeadline };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // Response Deadline should be auto-filled (MEDIUM = queryDate + 24h)
+    // Use exact match to avoid matching "Response Deadline Remarks"
+    const deadline = screen.getByLabelText("Response Deadline") as HTMLInputElement;
+    await waitFor(() => expect(deadline.value).not.toBe(""));
+
+    const mediumValue = deadline.value;
+    expect(mediumValue).not.toBe("");
+
+    // Switch priority to URGENT via the Radix Select (URGENT = +12h, different from MEDIUM +24h)
+    const priorityTrigger = screen.getByRole("combobox", { name: /Priority/i });
+    await user.click(priorityTrigger);
+    const urgentOption = await screen.findByRole("option", { name: "URGENT" });
+    await user.click(urgentOption);
+
+    // Deadline should recompute (still filled, but a different value)
+    await waitFor(() => {
+      expect(deadline.value).not.toBe("");
+      expect(deadline.value).not.toBe(mediumValue);
+    });
+
+    // Manual edit marks it touched — after this, priority changes should NOT recompute.
+    // Use a dynamic future value so this test stays green indefinitely.
+    const manualDeadline = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 16); // "YYYY-MM-DDTHH:mm" — matches datetime-local input format
+    await user.clear(deadline);
+    await user.type(deadline, manualDeadline);
+    expect(deadline.value).toBe(manualDeadline);
+
+    // Switch priority again — deadline should stay at the manually typed value
+    await user.click(priorityTrigger);
+    const mediumOption = await screen.findByRole("option", { name: "MEDIUM" });
+    await user.click(mediumOption);
+
+    // Deadline must not change after manual edit
+    expect(deadline.value).toBe(manualDeadline);
   });
 
   it("shows company name (not UUID) in client picker trigger when detail.clientId is pre-set", async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
 import { QueryWizardPage } from "../QueryWizardPage";
@@ -87,6 +87,49 @@ async function navigateToStep3() {
 }
 
 describe("Step3Cargo", () => {
+  it("opens the Add-cargo dialog with Save + Cancel", async () => {
+    const user = userEvent.setup();
+
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}`)
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve(baseDetail),
+          text: () => Promise.resolve(JSON.stringify(baseDetail)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=2` },
+    );
+
+    await navigateToStep3();
+
+    await user.click(screen.getByRole("button", { name: /add row/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: /^save$/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+  });
+
   it("adds a cargo row: POSTs with poReference + grossWt + dims then shows the row in the table", async () => {
     const user = userEvent.setup();
 
@@ -169,10 +212,9 @@ describe("Step3Cargo", () => {
     const grossWtInput = screen.getByPlaceholderText("60");
     await user.type(grossWtInput, "60");
 
-    // Submit — there are two "Add Row" buttons: the header button and the form submit.
-    // The form submit is the last one.
-    const allAddRowBtns = screen.getAllByRole("button", { name: /add row/i });
-    await user.click(allAddRowBtns[allAddRowBtns.length - 1]);
+    // Submit — the dialog's form submit button is "Save"
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
     // Verify POST was called with required fields
     await waitFor(() => {

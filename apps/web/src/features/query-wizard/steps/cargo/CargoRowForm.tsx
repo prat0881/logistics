@@ -150,8 +150,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
 
   return (
     <Form {...form}>
-      <form onSubmit={handleSubmit} className="space-y-4 border rounded-md p-4 bg-muted/30">
-        <h3 className="text-sm font-semibold">Add Cargo Row</h3>
+      <form onSubmit={handleSubmit} className="space-y-4">
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* PO / Reference */}
@@ -377,7 +376,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
             Cancel
           </Button>
           <Button type="submit" size="sm">
-            Add Row
+            Save
           </Button>
         </div>
       </form>
@@ -434,8 +433,7 @@ function EditForm({
 
   return (
     <Form {...form}>
-      <form onSubmit={handleSubmit} className="space-y-4 border rounded-md p-4 bg-blue-50/30">
-        <h3 className="text-sm font-semibold">Edit Row — {row.poReference}</h3>
+      <form onSubmit={handleSubmit} className="space-y-4">
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField control={form.control} name="poReference" render={({ field }) => (
@@ -594,7 +592,7 @@ function EditForm({
 
         <div className="flex gap-2 justify-end">
           <Button type="button" variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
-          <Button type="submit" size="sm">Save Changes</Button>
+          <Button type="submit" size="sm">Save</Button>
         </div>
       </form>
     </Form>

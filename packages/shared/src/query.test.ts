@@ -7,10 +7,12 @@ import {
   querySaveSchema,
   collectCreateFindings,
   queryListQuerySchema,
+  defaultResponseDeadline,
+  RESPONSE_DEADLINE_HOURS,
 } from "./query";
 
 describe("Query vocabularies", () => {
-  it("pins the 11 Incoterms", () => {
+  it("pins the 12 Incoterms", () => {
     expect(INCOTERMS).toEqual([
       "EXW",
       "FCA",
@@ -23,10 +25,17 @@ describe("Query vocabularies", () => {
       "DAP",
       "DPU",
       "DDP",
+      "N/A",
     ]);
+  });
+  it("accepts N/A as a valid incoterms value", () => {
+    expect(querySaveSchema.safeParse({ incoterms: "N/A" }).success).toBe(true);
   });
   it("pins priorities", () => {
     expect(PRIORITIES).toEqual(["LOW", "MEDIUM", "HIGH", "URGENT"]);
+  });
+  it("pins the response-deadline hour map", () => {
+    expect(RESPONSE_DEADLINE_HOURS).toEqual({ LOW: 48, MEDIUM: 24, HIGH: 18, URGENT: 12 });
   });
 });
 
@@ -57,6 +66,12 @@ describe("querySaveSchema (draft — lenient, format-validated)", () => {
     });
     it("accepts a valid 7-digit imoNumber", () => {
       expect(querySaveSchema.safeParse({ imoNumber: "1234567" }).success).toBe(true);
+    });
+    it("rejects a contactPhone without a leading +", () => {
+      expect(querySaveSchema.safeParse({ contactPhone: "911234567890" }).success).toBe(false);
+    });
+    it("accepts a valid E.164 contactPhone with +", () => {
+      expect(querySaveSchema.safeParse({ contactPhone: "+911234567890" }).success).toBe(true);
     });
   });
 
@@ -171,10 +186,10 @@ describe("queryListQuerySchema", () => {
     expect(parsed.freightMode).toBe("SEA,ROAD");
   });
 
-  it("defaults page=1 pageSize=20 when omitted", () => {
+  it("defaults page=1 pageSize=10 when omitted", () => {
     const parsed = queryListQuerySchema.parse({});
     expect(parsed.page).toBe(1);
-    expect(parsed.pageSize).toBe(20);
+    expect(parsed.pageSize).toBe(10);
   });
 
   describe("freightMode validation", () => {
@@ -266,5 +281,19 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
   it("treats a whitespace-only contactName as missing (F1) (G8)", () => {
     const f = collectCreateFindings({ ...ready, contactName: "   " }, []);
     expect(f.map((x) => x.rule)).toEqual(["F1"]);
+  });
+});
+
+describe("defaultResponseDeadline (priority → deadline offset)", () => {
+  it("adds 24h for MEDIUM", () => {
+    const out = defaultResponseDeadline("2026-07-22T09:00:00.000Z", "MEDIUM");
+    expect(new Date(out).getTime()).toBe(new Date("2026-07-23T09:00:00.000Z").getTime());
+  });
+  it("adds 48/18/12h for LOW/HIGH/URGENT", () => {
+    const base = "2026-07-22T00:00:00.000Z";
+    const t = (p: "LOW" | "HIGH" | "URGENT") => new Date(defaultResponseDeadline(base, p)).getTime();
+    expect(t("LOW")).toBe(new Date("2026-07-24T00:00:00.000Z").getTime());
+    expect(t("HIGH")).toBe(new Date("2026-07-22T18:00:00.000Z").getTime());
+    expect(t("URGENT")).toBe(new Date("2026-07-22T12:00:00.000Z").getTime());
   });
 });

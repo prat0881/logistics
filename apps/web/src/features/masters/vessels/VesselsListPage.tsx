@@ -4,12 +4,17 @@ import { Role } from "@svyft/shared";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { useVessels } from "../useMasters";
 import { Input } from "@/components/ui/input";
+import { PaginationBar } from "@/components/PaginationBar";
 
 export function VesselsListPage() {
   const { user } = useAuth();
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const canWrite = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
-  const { data, isLoading } = useVessels(q);
+  const { data, isLoading } = useVessels({ q, page, pageSize });
+
+  function handleSearch(v: string) { setQ(v); setPage(1); }
 
   return (
     <div className="space-y-4">
@@ -27,7 +32,7 @@ export function VesselsListPage() {
       <Input
         placeholder="Search name, code, IMO…"
         value={q}
-        onChange={(e) => setQ(e.target.value)}
+        onChange={(e) => handleSearch(e.target.value)}
       />
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -74,6 +79,13 @@ export function VesselsListPage() {
           </table>
         </div>
       )}
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={data?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+      />
     </div>
   );
 }

@@ -6,9 +6,9 @@ interface LegsStepProps {
 }
 
 /**
- * Step 4 — Legs / Route. Thin pass-through to the full implementation in
- * ./legs/LegsStep, which registers the Save/Next validation gate: Save persists +
- * surfaces route findings; Next blocks advancing on any create-phase route error.
+ * Step 4 — Leg & Route. Thin pass-through to the full implementation in
+ * ./legs/LegsStep. Legs/points persist eagerly and validation is deferred to
+ * Create Query; there is no Save/Next gate blocking advancement on route errors.
  */
 export function LegsStep({ registerSave }: LegsStepProps) {
   return <LegsStepImpl registerSave={registerSave} />;

@@ -71,14 +71,20 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
       const atm = overrides.assignedToMe !== undefined ? overrides.assignedToMe : assignedToMe;
       const c = overrides.country !== undefined ? overrides.country : country;
       const df = overrides.dateField ?? dateField;
-      const dr = overrides.dateRange !== undefined ? overrides.dateRange : dateRange;
+      // Use `in` check (not `!== undefined`) so that an explicit `dateRange: undefined`
+      // override (from clearDateRange) is honoured rather than falling back to state.
+      const dr = "dateRange" in overrides ? overrides.dateRange : dateRange;
 
-      const params: Partial<QueryListParams> = {};
-      if (s) params.status = s as QueryListParams["status"];
-      if (p) params.priority = p as QueryListParams["priority"];
-      if (fm) params.freightMode = fm;
-      if (atm && user?.id) params.assignedUserId = user.id;
-      if (c) params.country = c;
+      const params: Partial<QueryListParams> = {
+        status: (s || undefined) as QueryListParams["status"],
+        priority: (p || undefined) as QueryListParams["priority"],
+        freightMode: fm || undefined,
+        assignedUserId: atm && user?.id ? user.id : undefined,
+        country: c || undefined,
+        dateField: undefined,
+        dateFrom: undefined,
+        dateTo: undefined,
+      };
       if (dr?.from) {
         params.dateField = df;
         params.dateFrom = toIsoOffset(dr.from.toISOString().slice(0, 16));
@@ -116,9 +122,28 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
     emitFilters({ dateField: next });
   }
   function handleDateRange(range: DateRange | undefined) {
+    // Always store the raw selection so the calendar reflects it immediately.
     setDateRange(range);
-    emitFilters({ dateRange: range });
-    if (range?.from && range?.to) setCalendarOpen(false);
+    // Gate: only emit + close once BOTH distinct endpoints are chosen.
+    //
+    // Why distinct days? react-day-picker v10 `addToRange` (utils/addToRange.js line 21)
+    // returns `{ from: date, to: date }` on the FIRST click when `min === 0` (our case).
+    // So a partial "start only" selection and a genuine single-day range produce the
+    // same payload, making them indistinguishable at `onSelect` time.
+    // Consequence: single-day ranges (dateFrom === dateTo) are NOT emittable via
+    // click — the user must pick two different days. This is intentional, not a bug.
+    if (
+      range?.from &&
+      range?.to &&
+      range.from.toDateString() !== range.to.toDateString()
+    ) {
+      emitFilters({ dateRange: range });
+      setCalendarOpen(false);
+    }
+  }
+  function clearDateRange() {
+    setDateRange(undefined);
+    emitFilters({ dateRange: undefined });
   }
 
   function clearFilters() {
@@ -218,8 +243,8 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
 
       <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
         <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-1.5">
-            <CalendarIcon className="h-3.5 w-3.5" />
+          <Button variant="outline" size="sm" className="gap-1.5" aria-label="Date range picker">
+            <CalendarIcon className="h-3.5 w-3.5" aria-hidden="true" />
             <span>{dateLabel}</span>
           </Button>
         </PopoverTrigger>
@@ -252,6 +277,11 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
             onSelect={handleDateRange}
             numberOfMonths={2}
           />
+          <div className="flex justify-end border-t p-2">
+            <Button size="sm" variant="ghost" onClick={clearDateRange}>
+              Clear
+            </Button>
+          </div>
         </PopoverContent>
       </Popover>
 

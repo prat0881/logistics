@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CargoDto, CargoCreateInput, CargoUpdateInput } from "@svyft/shared";
 import {
   Table,
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useWizard } from "../WizardContext";
 import { useCargo } from "./cargo/useCargo";
 import { CargoRowForm } from "./cargo/CargoRowForm";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { StepSaveFn } from "./Step1Client";
 
 interface Step3CargoProps {
@@ -104,14 +105,28 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
         </div>
       </div>
 
-      {/* Add form */}
-      {showAddForm && (
-        <CargoRowForm
-          mode="add"
-          onSubmit={handleAdd}
-          onCancel={() => setShowAddForm(false)}
-        />
-      )}
+      {/* Add / Edit dialog */}
+      <Dialog
+        open={showAddForm || editingId !== null}
+        onOpenChange={(o) => { if (!o) { setShowAddForm(false); setEditingId(null); } }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingId ? "Edit Cargo Row" : "Add Cargo Row"}</DialogTitle>
+          </DialogHeader>
+          {editingId ? (
+            (() => {
+              const row = cargoRows.find((r) => r.id === editingId);
+              return row ? (
+                <CargoRowForm mode="edit" row={row} onSubmit={handleUpdate}
+                  onCancel={() => setEditingId(null)} uploadMsds={cargo.uploadMsds} />
+              ) : null;
+            })()
+          ) : (
+            <CargoRowForm mode="add" onSubmit={handleAdd} onCancel={() => setShowAddForm(false)} />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Cargo table */}
       {cargoRows.length > 0 ? (
@@ -138,76 +153,57 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
             </TableHeader>
             <TableBody>
               {cargoRows.map((row) => (
-                <Fragment key={row.id}>
-                  <TableRow>
-                    <TableCell className="font-mono tabular-nums text-muted-foreground">
-                      {row.rowIndex + 1}
-                    </TableCell>
-                    <TableCell>{row.poReference}</TableCell>
-                    <TableCell>{row.productName}</TableCell>
-                    <TableCell>{row.packageType}</TableCell>
-                    <TableCell className="font-mono tabular-nums">{fmtNum(row.qty)}</TableCell>
-                    <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimL, 0)}</TableCell>
-                    <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimW, 0)}</TableCell>
-                    <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimH, 0)}</TableCell>
-                    <TableCell className="font-mono tabular-nums">{fmtDecimal(row.netWt, 2)}</TableCell>
-                    <TableCell className="font-mono tabular-nums">{fmtDecimal(row.grossWt, 2)}</TableCell>
-                    <TableCell className="font-mono tabular-nums">{fmtDecimal(row.volumeCbm, 4)}</TableCell>
-                    {/* Stage 4 — read-only empty with hint */}
-                    <TableCell
-                      className="font-mono tabular-nums text-muted-foreground"
-                      title="Available in Stage 4"
-                    />
-                    <TableCell
-                      className="font-mono tabular-nums text-muted-foreground"
-                      title="Available in Stage 4"
-                    />
-                    <TableCell>{row.isDangerous ? "Yes" : "No"}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setEditingId(editingId === row.id ? null : row.id)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => handleRemove(row.id)}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                  {editingId === row.id && (
-                    <TableRow key={`${row.id}-edit`}>
-                      <TableCell colSpan={15} className="p-0">
-                        <div className="p-2">
-                          <CargoRowForm
-                            mode="edit"
-                            row={row}
-                            onSubmit={handleUpdate}
-                            onCancel={() => setEditingId(null)}
-                            uploadMsds={cargo.uploadMsds}
-                          />
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </Fragment>
+                <TableRow key={row.id}>
+                  <TableCell className="font-mono tabular-nums text-muted-foreground">
+                    {row.rowIndex + 1}
+                  </TableCell>
+                  <TableCell>{row.poReference}</TableCell>
+                  <TableCell>{row.productName}</TableCell>
+                  <TableCell>{row.packageType}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtNum(row.qty)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimL, 0)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimW, 0)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimH, 0)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.netWt, 2)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.grossWt, 2)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.volumeCbm, 4)}</TableCell>
+                  {/* Stage 4 — read-only empty with hint */}
+                  <TableCell
+                    className="font-mono tabular-nums text-muted-foreground"
+                    title="Available in Stage 4"
+                  />
+                  <TableCell
+                    className="font-mono tabular-nums text-muted-foreground"
+                    title="Available in Stage 4"
+                  />
+                  <TableCell>{row.isDangerous ? "Yes" : "No"}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { setEditingId(row.id); setShowAddForm(false); }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleRemove(row.id)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
               ))}
             </TableBody>
           </Table>
         </div>
       ) : (
-        !showAddForm && (
-          <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-            No cargo rows yet. Click &quot;+ Add Row&quot; to add one.
-          </div>
-        )
+        <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+          No cargo rows yet. Click &quot;+ Add Row&quot; to add one.
+        </div>
       )}
     </div>
   );

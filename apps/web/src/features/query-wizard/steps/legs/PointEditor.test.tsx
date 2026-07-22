@@ -317,38 +317,62 @@ describe("PointEditor", () => {
     expect((iataInput as HTMLInputElement).value).toBe("LHR");
   });
 
-  it("blocks Save when a mandatory field for the type is missing (#4)", async () => {
+  it("saves a partial point without hard-blocking on missing type fields (Round-1 Common #5)", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) =>
-      Promise.resolve({
+    const partialPointResponse = {
+      id: "11111111-1111-1111-1111-111111111111",
+      queryId: QUERY_ID,
+      type: "AIRPORT",
+      name: "Heathrow",
+    };
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ user: testUser }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (
+        (url as string) === `/api/queries/${QUERY_ID}/points` &&
+        (init as RequestInit)?.method === "POST"
+      )
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: () => Promise.resolve(partialPointResponse),
+          text: () => Promise.resolve(JSON.stringify(partialPointResponse)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      return Promise.resolve({
         ok: true,
         status: 200,
-        json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
+        json: () => Promise.resolve({}),
         text: () => Promise.resolve(""),
         blob: () => Promise.resolve(new Blob()),
-      } as Response),
-    );
+      } as Response);
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     renderWithProviders(
       <PointEditor queryId={QUERY_ID} open type="AIRPORT" onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
-    // Fill only name + IATA; leave the other AIRPORT-required fields (city/postal/country) empty
+    // Fill only name; leave IATA, city, postal, country empty (partial draft)
     const nameInput = await screen.findByPlaceholderText(/airport name/i);
     await user.type(nameInput, "Heathrow");
-    const iataInput = screen.getByLabelText(/iata code/i);
-    await user.type(iataInput, "LHR");
 
-    await user.click(screen.getByRole("button", { name: /save/i }));
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
 
-    // Required messages appear and no POST is issued
-    await waitFor(() => expect(screen.getAllByText(/required/i).length).toBeGreaterThan(0));
-    const postCall = fetchMock.mock.calls.find(
-      ([url, init]) =>
-        (url as string) === `/api/queries/${QUERY_ID}/points` &&
-        (init as RequestInit)?.method === "POST",
-    );
-    expect(postCall).toBeFalsy();
+    // add (POST) must be called — no hard-block on partial drafts
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          (url as string) === `/api/queries/${QUERY_ID}/points` &&
+          (init as RequestInit)?.method === "POST",
+      );
+      expect(postCall).toBeTruthy();
+    });
   });
 });

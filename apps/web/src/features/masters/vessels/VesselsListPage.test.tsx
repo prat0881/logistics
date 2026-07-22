@@ -31,7 +31,7 @@ function renderList(role: string) {
             ],
             total: 1,
             page: 1,
-            pageSize: 20,
+            pageSize: 10,
           },
         };
       return { status: 404 };
@@ -63,5 +63,32 @@ describe("VesselsListPage", () => {
     renderList("EXECUTIVE");
     await waitFor(() => expect(screen.getByText("MV Test Carrier")).toBeInTheDocument());
     expect(screen.queryByRole("link", { name: /new vessel/i })).not.toBeInTheDocument();
+  });
+
+  it("requests page size 10 and renders the paginator", async () => {
+    const fetchMock = vi.fn(
+      mockFetch((url) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "ADMINISTRATOR" } } };
+        if (url.includes("/api/vessels"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 10 } };
+        return { status: 404 };
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter>
+            <VesselsListPage />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    await screen.findByText(/no vessels/i);
+    const url = fetchMock.mock.calls.map((c) => String(c[0])).find((u) => u.includes("/api/vessels"))!;
+    expect(url).toMatch(/pageSize=10/);
+    expect(screen.getByLabelText("Rows per page")).toBeInTheDocument();
   });
 });

@@ -11,7 +11,6 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Form,
   FormField,
@@ -33,7 +32,6 @@ function fromDetail(detail: QueryDetail | undefined): Partial<QuerySaveInput> {
   return {
     incoterms: (detail.incoterms as QuerySaveInput["incoterms"]) ?? undefined,
     shipmentDescription: detail.shipmentDescription ?? undefined,
-    dgIndicator: detail.dgIndicator ?? false,
   };
 }
 
@@ -56,23 +54,17 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
   const submitRef = useRef<StepSaveFn>();
 
   useEffect(() => {
-    submitRef.current = async (opts) => {
+    submitRef.current = async () => {
       // G1: validate the fields this step owns before persisting. Previously Step 2
       // read raw form values and PATCHed with no client-side validation at all.
-      const valid = await form.trigger(["incoterms", "shipmentDescription", "dgIndicator"]);
+      const valid = await form.trigger(["incoterms", "shipmentDescription"]);
       if (!valid) {
         throw new Error("Please fix the highlighted fields.");
       }
       const values = form.getValues();
-      // U5: Incoterms is mandatory when advancing (Next).
-      if (opts?.enforceRequired && !values.incoterms) {
-        form.setError("incoterms", { type: "required", message: "Required to continue" });
-        throw new Error("Complete these required fields before continuing: Incoterms");
-      }
       const payload: Partial<QuerySaveInput> = {
         incoterms: values.incoterms,
         shipmentDescription: values.shipmentDescription,
-        dgIndicator: values.dgIndicator ?? false,
       };
 
       if (!queryId) {
@@ -87,8 +79,8 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
       return undefined;
     };
 
-    registerSave((opts) => {
-      if (submitRef.current) return submitRef.current(opts);
+    registerSave(() => {
+      if (submitRef.current) return submitRef.current();
       return Promise.resolve();
     });
   }, [registerSave, form, queryId, patch]);
@@ -117,7 +109,7 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
                 >
                   <FormControl>
                     <SelectTrigger aria-label="Incoterms">
-                      <SelectValue placeholder="Select incoterms" />
+                      <SelectValue placeholder="Select" />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
@@ -158,32 +150,6 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
             )}
           />
 
-          {/* DG Indicator */}
-          <FormField
-            control={form.control}
-            name="dgIndicator"
-            render={({ field }) => (
-              <FormItem className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <FormControl>
-                    <Checkbox
-                      id="dgIndicator"
-                      checked={field.value ?? false}
-                      onCheckedChange={field.onChange}
-                      aria-label="DG Indicator"
-                    />
-                  </FormControl>
-                  <FormLabel htmlFor="dgIndicator" className="cursor-pointer">
-                    DG Indicator
-                  </FormLabel>
-                </div>
-                <p className="text-xs text-muted-foreground pl-6">
-                  Set automatically when a cargo row is dangerous; you can also set it manually.
-                </p>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
         </div>
       </form>
     </Form>
