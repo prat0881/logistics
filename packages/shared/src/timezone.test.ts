@@ -48,6 +48,18 @@ describe("zonedInputToUtc / utcToZonedInput round-trip", () => {
   });
 });
 
+describe("midnight handling (no 24:00 day-off)", () => {
+  it("round-trips wall-clock midnight in a +08:00 zone", () => {
+    // 2026-06-14T16:00Z is 00:00 on 2026-06-15 in Singapore (+08:00).
+    expect(utcToZonedInput("2026-06-14T16:00:00.000Z", "Asia/Singapore")).toBe("2026-06-15T00:00");
+    expect(zonedInputToUtc("2026-06-15T00:00", "Asia/Singapore")).toBe("2026-06-14T16:00:00.000Z");
+  });
+  it("round-trips UTC midnight in UTC", () => {
+    expect(utcToZonedInput("2026-06-15T00:00:00.000Z", "UTC")).toBe("2026-06-15T00:00");
+    expect(zonedInputToUtc("2026-06-15T00:00", "UTC")).toBe("2026-06-15T00:00:00.000Z");
+  });
+});
+
 describe("zoneLabel / formatInZone", () => {
   it("labels a zone with a non-empty short name", () => {
     expect(zoneLabel("America/New_York", "2026-01-15T14:00:00.000Z")).toMatch(/E[SD]T|GMT/);

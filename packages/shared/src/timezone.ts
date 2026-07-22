@@ -30,13 +30,13 @@ function zoneOffsetMs(zone: string, date: Date): number {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: false,
+    hourCycle: "h23",
   });
   const p = dtf.formatToParts(date).reduce<Record<string, string>>((a, x) => {
     if (x.type !== "literal") a[x.type] = x.value;
     return a;
   }, {});
-  const hour = p.hour === "24" ? 0 : Number(p.hour); // some engines emit "24" for midnight
+  const hour = Number(p.hour);
   const asIfUtc = Date.UTC(
     Number(p.year),
     Number(p.month) - 1,
@@ -55,6 +55,7 @@ function zoneOffsetMs(zone: string, date: Date): number {
 export function zonedInputToUtc(wallClock: string, zone: string): string {
   if (!wallClock) return "";
   const provisional = new Date(`${wallClock.length === 16 ? `${wallClock}:00` : wallClock}Z`);
+  if (Number.isNaN(provisional.getTime())) return "";
   let utcMs = provisional.getTime() - zoneOffsetMs(zone, provisional);
   const off2 = zoneOffsetMs(zone, new Date(utcMs));
   utcMs = provisional.getTime() - off2; // re-resolve at the candidate instant (DST edges)
