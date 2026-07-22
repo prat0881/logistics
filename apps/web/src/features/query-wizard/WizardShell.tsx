@@ -19,9 +19,8 @@ import { useSaveQuery } from "./useQueryDetail";
 
 interface WizardShellProps {
   children: ReactNode;
-  /** Called when Save or Next is pressed — provided by QueryWizardPage.
-   *  enforceRequired=true (Next) makes the current step's mandatory fields blocking. */
-  onSave: (opts?: { enforceRequired?: boolean }) => Promise<void>;
+  /** Called when Save or Next is pressed — provided by QueryWizardPage. */
+  onSave: () => Promise<void>;
   findings?: Finding[];
   onClearFindings?: () => void;
   /** Called by the final step's "Create Query" button — provided by QueryWizardPage */
@@ -54,15 +53,12 @@ export function WizardShell({
     STEPS.slice(0, step).map((s) => s.key),
   );
 
-  // Runs the current step's save. enforceRequired=true (Next) makes the step's
-  // mandatory fields blocking; false (Save) persists a partial draft. Returns
-  // whether it succeeded so callers can decide to advance.
-  const runSave = async (enforceRequired: boolean): Promise<boolean> => {
+  const runSave = async (): Promise<boolean> => {
     setSaving(true);
     setSaveError(null);
     setSaveSuccess(null);
     try {
-      await onSave(enforceRequired ? { enforceRequired: true } : undefined);
+      await onSave();
       return true;
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "unknown error");
@@ -73,12 +69,21 @@ export function WizardShell({
   };
 
   const handleSave = async () => {
-    if (await runSave(false)) setSaveSuccess("Changes saved."); // U3
+    if (await runSave()) setSaveSuccess("Changes saved."); // U3
   };
 
   const handleNext = async () => {
-    // U5: advancing enforces the current step's mandatory fields.
-    if (await runSave(true)) goNext();
+    // Round-1 Common #5: Next never blocks. Best-effort save, then advance regardless.
+    // Swallow a save rejection here (inline field errors already surface format issues
+    // on the step) so we don't raise a confusing top-notice on the step we just left.
+    setSaveError(null);
+    setSaveSuccess(null);
+    try {
+      await onSave();
+    } catch {
+      /* never block navigation */
+    }
+    goNext();
   };
 
   const handleCancel = () => {

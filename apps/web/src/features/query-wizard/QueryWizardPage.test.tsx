@@ -438,7 +438,7 @@ describe("QueryWizardPage", () => {
     );
   });
 
-  it("Next on Step 1 with missing required fields blocks navigation and flags them (U5)", async () => {
+  it("Next advances to Step 2 even when Step-1 mandatory fields are empty (Round-1 Common #5)", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url) => {
@@ -462,46 +462,10 @@ describe("QueryWizardPage", () => {
 
     await screen.findByText("YAL26-0009");
 
-    // Click Next with every required field empty
     await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
 
-    // A required-fields message appears and we do NOT advance to Step 2 (no Incoterms)
-    await waitFor(() => expect(screen.getByText(/required fields/i)).toBeInTheDocument());
-    expect(screen.queryByLabelText(/incoterms/i)).not.toBeInTheDocument();
-  });
-
-  it("Next on Step 1 with all required fields present advances to Step 2 (U5)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      mockFetch((url, init) => {
-        if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
-        if (url === `/api/clients/${fullDraftDetail.clientId}`)
-          return { status: 200, body: { id: fullDraftDetail.clientId, companyName: "Acme", country: "SG", status: "ACTIVE" } };
-        if (url.includes("/api/clients"))
-          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
-        if (url.includes("/api/vessels"))
-          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
-        if (url.includes("/api/queries/q9") && init?.method === "PATCH")
-          return { status: 200, body: fullDraftDetail };
-        if (url.includes("/api/queries/q9")) return { status: 200, body: fullDraftDetail };
-        return { status: 200, body: {} };
-      }),
-    );
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
-    );
-
-    await screen.findByText("YAL26-0009");
-
-    await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
-
-    // Advances to Step 2 — the Incoterms control becomes visible
-    await waitFor(() => expect(screen.getByLabelText(/incoterms/i)).toBeInTheDocument());
+    expect(await screen.findByText(/Shipment Details/i)).toBeInTheDocument();
+    expect(screen.queryByText(/required fields before continuing/i)).not.toBeInTheDocument();
   });
 
   it("Save shows a success message at the top (U3)", async () => {

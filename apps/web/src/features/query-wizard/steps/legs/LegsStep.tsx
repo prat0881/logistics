@@ -94,25 +94,13 @@ function LegsStepBody({
 }) {
   const { remove } = useLegs(queryId);
   const { remove: removePoint } = usePoints(queryId);
-  const { all, grouped, validateOnServer } = useRouteFindings(detail);
+  const { all, grouped } = useRouteFindings(detail);
   const [selected, setSelected] = useState<FindingScope | null>(null);
 
-  // Next-gate (#3): Save/Next run the authoritative server validate; Next blocks
-  // advancing when any create-phase route finding is blocking. Save still resolves —
-  // legs/points persist eagerly, so there is nothing to write from here.
+  // Legs/points persist eagerly; nothing to save here, and validation is Create-only now.
   useEffect(() => {
-    registerSave(async (opts) => {
-      const serverFindings = await validateOnServer();
-      if (opts?.enforceRequired) {
-        const blocked =
-          serverFindings.some((f) => f.severity === "blocking") || grouped.blocking.length > 0;
-        if (blocked) {
-          throw new Error("Resolve the route issues on this screen before continuing.");
-        }
-      }
-      return undefined;
-    });
-  }, [registerSave, validateOnServer, grouped]);
+    registerSave(() => Promise.resolve(undefined));
+  }, [registerSave]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingLeg, setEditingLeg] = useState<QueryLegDto | undefined>(undefined);
   const [pointEditorOpen, setPointEditorOpen] = useState(false);

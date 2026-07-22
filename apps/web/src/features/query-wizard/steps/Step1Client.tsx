@@ -37,18 +37,8 @@ import { VesselPicker } from "../pickers/VesselPicker";
  *      its own PATCH, avoiding a double-write (Step 2 and Step 5 use this pattern).
  */
 export interface StepSaveFn {
-  (opts?: { enforceRequired?: boolean }): Promise<QuerySaveInput | void>;
+  (): Promise<QuerySaveInput | void>;
 }
-
-/** Step-1 mandatory fields (the F1 subset this step owns) — enforced on Next (U5). */
-const STEP1_REQUIRED: { field: keyof QuerySaveInput; label: string }[] = [
-  { field: "clientId", label: "Client" },
-  { field: "contactName", label: "Contact Name" },
-  { field: "contactEmail", label: "Email" },
-  { field: "contactPhone", label: "Phone" },
-  { field: "readyDate", label: "Ready Date" },
-  { field: "targetDelivery", label: "Target Delivery" },
-];
 
 interface Step1ClientProps {
   registerSave: (fn: StepSaveFn) => void;
@@ -143,30 +133,10 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
   const submitRef = useRef<StepSaveFn>();
 
   useEffect(() => {
-    submitRef.current = (opts) => {
+    submitRef.current = () => {
       return new Promise<QuerySaveInput | void>((resolve, reject) => {
         const submitFn = form.handleSubmit(
           (values) => {
-            // U5/D3: on advance (Next), this step's mandatory fields must be present.
-            // Plain Save (no enforce) still persists a partial draft.
-            if (opts?.enforceRequired) {
-              const missing = STEP1_REQUIRED.filter(({ field }) => {
-                const v = values[field];
-                return v == null || (typeof v === "string" && v.trim() === "");
-              });
-              if (missing.length) {
-                missing.forEach(({ field }) =>
-                  form.setError(field, { type: "required", message: "Required to continue" }),
-                );
-                reject(
-                  new Error(
-                    "Complete these required fields before continuing: " +
-                      missing.map((m) => m.label).join(", "),
-                  ),
-                );
-                return;
-              }
-            }
             if (!isAdmin) {
               // eslint-disable-next-line @typescript-eslint/no-unused-vars
               const { queryDate: _, ...rest } = values;
@@ -185,8 +155,8 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
         submitFn().catch(reject);
       });
     };
-    registerSave((opts) => {
-      if (submitRef.current) return submitRef.current(opts);
+    registerSave(() => {
+      if (submitRef.current) return submitRef.current();
       return Promise.resolve();
     });
   }, [registerSave, form, isAdmin]);

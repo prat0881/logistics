@@ -56,7 +56,7 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
   const submitRef = useRef<StepSaveFn>();
 
   useEffect(() => {
-    submitRef.current = async (opts) => {
+    submitRef.current = async () => {
       // G1: validate the fields this step owns before persisting. Previously Step 2
       // read raw form values and PATCHed with no client-side validation at all.
       const valid = await form.trigger(["incoterms", "shipmentDescription", "dgIndicator"]);
@@ -64,11 +64,6 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
         throw new Error("Please fix the highlighted fields.");
       }
       const values = form.getValues();
-      // U5: Incoterms is mandatory when advancing (Next).
-      if (opts?.enforceRequired && !values.incoterms) {
-        form.setError("incoterms", { type: "required", message: "Required to continue" });
-        throw new Error("Complete these required fields before continuing: Incoterms");
-      }
       const payload: Partial<QuerySaveInput> = {
         incoterms: values.incoterms,
         shipmentDescription: values.shipmentDescription,
@@ -87,8 +82,8 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
       return undefined;
     };
 
-    registerSave((opts) => {
-      if (submitRef.current) return submitRef.current(opts);
+    registerSave(() => {
+      if (submitRef.current) return submitRef.current();
       return Promise.resolve();
     });
   }, [registerSave, form, queryId, patch]);

@@ -625,7 +625,7 @@ describe("LegsStep", () => {
     expect(title?.textContent ?? "").toMatch(/missing|ready date|target delivery/i);
   });
 
-  it("blocks Next from Step 4 when the route has errors (Legs rework step 5)", async () => {
+  it("Next advances from Step 4 even when the route has errors (Round-1 Common #5)", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
@@ -647,34 +647,8 @@ describe("LegsStep", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
 
-    // Blocked — error shown, still on Step 4 (Step-5 Internal Notes not visible)
-    await waitFor(() => expect(screen.getByText(/before continuing/i)).toBeInTheDocument());
-    expect(screen.queryByText(/internal notes/i)).not.toBeInTheDocument();
-  });
-
-  it("Next from Step 4 advances when the route is valid (Legs rework step 5)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      mockFetch((url, init) => {
-        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
-        if (url.includes("/validate")) return { status: 200, body: { findings: [] } };
-        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-          return { status: 200, body: validRouteDetail };
-        return { status: 200, body: {} };
-      }),
-    );
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=3` },
-    );
-    await navigateToStep4();
-    await screen.findByText(/123 Main St/);
-
-    await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
-
-    // Advances to Step 5 — the Internal Notes field appears
-    await waitFor(() => expect(screen.getByText(/internal notes/i)).toBeInTheDocument());
+    expect(screen.queryByText(/before continuing/i)).not.toBeInTheDocument();
+    // Step 5 heading is shown (Internal Notes label is unique to Step5Notes body)
+    expect(await screen.findByLabelText(/internal notes/i)).toBeInTheDocument();
   });
 });

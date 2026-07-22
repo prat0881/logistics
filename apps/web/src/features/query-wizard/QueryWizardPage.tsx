@@ -126,8 +126,8 @@ function WizardInner({ id }: { id?: string }) {
    * - existing query: call the step's save (step returns a QuerySaveInput patch or void)
    */
   const handleSave = useCallback(
-    async (opts?: { enforceRequired?: boolean }) => {
-      const input = stepSaveRef.current ? await stepSaveRef.current(opts) : undefined;
+    async () => {
+      const input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
       if (isNew) {
         // First save mints the queryCode; even an empty body is valid
         const d = await create(input ?? {});
