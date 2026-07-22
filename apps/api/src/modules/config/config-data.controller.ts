@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch } from "@nestjs/common";
-import { Role, checklistItemUpdateSchema, densityFactorUpdateSchema } from "@svyft/shared";
-import type { ChecklistItemUpdateInput, DensityFactorUpdateInput } from "@svyft/shared";
+import { Role, checklistItemUpdateSchema, densityFactorUpdateSchema, orgTimezoneUpdateSchema } from "@svyft/shared";
+import type { ChecklistItemUpdateInput, DensityFactorUpdateInput, OrgTimezoneUpdateInput } from "@svyft/shared";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { ConfigDataService } from "./config-data.service";
@@ -35,5 +35,18 @@ export class ConfigDataController {
     @Body(new ZodValidationPipe(checklistItemUpdateSchema)) body: ChecklistItemUpdateInput,
   ) {
     return this.config.updateChecklistItem(itemKey, body);
+  }
+
+  @Get("org-timezone")
+  orgTimezone() {
+    return this.config.orgTimezone();
+  }
+
+  @Roles(Role.ADMINISTRATOR)
+  @Patch("org-timezone")
+  updateOrgTimezone(
+    @Body(new ZodValidationPipe(orgTimezoneUpdateSchema)) body: OrgTimezoneUpdateInput,
+  ) {
+    return this.config.updateOrgTimezone(body);
   }
 }
