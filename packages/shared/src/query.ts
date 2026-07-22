@@ -11,6 +11,23 @@ export const Priority = { LOW: "LOW", MEDIUM: "MEDIUM", HIGH: "HIGH", URGENT: "U
 export type Priority = (typeof Priority)[keyof typeof Priority];
 export const PRIORITIES = Object.values(Priority) as [Priority, ...Priority[]];
 
+/**
+ * Response-Deadline default by priority (Round-1 Common Rules / Step-1).
+ * Deadline = Query Date + N hours. Recompute-until-touched wiring lives in the wizard.
+ * NOTE: pure instant math (base + N h). Timezone-anchored display + the "≥ Query Date"
+ * real-instant comparison are the separate timezone increment — not here.
+ */
+export const RESPONSE_DEADLINE_HOURS: Record<Priority, number> = {
+  LOW: 48,
+  MEDIUM: 24,
+  HIGH: 18,
+  URGENT: 12,
+};
+export function defaultResponseDeadline(queryDate: string, priority: Priority): string {
+  const ms = new Date(queryDate).getTime() + RESPONSE_DEADLINE_HOURS[priority] * 3_600_000;
+  return new Date(ms).toISOString();
+}
+
 // §7.2 — fixed 11-value Incoterms enum.
 export const Incoterms = {
   EXW: "EXW",

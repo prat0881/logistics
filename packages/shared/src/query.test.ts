@@ -7,6 +7,8 @@ import {
   querySaveSchema,
   collectCreateFindings,
   queryListQuerySchema,
+  defaultResponseDeadline,
+  RESPONSE_DEADLINE_HOURS,
 } from "./query";
 
 describe("Query vocabularies", () => {
@@ -276,5 +278,19 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
   it("treats a whitespace-only contactName as missing (F1) (G8)", () => {
     const f = collectCreateFindings({ ...ready, contactName: "   " }, []);
     expect(f.map((x) => x.rule)).toEqual(["F1"]);
+  });
+});
+
+describe("defaultResponseDeadline (priority → deadline offset)", () => {
+  it("adds 24h for MEDIUM", () => {
+    const out = defaultResponseDeadline("2026-07-22T09:00:00.000Z", "MEDIUM");
+    expect(new Date(out).getTime()).toBe(new Date("2026-07-23T09:00:00.000Z").getTime());
+  });
+  it("adds 48/18/12h for LOW/HIGH/URGENT", () => {
+    const base = "2026-07-22T00:00:00.000Z";
+    const t = (p: "LOW" | "HIGH" | "URGENT") => new Date(defaultResponseDeadline(base, p)).getTime();
+    expect(t("LOW")).toBe(new Date("2026-07-24T00:00:00.000Z").getTime());
+    expect(t("HIGH")).toBe(new Date("2026-07-22T18:00:00.000Z").getTime());
+    expect(t("URGENT")).toBe(new Date("2026-07-22T12:00:00.000Z").getTime());
   });
 });
