@@ -8,7 +8,7 @@ export const STEPS = [
   { key: "client", label: "Client & Query" },
   { key: "shipment", label: "Shipment" },
   { key: "cargo", label: "Cargo" },
-  { key: "legs", label: "Legs / Route" },
+  { key: "legs", label: "Leg & Route" },
   { key: "notes", label: "Notes & Checklist" },
 ] as const;
 

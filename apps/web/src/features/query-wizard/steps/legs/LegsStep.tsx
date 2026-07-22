@@ -148,6 +148,7 @@ function LegsStepBody({
 
   return (
     <div className="space-y-4 p-4">
+      <h2 className="text-base font-semibold">Leg & Route</h2>
       {/* Notices strip (top) */}
       <RouteNoticesStrip grouped={grouped} />
 
@@ -357,7 +358,7 @@ export function LegsStep({ registerSave }: { registerSave: (fn: StepSaveFn) => v
   return (
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Legs / Route</h2>
+        <h2 className="text-base font-semibold">Leg & Route</h2>
         <Button size="sm" onClick={handleMint} disabled={minting}>
           {minting ? "Saving…" : "+ Add leg"}
         </Button>

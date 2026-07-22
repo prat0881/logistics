@@ -169,10 +169,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Navigate to Step 4 (Legs / Route) from the wizard */
+/** Navigate to Step 4 (Leg & Route) from the wizard */
 async function navigateToStep4() {
   await screen.findByText("YAL26-0001");
-  const legsTab = screen.getByRole("button", { name: /legs/i });
+  const legsTab = screen.getByRole("button", { name: /leg & route/i });
   await userEvent.click(legsTab);
 }
 
@@ -213,6 +213,7 @@ describe("LegsStep", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/add the first leg to build the route/i)).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Leg & Route" })).toBeInTheDocument();
     });
   });
 
@@ -386,7 +387,7 @@ describe("LegsStep", () => {
       }),
     );
 
-    // Render as a NEW query (no :id param) at step=3 (Legs / Route)
+    // Render as a NEW query (no :id param) at step=3 (Leg & Route)
     renderWithProviders(
       <Routes>
         <Route path="/queries/new" element={<QueryWizardPage />} />
@@ -395,7 +396,7 @@ describe("LegsStep", () => {
       { route: "/queries/new?step=3" },
     );
 
-    // Navigate to step 4 in the shell (click the "Legs / Route" tab)
+    // Navigate to step 4 in the shell (click the "Leg & Route" tab)
     // On new query, tabs may not be clickable — but "+ Add leg" is always present
     // because we removed the dead-end guard.
     const addLegBtn = await screen.findByRole("button", { name: /add leg/i });
