@@ -229,7 +229,7 @@ export const queryListQuerySchema = z.object({
   dateTo: z.string().datetime({ offset: true }).optional(),
   sort: z.string().optional(),             // "<column>:<asc|desc>"
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  pageSize: z.coerce.number().int().min(1).max(100).default(10),
 }).refine(
   // G11: dateFrom must be on or before dateTo (when both are present).
   (p) =>

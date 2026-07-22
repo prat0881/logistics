@@ -1,9 +1,9 @@
 import { useState, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { QueryListParams } from "@svyft/shared";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
+import { PaginationBar } from "@/components/PaginationBar";
 import { useQueries } from "./useQueries";
 import { queryColumns } from "./columns";
 import { QueriesToolbar } from "./QueriesToolbar";
@@ -20,7 +20,7 @@ const SORTABLE_COLS: string[] = [
 
 const DEFAULT_PARAMS: QueryListParams = {
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   sort: "updatedAt:desc",
 };
 
@@ -31,7 +31,6 @@ export function QueriesListPage() {
   const { data, isLoading } = useQueries(params);
 
   const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / (params.pageSize ?? 20)));
 
   const handleToolbarChange = useCallback((partial: Partial<QueryListParams>) => {
     setParams((prev) => ({ ...prev, ...partial, page: 1 }));
@@ -48,13 +47,6 @@ export function QueriesListPage() {
     },
     [],
   );
-
-  function prevPage() {
-    setParams((p) => ({ ...p, page: Math.max(1, (p.page ?? 1) - 1) }));
-  }
-  function nextPage() {
-    setParams((p) => ({ ...p, page: Math.min(pageCount, (p.page ?? 1) + 1) }));
-  }
 
   const currentPage = params.page ?? 1;
 
@@ -84,34 +76,13 @@ export function QueriesListPage() {
       />
 
       {/* Pagination */}
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>
-          {total === 0 ? "No results" : `${total} result${total !== 1 ? "s" : ""}`}
-        </span>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={prevPage}
-            disabled={currentPage <= 1}
-            aria-label="Previous page"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span>
-            Page {currentPage} of {pageCount}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={nextPage}
-            disabled={currentPage >= pageCount}
-            aria-label="Next page"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
+      <PaginationBar
+        page={currentPage}
+        pageSize={params.pageSize ?? 10}
+        total={total}
+        onPageChange={(p) => setParams((prev) => ({ ...prev, page: p }))}
+        onPageSizeChange={(size) => setParams((prev) => ({ ...prev, pageSize: size, page: 1 }))}
+      />
     </div>
   );
 }

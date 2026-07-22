@@ -183,10 +183,10 @@ describe("queryListQuerySchema", () => {
     expect(parsed.freightMode).toBe("SEA,ROAD");
   });
 
-  it("defaults page=1 pageSize=20 when omitted", () => {
+  it("defaults page=1 pageSize=10 when omitted", () => {
     const parsed = queryListQuerySchema.parse({});
     expect(parsed.page).toBe(1);
-    expect(parsed.pageSize).toBe(20);
+    expect(parsed.pageSize).toBe(10);
   });
 
   describe("freightMode validation", () => {
