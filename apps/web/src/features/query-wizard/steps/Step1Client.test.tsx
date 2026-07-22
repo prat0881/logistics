@@ -112,6 +112,22 @@ describe("Step1Client", () => {
     // Check that the form shows key field labels
     expect(screen.getByText(/Query ID/i)).toBeInTheDocument();
     expect(screen.getByText(/Priority/i)).toBeInTheDocument();
+
+    // Regression: all key Step-1 fields must still render after any layout change
+    for (const label of [
+      /Query Date/i,
+      /Priority/i,
+      /Company \/ Client/i,
+      /Contact Name/i,
+      /Email/i,
+      /Phone/i,
+      /Ready Date/i,
+      /Target Delivery/i,
+    ]) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
+    // "Response Deadline" also matches "Response Deadline Remarks" — use getAllByText
+    expect(screen.getAllByText(/Response Deadline/i).length).toBeGreaterThan(0);
   });
 
   it("selecting a client loads its contacts into the Contact Person select", async () => {
