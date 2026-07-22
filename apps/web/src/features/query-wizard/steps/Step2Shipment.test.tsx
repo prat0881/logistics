@@ -53,9 +53,8 @@ const draftDetail = {
   destination: [],
 };
 
-const draftDetailWithDg = {
+const draftDetailWithIncoterms = {
   ...draftDetail,
-  dgIndicator: true,
   incoterms: "FOB",
   shipmentDescription: "Electronics shipment",
 };
@@ -79,7 +78,7 @@ async function navigateToStep2() {
 }
 
 describe("Step2Shipment", () => {
-  it("renders Incoterms options, shipment description textarea, and DG checkbox", async () => {
+  it("renders Incoterms select and shipment description textarea", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch(baseHandler),
@@ -97,25 +96,14 @@ describe("Step2Shipment", () => {
     // Shipment Description textarea
     expect(screen.getByLabelText(/shipment description/i)).toBeInTheDocument();
 
-    // DG Indicator checkbox
-    expect(screen.getByRole("checkbox", { name: /dg indicator/i })).toBeInTheDocument();
-
-    // Hint text about DG
-    expect(screen.getByText(/set automatically when a cargo row is dangerous/i)).toBeInTheDocument();
+    // Incoterms select trigger
+    expect(screen.getByLabelText("Incoterms")).toBeInTheDocument();
   });
 
-  it("DG checkbox reflects detail.dgIndicator (true case)", async () => {
+  it("no longer renders a DG Indicator field", async () => {
     vi.stubGlobal(
       "fetch",
-      mockFetch((url, init) => {
-        if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } } };
-        if (url.includes(`/api/queries/${QUERY_ID}`) && init?.method === "PATCH")
-          return { status: 200, body: draftDetailWithDg };
-        if (url.includes(`/api/queries/${QUERY_ID}`))
-          return { status: 200, body: draftDetailWithDg };
-        return { status: 200, body: {} };
-      }),
+      mockFetch(baseHandler),
     );
 
     renderWithProviders(
@@ -127,14 +115,35 @@ describe("Step2Shipment", () => {
 
     await navigateToStep2();
 
-    // DG checkbox should be checked when detail.dgIndicator is true
-    await waitFor(() => {
-      const dgCheckbox = screen.getByRole("checkbox", { name: /dg indicator/i });
-      expect(dgCheckbox).toBeChecked();
-    });
+    expect(screen.queryByLabelText(/DG Indicator/i)).not.toBeInTheDocument();
   });
 
-  it("on Save the PATCH body carries incoterms, shipmentDescription, and dgIndicator", async () => {
+  it("offers N/A as an incoterm option", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(baseHandler),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=1`, user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } },
+    );
+
+    await navigateToStep2();
+
+    // Radix Select renders a hidden native <select> for accessibility/form purposes.
+    // We query its options to assert N/A is present (Radix popup is not rendered in jsdom).
+    const nativeSelect = document.querySelector(
+      'select[aria-hidden="true"]',
+    ) as HTMLSelectElement;
+    expect(nativeSelect).not.toBeNull();
+    const optionValues = Array.from(nativeSelect.options).map((o) => o.value);
+    expect(optionValues).toContain("N/A");
+  });
+
+  it("on Save the PATCH body carries incoterms and shipmentDescription (no dgIndicator)", async () => {
     const patches: unknown[] = [];
     vi.stubGlobal(
       "fetch",
@@ -143,11 +152,11 @@ describe("Step2Shipment", () => {
           return { status: 200, body: { user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } } };
         if (url.includes(`/api/queries/${QUERY_ID}`) && init?.method === "PATCH") {
           patches.push(JSON.parse(init.body as string));
-          return { status: 200, body: draftDetailWithDg };
+          return { status: 200, body: draftDetailWithIncoterms };
         }
         if (url.includes(`/api/queries/${QUERY_ID}`))
-          // Use draftDetailWithDg so the form default has incoterms: "FOB" pre-set
-          return { status: 200, body: draftDetailWithDg };
+          // Use draftDetailWithIncoterms so the form default has incoterms: "FOB" pre-set
+          return { status: 200, body: draftDetailWithIncoterms };
         return { status: 200, body: {} };
       }),
     );
@@ -177,8 +186,8 @@ describe("Step2Shipment", () => {
 
     const body = patches[patches.length - 1] as Record<string, unknown>;
     expect(body).toHaveProperty("shipmentDescription", "Test cargo shipment");
-    expect(body).toHaveProperty("dgIndicator");
-    // incoterms key must be present in the patch body (pre-seeded from draftDetailWithDg)
+    expect(body).not.toHaveProperty("dgIndicator");
+    // incoterms key must be present in the patch body (pre-seeded from draftDetailWithIncoterms)
     expect(body).toHaveProperty("incoterms");
   });
 
