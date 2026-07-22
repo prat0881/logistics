@@ -247,7 +247,7 @@ describe("Step5Notes", () => {
     expect(body).toHaveProperty("internalNotes", "Important shipment notes");
   });
 
-  it("msds-received checkbox is disabled/not-applicable when dgIndicator is false", async () => {
+  it("renders all 9 checklist boxes enabled, even for a non-DG query", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url) => {
@@ -268,46 +268,19 @@ describe("Step5Notes", () => {
 
     await navigateToStep5();
 
+    // Wait for checklist to load
     await screen.findByText("MSDS received");
 
-    // msds-received row should have a "not applicable" indicator when dgIndicator is false
-    const msdsLabel = screen.getByText("MSDS received");
-    const msdsRow = msdsLabel.closest("[data-testid='checklist-row']") ?? msdsLabel.closest("div");
-    expect(msdsRow).toBeTruthy();
+    // Find the checklist rows specifically (excludes other checkboxes like whatsappEnabled in the shell)
+    const rows = screen.getAllByTestId("checklist-row");
+    expect(rows).toHaveLength(9);
+    rows.forEach((row) => {
+      const checkbox = row.querySelector('[role="checkbox"]') as HTMLElement;
+      expect(checkbox).toBeTruthy();
+      expect(checkbox).not.toBeDisabled();
+    });
 
-    // The MSDS checkbox should be disabled when dgIndicator is false
-    const msdsCheckbox = msdsRow?.querySelector('[role="checkbox"]') as HTMLElement;
-    expect(msdsCheckbox).toBeTruthy();
-    expect(msdsCheckbox).toBeDisabled();
-  });
-
-  it("msds-received checkbox is enabled when dgIndicator is true", async () => {
-    vi.stubGlobal(
-      "fetch",
-      mockFetch((url) => {
-        if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } } };
-        if (url.includes(`/api/queries/${QUERY_ID}`))
-          return { status: 200, body: detailWithDg }; // dgIndicator: true
-        return { status: 200, body: {} };
-      }),
-    );
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=4` },
-    );
-
-    await navigateToStep5();
-
-    await screen.findByText("MSDS received");
-
-    const msdsLabel = screen.getByText("MSDS received");
-    const msdsRow = msdsLabel.closest("[data-testid='checklist-row']") ?? msdsLabel.closest("div");
-    const msdsCheckbox = msdsRow?.querySelector('[role="checkbox"]') as HTMLElement;
-    expect(msdsCheckbox).toBeTruthy();
-    expect(msdsCheckbox).not.toBeDisabled();
+    // The N/A hint should not appear for any row
+    expect(screen.queryByText(/N\/A — not a DG shipment/i)).not.toBeInTheDocument();
   });
 });

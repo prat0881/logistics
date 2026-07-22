@@ -87,7 +87,6 @@ export function Step5Notes({ registerSave }: Step5NotesProps) {
   }, [registerSave, queryId, patch, qc]);
 
   const charCount = internalNotes.length;
-  const dgActive = detail?.dgIndicator ?? false;
 
   // Get the checklist items in the canonical order using the label map keys
   const orderedKeys = Object.keys(CHECKLIST_LABELS);
@@ -97,7 +96,7 @@ export function Step5Notes({ registerSave }: Step5NotesProps) {
       {/* Section: Internal Notes */}
       <div className="space-y-2">
         <label htmlFor="internalNotes" className="text-sm font-medium">
-          Internal Notes
+          Internal Notes <span className="text-destructive">*</span>
         </label>
         <Textarea
           id="internalNotes"
@@ -115,13 +114,11 @@ export function Step5Notes({ registerSave }: Step5NotesProps) {
 
       {/* Section: Checklist */}
       <div className="space-y-2">
-        <h2 className="text-base font-semibold">Checklist</h2>
+        <h2 className="text-base font-semibold">Checklist <span className="text-destructive">*</span></h2>
         <div className="space-y-3">
           {orderedKeys.map((itemKey) => {
             const label = CHECKLIST_LABELS[itemKey];
             const checked = checklistState[itemKey] ?? false;
-            const isDgConditional = itemKey === DG_CONDITIONAL_KEY;
-            const disabled = isDgConditional && !dgActive;
 
             return (
               <div
@@ -132,9 +129,7 @@ export function Step5Notes({ registerSave }: Step5NotesProps) {
                 <Checkbox
                   id={`checklist-${itemKey}`}
                   checked={checked}
-                  disabled={disabled}
                   onCheckedChange={(value) => {
-                    if (disabled) return;
                     setChecklistState((prev) => ({
                       ...prev,
                       [itemKey]: value === true,
@@ -144,15 +139,10 @@ export function Step5Notes({ registerSave }: Step5NotesProps) {
                 />
                 <label
                   htmlFor={`checklist-${itemKey}`}
-                  className={`text-sm cursor-pointer ${disabled ? "text-muted-foreground line-through" : ""}`}
+                  className="text-sm cursor-pointer"
                 >
                   {label}
                 </label>
-                {isDgConditional && !dgActive && (
-                  <span className="text-xs text-muted-foreground italic ml-1">
-                    (N/A — not a DG shipment)
-                  </span>
-                )}
               </div>
             );
           })}
