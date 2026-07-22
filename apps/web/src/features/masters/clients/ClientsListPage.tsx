@@ -4,12 +4,17 @@ import { Role } from "@svyft/shared";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { useClients } from "../useMasters";
 import { Input } from "@/components/ui/input";
+import { PaginationBar } from "@/components/PaginationBar";
 
 export function ClientsListPage() {
   const { user } = useAuth();
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const canWrite = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
-  const { data, isLoading } = useClients(q);
+  const { data, isLoading } = useClients({ q, page, pageSize });
+
+  function handleSearch(v: string) { setQ(v); setPage(1); }
 
   return (
     <div className="space-y-4">
@@ -27,7 +32,7 @@ export function ClientsListPage() {
       <Input
         placeholder="Search company, code, country…"
         value={q}
-        onChange={(e) => setQ(e.target.value)}
+        onChange={(e) => handleSearch(e.target.value)}
       />
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -70,6 +75,13 @@ export function ClientsListPage() {
           </table>
         </div>
       )}
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={data?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+      />
     </div>
   );
 }
