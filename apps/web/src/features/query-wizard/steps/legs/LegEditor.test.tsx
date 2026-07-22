@@ -417,6 +417,78 @@ describe("LegEditor", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  it("edit mode shows a Delete button that removes the leg after confirm", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const EDIT_LEG_ID = "edit-leg-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const editLeg = {
+      id: EDIT_LEG_ID,
+      tenantId: null,
+      queryId: QUERY_ID,
+      legCode: "L1",
+      legName: null,
+      mode: "ROAD" as const,
+      originPointId: PICKUP_POINT_ID,
+      destinationPointId: DELIVERY_POINT_ID,
+      assignedCargoIds: [] as string[],
+      readyDate: null,
+      targetDelivery: null,
+      status: "DRAFT" as const,
+      executionStatus: "PENDING" as const,
+      totalChargeableWeight: null,
+      createdAt: "2026-01-01T00:00:00+00:00",
+      updatedAt: "2026-01-01T00:00:00+00:00",
+      rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+    };
+
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const onSaved = vi.fn();
+    const onClose = vi.fn();
+
+    renderWithProviders(
+      <LegEditor
+        open
+        leg={editLeg}
+        detail={baseDetail}
+        queryId={QUERY_ID}
+        onSaved={onSaved}
+        onClose={onClose}
+      />,
+    );
+
+    await screen.findByRole("dialog");
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    await waitFor(() => {
+      const deleteCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          url === `/api/queries/${QUERY_ID}/legs/${EDIT_LEG_ID}` &&
+          (init as RequestInit)?.method === "DELETE",
+      );
+      expect(deleteCall).toBeTruthy();
+    });
+  });
+
+  it("add mode shows no Delete button", async () => {
+    vi.stubGlobal("fetch", makeFetchMock());
+
+    renderWithProviders(
+      <LegEditor
+        open
+        detail={baseDetail}
+        queryId={QUERY_ID}
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("dialog");
+    expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
+  });
+
   it("saves a partial leg without hard-blocking (Round-1 Common #5)", async () => {
     const user = userEvent.setup();
 

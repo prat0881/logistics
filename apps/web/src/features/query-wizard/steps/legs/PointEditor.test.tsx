@@ -317,6 +317,96 @@ describe("PointEditor", () => {
     expect((iataInput as HTMLInputElement).value).toBe("LHR");
   });
 
+  it("edit mode shows a Delete button that removes the point after confirm", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const EDIT_POINT_ID = "edit-point-1111-1111-1111-111111111111";
+    const editPoint = {
+      id: EDIT_POINT_ID,
+      type: "PICKUP" as const,
+      name: "Edit Me",
+      streetAddress: "1 Test St",
+      city: "London",
+      postalCode: "SW1A",
+      country: "UK",
+      contactName: null,
+      contactPhone: null,
+      contactEmail: null,
+      warehouseType: null,
+      iataCode: null,
+      icaoCode: null,
+      unLocode: null,
+      terminal: null,
+    };
+
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ user: testUser }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const onSaved = vi.fn();
+    const onClose = vi.fn();
+
+    renderWithProviders(
+      <PointEditor
+        queryId={QUERY_ID}
+        open
+        point={editPoint}
+        onSaved={onSaved}
+        onClose={onClose}
+      />,
+      { user: testUser },
+    );
+
+    await screen.findByRole("dialog");
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    await waitFor(() => {
+      const deleteCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          url === `/api/queries/${QUERY_ID}/points/${EDIT_POINT_ID}` &&
+          (init as RequestInit)?.method === "DELETE",
+      );
+      expect(deleteCall).toBeTruthy();
+    });
+  });
+
+  it("add mode shows no Delete button", () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) =>
+      Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response),
+    ));
+
+    renderWithProviders(
+      <PointEditor
+        queryId={QUERY_ID}
+        open
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />,
+      { user: testUser },
+    );
+
+    expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
+  });
+
   it("saves a partial point without hard-blocking on missing type fields (Round-1 Common #5)", async () => {
     const user = userEvent.setup();
     const partialPointResponse = {
