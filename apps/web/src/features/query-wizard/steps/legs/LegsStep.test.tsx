@@ -148,22 +148,6 @@ const legDto = {
 
 const detailWithLeg = { ...baseDetail, legs: [legDto] };
 
-// A fully-valid route (passes create-phase validateRoute): complete points, one
-// PICKUP→DELIVERY leg with dates == query dates, cargo assigned + volumeCbm set.
-const RD = "2026-09-01T00:00:00+00:00";
-const TD = "2026-09-15T00:00:00+00:00";
-const validRouteDetail = {
-  ...baseDetail,
-  readyDate: RD,
-  targetDelivery: TD,
-  points: [
-    { ...baseDetail.points[0], contactName: "Sender", contactPhone: "+6591234500", contactEmail: "sender@x.com" },
-    { ...baseDetail.points[1], contactName: "Receiver", contactPhone: "+6591234501" },
-  ],
-  cargo: [{ ...baseDetail.cargo[0], volumeCbm: "0.024" }],
-  legs: [{ ...legDto, readyDate: RD, targetDelivery: TD }],
-};
-
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

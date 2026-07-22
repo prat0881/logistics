@@ -34,6 +34,9 @@ describe("Query vocabularies", () => {
   it("pins priorities", () => {
     expect(PRIORITIES).toEqual(["LOW", "MEDIUM", "HIGH", "URGENT"]);
   });
+  it("pins the response-deadline hour map", () => {
+    expect(RESPONSE_DEADLINE_HOURS).toEqual({ LOW: 48, MEDIUM: 24, HIGH: 18, URGENT: 12 });
+  });
 });
 
 describe("querySaveSchema (draft — lenient, format-validated)", () => {
