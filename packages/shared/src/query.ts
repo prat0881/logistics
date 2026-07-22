@@ -204,6 +204,44 @@ export function collectCreateFindings(
   return findings;
 }
 
+export interface ChecklistItemForValidation {
+  key: string;
+  checked: boolean;
+  label: string;
+}
+
+/**
+ * Notes + all-checklist-boxes manual gate (Round-1 Issue 2, Notes & Checklist tab).
+ * Pure/isomorphic; run in the Create-Query preview. Every provided box must be
+ * checked and internalNotes must be non-empty. No DG-conditional exemption — all
+ * boxes are required (the DG-conditional disable is dropped).
+ */
+export function collectChecklistFindings(
+  items: ChecklistItemForValidation[],
+  notes: string | null | undefined,
+): Finding[] {
+  const findings: Finding[] = [];
+  for (const it of items) {
+    if (!it.checked) {
+      findings.push({
+        rule: "F7",
+        severity: "blocking",
+        scope: { type: "field", id: `checklist:${it.key}` },
+        message: `${it.label} must be confirmed`,
+      });
+    }
+  }
+  if (notes === null || notes === undefined || notes.trim() === "") {
+    findings.push({
+      rule: "F7",
+      severity: "blocking",
+      scope: { type: "field", id: "notes" },
+      message: "Internal notes are required",
+    });
+  }
+  return findings;
+}
+
 export interface QueryDto {
   id: string;
   queryCode: string;
