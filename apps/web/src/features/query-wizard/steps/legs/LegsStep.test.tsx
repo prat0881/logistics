@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
 import { QueryWizardPage } from "../../QueryWizardPage";
@@ -161,30 +161,16 @@ async function navigateToStep4() {
 }
 
 describe("LegsStep", () => {
-  it("shows empty state when there are no legs", async () => {
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: testUser }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(baseDetail),
-          text: () => Promise.resolve(JSON.stringify(baseDetail)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
+  it("shows the + Add point / + Add leg toolbar and the route canvas (no list cards)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: baseDetail };
+        return { status: 200, body: {} };
+      }),
+    );
 
     renderWithProviders(
       <Routes>
@@ -196,35 +182,26 @@ describe("LegsStep", () => {
     await navigateToStep4();
 
     await waitFor(() => {
-      expect(screen.getByText(/add the first leg to build the route/i)).toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "Leg & Route" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /\+ add point/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /\+ add leg/i })).toBeInTheDocument();
+      expect(document.querySelector('[data-slot="route-diagram"]')).toBeInTheDocument();
     });
+
+    // The old list section headings are gone
+    expect(screen.queryByText(/^Points$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Legs$/)).not.toBeInTheDocument();
   });
 
-  it("lists saved legs: legCode, mode badge, origin→destination names, assigned cargo count", async () => {
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: testUser }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(detailWithLeg),
-          text: () => Promise.resolve(JSON.stringify(detailWithLeg)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
+  it("clicking a point box in the canvas opens the Point editor in edit mode", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: baseDetail };
+        return { status: 200, body: {} };
+      }),
+    );
 
     renderWithProviders(
       <Routes>
@@ -235,98 +212,30 @@ describe("LegsStep", () => {
 
     await navigateToStep4();
 
-    // legCode displayed as font-mono in the leg-list row (the RouteDiagram also
-    // renders "L1" as an SVG edge label, so scope to the list <span>).
+    // Wait for the canvas to render with a point node
     await waitFor(() => {
-      expect(screen.getByText("L1", { selector: "span" })).toBeInTheDocument();
+      expect(document.querySelector(`[data-point-id="${PICKUP_POINT_ID}"]`)).toBeInTheDocument();
     });
 
-    // Scope remaining assertions to the leg-list ROW — legCode, mode, and point
-    // names also legitimately appear in the RouteDiagram (SVG) and FindingsPanel.
-    const legRow = screen
-      .getByText("L1", { selector: "span" })
-      .closest("div.rounded-md") as HTMLElement;
-    expect(legRow).not.toBeNull();
-    const row = within(legRow);
+    const pointNode = document.querySelector(
+      `[data-point-id="${PICKUP_POINT_ID}"]`,
+    ) as SVGGElement;
+    await userEvent.click(pointNode);
 
-    // mode badge
-    expect(row.getByText("ROAD")).toBeInTheDocument();
-
-    // origin → destination
-    expect(row.getByText(/Sender HQ/)).toBeInTheDocument();
-    expect(row.getByText(/Receiver Depot/)).toBeInTheDocument();
-
-    // Assigned cargo count
-    expect(row.getByText(/1 cargo/i)).toBeInTheDocument();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
-  it("shows rollup totals for a leg (totalPackages, totalCbm, totalGrossWt)", async () => {
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: testUser }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(detailWithLeg),
-          text: () => Promise.resolve(JSON.stringify(detailWithLeg)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=3` },
-    );
-
-    await navigateToStep4();
-
-    await waitFor(() => {
-      expect(screen.getByText("L1", { selector: "span" })).toBeInTheDocument();
-    });
-
-    // rollup.totalPackages = 2
-    expect(screen.getByText(/2 pkg/i)).toBeInTheDocument();
-  });
-
-  it("clicking '+ Add leg' opens the LegEditor dialog", async () => {
+  it("clicking '+ Add leg' toolbar button opens the LegEditor dialog", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: testUser }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(baseDetail),
-          text: () => Promise.resolve(JSON.stringify(baseDetail)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: baseDetail };
+        return { status: 200, body: {} };
+      }),
+    );
 
     renderWithProviders(
       <Routes>
@@ -337,7 +246,7 @@ describe("LegsStep", () => {
 
     await navigateToStep4();
 
-    const addLegBtn = await screen.findByRole("button", { name: /add leg/i });
+    const addLegBtn = await screen.findByRole("button", { name: /\+ add leg/i });
     await user.click(addLegBtn);
 
     await waitFor(() => {
@@ -345,7 +254,7 @@ describe("LegsStep", () => {
     });
   });
 
-  it("on a new (unsaved) query at Step 4, '+ Add leg' mints the query (POST /api/queries) and does NOT show the dead-end message", async () => {
+  it("on a new (unsaved) query at Step 4, '+ Add leg' mints the query (POST /api/queries) with ?add=leg", async () => {
     const user = userEvent.setup();
     const mintedDetail = {
       ...baseDetail,
@@ -380,9 +289,7 @@ describe("LegsStep", () => {
       { route: "/queries/new?step=3" },
     );
 
-    // Navigate to step 4 in the shell (click the "Leg & Route" tab)
-    // On new query, tabs may not be clickable — but "+ Add leg" is always present
-    // because we removed the dead-end guard.
+    // On new query, the pre-mint toolbar is shown — find the "+ Add leg" button
     const addLegBtn = await screen.findByRole("button", { name: /add leg/i });
 
     // The dead-end "Save the query first" message must NOT appear
@@ -402,148 +309,16 @@ describe("LegsStep", () => {
     });
   });
 
-  it("deleting a leg: shows confirm dialog then DELETEs the leg", async () => {
-    const user = userEvent.setup();
-    vi.stubGlobal("confirm", vi.fn(() => true));
-
-    let callCount = 0;
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: testUser }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET")) {
-        callCount++;
-        const body = callCount > 1 ? baseDetail : detailWithLeg;
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(body),
-          text: () => Promise.resolve(JSON.stringify(body)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      }
-
-      if (url === `/api/queries/${QUERY_ID}/legs/${LEG_ID}` && init?.method === "DELETE")
-        return Promise.resolve({
-          ok: true, status: 204,
-          json: () => Promise.resolve({}),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=3` },
+  it("shows route findings notices strip and canvas (Legs rework)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: baseDetail };
+        return { status: 200, body: {} };
+      }),
     );
-
-    await navigateToStep4();
-
-    // Wait for the leg to appear (scope to the list <span>; the RouteDiagram
-    // also renders "L1" as an SVG edge label).
-    const legSpan = await screen.findByText("L1", { selector: "span" });
-
-    // Click the leg's Remove — scope to the leg row, since points now also
-    // render Remove buttons (U6).
-    const legRow = legSpan.closest("div.rounded-md") as HTMLElement;
-    const removeBtn = within(legRow).getByRole("button", { name: /remove/i });
-    await user.click(removeBtn);
-
-    // Verify DELETE was called
-    await waitFor(() => {
-      const deleteCall = fetchMock.mock.calls.find(
-        ([url, init]) =>
-          url === `/api/queries/${QUERY_ID}/legs/${LEG_ID}` &&
-          (init as RequestInit)?.method === "DELETE",
-      );
-      expect(deleteCall).toBeTruthy();
-    });
-  });
-
-  it("lists points with their address and lets you edit an existing one (U6)", async () => {
-    const user = userEvent.setup();
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: testUser }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(baseDetail),
-          text: () => Promise.resolve(JSON.stringify(baseDetail)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=3` },
-    );
-
-    await navigateToStep4();
-
-    // (1) the pickup point's street address is now shown on the main screen
-    const addr = await screen.findByText(/123 Main St/);
-
-    // (2) that point row has an Edit button that opens PointEditor pre-filled
-    const pointRow = addr.closest("div.rounded-md") as HTMLElement;
-    expect(pointRow).not.toBeNull();
-    await user.click(within(pointRow).getByRole("button", { name: /edit/i }));
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
-    expect(screen.getByDisplayValue("Sender HQ")).toBeInTheDocument();
-  });
-
-  it("hides the Validate button and shows a notices strip + per-box hover (Legs rework)", async () => {
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: testUser }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(baseDetail),
-          text: () => Promise.resolve(JSON.stringify(baseDetail)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
 
     renderWithProviders(
       <Routes>
@@ -554,7 +329,9 @@ describe("LegsStep", () => {
     await navigateToStep4();
 
     // (1) the "Validate route" button is gone (validation runs on Save/Next now)
-    await screen.findByText(/123 Main St/);
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="route-diagram"]')).toBeInTheDocument(),
+    );
     expect(screen.queryByRole("button", { name: /validate route/i })).not.toBeInTheDocument();
 
     // (2) baseDetail has unused points + unassigned cargo → create-phase errors →
@@ -562,37 +339,18 @@ describe("LegsStep", () => {
     await waitFor(() =>
       expect(screen.getByText(/hover the highlighted boxes/i)).toBeInTheDocument(),
     );
-
-    // (3) the problematic PICKUP point card carries a hover (title) message
-    const addr = screen.getByText(/123 Main St/);
-    const card = addr.closest("div.rounded-md") as HTMLElement;
-    expect(card.getAttribute("title") ?? "").toMatch(/not used by any leg/i);
   });
 
   it("shows route findings as a hover tooltip on the diagram edge (Legs rework step 4)", async () => {
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: testUser }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(detailWithLeg),
-          text: () => Promise.resolve(JSON.stringify(detailWithLeg)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: detailWithLeg };
+        return { status: 200, body: {} };
+      }),
+    );
 
     renderWithProviders(
       <Routes>
@@ -603,7 +361,10 @@ describe("LegsStep", () => {
     await navigateToStep4();
 
     // legDto has null ready/target dates → create-phase C1 finding on leg L1.
-    await screen.findByText("L1", { selector: "span" });
+    await waitFor(() => {
+      expect(document.querySelector(`[data-leg-id="${LEG_ID}"]`)).toBeInTheDocument();
+    });
+
     const edge = document.querySelector(`[data-leg-id="${LEG_ID}"]`);
     expect(edge).not.toBeNull();
     const title = edge?.querySelector("title");
@@ -628,12 +389,44 @@ describe("LegsStep", () => {
       { route: `/queries/${QUERY_ID}?step=3` },
     );
     await navigateToStep4();
-    await screen.findByText(/123 Main St/);
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="route-diagram"]')).toBeInTheDocument(),
+    );
 
     await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
 
     expect(screen.queryByText(/before continuing/i)).not.toBeInTheDocument();
     // Step 5 heading is shown (Internal Notes label is unique to Step5Notes body)
     expect(await screen.findByLabelText(/internal notes/i)).toBeInTheDocument();
+  });
+
+  it("empty state shows placeholder text when no points and no legs exist", async () => {
+    const emptyDetail = { ...baseDetail, points: [], legs: [] };
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: emptyDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=3` },
+    );
+
+    await navigateToStep4();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/add a point or leg to start the route/i),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Leg & Route" })).toBeInTheDocument();
+    });
   });
 });

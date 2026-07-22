@@ -340,7 +340,7 @@ describe("PointEditor", () => {
       terminal: null,
     };
 
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
       if (url.includes("/api/auth/me"))
         return Promise.resolve({
           ok: true, status: 200,

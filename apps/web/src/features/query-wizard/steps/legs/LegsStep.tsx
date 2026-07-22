@@ -1,48 +1,18 @@
 import { useEffect, useState, type ComponentProps } from "react";
-import { useNavigate } from "react-router-dom";
-import { Badge } from "@/components/ui/badge";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useWizard } from "../../WizardContext";
 import { useSaveQuery } from "../../useQueryDetail";
 import type { StepSaveFn } from "../Step1Client";
-import { useLegs } from "./useLegs";
 import { usePoints } from "./usePoints";
 import { LegEditor } from "./LegEditor";
 import { PointEditor } from "./PointEditor";
 import { RouteDiagram } from "./RouteDiagram";
 import { useRouteFindings, type GroupedFindings } from "./useRouteFindings";
-import type { FindingScope, QueryDetail, QueryLegDto, QueryPointDto } from "@svyft/shared";
+import type { QueryDetail, QueryLegDto, QueryPointDto } from "@svyft/shared";
 
 // Legs step index (0-based) matching STEPS array: client=0, shipment=1, cargo=2, legs=3, notes=4
 const LEGS_STEP_INDEX = 3;
-
-/** Get point name/city for display */
-function pointName(pointId: string | null | undefined, points: QueryPointDto[]): string {
-  if (!pointId) return "—";
-  const p = points.find((pt) => pt.id === pointId);
-  return p?.name ?? p?.city ?? pointId;
-}
-
-/** Format a number for tabular display */
-function fmtNum(n: number, decimals = 2): string {
-  return n.toFixed(decimals);
-}
-
-/** Compact one-line address/identity for a point row (U6). */
-function pointAddress(p: QueryPointDto): string {
-  const code = p.iataCode ?? p.unLocode ?? p.icaoCode ?? null;
-  const parts = [code, p.streetAddress, p.city, p.postalCode, p.country].filter(Boolean);
-  return parts.length ? parts.join(" · ") : "No address yet";
-}
-
-/** Small inline "⚠ N" indicator shown on a box that has route findings. */
-function WarningBadge({ count }: { count: number }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-sm bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
-      ⚠ {count}
-    </span>
-  );
-}
 
 /**
  * RouteNoticesStrip — the top summary strip (replaces the old FindingsPanel list).
@@ -77,11 +47,13 @@ function RouteNoticesStrip({ grouped }: { grouped: GroupedFindings }) {
 /**
  * LegsStepBody — Step 4 content once the query exists (detail is guaranteed).
  *
- * Layout (top→bottom): notices strip · Points · Legs · Route diagram. Findings run
- * live at create-phase (`useRouteFindings`); the top strip carries the summary +
- * query-scoped findings, and each Point/Leg card shows a ⚠ badge + hover tooltip
- * for the findings on that box. The "Validate route" button is gone — validation
- * runs on Save/Next (the Next-gate lives in the wizard shell).
+ * Layout (top→bottom): notices strip · toolbar (+ Add point · + Add leg) ·
+ * RouteDiagram (the primary surface — click a point box or leg edge to edit) ·
+ * LegEditor + PointEditor dialogs.
+ *
+ * The `?add=point|leg` search param minted by the pre-mint wrapper is consumed
+ * here on mount: opens the corresponding editor, then clears the param so a
+ * page refresh doesn't re-open it.
  */
 function LegsStepBody({
   detail,
@@ -92,36 +64,27 @@ function LegsStepBody({
   queryId: string;
   registerSave: (fn: StepSaveFn) => void;
 }) {
-  const { remove } = useLegs(queryId);
-  const { remove: removePoint } = usePoints(queryId);
+  const [searchParams, setSearchParams] = useSearchParams();
   const { all, grouped } = useRouteFindings(detail);
-  const [selected, setSelected] = useState<FindingScope | null>(null);
+  // usePoints imported for potential future use; remove is now in editors.
+  usePoints(queryId);
 
   // Legs/points persist eagerly; nothing to save here, and validation is Create-only now.
   useEffect(() => {
     registerSave(() => Promise.resolve(undefined));
   }, [registerSave]);
+
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingLeg, setEditingLeg] = useState<QueryLegDto | undefined>(undefined);
   const [pointEditorOpen, setPointEditorOpen] = useState(false);
   const [editingPoint, setEditingPoint] = useState<QueryPointDto | undefined>(undefined);
 
-  const legs = detail.legs;
-  const points = detail.points;
-
-  const selectedLegId = selected?.type === "leg" ? selected.id ?? null : null;
-  const selectedPointId = selected?.type === "point" ? selected.id ?? null : null;
-
-  const handleRemove = async (legId: string) => {
-    if (!window.confirm("Remove this leg?")) return;
-    await remove(legId);
+  const handleAddLeg = () => {
+    setEditingLeg(undefined);
+    setEditorOpen(true);
   };
   const handleEdit = (leg: QueryLegDto) => {
     setEditingLeg(leg);
-    setEditorOpen(true);
-  };
-  const handleAddLeg = () => {
-    setEditingLeg(undefined);
     setEditorOpen(true);
   };
   const closeLegEditor = () => {
@@ -137,14 +100,23 @@ function LegsStepBody({
     setEditingPoint(pt);
     setPointEditorOpen(true);
   };
-  const handleRemovePoint = async (pointId: string) => {
-    if (!window.confirm("Remove this point?")) return;
-    await removePoint(pointId);
-  };
   const closePointEditor = () => {
     setPointEditorOpen(false);
     setEditingPoint(undefined);
   };
+
+  // Consume the ?add= param minted by the pre-mint wrapper. Run on mount only
+  // (intentional empty dep array — we snapshot the param once and clear it).
+  useEffect(() => {
+    const add = searchParams.get("add");
+    if (add === "point") handleAddPoint();
+    else if (add === "leg") handleAddLeg();
+    if (add) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("add");
+      setSearchParams(next, { replace: true });
+    }
+  }, []); // intentional: mount-only
 
   return (
     <div className="space-y-4 p-4">
@@ -152,149 +124,29 @@ function LegsStepBody({
       {/* Notices strip (top) */}
       <RouteNoticesStrip grouped={grouped} />
 
-      {/* Points */}
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Points</h3>
-          <Button size="sm" variant="outline" onClick={handleAddPoint}>
-            + Add point
-          </Button>
-        </div>
-        {points.length === 0 ? (
-          <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-            No points yet. Add one here, or via a leg's “+ New point”.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {points.map((pt) => {
-              const pf = grouped.byPoint.get(pt.id) ?? [];
-              const hasErr = pf.length > 0;
-              return (
-                <div
-                  key={pt.id}
-                  title={hasErr ? pf.map((f) => f.message).join("\n") : undefined}
-                  className={`rounded-md border p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${
-                    hasErr ? "border-destructive" : ""
-                  }`}
-                >
-                  <div className="flex flex-col gap-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="shrink-0 text-xs">
-                        {pt.type}
-                      </Badge>
-                      <span className="text-sm font-medium truncate">{pt.name ?? "—"}</span>
-                      {hasErr && <WarningBadge count={pf.length} />}
-                    </div>
-                    <span className="text-xs text-muted-foreground truncate">
-                      {pointAddress(pt)}
-                    </span>
-                  </div>
-                  <div className="flex gap-1 shrink-0">
-                    <Button variant="outline" size="sm" onClick={() => handleEditPoint(pt)}>
-                      Edit
-                    </Button>
-                    <Button variant="destructive" size="sm" onClick={() => handleRemovePoint(pt.id)}>
-                      Remove
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
+      {/* Toolbar */}
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" onClick={handleAddPoint}>
+          + Add point
+        </Button>
+        <Button size="sm" onClick={handleAddLeg}>
+          + Add leg
+        </Button>
+      </div>
 
-      {/* Legs */}
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Legs</h3>
-          <Button size="sm" onClick={handleAddLeg}>
-            + Add leg
-          </Button>
-        </div>
-        {legs.length === 0 ? (
-          <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-            Add the first leg to build the route.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {legs.map((leg) => {
-              const lf = grouped.byLeg.get(leg.id) ?? [];
-              const hasErr = lf.length > 0;
-              const originName = pointName(leg.originPointId, points);
-              const destName = pointName(leg.destinationPointId, points);
-              const cargoCount = leg.assignedCargoIds.length;
-              const rollup = leg.rollup;
-
-              return (
-                <div
-                  key={leg.id}
-                  title={hasErr ? lf.map((f) => f.message).join("\n") : undefined}
-                  className={`rounded-md border p-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${
-                    hasErr ? "border-destructive" : ""
-                  }`}
-                >
-                  {/* Left side: leg info */}
-                  <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-                    <span className="font-mono text-sm font-semibold shrink-0">{leg.legCode}</span>
-                    {leg.mode && (
-                      <Badge variant="outline" className="shrink-0 text-xs">
-                        {leg.mode}
-                      </Badge>
-                    )}
-                    <span className="text-sm truncate">
-                      <span>{originName}</span>
-                      <span className="mx-1 text-muted-foreground">→</span>
-                      <span>{destName}</span>
-                    </span>
-                    <Badge
-                      variant={leg.status === "READY_FOR_RFQ" ? "success" : "secondary"}
-                      className="shrink-0 text-xs"
-                    >
-                      {leg.status}
-                    </Badge>
-                    {hasErr && <WarningBadge count={lf.length} />}
-                  </div>
-
-                  {/* Right side: metrics + actions */}
-                  <div className="flex flex-wrap items-center gap-3 shrink-0">
-                    <span className="text-xs text-muted-foreground">{cargoCount} cargo</span>
-                    <span className="font-mono tabular-nums text-xs text-muted-foreground">
-                      {rollup.totalPackages} pkg
-                    </span>
-                    <span className="font-mono tabular-nums text-xs text-muted-foreground">
-                      {fmtNum(rollup.totalCbm, 4)} CBM
-                    </span>
-                    <span className="font-mono tabular-nums text-xs text-muted-foreground">
-                      {fmtNum(rollup.totalGrossWt, 2)} kg
-                    </span>
-                    <div className="flex gap-1">
-                      <Button variant="outline" size="sm" onClick={() => handleEdit(leg)}>
-                        Edit
-                      </Button>
-                      <Button variant="destructive" size="sm" onClick={() => handleRemove(leg.id)}>
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Route diagram (bottom) — the signature SVG; findings cross-highlight on click. */}
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">Route</h3>
-        <RouteDiagram
-          detail={detail}
-          findings={all}
-          selectedLegId={selectedLegId}
-          selectedPointId={selectedPointId}
-          onSelect={setSelected}
-        />
-      </section>
+      {/* Route diagram — the primary editing surface */}
+      <RouteDiagram
+        detail={detail}
+        findings={all}
+        onEditPoint={(id) => {
+          const pt = detail.points.find((p) => p.id === id);
+          if (pt) handleEditPoint(pt);
+        }}
+        onEditLeg={(id) => {
+          const leg = detail.legs.find((l) => l.id === id);
+          if (leg) handleEdit(leg);
+        }}
+      />
 
       {/* LegEditor dialog */}
       <LegEditor
@@ -321,12 +173,12 @@ function LegsStepBody({
 
 /**
  * LegsStep — Step 4. Thin wrapper: before the query is minted (new query) it shows
- * the "+ Add leg" mint entry point; once `detail` exists it renders LegsStepBody
- * (which owns the findings feed + all the point/leg UI).
+ * the same "+ Add point" / "+ Add leg" toolbar; each button mints the query then
+ * navigates with `?add=point|leg` so `LegsStepBody` opens the right editor on load.
  *
- * §5 / §7.4.3: the first persist mints the query — here "+ Add leg" on a brand-new
- * query POSTs an empty DRAFT then navigates to /queries/:id?step=3, which re-renders
- * with a real queryId.
+ * §5 / §7.4.3: the first persist mints the query — here a toolbar button on a
+ * brand-new query POSTs an empty DRAFT then navigates to /queries/:id?step=3&add=…,
+ * which re-renders with a real queryId and opens the editor.
  */
 export function LegsStep({ registerSave }: { registerSave: (fn: StepSaveFn) => void }) {
   const { detail, queryId } = useWizard();
@@ -345,11 +197,11 @@ export function LegsStep({ registerSave }: { registerSave: (fn: StepSaveFn) => v
     return <LegsStepBody detail={detail} queryId={queryId} registerSave={registerSave} />;
   }
 
-  const handleMint = async () => {
+  const handleMintAdd = async (what: "point" | "leg") => {
     setMinting(true);
     try {
       const d = await create({});
-      navigate(`/queries/${d.id}?step=${LEGS_STEP_INDEX}`, { replace: true });
+      navigate(`/queries/${d.id}?step=${LEGS_STEP_INDEX}&add=${what}`, { replace: true });
     } finally {
       setMinting(false);
     }
@@ -357,9 +209,17 @@ export function LegsStep({ registerSave }: { registerSave: (fn: StepSaveFn) => v
 
   return (
     <div className="space-y-4 p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Leg & Route</h2>
-        <Button size="sm" onClick={handleMint} disabled={minting}>
+      <h2 className="text-base font-semibold">Leg & Route</h2>
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => handleMintAdd("point")}
+          disabled={minting}
+        >
+          {minting ? "Saving…" : "+ Add point"}
+        </Button>
+        <Button size="sm" onClick={() => handleMintAdd("leg")} disabled={minting}>
           {minting ? "Saving…" : "+ Add leg"}
         </Button>
       </div>
