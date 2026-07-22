@@ -8,6 +8,10 @@ import { mockFetch } from "@/test/mock-fetch";
 
 afterEach(() => vi.unstubAllGlobals());
 
+// Dynamic date ~7 days ahead so auto-filled Response Deadline (queryDate + up to 48h)
+// always passes the F4 "not in the past" schema check regardless of when tests run.
+const FUTURE_QUERY_DATE = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
 const draftDetail = {
   id: "q9",
   queryCode: "YAL26-0009",
@@ -15,7 +19,7 @@ const draftDetail = {
   priority: "MEDIUM",
   dgIndicator: false,
   whatsappEnabled: false,
-  queryDate: "2026-08-01T00:00:00+00:00",
+  queryDate: FUTURE_QUERY_DATE,
   responseDeadline: null,
   responseDeadlineRemarks: null,
   clientId: null,
@@ -320,8 +324,8 @@ describe("Step1Client", () => {
     const detailWithClient = {
       ...draftDetail,
       clientId: CLIENT_ID,
-      // queryDate is always present on an existing query
-      queryDate: "2026-08-01T00:00:00+00:00",
+      // queryDate is always present on an existing query; keep dynamic to avoid F4 failures
+      queryDate: FUTURE_QUERY_DATE,
     };
     vi.stubGlobal(
       "fetch",
@@ -377,10 +381,10 @@ describe("Step1Client", () => {
   it("defaults Response Deadline to Query Date + 24h for MEDIUM and recomputes on priority change until edited", async () => {
     const user = userEvent.setup();
 
-    // queryDate 2026-07-22T09:00:00Z, priority MEDIUM, responseDeadline null
+    // Use a dynamic future queryDate so auto-filled deadline (queryDate + 24h) passes F4.
     const detailNoDeadline = {
       ...draftDetail,
-      queryDate: "2026-07-22T09:00:00Z",
+      queryDate: FUTURE_QUERY_DATE,
       priority: "MEDIUM",
       responseDeadline: null,
     };
@@ -426,10 +430,14 @@ describe("Step1Client", () => {
       expect(deadline.value).not.toBe(mediumValue);
     });
 
-    // Manual edit marks it touched — after this, priority changes should NOT recompute
+    // Manual edit marks it touched — after this, priority changes should NOT recompute.
+    // Use a dynamic future value so this test stays green indefinitely.
+    const manualDeadline = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 16); // "YYYY-MM-DDTHH:mm" — matches datetime-local input format
     await user.clear(deadline);
-    await user.type(deadline, "2026-07-30T10:00");
-    expect(deadline.value).toBe("2026-07-30T10:00");
+    await user.type(deadline, manualDeadline);
+    expect(deadline.value).toBe(manualDeadline);
 
     // Switch priority again — deadline should stay at the manually typed value
     await user.click(priorityTrigger);
@@ -437,7 +445,7 @@ describe("Step1Client", () => {
     await user.click(mediumOption);
 
     // Deadline must not change after manual edit
-    expect(deadline.value).toBe("2026-07-30T10:00");
+    expect(deadline.value).toBe(manualDeadline);
   });
 
   it("shows company name (not UUID) in client picker trigger when detail.clientId is pre-set", async () => {

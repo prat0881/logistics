@@ -8,6 +8,10 @@ import { mockFetch } from "@/test/mock-fetch";
 
 afterEach(() => vi.unstubAllGlobals());
 
+// Use a dynamic date ~7 days in the future so the auto-filled Response Deadline
+// (queryDate + up to 48h) always passes the F4 "not in the past" check.
+const FUTURE_QUERY_DATE = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
 const draftDetail = {
   id: "q9",
   queryCode: "YAL26-0009",
@@ -15,7 +19,7 @@ const draftDetail = {
   priority: "MEDIUM",
   dgIndicator: false,
   whatsappEnabled: false,
-  queryDate: "2026-01-01T00:00:00+00:00",
+  queryDate: FUTURE_QUERY_DATE,
   responseDeadline: null,
   responseDeadlineRemarks: null,
   clientId: null,
