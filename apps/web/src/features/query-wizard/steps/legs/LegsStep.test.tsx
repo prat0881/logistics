@@ -1,10 +1,22 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router-dom";
 import { QueryWizardPage } from "../../QueryWizardPage";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
+
+/**
+ * LocationProbe — mounts inside the router tree and calls onSearch with the
+ * current search string on every location change. Used by ?add= round-trip
+ * tests to assert that the param is cleared after the editor opens.
+ */
+function LocationProbe({ onSearch }: { onSearch: (search: string) => void }) {
+  const location = useLocation();
+  // Call synchronously on each render so the caller captures the latest value.
+  onSearch(location.search);
+  return null;
+}
 
 const QUERY_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const LEG_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -427,6 +439,88 @@ describe("LegsStep", () => {
         screen.getByText(/add a point or leg to start the route/i),
       ).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Leg & Route" })).toBeInTheDocument();
+    });
+  });
+
+  // ?add= mint-intent round-trip tests
+  it("?add=leg on an existing query opens the LegEditor dialog and clears the param", async () => {
+    let capturedSearch = "";
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: baseDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    // Render directly at step=3&add=leg — simulates navigation after a mint.
+    // The wizard reads step=3 from the URL and renders LegsStepBody directly;
+    // no need to click the stepper tab.
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/queries/:id"
+          element={
+            <>
+              <QueryWizardPage />
+              {/* Location probe: captures current search string on every render */}
+              <LocationProbe onSearch={(s) => { capturedSearch = s; }} />
+            </>
+          }
+        />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=3&add=leg` },
+    );
+
+    // LegEditor dialog must open (add= consumed on mount by LegsStepBody)
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    // The ?add= param must have been stripped (replace:true, no re-open on refresh)
+    await waitFor(() => {
+      expect(capturedSearch).not.toContain("add=leg");
+    });
+  });
+
+  it("?add=point on an existing query opens the PointEditor dialog and clears the param", async () => {
+    let capturedSearch = "";
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: baseDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    // Render directly at step=3&add=point — simulates navigation after a mint.
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/queries/:id"
+          element={
+            <>
+              <QueryWizardPage />
+              <LocationProbe onSearch={(s) => { capturedSearch = s; }} />
+            </>
+          }
+        />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=3&add=point` },
+    );
+
+    // PointEditor dialog must open
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    // The ?add= param must have been stripped
+    await waitFor(() => {
+      expect(capturedSearch).not.toContain("add=point");
     });
   });
 });

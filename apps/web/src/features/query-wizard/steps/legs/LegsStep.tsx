@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { useWizard } from "../../WizardContext";
 import { useSaveQuery } from "../../useQueryDetail";
 import type { StepSaveFn } from "../Step1Client";
-import { usePoints } from "./usePoints";
 import { LegEditor } from "./LegEditor";
 import { PointEditor } from "./PointEditor";
 import { RouteDiagram } from "./RouteDiagram";
@@ -66,8 +65,6 @@ function LegsStepBody({
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { all, grouped } = useRouteFindings(detail);
-  // usePoints imported for potential future use; remove is now in editors.
-  usePoints(queryId);
 
   // Legs/points persist eagerly; nothing to save here, and validation is Create-only now.
   useEffect(() => {
