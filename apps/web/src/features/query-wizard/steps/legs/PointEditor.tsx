@@ -490,32 +490,38 @@ export function PointEditor({
             <FormField
               control={form.control}
               name="timezone"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Timezone
-                    <RequiredMark field="timezone" type={activeType} />
-                  </FormLabel>
-                  <FormControl>
-                    <Select
-                      value={field.value ?? ""}
-                      onValueChange={field.onChange}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select timezone" />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-72">
-                        {IANA_ZONES.map((z) => (
-                          <SelectItem key={z} value={z}>
-                            {z}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              render={({ field }) => {
+                const zoneOptions =
+                  field.value && !IANA_ZONES.includes(field.value)
+                    ? [...IANA_ZONES, field.value]
+                    : IANA_ZONES;
+                return (
+                  <FormItem>
+                    <FormLabel>
+                      Timezone
+                      <RequiredMark field="timezone" type={activeType} />
+                    </FormLabel>
+                    <FormControl>
+                      <Select
+                        value={field.value ?? ""}
+                        onValueChange={field.onChange}
+                      >
+                        <SelectTrigger data-testid="timezone-trigger">
+                          <SelectValue placeholder="Select timezone" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          {zoneOptions.map((z) => (
+                            <SelectItem key={z} value={z}>
+                              {z}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
             />
 
             {/* Contact fields (PICKUP / DELIVERY / WAREHOUSE) */}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { PointEditor } from "./PointEditor";
@@ -525,6 +525,31 @@ describe("PointEditor", () => {
         const label = screen.getByText(/^Timezone$/i).closest("label");
         expect(label).not.toBeNull();
         expect(label!.textContent).toContain("*");
+      });
+    });
+
+    it("(d) new point with org timezone Asia/Kolkata (Intl alias) displays correctly in the trigger", async () => {
+      // Asia/Kolkata is NOT returned by Intl.supportedValuesOf("timeZone") — only Asia/Calcutta is.
+      // Without Fix 1 the SelectTrigger would be blank; with Fix 1 the value is appended to the
+      // options list so the trigger renders "Asia/Kolkata".
+      vi.stubGlobal("fetch", makeFetch("Asia/Kolkata"));
+
+      renderWithProviders(
+        <PointEditor
+          queryId={QUERY_ID}
+          open
+          type="PICKUP"
+          onSaved={vi.fn()}
+          onClose={vi.fn()}
+        />,
+        { user: testUser },
+      );
+
+      // After the org-timezone query resolves the seeding useEffect runs and sets the form value.
+      // zoneOptions will include "Asia/Kolkata" (appended), so Radix renders it in the trigger.
+      await waitFor(() => {
+        const trigger = screen.getByTestId("timezone-trigger");
+        expect(within(trigger).getByText("Asia/Kolkata")).toBeInTheDocument();
       });
     });
   });
