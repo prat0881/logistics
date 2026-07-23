@@ -160,6 +160,19 @@ const legDto = {
 
 const detailWithLeg = { ...baseDetail, legs: [legDto] };
 
+// A leg with a dangling (null) origin — RouteDiagram can't draw it, so the
+// escape strip is the only place to reach it.
+const danglingLegDto = {
+  ...legDto,
+  id: "99999999-9999-9999-9999-999999999999",
+  legCode: "L2",
+  originPointId: null,
+  destinationPointId: DELIVERY_POINT_ID,
+  assignedCargoIds: [],
+  rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+};
+const detailWithDangling = { ...baseDetail, legs: [danglingLegDto] };
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -440,6 +453,37 @@ describe("LegsStep", () => {
       ).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Leg & Route" })).toBeInTheDocument();
     });
+  });
+
+  it("lists an incomplete (dangling-endpoint) leg in the escape strip and opens the editor on click", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
+        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+          return { status: 200, body: detailWithDangling };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=3` },
+    );
+    await navigateToStep4();
+
+    // The strip names the incomplete leg + the "needs origin & destination" hint.
+    const stripRow = await screen.findByRole("button", {
+      name: /L2.*needs origin & destination/i,
+    });
+    expect(stripRow).toBeInTheDocument();
+
+    // Clicking the row opens the LegEditor dialog (edit mode) so it can be completed/deleted.
+    await user.click(stripRow);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
   // ?add= mint-intent round-trip tests
