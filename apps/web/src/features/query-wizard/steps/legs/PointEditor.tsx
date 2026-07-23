@@ -117,7 +117,7 @@ export function PointEditor({
 }: PointEditorProps) {
   const isEdit = Boolean(point);
   const { add, update, remove } = usePoints(queryId);
-  const { orgZone } = useOrgTimezone();
+  const { orgZone, isLoading } = useOrgTimezone();
 
   // Local controlled state for type (when creating a new point).
   const [selectedType, setSelectedType] = useState<PointType>(
@@ -151,12 +151,14 @@ export function PointEditor({
         },
   });
 
-  // Seed timezone for new points once the org zone resolves (async react-query).
+  // Seed timezone for new points exactly once after the org zone resolves.
+  // Gates on: not an edit, query has loaded (not the loading-fallback), zone present,
+  // and the field is still empty (never clobbers a user pick).
   useEffect(() => {
-    if (!isEdit && orgZone) {
+    if (!isEdit && !isLoading && orgZone && !form.getValues("timezone")) {
       form.setValue("timezone", orgZone as PointSaveInput["timezone"]);
     }
-  }, [isEdit, orgZone, form]);
+  }, [isEdit, isLoading, orgZone, form]);
 
   const handleTypeChange = (t: string) => {
     setSelectedType(t as PointType);
@@ -491,10 +493,12 @@ export function PointEditor({
               control={form.control}
               name="timezone"
               render={({ field }) => {
-                const zoneOptions =
-                  field.value && !IANA_ZONES.includes(field.value)
-                    ? [...IANA_ZONES, field.value]
-                    : IANA_ZONES;
+                // Include the org zone proactively (even before it's seeded into the field)
+                // so the Radix hidden <select> always has the option when value changes.
+                const extraZones: string[] = [];
+                if (orgZone && !IANA_ZONES.includes(orgZone)) extraZones.push(orgZone);
+                if (field.value && !IANA_ZONES.includes(field.value) && !extraZones.includes(field.value)) extraZones.push(field.value);
+                const zoneOptions = extraZones.length ? [...IANA_ZONES, ...extraZones] : IANA_ZONES;
                 return (
                   <FormItem>
                     <FormLabel>

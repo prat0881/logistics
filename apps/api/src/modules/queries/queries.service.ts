@@ -46,7 +46,7 @@ const QUERY_GRAPH_ARGS = Prisma.validator<Prisma.QueryDefaultArgs>()({
         createdAt: true,
       },
     },
-    points: true,
+    points: { orderBy: { createdAt: "asc" } },
     legs: { include: { legCargo: { select: { cargoItemId: true } } }, orderBy: { createdAt: "asc" } },
   },
 });
