@@ -496,17 +496,15 @@ describe("LegEditor", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
-  it("saves a partial leg without hard-blocking (Round-1 Common #5)", async () => {
+  it("blocks saving a NEW leg with no origin/destination (asserts no POST)", async () => {
     const user = userEvent.setup();
-
-    const legResponse = { id: "…uuid…" };
     const fetchMock = makeFetchMock({
       "/legs": (_url, init) =>
         Promise.resolve({
           ok: true,
           status: init?.method === "POST" ? 201 : 200,
-          json: () => Promise.resolve(legResponse),
-          text: () => Promise.resolve(JSON.stringify(legResponse)),
+          json: () => Promise.resolve({ id: "should-not-post" }),
+          text: () => Promise.resolve("{}"),
           blob: () => Promise.resolve(new Blob()),
         } as Response),
     });
@@ -517,16 +515,89 @@ describe("LegEditor", () => {
     );
     await screen.findByRole("dialog");
 
-    // Set origin + destination + mode, but leave cargo unchecked and dates empty (partial leg)
+    // Leave origin + destination empty; click Save.
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    // Inline required errors appear on both endpoint fields.
+    expect(await screen.findByText(/origin is required/i)).toBeInTheDocument();
+    expect(screen.getByText(/destination is required/i)).toBeInTheDocument();
+
+    // No POST fired.
+    const postCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        url === `/api/queries/${QUERY_ID}/legs` && (init as RequestInit)?.method === "POST",
+    );
+    expect(postCall).toBeFalsy();
+  });
+
+  it("blocks saving an EDIT when an endpoint is missing (asserts no PATCH)", async () => {
+    const user = userEvent.setup();
+    const EDIT_LEG_ID = "0a0a0a0a-0a0a-0a0a-0a0a-0a0a0a0a0a0a";
+    const editLeg = {
+      id: EDIT_LEG_ID,
+      tenantId: null,
+      queryId: QUERY_ID,
+      legCode: "L1",
+      legName: null,
+      mode: "ROAD" as const,
+      originPointId: null, // dangling origin — the dead-end scenario
+      destinationPointId: DELIVERY_POINT_ID,
+      assignedCargoIds: [] as string[],
+      readyDate: null,
+      targetDelivery: null,
+      status: "DRAFT" as const,
+      executionStatus: "PENDING" as const,
+      totalChargeableWeight: null,
+      createdAt: "2026-01-01T00:00:00+00:00",
+      updatedAt: "2026-01-01T00:00:00+00:00",
+      rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+    };
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <LegEditor open leg={editLeg} detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
+    );
+    await screen.findByRole("dialog");
+
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByText(/origin is required/i)).toBeInTheDocument();
+
+    const patchCall = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        url === `/api/queries/${QUERY_ID}/legs/${EDIT_LEG_ID}` &&
+        (init as RequestInit)?.method === "PATCH",
+    );
+    expect(patchCall).toBeFalsy();
+  });
+
+  it("saves a leg with origin+destination but no mode/cargo/dates (relaxed fields stay optional)", async () => {
+    const user = userEvent.setup();
+    const fetchMock = makeFetchMock({
+      "/legs": (_url, init) =>
+        Promise.resolve({
+          ok: true,
+          status: init?.method === "POST" ? 201 : 200,
+          json: () => Promise.resolve({ id: "0b0b0b0b-0b0b-0b0b-0b0b-0b0b0b0b0b0b" }),
+          text: () => Promise.resolve("{}"),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <LegEditor open detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
+    );
+    await screen.findByRole("dialog");
+
+    // Set only origin + destination (no mode, no cargo, no dates).
     const selects = getHiddenSelects();
     fireEvent.change(selects[0], { target: { value: PICKUP_POINT_ID } });
     fireEvent.change(selects[1], { target: { value: DELIVERY_POINT_ID } });
-    fireEvent.change(selects[2], { target: { value: "ROAD" } });
 
-    // Button name is now "Save" (not "Save Leg")
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
-    // Partial leg should proceed to POST without being blocked
     await waitFor(() => {
       const postCall = fetchMock.mock.calls.find(
         ([url, init]) =>
