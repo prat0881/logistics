@@ -2,32 +2,11 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render } from "@testing-library/react";
 import { formatInZone, viewerZone } from "@svyft/shared";
 import { makeQueryColumns } from "./columns";
-import type { QueryListRow } from "@svyft/shared";
 
 afterEach(() => vi.restoreAllMocks());
 
 const ORG_ZONE = "America/New_York";
 const VIEWER_ZONE = viewerZone();
-
-/** Minimal row stub — only date fields matter for this test. */
-const makeRow = (overrides: Partial<QueryListRow> = {}): QueryListRow => ({
-  id: "q1",
-  queryCode: "TST-0001",
-  queryDate: "2026-07-15T10:00:00.000Z",
-  customerName: "Acme",
-  contactName: "Al",
-  shipmentDescription: "widgets",
-  freightMode: ["SEA"],
-  origin: "Mumbai, IN",
-  destination: "Rotterdam, NL",
-  responseDeadline: "2026-07-22T08:00:00.000Z",
-  priority: "HIGH",
-  status: "DRAFT",
-  assignedUserId: null,
-  assignedUserName: "Exec",
-  updatedAt: "2026-07-15T12:00:00.000Z",
-  ...overrides,
-});
 
 /**
  * Render a single cell by finding the column with `accessorKey === key`
