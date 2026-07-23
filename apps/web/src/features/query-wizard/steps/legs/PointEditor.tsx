@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -38,6 +38,13 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { usePoints } from "./usePoints";
+import { useOrgTimezone } from "@/features/config/useOrgTimezone";
+
+// Full IANA timezone list — computed once at module scope.
+const IANA_ZONES: string[] =
+  typeof Intl.supportedValuesOf === "function"
+    ? Intl.supportedValuesOf("timeZone")
+    : ["UTC"];
 
 /** Existing point row shape (from API / query detail). */
 interface PointRow {
@@ -56,6 +63,7 @@ interface PointRow {
   icaoCode?: string | null;
   unLocode?: string | null;
   terminal?: string | null;
+  timezone?: string | null;
 }
 
 interface PointEditorProps {
@@ -109,6 +117,7 @@ export function PointEditor({
 }: PointEditorProps) {
   const isEdit = Boolean(point);
   const { add, update, remove } = usePoints(queryId);
+  const { orgZone } = useOrgTimezone();
 
   // Local controlled state for type (when creating a new point).
   const [selectedType, setSelectedType] = useState<PointType>(
@@ -135,11 +144,19 @@ export function PointEditor({
           icaoCode: point.icaoCode ?? undefined,
           unLocode: point.unLocode ?? undefined,
           terminal: point.terminal ?? undefined,
+          timezone: point.timezone ?? undefined,
         }
       : {
           type: typeProp ?? "PICKUP",
         },
   });
+
+  // Seed timezone for new points once the org zone resolves (async react-query).
+  useEffect(() => {
+    if (!isEdit && orgZone) {
+      form.setValue("timezone", orgZone as PointSaveInput["timezone"]);
+    }
+  }, [isEdit, orgZone, form]);
 
   const handleTypeChange = (t: string) => {
     setSelectedType(t as PointType);
@@ -463,6 +480,38 @@ export function PointEditor({
                       value={field.value ?? ""}
                       placeholder="United Kingdom"
                     />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {/* Timezone */}
+            <FormField
+              control={form.control}
+              name="timezone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Timezone
+                    <RequiredMark field="timezone" type={activeType} />
+                  </FormLabel>
+                  <FormControl>
+                    <Select
+                      value={field.value ?? ""}
+                      onValueChange={field.onChange}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select timezone" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-72">
+                        {IANA_ZONES.map((z) => (
+                          <SelectItem key={z} value={z}>
+                            {z}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </FormControl>
                   <FormMessage />
                 </FormItem>

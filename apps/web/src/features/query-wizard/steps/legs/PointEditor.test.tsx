@@ -407,6 +407,128 @@ describe("PointEditor", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
+  describe("timezone field (Task 10)", () => {
+    const makeFetch = (orgZone = "Asia/Kolkata") =>
+      vi.fn((url: string, _init?: RequestInit) => {
+        if (url.includes("/api/auth/me"))
+          return Promise.resolve({
+            ok: true, status: 200,
+            json: () => Promise.resolve({ user: testUser }),
+            text: () => Promise.resolve(""),
+            blob: () => Promise.resolve(new Blob()),
+          } as Response);
+        if (url.includes("/api/config/org-timezone"))
+          return Promise.resolve({
+            ok: true, status: 200,
+            json: () => Promise.resolve({ timezone: orgZone }),
+            text: () => Promise.resolve(JSON.stringify({ timezone: orgZone })),
+            blob: () => Promise.resolve(new Blob()),
+          } as Response);
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      });
+
+    it("(a) new point defaults timezone to org zone (Asia/Singapore)", async () => {
+      // Use Asia/Singapore — guaranteed to be in Intl.supportedValuesOf("timeZone").
+      vi.stubGlobal("fetch", makeFetch("Asia/Singapore"));
+
+      renderWithProviders(
+        <PointEditor
+          queryId={QUERY_ID}
+          open
+          type="PICKUP"
+          onSaved={vi.fn()}
+          onClose={vi.fn()}
+        />,
+        { user: testUser },
+      );
+
+      // After org-timezone loads, useEffect calls form.setValue("timezone", "Asia/Singapore").
+      // Radix SelectTrigger renders the selected zone text in its inner span.
+      await waitFor(() => {
+        // The "Timezone" label must exist
+        expect(
+          screen.getByText(/^Timezone$/),
+        ).toBeInTheDocument();
+        // The SelectTrigger span displays the selected option text
+        expect(
+          screen.getAllByText("Asia/Singapore").length,
+        ).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it("(b) edit mode shows the point's own timezone (America/New_York)", async () => {
+      // Use America/New_York — guaranteed to be in Intl.supportedValuesOf("timeZone").
+      vi.stubGlobal("fetch", makeFetch("Asia/Singapore"));
+
+      const editPoint = {
+        id: POINT_ID,
+        type: "DELIVERY" as const,
+        name: "My Warehouse",
+        streetAddress: "1 Test St",
+        city: "New York",
+        postalCode: "10001",
+        country: "US",
+        contactName: null,
+        contactPhone: null,
+        contactEmail: null,
+        warehouseType: null,
+        iataCode: null,
+        icaoCode: null,
+        unLocode: null,
+        terminal: null,
+        timezone: "America/New_York",
+      };
+
+      renderWithProviders(
+        <PointEditor
+          queryId={QUERY_ID}
+          open
+          point={editPoint}
+          onSaved={vi.fn()}
+          onClose={vi.fn()}
+        />,
+        { user: testUser },
+      );
+
+      // SelectTrigger renders the point's stored zone — it's in the IANA list so it renders.
+      await waitFor(() => {
+        expect(screen.getByText(/^Timezone$/)).toBeInTheDocument();
+        expect(
+          screen.getAllByText("America/New_York").length,
+        ).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it("(c) timezone field label renders with a required marker (*)", async () => {
+      vi.stubGlobal("fetch", makeFetch("Asia/Singapore"));
+
+      renderWithProviders(
+        <PointEditor
+          queryId={QUERY_ID}
+          open
+          type="PICKUP"
+          onSaved={vi.fn()}
+          onClose={vi.fn()}
+        />,
+        { user: testUser },
+      );
+
+      await waitFor(() => {
+        // The label text "Timezone" must exist
+        expect(screen.getByText(/^Timezone$/i)).toBeInTheDocument();
+        // The required marker " *" must be a sibling span within the label
+        const label = screen.getByText(/^Timezone$/i).closest("label");
+        expect(label).not.toBeNull();
+        expect(label!.textContent).toContain("*");
+      });
+    });
+  });
+
   it("saves a partial point without hard-blocking on missing type fields (Round-1 Common #5)", async () => {
     const user = userEvent.setup();
     const partialPointResponse = {
