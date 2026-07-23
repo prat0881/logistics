@@ -48,8 +48,8 @@ interface Step1ClientProps {
 
 /**
  * Convert a QueryDetail into RHF default values for Step 1.
- * Dates are stored as offset ISO strings on the server; datetime-local inputs
- * need "yyyy-MM-ddTHH:mm". We use isoToLocalInput() for each date field.
+ * Dates are stored as UTC ISO strings on the server and are passed directly
+ * to ZonedDateTimeField, which projects them into the appropriate IANA zone.
  */
 function fromDetail(detail: QueryDetail | undefined): Partial<QuerySaveInput> {
   if (!detail) return { priority: "MEDIUM" };

@@ -12,6 +12,10 @@ const DELIVERY_POINT_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const SEAPORT_POINT_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 const CARGO_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 
+// Points with explicit IANA timezones for zone-anchor tests
+const KOLKATA_POINT_ID = "11111111-1111-1111-1111-111111111111";
+const SINGAPORE_POINT_ID = "22222222-2222-2222-2222-222222222222";
+
 const testUser = { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" as const };
 
 const baseDetail: QueryDetail = {
@@ -529,6 +533,89 @@ describe("LegEditor", () => {
           url === `/api/queries/${QUERY_ID}/legs` && (init as RequestInit)?.method === "POST",
       );
       expect(postCall).toBeTruthy();
+    });
+  });
+
+  it("Ready Date anchors to origin zone (Asia/Kolkata); Target Delivery anchors to destination zone (Asia/Singapore)", async () => {
+    // Build a detail with two points that have explicit timezones
+    const zoneDetail: QueryDetail = {
+      ...baseDetail,
+      points: [
+        {
+          id: KOLKATA_POINT_ID,
+          tenantId: null,
+          queryId: QUERY_ID,
+          type: "PICKUP",
+          name: "Mumbai Warehouse",
+          streetAddress: null,
+          city: "Mumbai",
+          postalCode: null,
+          country: "IN",
+          contactName: null,
+          contactPhone: null,
+          contactEmail: null,
+          warehouseType: null,
+          iataCode: null,
+          icaoCode: null,
+          unLocode: null,
+          terminal: null,
+          timezone: "Asia/Kolkata",
+          createdAt: "2026-01-01T00:00:00+00:00",
+          updatedAt: "2026-01-01T00:00:00+00:00",
+        },
+        {
+          id: SINGAPORE_POINT_ID,
+          tenantId: null,
+          queryId: QUERY_ID,
+          type: "DELIVERY",
+          name: "Singapore Depot",
+          streetAddress: null,
+          city: "Singapore",
+          postalCode: null,
+          country: "SG",
+          contactName: null,
+          contactPhone: null,
+          contactEmail: null,
+          warehouseType: null,
+          iataCode: null,
+          icaoCode: null,
+          unLocode: null,
+          terminal: null,
+          timezone: "Asia/Singapore",
+          createdAt: "2026-01-01T00:00:00+00:00",
+          updatedAt: "2026-01-01T00:00:00+00:00",
+        },
+      ],
+    };
+
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <LegEditor open detail={zoneDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    await screen.findByRole("dialog");
+
+    // Select origin (Kolkata) and destination (Singapore) via hidden selects
+    const selects = getHiddenSelects();
+    fireEvent.change(selects[0], { target: { value: KOLKATA_POINT_ID } });
+    fireEvent.change(selects[1], { target: { value: SINGAPORE_POINT_ID } });
+
+    // The "Times in …" hints from ZonedDateTimeField must reflect each point's zone.
+    // ZonedDateTimeField renders: <p className="text-xs text-muted-foreground">Times in {zoneLabel(zone)}</p>
+    // In jsdom, zoneLabel("Asia/Kolkata") → "GMT+5:30" and zoneLabel("Asia/Singapore") → "GMT+8:00"
+    // (or similar offset strings). The two hints must be DIFFERENT from each other, proving
+    // each field uses its own endpoint's zone rather than a shared fallback.
+    await waitFor(() => {
+      const hints = screen.getAllByText(/Times in /i);
+      expect(hints).toHaveLength(2);
+      const hintTexts = hints.map((el) => el.textContent ?? "");
+      // The two fields must resolve to different zones (origin != destination)
+      expect(hintTexts[0]).not.toBe(hintTexts[1]);
+      // Neither hint should fall back to bare "UTC" (the org-fallback zone), since both
+      // points have explicit timezone values set
+      expect(hintTexts.every((t) => !t.endsWith("UTC"))).toBe(true);
     });
   });
 });
