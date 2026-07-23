@@ -24,6 +24,7 @@ export interface RoutePoint {
   icaoCode: string | null;
   unLocode: string | null;
   terminal: string | null;
+  timezone: string | null;
 }
 export interface RouteLeg {
   id: string;

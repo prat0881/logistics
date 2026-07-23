@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidIanaZone } from "./timezone";
 
 export const FreightMode = { ROAD: "ROAD", AIR: "AIR", SEA: "SEA" } as const;
 export type FreightMode = (typeof FreightMode)[keyof typeof FreightMode];
@@ -25,4 +26,16 @@ export interface ChecklistItemDto {
   label: string;
   order: number;
   dgConditional: boolean;
+}
+
+export const ORG_TIMEZONE_KEY = "orgDefaultTimezone" as const;
+export const DEFAULT_ORG_TIMEZONE = "Asia/Kolkata" as const;
+
+export const orgTimezoneUpdateSchema = z.object({
+  timezone: z.string().refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
+});
+export type OrgTimezoneUpdateInput = z.infer<typeof orgTimezoneUpdateSchema>;
+
+export interface OrgTimezoneDto {
+  timezone: string;
 }

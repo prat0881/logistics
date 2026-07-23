@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { FREIGHT_MODES, type FreightMode } from "@svyft/shared";
-import type { ChecklistItemUpdateInput, DensityFactorUpdateInput } from "@svyft/shared";
+import { FREIGHT_MODES, type FreightMode, ORG_TIMEZONE_KEY, DEFAULT_ORG_TIMEZONE } from "@svyft/shared";
+import type { ChecklistItemUpdateInput, DensityFactorUpdateInput, OrgTimezoneDto, OrgTimezoneUpdateInput } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 
 @Injectable()
@@ -42,5 +42,19 @@ export class ConfigDataService {
       }
       throw e;
     }
+  }
+
+  async orgTimezone(): Promise<OrgTimezoneDto> {
+    const row = await this.prisma.appSetting.findUnique({ where: { key: ORG_TIMEZONE_KEY } });
+    return { timezone: row?.value ?? DEFAULT_ORG_TIMEZONE };
+  }
+
+  async updateOrgTimezone(input: OrgTimezoneUpdateInput): Promise<OrgTimezoneDto> {
+    const row = await this.prisma.appSetting.upsert({
+      where: { key: ORG_TIMEZONE_KEY },
+      create: { key: ORG_TIMEZONE_KEY, value: input.timezone },
+      update: { value: input.timezone },
+    });
+    return { timezone: row.value };
   }
 }

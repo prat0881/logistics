@@ -24,7 +24,9 @@ import {
 import { fetchJson } from "@/lib/api";
 import { useWizard } from "../WizardContext";
 import { useAuth } from "@/features/auth/AuthProvider";
-import { toIsoOffset, isoToLocalInput } from "@/lib/dates";
+import { useOrgTimezone } from "@/features/config/useOrgTimezone";
+import { resolveQueryFieldZone } from "@/lib/zones";
+import { ZonedDateTimeField } from "@/components/ZonedDateTimeField";
 import { ClientPicker } from "../pickers/ClientPicker";
 import { VesselPicker } from "../pickers/VesselPicker";
 
@@ -46,8 +48,8 @@ interface Step1ClientProps {
 
 /**
  * Convert a QueryDetail into RHF default values for Step 1.
- * Dates are stored as offset ISO strings on the server; datetime-local inputs
- * need "yyyy-MM-ddTHH:mm". We use isoToLocalInput() for each date field.
+ * Dates are stored as UTC ISO strings on the server and are passed directly
+ * to ZonedDateTimeField, which projects them into the appropriate IANA zone.
  */
 function fromDetail(detail: QueryDetail | undefined): Partial<QuerySaveInput> {
   if (!detail) return { priority: "MEDIUM" };
@@ -79,6 +81,11 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
   const { detail } = useWizard();
   const { user } = useAuth();
   const isAdmin = user?.role === Role.ADMINISTRATOR;
+
+  const { orgZone } = useOrgTimezone();
+  const graph = { points: detail?.points ?? [], legs: detail?.legs ?? [] };
+  const zoneFor = (f: Parameters<typeof resolveQueryFieldZone>[0]) =>
+    resolveQueryFieldZone(f, graph, orgZone);
 
   const [selectedClientId, setSelectedClientId] = useState<string | undefined>(
     detail?.clientId ?? undefined,
@@ -207,33 +214,12 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Query Date */}
-            <FormField
+            <ZonedDateTimeField
               control={form.control}
               name="queryDate"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Query Date</FormLabel>
-                  <FormControl>
-                    {isAdmin ? (
-                      <Input
-                        type="datetime-local"
-                        value={isoToLocalInput(field.value ?? null)}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          field.onChange(v ? toIsoOffset(v) : undefined);
-                        }}
-                      />
-                    ) : (
-                      <Input
-                        value={isoToLocalInput(field.value ?? null)}
-                        readOnly
-                        className="bg-muted"
-                      />
-                    )}
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              label="Query Date"
+              zone={zoneFor("queryDate")}
+              readOnly={!isAdmin}
             />
 
             {/* Priority */}
@@ -266,26 +252,12 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
             />
 
             {/* Response Deadline */}
-            <FormField
+            <ZonedDateTimeField
               control={form.control}
               name="responseDeadline"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Response Deadline</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="datetime-local"
-                      value={isoToLocalInput(field.value ?? null)}
-                      onChange={(e) => {
-                        deadlineTouchedRef.current = true;
-                        const v = e.target.value;
-                        field.onChange(v ? toIsoOffset(v) : undefined);
-                      }}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              label="Response Deadline"
+              zone={zoneFor("responseDeadline")}
+              onChanged={() => { deadlineTouchedRef.current = true; }}
             />
 
             {/* Response Deadline Remarks */}
@@ -558,69 +530,27 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
             />
 
             {/* ETA */}
-            <FormField
+            <ZonedDateTimeField
               control={form.control}
               name="eta"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>ETA</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="datetime-local"
-                      value={isoToLocalInput(field.value ?? null)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        field.onChange(v ? toIsoOffset(v) : undefined);
-                      }}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              label="ETA"
+              zone={zoneFor("eta")}
             />
 
             {/* ETB */}
-            <FormField
+            <ZonedDateTimeField
               control={form.control}
               name="etb"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>ETB</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="datetime-local"
-                      value={isoToLocalInput(field.value ?? null)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        field.onChange(v ? toIsoOffset(v) : undefined);
-                      }}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              label="ETB"
+              zone={zoneFor("etb")}
             />
 
             {/* ETD */}
-            <FormField
+            <ZonedDateTimeField
               control={form.control}
               name="etd"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>ETD</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="datetime-local"
-                      value={isoToLocalInput(field.value ?? null)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        field.onChange(v ? toIsoOffset(v) : undefined);
-                      }}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              label="ETD"
+              zone={zoneFor("etd")}
             />
 
             {/* Port of Call */}
@@ -650,51 +580,21 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Ready Date */}
-            <FormField
+            <ZonedDateTimeField
               control={form.control}
               name="readyDate"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Ready Date <span className="text-destructive">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      type="datetime-local"
-                      value={isoToLocalInput(field.value ?? null)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        field.onChange(v ? toIsoOffset(v) : undefined);
-                      }}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              label="Ready Date"
+              zone={zoneFor("readyDate")}
+              required
             />
 
             {/* Target Delivery */}
-            <FormField
+            <ZonedDateTimeField
               control={form.control}
               name="targetDelivery"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Target Delivery <span className="text-destructive">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      type="datetime-local"
-                      value={isoToLocalInput(field.value ?? null)}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        field.onChange(v ? toIsoOffset(v) : undefined);
-                      }}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              label="Target Delivery"
+              zone={zoneFor("targetDelivery")}
+              required
             />
           </div>
         </div>

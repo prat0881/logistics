@@ -15,7 +15,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { useAuth } from "@/features/auth/AuthProvider";
-import { formatDate, toIsoOffset } from "@/lib/dates";
+import { formatDate } from "@/lib/dates";
 
 interface QueriesToolbarProps {
   onChange: (params: Partial<QueryListParams>) => void;
@@ -87,8 +87,8 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
       };
       if (dr?.from) {
         params.dateField = df;
-        params.dateFrom = toIsoOffset(dr.from.toISOString().slice(0, 16));
-        if (dr.to) params.dateTo = toIsoOffset(dr.to.toISOString().slice(0, 16));
+        params.dateFrom = dr.from.toISOString();
+        if (dr.to) params.dateTo = dr.to.toISOString();
       }
       onChange(params);
     },

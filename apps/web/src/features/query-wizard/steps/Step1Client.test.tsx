@@ -394,6 +394,77 @@ describe("Step1Client", () => {
     expect(body).toHaveProperty("priority");
   });
 
+  it("Response Deadline field shows a 'Times in' zone hint (org zone = Asia/Kolkata)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // The Response Deadline field should show a "Times in" hint (rendered by ZonedDateTimeField)
+    await waitFor(() => {
+      const hints = screen.getAllByText(/Times in/i);
+      expect(hints.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("readyDate with a stored UTC instant renders the org-zone wall-clock when no points exist", async () => {
+    // 2026-06-15T03:30:00.000Z in Asia/Kolkata (UTC+5:30) = 2026-06-15T09:00
+    const STORED_READY_DATE = "2026-06-15T03:30:00.000Z";
+    const detailWithReadyDate = {
+      ...draftDetail,
+      readyDate: STORED_READY_DATE,
+      points: [], // no points → anchor = org zone
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithReadyDate };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // The Ready Date field should show the UTC instant converted to Asia/Kolkata wall-clock
+    await waitFor(() => {
+      const readyDateInput = screen.getByLabelText(/Ready Date/i) as HTMLInputElement;
+      // 2026-06-15T03:30Z in Asia/Kolkata (UTC+5:30) = 2026-06-15T09:00
+      expect(readyDateInput.value).toBe("2026-06-15T09:00");
+    });
+  });
+
   it("defaults Response Deadline to Query Date + 24h for MEDIUM and recomputes on priority change until edited", async () => {
     const user = userEvent.setup();
 

@@ -38,6 +38,7 @@ export function toRouteGraph(detail: QueryDetail): RouteGraph {
     icaoCode: p.icaoCode,
     unLocode: p.unLocode,
     terminal: p.terminal,
+    timezone: p.timezone ?? null,
   }));
 
   const legs: RouteLeg[] = detail.legs.map((l) => ({

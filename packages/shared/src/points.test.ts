@@ -68,3 +68,13 @@ describe("pointSaveSchema.contactPhone (strict E.164)", () => {
     expect(pointSaveSchema.safeParse({ type: "PICKUP" }).success).toBe(true);
   });
 });
+
+describe("Point.timezone", () => {
+  it("accepts a valid IANA timezone and rejects junk when present", () => {
+    expect(pointSaveSchema.safeParse({ type: "PICKUP", timezone: "Asia/Kolkata" }).success).toBe(true);
+    expect(pointSaveSchema.safeParse({ type: "PICKUP", timezone: "Bad/Zone" }).success).toBe(false);
+  });
+  it("marks timezone required for every point type", () => {
+    for (const t of POINT_TYPES) expect(POINT_REQUIRED_FIELDS[t]).toContain("timezone");
+  });
+});

@@ -28,7 +28,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -39,7 +38,9 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { ApiError } from "@/lib/api";
-import { toIsoOffset, isoToLocalInput } from "@/lib/dates";
+import { useOrgTimezone } from "@/features/config/useOrgTimezone";
+import { resolveLegFieldZone } from "@/lib/zones";
+import { ZonedDateTimeField } from "@/components/ZonedDateTimeField";
 import { useLegs } from "./useLegs";
 import { PointEditor } from "./PointEditor";
 import { CargoAssignmentControl } from "./CargoAssignmentControl";
@@ -83,6 +84,7 @@ export function LegEditor({
 }: LegEditorProps) {
   const isEdit = Boolean(leg);
   const { add, update, remove } = useLegs(queryId);
+  const { orgZone } = useOrgTimezone();
 
   const [serverFindings, setServerFindings] = useState<Finding[]>([]);
   const [showPointEditor, setShowPointEditor] = useState<"origin" | "destination" | null>(null);
@@ -123,6 +125,8 @@ export function LegEditor({
 
   const originPoint = detail.points.find((p) => p.id === watchedOriginId);
   const destPoint = detail.points.find((p) => p.id === watchedDestId);
+
+  const legLike = { originPointId: watchedOriginId, destinationPointId: watchedDestId };
 
   // Client-side V-M1 warning (non-blocking)
   const showClientVm1Warning =
@@ -330,48 +334,20 @@ export function LegEditor({
                 )}
               </div>
 
-              {/* Ready Date */}
-              <FormField
+              {/* Ready Date — anchored to origin point's timezone */}
+              <ZonedDateTimeField
                 control={form.control}
                 name="readyDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Ready Date</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="datetime-local"
-                        value={isoToLocalInput(field.value ?? null)}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          field.onChange(v ? toIsoOffset(v) : undefined);
-                        }}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                label="Ready Date"
+                zone={resolveLegFieldZone("readyDate", legLike, detail.points, orgZone)}
               />
 
-              {/* Target Delivery */}
-              <FormField
+              {/* Target Delivery — anchored to destination point's timezone */}
+              <ZonedDateTimeField
                 control={form.control}
                 name="targetDelivery"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Target Delivery</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="datetime-local"
-                        value={isoToLocalInput(field.value ?? null)}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          field.onChange(v ? toIsoOffset(v) : undefined);
-                        }}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                label="Target Delivery"
+                zone={resolveLegFieldZone("targetDelivery", legLike, detail.points, orgZone)}
               />
 
               {/* Server-side findings (V-M1 422) */}

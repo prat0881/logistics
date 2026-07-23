@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -38,6 +38,13 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { usePoints } from "./usePoints";
+import { useOrgTimezone } from "@/features/config/useOrgTimezone";
+
+// Full IANA timezone list — computed once at module scope.
+const IANA_ZONES: string[] =
+  typeof Intl.supportedValuesOf === "function"
+    ? Intl.supportedValuesOf("timeZone")
+    : ["UTC"];
 
 /** Existing point row shape (from API / query detail). */
 interface PointRow {
@@ -56,6 +63,7 @@ interface PointRow {
   icaoCode?: string | null;
   unLocode?: string | null;
   terminal?: string | null;
+  timezone?: string | null;
 }
 
 interface PointEditorProps {
@@ -109,6 +117,7 @@ export function PointEditor({
 }: PointEditorProps) {
   const isEdit = Boolean(point);
   const { add, update, remove } = usePoints(queryId);
+  const { orgZone, isLoading } = useOrgTimezone();
 
   // Local controlled state for type (when creating a new point).
   const [selectedType, setSelectedType] = useState<PointType>(
@@ -135,11 +144,21 @@ export function PointEditor({
           icaoCode: point.icaoCode ?? undefined,
           unLocode: point.unLocode ?? undefined,
           terminal: point.terminal ?? undefined,
+          timezone: point.timezone ?? undefined,
         }
       : {
           type: typeProp ?? "PICKUP",
         },
   });
+
+  // Seed timezone for new points exactly once after the org zone resolves.
+  // Gates on: not an edit, query has loaded (not the loading-fallback), zone present,
+  // and the field is still empty (never clobbers a user pick).
+  useEffect(() => {
+    if (!isEdit && !isLoading && orgZone && !form.getValues("timezone")) {
+      form.setValue("timezone", orgZone as PointSaveInput["timezone"]);
+    }
+  }, [isEdit, isLoading, orgZone, form]);
 
   const handleTypeChange = (t: string) => {
     setSelectedType(t as PointType);
@@ -467,6 +486,46 @@ export function PointEditor({
                   <FormMessage />
                 </FormItem>
               )}
+            />
+
+            {/* Timezone */}
+            <FormField
+              control={form.control}
+              name="timezone"
+              render={({ field }) => {
+                // Include the org zone proactively (even before it's seeded into the field)
+                // so the Radix hidden <select> always has the option when value changes.
+                const extraZones: string[] = [];
+                if (orgZone && !IANA_ZONES.includes(orgZone)) extraZones.push(orgZone);
+                if (field.value && !IANA_ZONES.includes(field.value) && !extraZones.includes(field.value)) extraZones.push(field.value);
+                const zoneOptions = extraZones.length ? [...IANA_ZONES, ...extraZones] : IANA_ZONES;
+                return (
+                  <FormItem>
+                    <FormLabel>
+                      Timezone
+                      <RequiredMark field="timezone" type={activeType} />
+                    </FormLabel>
+                    <FormControl>
+                      <Select
+                        value={field.value ?? ""}
+                        onValueChange={field.onChange}
+                      >
+                        <SelectTrigger data-testid="timezone-trigger">
+                          <SelectValue placeholder="Select timezone" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          {zoneOptions.map((z) => (
+                            <SelectItem key={z} value={z}>
+                              {z}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
             />
 
             {/* Contact fields (PICKUP / DELIVERY / WAREHOUSE) */}

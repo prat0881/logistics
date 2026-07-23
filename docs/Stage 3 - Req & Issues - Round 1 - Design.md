@@ -115,11 +115,21 @@ The airline-itinerary model.
 
 ---
 
-## Open decisions (Issue 3 — settle when we build the timezone increment)
-- **(a)** Query-level Ready/Target zone **before any point exists** (org default → re-anchor to first/last point?).
-- **(b)** **Response Deadline** zone — org operating zone (recommended) vs viewer.
-- **(c)** Where the **org default zone** is configured (a Config/admin setting).
-- **(d)** **Multi-zone countries** (US/RU/AU…) — derive from city, or a manual zone field on the point.
+## Issue 3 — resolved design (settled 2026-07-22 · built on `feat/plan-6b-req-issues-round1-timezone`)
+
+**Open decisions — resolved:**
+- **(a)** ✅ Query Ready/Target anchor to the **org default zone until any Point exists**, then **re-anchor** to the **first-point (Ready) / last-point (Target)** zone once the route is built (airline-itinerary model; consistent with T2 first/last-leg = query).
+- **(b)** ✅ **Response Deadline → org operating zone**, always shown with a zone label (one canonical SLA time for every viewer).
+- **(c)** ✅ **Org default zone = `Asia/Kolkata` (IST)**, stored as a seeded, **admin-editable Config setting** — a new key-value **`AppSetting { key @id, value }`** table (mirrors the `CodeSequence` keyed-table precedent), seeded `orgDefaultTimezone` via the idempotent reference-seed, exposed via `ConfigDataService` (GET + admin PATCH) with a shared Zod IANA-id validator.
+- **(d)** ✅ **Manual IANA zone picker per Point** (`Point.timezone`), default = org zone, overridable — a searchable dropdown from `Intl.supportedValuesOf('timeZone')`. No geocoding/auto-derive (robust for multi-zone countries).
+
+**Design summary:**
+- **Data / migration** (the one increment carrying a Prisma migration): add nullable `Point.timezone` (IANA id), **required-at-Create** (added to `POINT_REQUIRED_FIELDS` → surfaces in the ValidationSummary under *Leg & Route*; **not** Save-blocking, per Common #4/#5). Migration adds the column, **backfills existing Point rows → `Asia/Kolkata`**, and creates + seeds `AppSetting`. Operational datetime columns **stay Prisma `DateTime` (UTC)** — no `timestamptz` switch (Prisma already reads/writes them as UTC instants and only Prisma touches them; a column-type migration adds risk for no functional gain). *Explicit non-goal.*
+- **Anchor rules** (which zone a datetime displays/interprets in): leg Ready → origin-point zone · leg Target → destination-point zone · query Ready/Target → first/last-point zone (org zone before points) · Response Deadline → org zone · **ETA/ETB/ETD → the SEAPORT point's zone when present (first if several), else org zone** · system/audit times (Query Date, created/updated) → **viewer-local**. All shown with a zone label (e.g. "09:00 IST").
+- **Conversion layer:** retire the floating-wall-clock `toIsoOffset`/`isoToLocalInput`; add a date-fns-v4-native TZ package (`@date-fns/tz` or `date-fns-tz`, pinned in-build) to `packages/shared` (isomorphic). New helpers `zonedInputToUtc(wallClock, zone)` / `utcToZonedInput(utcIso, zone)` / `formatInZone(utcIso, zone)`. Datetime-local inputs keep their UX but round-trip through the **anchor zone**, not the machine offset.
+- **Temporal math:** all comparisons on real UTC instants — Ready≤Target, T1/T2/T3, F4 already are; **F3 ETA<ETB<ETD switches string-compare → instant-compare**.
+- **UI:** PointEditor gains the required zone dropdown; every datetime display carries its anchor-zone label; Query List Query Date/Updated = viewer-local, Response By = org-zone, all labeled; the client reads the org default zone from the config GET (TanStack Query cached).
+- **Testing:** shared pure-unit conversion tests across representative zones incl. a **DST boundary** (e.g. America/New_York transition; Asia/Kolkata no-DST) + UTC-instant temporal comparisons + label formatting; migration test (backfill + seed); api e2e (config GET/PATCH admin-gated; Point create/read with timezone); web integration (zone dropdown, round-trip, list labels).
 
 ## Deferred / future
 - **Shipment → "Shipment & Cargo" full merge** (remove Step 2, move Incoterms + Shipment Description into Cargo, 5→4 steps). Deferred to keep step indices stable this round; the DG-indicator removal is done now.

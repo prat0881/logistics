@@ -89,18 +89,18 @@ export const querySaveSchema = z
     assignedUserId: z.string().uuid(),
   })
   .partial()
-  // F3: ETA < ETB < ETD when present.
-  .refine((q) => !(q.eta && q.etb) || q.eta < q.etb, {
+  // F3: ETA < ETB < ETD when present (real-instant compare, offset-aware).
+  .refine((q) => !(q.eta && q.etb) || new Date(q.eta).getTime() < new Date(q.etb).getTime(), {
     message: "ETA must be before ETB",
     path: ["eta"],
   })
-  .refine((q) => !(q.etb && q.etd) || q.etb < q.etd, {
+  .refine((q) => !(q.etb && q.etd) || new Date(q.etb).getTime() < new Date(q.etd).getTime(), {
     message: "ETB must be before ETD",
     path: ["etb"],
   })
   // F3 (transitive): ETA < ETD independent of ETB, so an absent ETB can't hide an
   // ETD before ETA (the two pairwise refines above only cover adjacent pairs).
-  .refine((q) => !(q.eta && q.etd) || q.eta < q.etd, {
+  .refine((q) => !(q.eta && q.etd) || new Date(q.eta).getTime() < new Date(q.etd).getTime(), {
     message: "ETA must be before ETD",
     path: ["eta"],
   })
@@ -362,6 +362,7 @@ export type QueryPointDto = {
   icaoCode: string | null;
   unLocode: string | null;
   terminal: string | null;
+  timezone: string | null;
   createdAt: string;
   updatedAt: string;
 };
