@@ -159,8 +159,8 @@ describe("Queries (e2e)", () => {
     // Plan 5: Create Query also gates on the full route catalogue (R1-R9/T/C), so this query
     // needs a complete Pickup->Delivery route (one cargo row on one leg) to pass — leg dates
     // match the query's readyDate/targetDelivery above (T2: first/last leg dates = query dates).
-    const pu = await prisma.point.create({ data: { queryId: created.body.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com" } });
-    const de = await prisma.point.create({ data: { queryId: created.body.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555" } });
+    const pu = await prisma.point.create({ data: { queryId: created.body.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", timezone: "Asia/Kolkata" } });
+    const de = await prisma.point.create({ data: { queryId: created.body.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" } });
     const cargo = await prisma.cargoItem.create({ data: { queryId: created.body.id, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } });
     const leg = await prisma.leg.create({ data: { queryId: created.body.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: "2026-08-01T00:00:00.000Z", targetDelivery: "2026-08-20T00:00:00.000Z" } });
     await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo.id } });

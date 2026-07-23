@@ -42,8 +42,8 @@ describe("Routing validate (e2e)", () => {
     const q = await prisma.query.create({
       data: { queryCode: `${PFX}${Date.now()}-${Math.floor(Math.random() * 1e6)}`, shipmentDescription: `${PFX}q`, readyDate: READY, targetDelivery: TARGET },
     });
-    const pu = await prisma.point.create({ data: { queryId: q.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com" } });
-    const de = await prisma.point.create({ data: { queryId: q.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555" } });
+    const pu = await prisma.point.create({ data: { queryId: q.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", timezone: "Asia/Kolkata" } });
+    const de = await prisma.point.create({ data: { queryId: q.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" } });
     const cargo = await prisma.cargoItem.create({ data: { queryId: q.id, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } });
     const leg = await prisma.leg.create({ data: { queryId: q.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: READY, targetDelivery: TARGET } });
     await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo.id } });
