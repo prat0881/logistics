@@ -1,12 +1,13 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import type { QueryListParams } from "@svyft/shared";
 import { Button } from "@/components/ui/button";
 import { DataTable } from "@/components/ui/data-table";
 import { PaginationBar } from "@/components/PaginationBar";
 import { useQueries } from "./useQueries";
-import { queryColumns } from "./columns";
+import { makeQueryColumns } from "./columns";
 import { QueriesToolbar } from "./QueriesToolbar";
+import { useOrgTimezone } from "@/features/config/useOrgTimezone";
 
 /** Query-domain sortable columns (server-side allowlist lives here, not in DataTable). */
 const SORTABLE_COLS: string[] = [
@@ -27,6 +28,9 @@ const DEFAULT_PARAMS: QueryListParams = {
 export function QueriesListPage() {
   const navigate = useNavigate();
   const [params, setParams] = useState<QueryListParams>(DEFAULT_PARAMS);
+
+  const { orgZone } = useOrgTimezone();
+  const columns = useMemo(() => makeQueryColumns(orgZone), [orgZone]);
 
   const { data, isLoading } = useQueries(params);
 
@@ -65,7 +69,7 @@ export function QueriesListPage() {
 
       {/* Table */}
       <DataTable
-        columns={queryColumns}
+        columns={columns}
         data={data?.items ?? []}
         isLoading={isLoading}
         onRowClick={(row) => navigate(`/queries/${row.id}`)}
