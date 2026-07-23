@@ -161,6 +161,7 @@ function LegsStepBody({
         queryId={queryId}
         open={pointEditorOpen}
         point={editingPoint as unknown as ComponentProps<typeof PointEditor>["point"]}
+        legs={detail.legs}
         onSaved={closePointEditor}
         onClose={closePointEditor}
       />

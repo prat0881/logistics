@@ -398,6 +398,7 @@ export function LegEditor({
         <PointEditor
           queryId={queryId}
           open={Boolean(showPointEditor)}
+          legs={detail.legs}
           onSaved={(saved) => handlePointSaved(showPointEditor, saved)}
           onClose={() => setShowPointEditor(null)}
         />
