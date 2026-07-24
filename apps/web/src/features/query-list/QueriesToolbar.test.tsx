@@ -73,9 +73,12 @@ describe("QueriesToolbar — date-range popup", () => {
 
     // Second, later endpoint completes the range (from !== to) → emit.
     await clickDay(user, DAY_TO);
-    const last = onChange.mock.calls.at(-1)![0];
-    expect(last.dateFrom).toBeTruthy();
-    expect(last.dateTo).toBeTruthy();
+    // Assert on the range emit ITSELF, not onChange's last call: the mount-time
+    // 300ms search debounce (`onChange({ q: undefined })`) can fire after the range
+    // emit on a slow run and clobber the tail — that was the real flake.
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ dateFrom: expect.any(String), dateTo: expect.any(String) }),
+    );
   });
 
   it("closes the popover after the second (completing) click", async () => {
@@ -109,8 +112,11 @@ describe("QueriesToolbar — date-range popup", () => {
     await clickDay(user, DAY_FROM);
     await waitForDaySelected(DAY_FROM);
     await clickDay(user, DAY_TO);
-    const afterRange = onChange.mock.calls.at(-1)![0];
-    expect(afterRange.dateFrom).toBeTruthy(); // sanity: range was emitted
+    // Sanity: a full range was emitted (assert the range call, not at(-1), which the
+    // 300ms search debounce can clobber — see the first test).
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ dateFrom: expect.any(String), dateTo: expect.any(String) }),
+    );
 
     // Re-open the popover (it closed after the completing click) to access the Clear button
     await user.click(screen.getByRole("button", { name: "Date range picker" }));
@@ -146,7 +152,10 @@ describe("QueriesToolbar — All clears the facet", () => {
     await user.click(screen.getByLabelText("Status filter"));
     await user.click(await screen.findByText("All statuses"));
 
-    const last = onChange.mock.calls.at(-1)![0];
-    expect(last).toHaveProperty("status", undefined);
+    // Assert on the last STATUS-carrying emit, not onChange's last call — the
+    // mount-time search debounce (`onChange({ q: undefined })`) has no `status`
+    // key and can otherwise land last on a slow run and clobber the tail.
+    const statusEmits = onChange.mock.calls.map((c) => c[0]).filter((p) => "status" in p);
+    expect(statusEmits.at(-1)?.status).toBeUndefined();
   });
 });
