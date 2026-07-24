@@ -2,7 +2,12 @@
 // Which IANA zone anchors each datetime field (Issue 3 anchor rules). Pure.
 type PointLike = { id: string; type?: string | null; timezone?: string | null };
 type LegLike = { originPointId?: string | null; destinationPointId?: string | null };
-type GraphLike = { points: PointLike[]; legs: LegLike[] };
+type GraphLike = {
+  points: PointLike[];
+  legs: LegLike[];
+  readyDateTimezone?: string | null;
+  targetDeliveryTimezone?: string | null;
+};
 
 export type QueryZonedField =
   | "queryDate"
@@ -28,9 +33,9 @@ export function resolveQueryFieldZone(
     case "responseDeadline":
       return orgZone; // internal SLA
     case "readyDate":
-      return pts.length ? zoneOf(pts[0], orgZone) : orgZone;
+      return graph.readyDateTimezone || orgZone;
     case "targetDelivery":
-      return pts.length ? zoneOf(pts[pts.length - 1], orgZone) : orgZone;
+      return graph.targetDeliveryTimezone || orgZone;
     case "eta":
     case "etb":
     case "etd": {

@@ -14,16 +14,12 @@ describe("resolveQueryFieldZone", () => {
     const viewer = Intl.DateTimeFormat().resolvedOptions().timeZone;
     expect(resolveQueryFieldZone("queryDate", { points: [], legs: [] }, ORG)).toBe(viewer);
   });
-  it("readyDate → first point zone once points exist, else org", () => {
-    expect(resolveQueryFieldZone("readyDate", { points: [], legs: [] }, ORG)).toBe(ORG);
-    expect(resolveQueryFieldZone("readyDate", { points: [air, sea], legs: [] }, ORG)).toBe(
-      "Europe/London",
-    );
+  it("readyDate → the query's explicit readyDateTimezone, else org", () => {
+    expect(resolveQueryFieldZone("readyDate", { points: [], legs: [] }, "Asia/Kolkata")).toBe("Asia/Kolkata");
+    expect(resolveQueryFieldZone("readyDate", { points: [], legs: [], readyDateTimezone: "Asia/Singapore" }, "Asia/Kolkata")).toBe("Asia/Singapore");
   });
-  it("targetDelivery → last point zone", () => {
-    expect(resolveQueryFieldZone("targetDelivery", { points: [air, sea], legs: [] }, ORG)).toBe(
-      "Asia/Singapore",
-    );
+  it("targetDelivery → the query's explicit targetDeliveryTimezone, else org", () => {
+    expect(resolveQueryFieldZone("targetDelivery", { points: [], legs: [], targetDeliveryTimezone: "Europe/London" }, "Asia/Kolkata")).toBe("Europe/London");
   });
   it("eta/etb/etd → first SEAPORT zone, else org", () => {
     expect(resolveQueryFieldZone("eta", { points: [air], legs: [] }, ORG)).toBe(ORG);
