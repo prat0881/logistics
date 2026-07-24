@@ -104,10 +104,6 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
     resolver: zodResolver(querySaveSchema),
     defaultValues: {
       ...fromDetail(detail),
-      // Seed timezone fields to the org zone if not stored on the detail;
-      // orgZone defaults to DEFAULT_ORG_TIMEZONE immediately (before the fetch resolves).
-      readyDateTimezone: detail?.readyDateTimezone ?? orgZone ?? undefined,
-      targetDeliveryTimezone: detail?.targetDeliveryTimezone ?? orgZone ?? undefined,
     },
   });
 
@@ -122,29 +118,20 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
   const zoneFor = (f: Parameters<typeof resolveQueryFieldZone>[0]) =>
     resolveQueryFieldZone(f, graph, orgZone);
 
-  // Seed timezone fields to org zone when empty (mirror PointEditor's guard).
-  // orgZone starts as DEFAULT_ORG_TIMEZONE immediately (before the fetch resolves),
-  // and isLoading gates this so we only set after we know the actual org zone.
-  // When isLoading becomes false and orgZone is confirmed, seed if still empty.
-  useEffect(() => {
-    if (!isLoading && orgZone) {
-      if (!form.getValues("readyDateTimezone")) form.setValue("readyDateTimezone", orgZone);
-      if (!form.getValues("targetDeliveryTimezone")) form.setValue("targetDeliveryTimezone", orgZone);
-    }
-  }, [isLoading, orgZone, form]);
-
   // Tracks whether the exec has manually edited the Response Deadline field.
   // When false, the field is recomputed from queryDate + priority on every priority change.
   const deadlineTouchedRef = useRef(false);
 
-  // Reset form when detail loads/changes
+  // Reset form when detail loads/changes, then seed timezone fields to the real org zone
+  // when they are still empty (no stored zone on the detail).
+  // Seed is done here (after form.reset) so it always runs AFTER the reset, preventing
+  // a race where the seed effect fires before reset and gets wiped.
+  // orgZone is in deps so when the fetch resolves (isLoading→false, orgZone is real),
+  // this runs again and seeds the now-empty fields.
   useEffect(() => {
     if (detail) {
       form.reset({
         ...fromDetail(detail),
-        // Preserve timezone seed: if detail has no stored zone, fall back to orgZone.
-        readyDateTimezone: detail.readyDateTimezone ?? orgZone ?? undefined,
-        targetDeliveryTimezone: detail.targetDeliveryTimezone ?? orgZone ?? undefined,
       });
       setSelectedClientId(detail.clientId ?? undefined);
       setSelectedVesselId(detail.vesselId ?? undefined);
@@ -155,7 +142,15 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
         deadlineTouchedRef.current = true;
       }
     }
-  }, [detail, form, orgZone]);
+    // Seed timezone fields with the real org zone when still empty.
+    // Empty-guarded: never clobbers a stored zone (from detail) or a user pick.
+    // Runs after every detail-change (covers post-reset) and every orgZone change (covers
+    // the async fetch resolving), but only when we know the actual zone (!isLoading).
+    if (!isLoading && orgZone) {
+      if (!form.getValues("readyDateTimezone")) form.setValue("readyDateTimezone", orgZone);
+      if (!form.getValues("targetDeliveryTimezone")) form.setValue("targetDeliveryTimezone", orgZone);
+    }
+  }, [detail, form, isLoading, orgZone]);
 
   // Auto-default Response Deadline = queryDate + priority-hours (recompute until touched).
   const watchedPriority = form.watch("priority");

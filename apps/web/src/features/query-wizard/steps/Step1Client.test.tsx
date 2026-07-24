@@ -39,6 +39,8 @@ const draftDetail = {
   shipmentDescription: null,
   readyDate: null,
   targetDelivery: null,
+  readyDateTimezone: null,
+  targetDeliveryTimezone: null,
   internalNotes: null,
   tenantId: null,
   rfqReadyAt: null,
@@ -582,6 +584,46 @@ describe("Step1Client", () => {
       const hints = screen.getAllByText(/Times in/i);
       const readyHint = hints.find((h) => h.textContent?.includes("Asia/Kolkata"));
       expect(readyHint).toBeDefined();
+    }, { timeout: 3000 });
+  });
+
+  it("non-Kolkata org (Asia/Singapore) — zone pickers show real org zone, not Kolkata default", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Singapore" } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // Regression: must show Asia/Singapore (GMT+08:00), NOT Asia/Kolkata (the DEFAULT_ORG_TIMEZONE)
+    // This would fail under the old bug where defaultValues seeded Kolkata synchronously and
+    // the seed-when-empty effect found the field non-empty and skipped setting the real zone.
+    await waitFor(() => {
+      const readyZonePicker = screen.getByRole("button", { name: /Ready Date timezone/i });
+      expect(readyZonePicker.textContent).toContain("Asia/Singapore");
+      expect(readyZonePicker.textContent).not.toContain("Asia/Kolkata");
+    }, { timeout: 3000 });
+
+    await waitFor(() => {
+      const targetZonePicker = screen.getByRole("button", { name: /Target Delivery timezone/i });
+      expect(targetZonePicker.textContent).toContain("Asia/Singapore");
+      expect(targetZonePicker.textContent).not.toContain("Asia/Kolkata");
     }, { timeout: 3000 });
   });
 
