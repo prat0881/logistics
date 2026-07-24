@@ -37,4 +37,6 @@ export const queryImpactMap: Record<keyof QuerySaveInput, ImpactClass> = {
   dgIndicator: ImpactClass.RfqDefining,
   readyDate: ImpactClass.RfqDefining,
   targetDelivery: ImpactClass.RfqDefining,
+  readyDateTimezone: ImpactClass.Corrective,
+  targetDeliveryTimezone: ImpactClass.Corrective,
 };
