@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, within } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
@@ -16,39 +16,63 @@ function authMockFetch() {
   });
 }
 
+// Pin "today" so the calendar always renders June 2026 — makes day targeting
+// deterministic and the test hermetic (no dependence on the real clock/month).
+const FIXED_NOW = "2026-06-15T12:00:00";
+// Two real, mid-month, distinct + ordered June days. Targeting by ISO date
+// (below) instead of a positional index into the re-rendering 2-month grid is
+// what makes the two endpoints unambiguous — the old `dayButtons[10]/[15]`
+// approach flaked when the completing click raced the first pick's re-render.
+const DAY_FROM = "2026-06-10";
+const DAY_TO = "2026-06-20";
+
 /**
- * Return day buttons scoped to the rendered calendar.
- * Scoping via `data-slot="calendar"` + `within(...)` makes a missing
- * data-day attribute fail with a clear "no elements found" error instead of
- * a cryptic `undefined[N]` crash that the global getAllByRole approach produces.
+ * Click the calendar day for an ISO date. react-day-picker sets
+ * `data-day="YYYY-MM-DD"` on the `role="gridcell"` wrapper; the clickable
+ * DayButton is inside it. Querying fresh by the stable ISO selector (never a
+ * cached node or positional index) sidesteps re-render staleness.
  */
-function getDayButtons() {
-  // calendar.tsx Root renders <div data-slot="calendar"> — scope to it so we
-  // don't accidentally pick up navigation buttons or other toolbar buttons.
-  const calendarEl = document.querySelector('[data-slot="calendar"]') as HTMLElement | null;
-  if (!calendarEl) throw new Error('Calendar root ([data-slot="calendar"]) not found in the document');
-  return within(calendarEl).getAllByRole("button").filter((b) => b.getAttribute("data-day"));
+async function clickDay(user: ReturnType<typeof userEvent.setup>, iso: string) {
+  const cell = document.querySelector(`[role="gridcell"][data-day="${iso}"]`) as HTMLElement | null;
+  if (!cell) throw new Error(`Calendar day cell for ${iso} not found`);
+  await user.click(within(cell).getByRole("button"));
+}
+
+/** Wait until the calendar reflects a day as selected (the controlled `selected`
+ *  prop has flushed) — so a following click can't race the previous re-render. */
+async function waitForDaySelected(iso: string) {
+  await waitFor(() =>
+    expect(
+      document.querySelector(`[role="gridcell"][data-day="${iso}"]`),
+    ).toHaveAttribute("data-selected", "true"),
+  );
 }
 
 describe("QueriesToolbar — date-range popup", () => {
+  // Fake ONLY Date (not setTimeout) so the calendar month is fixed while
+  // userEvent's real-timer behaviour is untouched.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(FIXED_NOW));
+  });
+  afterEach(() => vi.useRealTimers());
+
   it("does not emit a date filter until both endpoints are picked", async () => {
     vi.stubGlobal("fetch", authMockFetch());
     const onChange = vi.fn();
     renderWithProviders(<QueriesToolbar onChange={onChange} />);
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await user.click(screen.getByRole("button", { name: "Date range picker" }));
 
-    // react-day-picker v10 emits { from: day, to: day } on the FIRST click
-    // (addToRange returns to=date when min===0). We gate on from !== to so
-    // a "partial" first click is not treated as a completed range.
-    const dayButtons = getDayButtons();
-    await user.click(dayButtons[10]);
+    // First endpoint only — react-day-picker v10 `addToRange` returns
+    // { from: day, to: day } on the first click (min === 0), which the toolbar
+    // gates as "partial" (from === to), so NO completed range is emitted yet.
+    await clickDay(user, DAY_FROM);
     expect(onChange.mock.calls.every(([p]) => p.dateFrom === undefined)).toBe(true);
+    await waitForDaySelected(DAY_FROM);
 
-    // Re-query after first click — calendar re-renders with the highlight, so stale
-    // references would fail. Pick a second different day to complete the range.
-    const dayButtons2 = getDayButtons();
-    await user.click(dayButtons2[15]);
+    // Second, later endpoint completes the range (from !== to) → emit.
+    await clickDay(user, DAY_TO);
     const last = onChange.mock.calls.at(-1)![0];
     expect(last.dateFrom).toBeTruthy();
     expect(last.dateTo).toBeTruthy();
@@ -58,33 +82,33 @@ describe("QueriesToolbar — date-range popup", () => {
     vi.stubGlobal("fetch", authMockFetch());
     const onChange = vi.fn();
     renderWithProviders(<QueriesToolbar onChange={onChange} />);
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await user.click(screen.getByRole("button", { name: "Date range picker" }));
 
     // Popover is open: calendar is visible
     expect(document.querySelector('[data-slot="calendar"]')).toBeInTheDocument();
 
-    const dayButtons = getDayButtons();
-    await user.click(dayButtons[10]); // first click — stays open
+    await clickDay(user, DAY_FROM); // first click — stays open
+    await waitForDaySelected(DAY_FROM);
     expect(document.querySelector('[data-slot="calendar"]')).toBeInTheDocument();
 
-    const dayButtons2 = getDayButtons();
-    await user.click(dayButtons2[15]); // second click — should close
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await clickDay(user, DAY_TO); // second click — completes the range → closes
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="calendar"]')).not.toBeInTheDocument(),
+    );
   });
 
   it("emits dateFrom: undefined when Clear is clicked after a completed range", async () => {
     vi.stubGlobal("fetch", authMockFetch());
     const onChange = vi.fn();
     renderWithProviders(<QueriesToolbar onChange={onChange} />);
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     await user.click(screen.getByRole("button", { name: "Date range picker" }));
 
     // Complete a range first
-    const dayButtons = getDayButtons();
-    await user.click(dayButtons[10]);
-    const dayButtons2 = getDayButtons();
-    await user.click(dayButtons2[15]);
+    await clickDay(user, DAY_FROM);
+    await waitForDaySelected(DAY_FROM);
+    await clickDay(user, DAY_TO);
     const afterRange = onChange.mock.calls.at(-1)![0];
     expect(afterRange.dateFrom).toBeTruthy(); // sanity: range was emitted
 
