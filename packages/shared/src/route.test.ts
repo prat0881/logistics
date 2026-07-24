@@ -176,7 +176,19 @@ describe("R9 — DG needs MSDS on every carrying leg", () => {
   });
 });
 
-describe("T1/T2/T3 — temporal", () => {
+describe("T2 removed — query dates decoupled from legs", () => {
+  it("does NOT flag when leg dates differ from the query dates", () => {
+    const g = validGraph();
+    // Deliberately mismatch: first leg ready ≠ query ready, last leg target ≠ query target.
+    g.legs[0].readyDate = "2026-08-02T00:00:00.000Z"; // query readyDate is 2026-08-01
+    g.legs[1].targetDelivery = "2026-08-09T00:00:00.000Z"; // query targetDelivery is 2026-08-10
+    expect(validateRoute(g, "create").map((f) => f.rule)).not.toContain("T2");
+    // still a clean route otherwise (chain intact, T1 order preserved)
+    expect(validateRoute(g, "create")).toEqual([]);
+  });
+});
+
+describe("T1/T3 — temporal", () => {
   it("T1: warns in draft, blocks in create when a leg departs before the prior arrives", () => {
     const g = validGraph();
     g.legs[1].readyDate = "2026-08-03T00:00:00.000Z"; // before l1 target (MID = 08-05)
@@ -185,11 +197,6 @@ describe("T1/T2/T3 — temporal", () => {
     expect(draftT1[0].severity).toBe("warning");
     const createT1 = validateRoute(g, "create").filter((f) => f.rule === "T1");
     expect(createT1[0].severity).toBe("blocking");
-  });
-  it("T2: flags first leg readyDate != query readyDate", () => {
-    const g = validGraph();
-    g.legs[0].readyDate = "2026-08-02T00:00:00.000Z";
-    expect(rules(g, "create")).toContain("T2");
   });
   it("T3: flags an onward hub leg departing before the max feeding arrival", () => {
     const g = validGraph();
