@@ -115,6 +115,16 @@ function LegsStepBody({
     }
   }, []); // intentional: mount-only
 
+  // Legs the RouteDiagram cannot draw (missing/dangling endpoints) — the escape
+  // strip below is the only place to reach them. Pure derivation of `detail`.
+  const incompleteLegs = detail.legs.filter(
+    (l) =>
+      !l.originPointId ||
+      !l.destinationPointId ||
+      !detail.points.some((p) => p.id === l.originPointId) ||
+      !detail.points.some((p) => p.id === l.destinationPointId),
+  );
+
   return (
     <div className="space-y-4 p-4">
       <h2 className="text-base font-semibold">Leg & Route</h2>
@@ -130,6 +140,41 @@ function LegsStepBody({
           + Add leg
         </Button>
       </div>
+
+      {/* Incomplete-legs escape strip — only when there are un-drawable legs.
+          The RouteDiagram skips an endpoint-less edge, so without this strip
+          those legs are invisible yet still fail Create validation (C1). */}
+      {incompleteLegs.length > 0 && (
+        <div
+          role="group"
+          aria-label="Incomplete legs"
+          className="space-y-1 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
+        >
+          <p className="font-medium text-warning">
+            {incompleteLegs.length} incomplete leg
+            {incompleteLegs.length === 1 ? "" : "s"} can&apos;t be shown on the route — click to fix
+            or delete:
+          </p>
+          <ul className="space-y-1">
+            {incompleteLegs.map((l) => {
+              const finding = grouped.byLeg.get(l.id)?.[0]?.message;
+              return (
+                <li key={l.id}>
+                  <button
+                    type="button"
+                    onClick={() => handleEdit(l)}
+                    className="w-full rounded px-2 py-1 text-left hover:bg-warning/20"
+                  >
+                    <span className="mr-2 font-mono text-xs">{l.legCode}</span>
+                    <span className="text-muted-foreground">needs origin &amp; destination</span>
+                    {finding && <span className="ml-2 text-destructive">— {finding}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* Route diagram — the primary editing surface */}
       <RouteDiagram
@@ -161,6 +206,7 @@ function LegsStepBody({
         queryId={queryId}
         open={pointEditorOpen}
         point={editingPoint as unknown as ComponentProps<typeof PointEditor>["point"]}
+        legs={detail.legs}
         onSaved={closePointEditor}
         onClose={closePointEditor}
       />

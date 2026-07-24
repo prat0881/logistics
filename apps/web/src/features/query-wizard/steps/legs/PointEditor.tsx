@@ -12,6 +12,7 @@ import type {
   PointSaveInput,
   PointUpdateInput,
   PointType,
+  QueryLegDto,
 } from "@svyft/shared";
 import {
   Dialog,
@@ -73,6 +74,8 @@ interface PointEditorProps {
   type?: PointType;
   /** When editing an existing point, pass the full point row. */
   point?: PointRow;
+  /** Legs in this query — used to block deleting a point a leg still references. */
+  legs?: QueryLegDto[];
   onSaved: (point: Record<string, unknown>) => void;
   onClose: () => void;
 }
@@ -112,6 +115,7 @@ export function PointEditor({
   open,
   type: typeProp,
   point,
+  legs = [],
   onSaved,
   onClose,
 }: PointEditorProps) {
@@ -123,6 +127,9 @@ export function PointEditor({
   const [selectedType, setSelectedType] = useState<PointType>(
     (point?.type ?? typeProp ?? "PICKUP") as PointType,
   );
+
+  // Message shown when a delete is blocked because a leg references the point.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const activeType = isEdit ? (point!.type as PointType) : selectedType;
 
@@ -166,7 +173,19 @@ export function PointEditor({
   };
 
   const handleDelete = async () => {
-    if (!point || !window.confirm("Delete this point?")) return;
+    if (!point) return;
+    // Guard: a point still used by a leg can't be deleted — otherwise the server's
+    // SetNull FK nulls the leg's endpoint, making a dangling (un-drawable) leg.
+    const referencing = legs.find(
+      (l) => l.originPointId === point.id || l.destinationPointId === point.id,
+    );
+    if (referencing) {
+      setDeleteError(
+        `This point is used by leg ${referencing.legCode} — edit or remove that leg first.`,
+      );
+      return;
+    }
+    if (!window.confirm("Delete this point?")) return;
     await remove(point.id);
     onSaved(point as unknown as Record<string, unknown>);
     onClose();
@@ -675,6 +694,12 @@ export function PointEditor({
                   />
                 </div>
               </div>
+            )}
+
+            {deleteError && (
+              <p role="alert" className="text-sm font-medium text-destructive">
+                {deleteError}
+              </p>
             )}
 
             <DialogFooter>

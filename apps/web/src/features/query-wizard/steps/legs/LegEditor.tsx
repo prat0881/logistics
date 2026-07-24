@@ -148,6 +148,21 @@ export function LegEditor({
 
   const handleSubmit = form.handleSubmit(async (data) => {
     setServerFindings([]);
+
+    // Structural hard-block (add + edit): a leg with no origin/destination is not a
+    // draft, it's an invalid graph edge (C1 always blocks it, the diagram can't draw
+    // it). Unlike mode/cargo/dates, endpoints are required to Save. See the fix plan.
+    let blocked = false;
+    if (!data.originPointId) {
+      form.setError("originPointId", { type: "manual", message: "Origin is required" });
+      blocked = true;
+    }
+    if (!data.destinationPointId) {
+      form.setError("destinationPointId", { type: "manual", message: "Destination is required" });
+      blocked = true;
+    }
+    if (blocked) return;
+
     try {
       if (isEdit && leg) {
         await update(leg.id, data);
@@ -383,6 +398,7 @@ export function LegEditor({
         <PointEditor
           queryId={queryId}
           open={Boolean(showPointEditor)}
+          legs={detail.legs}
           onSaved={(saved) => handlePointSaved(showPointEditor, saved)}
           onClose={() => setShowPointEditor(null)}
         />

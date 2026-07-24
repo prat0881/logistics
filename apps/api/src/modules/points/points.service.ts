@@ -1,5 +1,5 @@
 // apps/api/src/modules/points/points.service.ts
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import type { PointSaveInput, PointUpdateInput } from "@svyft/shared";
@@ -68,10 +68,23 @@ export class PointsService {
 
   async remove(queryId: string, pointId: string, user: RequestUser) {
     await this.load(queryId, pointId);
+
+    // Guard: a point still used by a leg cannot be deleted. Without this the
+    // Leg→Point SetNull FK would silently null the leg's endpoint, manufacturing
+    // a dangling (un-drawable, C1-blocking) leg. Mirror of the PointEditor guard.
+    const referencingLeg = await this.prisma.leg.findFirst({
+      where: { queryId, OR: [{ originPointId: pointId }, { destinationPointId: pointId }] },
+      select: { legCode: true },
+    });
+    if (referencingLeg) {
+      throw new ConflictException(
+        `Point is referenced by leg ${referencingLeg.legCode} — remove or edit that leg first`,
+      );
+    }
+
     await this.mediator.apply(
       { entity: "point", id: pointId, action: "@delete", queryId, actorId: user.userId },
       async (tx) => {
-        // Referencing legs' endpoints are nulled by the SetNull FK; revalidation flags them.
         await tx.point.delete({ where: { id: pointId } });
       },
     );

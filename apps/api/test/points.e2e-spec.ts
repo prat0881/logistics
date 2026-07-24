@@ -97,4 +97,24 @@ describe("Points (e2e)", () => {
       .set("Cookie", cookie())
       .expect(204);
   });
+
+  it("409s when deleting a point referenced by a leg (does not null the endpoint)", async () => {
+    const pu = await prisma.point.create({ data: { queryId, type: "PICKUP", name: "RefPU" } });
+    const de = await prisma.point.create({ data: { queryId, type: "DELIVERY", name: "RefDE" } });
+    const leg = await prisma.leg.create({
+      data: { queryId, legCode: `${PFX}L1`, originPointId: pu.id, destinationPointId: de.id, mode: "ROAD" },
+    });
+
+    await request(app.getHttpServer())
+      .delete(`/api/queries/${queryId}/points/${pu.id}`)
+      .set("Cookie", cookie())
+      .expect(409);
+
+    // The leg still references the point — the SetNull FK was NOT reached.
+    const reloaded = await prisma.leg.findUnique({ where: { id: leg.id } });
+    expect(reloaded?.originPointId).toBe(pu.id);
+
+    // Cleanup this test's leg so it doesn't collide with other specs' legCode scans.
+    await prisma.leg.delete({ where: { id: leg.id } });
+  });
 });

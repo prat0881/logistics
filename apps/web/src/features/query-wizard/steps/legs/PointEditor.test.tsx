@@ -407,6 +407,153 @@ describe("PointEditor", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
+  it("blocks deleting a point referenced by a leg (no DELETE) and shows a message", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const REF_POINT_ID = "aaaa1111-aaaa-1111-aaaa-1111aaaa1111";
+    const refPoint = {
+      id: REF_POINT_ID,
+      type: "PICKUP" as const,
+      name: "Used Point",
+      streetAddress: "1 Test St",
+      city: "London",
+      postalCode: "SW1A",
+      country: "UK",
+      contactName: null,
+      contactPhone: null,
+      contactEmail: null,
+      warehouseType: null,
+      iataCode: null,
+      icaoCode: null,
+      unLocode: null,
+      terminal: null,
+      timezone: null,
+    };
+    // A leg whose origin is this point.
+    const legs = [
+      {
+        id: "bbbb2222-bbbb-2222-bbbb-2222bbbb2222",
+        tenantId: null,
+        queryId: QUERY_ID,
+        legCode: "L1",
+        legName: null,
+        originPointId: REF_POINT_ID,
+        destinationPointId: null,
+        mode: null,
+        readyDate: null,
+        targetDelivery: null,
+        status: "DRAFT" as const,
+        executionStatus: "PENDING" as const,
+        totalChargeableWeight: null,
+        createdAt: "2026-01-01T00:00:00+00:00",
+        updatedAt: "2026-01-01T00:00:00+00:00",
+        assignedCargoIds: [],
+        rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+      },
+    ];
+
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) =>
+      Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <PointEditor queryId={QUERY_ID} open point={refPoint} legs={legs} onSaved={vi.fn()} onClose={vi.fn()} />,
+      { user: testUser },
+    );
+
+    await screen.findByRole("dialog");
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    // A clear message naming the leg appears; no confirm, no DELETE.
+    expect(await screen.findByText(/used by leg L1/i)).toBeInTheDocument();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    const deleteCall = fetchMock.mock.calls.find(
+      ([, init]) => (init as RequestInit)?.method === "DELETE",
+    );
+    expect(deleteCall).toBeFalsy();
+  });
+
+  it("deletes an unreferenced point (legs present but none reference it)", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const FREE_POINT_ID = "cccc3333-cccc-3333-cccc-3333cccc3333";
+    const freePoint = {
+      id: FREE_POINT_ID,
+      type: "WAREHOUSE" as const,
+      name: "Unused WH",
+      streetAddress: "9 Free St",
+      city: "Leeds",
+      postalCode: "LS1",
+      country: "UK",
+      contactName: null,
+      contactPhone: null,
+      contactEmail: null,
+      warehouseType: null,
+      iataCode: null,
+      icaoCode: null,
+      unLocode: null,
+      terminal: null,
+      timezone: null,
+    };
+    // A leg that references OTHER points, not freePoint.
+    const legs = [
+      {
+        id: "dddd4444-dddd-4444-dddd-4444dddd4444",
+        tenantId: null,
+        queryId: QUERY_ID,
+        legCode: "L1",
+        legName: null,
+        originPointId: "eeee5555-eeee-5555-eeee-5555eeee5555",
+        destinationPointId: "ffff6666-ffff-6666-ffff-6666ffff6666",
+        mode: "ROAD" as const,
+        readyDate: null,
+        targetDelivery: null,
+        status: "DRAFT" as const,
+        executionStatus: "PENDING" as const,
+        totalChargeableWeight: null,
+        createdAt: "2026-01-01T00:00:00+00:00",
+        updatedAt: "2026-01-01T00:00:00+00:00",
+        assignedCargoIds: [],
+        rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+      },
+    ];
+
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) =>
+      Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <PointEditor queryId={QUERY_ID} open point={freePoint} legs={legs} onSaved={vi.fn()} onClose={vi.fn()} />,
+      { user: testUser },
+    );
+
+    await screen.findByRole("dialog");
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    await waitFor(() => {
+      const deleteCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          url === `/api/queries/${QUERY_ID}/points/${FREE_POINT_ID}` &&
+          (init as RequestInit)?.method === "DELETE",
+      );
+      expect(deleteCall).toBeTruthy();
+    });
+  });
+
   describe("timezone field (Task 10)", () => {
     const makeFetch = (orgZone = "Asia/Kolkata") =>
       vi.fn((url: string, _init?: RequestInit) => {
