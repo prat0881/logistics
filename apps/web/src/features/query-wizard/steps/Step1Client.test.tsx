@@ -627,6 +627,70 @@ describe("Step1Client", () => {
     }, { timeout: 3000 });
   });
 
+  it("org-zone clobber regression: user edits before org-zone resolves survive after it resolves", async () => {
+    // Defer the org-timezone response so we can simulate an edit during the fetch window.
+    // We bypass mockFetch for this test and install a raw vi.fn that returns Promises directly,
+    // allowing us to hold the org-timezone response until after the user has made an edit.
+    let resolveOrgTz!: () => void;
+    const orgTzDeferred = new Promise<void>((res) => { resolveOrgTz = res; });
+
+    const detailWithContact = {
+      ...draftDetail,
+      contactName: "Original Name",
+    };
+
+    const makeMockResponse = (body: unknown, status = 200) =>
+      Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
+      } as Response);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/api/auth/me"))
+          return makeMockResponse({ user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } });
+        if (url.includes("/api/config/org-timezone"))
+          return orgTzDeferred.then(() => makeMockResponse({ timezone: "Asia/Singapore" }));
+        if (url.includes("/api/queries/q9")) return makeMockResponse(detailWithContact);
+        if (url.includes("/api/clients")) return makeMockResponse({ items: [], total: 0, page: 1, pageSize: 20 });
+        if (url.includes("/api/vessels")) return makeMockResponse({ items: [], total: 0, page: 1, pageSize: 20 });
+        return makeMockResponse({});
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    // Wait for the form to render with the detail's contact name
+    await screen.findByText("YAL26-0009");
+    const contactNameInput = screen.getByPlaceholderText("Contact name") as HTMLInputElement;
+    await waitFor(() => expect(contactNameInput.value).toBe("Original Name"));
+
+    // User edits the contact name BEFORE org-timezone fetch resolves
+    await userEvent.clear(contactNameInput);
+    await userEvent.type(contactNameInput, "Edited Name");
+    expect(contactNameInput.value).toBe("Edited Name");
+
+    // Now resolve the org-timezone fetch (simulates the deferred fetch returning Asia/Singapore)
+    resolveOrgTz();
+
+    // Wait for the org zone to appear in the zone picker (confirms the seed effect ran)
+    await waitFor(() => {
+      const readyZonePicker = screen.getByRole("button", { name: /Ready Date timezone/i });
+      expect(readyZonePicker.textContent).toContain("Asia/Singapore");
+    }, { timeout: 3000 });
+
+    // The user's edit to contactName must NOT have been wiped by the seed effect re-run
+    expect(contactNameInput.value).toBe("Edited Name");
+  });
+
   it("shows company name (not UUID) in client picker trigger when detail.clientId is pre-set", async () => {
     // Query detail that already has a clientId on the server
     const detailWithClient = {

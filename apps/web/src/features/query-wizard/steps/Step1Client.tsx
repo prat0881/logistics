@@ -122,35 +122,31 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
   // When false, the field is recomputed from queryDate + priority on every priority change.
   const deadlineTouchedRef = useRef(false);
 
-  // Reset form when detail loads/changes, then seed timezone fields to the real org zone
-  // when they are still empty (no stored zone on the detail).
-  // Seed is done here (after form.reset) so it always runs AFTER the reset, preventing
-  // a race where the seed effect fires before reset and gets wiped.
-  // orgZone is in deps so when the fetch resolves (isLoading→false, orgZone is real),
-  // this runs again and seeds the now-empty fields.
+  // Reset the form when a query detail loads/changes. Deps do NOT include orgZone, so a
+  // late-resolving org-timezone fetch can never re-trigger a full-form reset (which would
+  // clobber the exec's un-saved edits).
   useEffect(() => {
-    if (detail) {
-      form.reset({
-        ...fromDetail(detail),
-      });
-      setSelectedClientId(detail.clientId ?? undefined);
-      setSelectedVesselId(detail.vesselId ?? undefined);
-      setSelectedVesselName(detail.vesselName ?? undefined);
-      // If the loaded detail already has a deadline, treat it as "touched" so we
-      // don't overwrite the server-persisted value.
-      if (detail.responseDeadline) {
-        deadlineTouchedRef.current = true;
-      }
+    if (!detail) return;
+    form.reset({ ...fromDetail(detail) });
+    setSelectedClientId(detail.clientId ?? undefined);
+    setSelectedVesselId(detail.vesselId ?? undefined);
+    setSelectedVesselName(detail.vesselName ?? undefined);
+    // If the loaded detail already has a deadline, treat it as "touched" so we
+    // don't overwrite the server-persisted value.
+    if (detail.responseDeadline) {
+      deadlineTouchedRef.current = true;
     }
-    // Seed timezone fields with the real org zone when still empty.
-    // Empty-guarded: never clobbers a stored zone (from detail) or a user pick.
-    // Runs after every detail-change (covers post-reset) and every orgZone change (covers
-    // the async fetch resolving), but only when we know the actual zone (!isLoading).
-    if (!isLoading && orgZone) {
-      if (!form.getValues("readyDateTimezone")) form.setValue("readyDateTimezone", orgZone);
-      if (!form.getValues("targetDeliveryTimezone")) form.setValue("targetDeliveryTimezone", orgZone);
-    }
-  }, [detail, form, isLoading, orgZone]);
+  }, [detail, form]);
+
+  // Seed the timezone fields to the real org zone once known, only when still empty.
+  // Declared AFTER the reset effect so on the initial flush it runs after reset (not wiped).
+  // Empty-guarded → never clobbers a stored zone or a user pick. Re-runs when the fetch
+  // resolves (orgZone/isLoading change) WITHOUT resetting any other field.
+  useEffect(() => {
+    if (isLoading || !orgZone) return;
+    if (!form.getValues("readyDateTimezone")) form.setValue("readyDateTimezone", orgZone);
+    if (!form.getValues("targetDeliveryTimezone")) form.setValue("targetDeliveryTimezone", orgZone);
+  }, [detail, isLoading, orgZone, form]);
 
   // Auto-default Response Deadline = queryDate + priority-hours (recompute until touched).
   const watchedPriority = form.watch("priority");
