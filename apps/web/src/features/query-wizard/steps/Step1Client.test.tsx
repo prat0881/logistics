@@ -459,7 +459,11 @@ describe("Step1Client", () => {
 
     // The Ready Date field should show the UTC instant converted to Asia/Kolkata wall-clock
     await waitFor(() => {
-      const readyDateInput = screen.getByLabelText(/Ready Date/i) as HTMLInputElement;
+      // getByLabelText with a function matcher: match labels whose text is "Ready Date"
+      // (with optional " *" from required marker) but NOT "Ready Date timezone".
+      const readyDateInput = screen.getByLabelText(
+        (content) => /^Ready Date(\s*\*)?$/i.test(content),
+      ) as HTMLInputElement;
       // 2026-06-15T03:30Z in Asia/Kolkata (UTC+5:30) = 2026-06-15T09:00
       expect(readyDateInput.value).toBe("2026-06-15T09:00");
     });
@@ -533,6 +537,52 @@ describe("Step1Client", () => {
 
     // Deadline must not change after manual edit
     expect(deadline.value).toBe(manualDeadline);
+  });
+
+  it("renders Ready-zone and Target-zone pickers defaulting to Asia/Kolkata, and Ready field hint reflects the zone", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // Ready-zone picker should render and default to Asia/Kolkata
+    await waitFor(() => {
+      const readyZonePicker = screen.getByRole("button", { name: /Ready Date timezone/i });
+      expect(readyZonePicker).toBeInTheDocument();
+      expect(readyZonePicker.textContent).toContain("Asia/Kolkata");
+    }, { timeout: 3000 });
+
+    // Target-zone picker should render and default to Asia/Kolkata
+    await waitFor(() => {
+      const targetZonePicker = screen.getByRole("button", { name: /Target Delivery timezone/i });
+      expect(targetZonePicker).toBeInTheDocument();
+      expect(targetZonePicker.textContent).toContain("Asia/Kolkata");
+    }, { timeout: 3000 });
+
+    // Ready field's "Times in" hint should reflect the picked zone (Asia/Kolkata)
+    await waitFor(() => {
+      const hints = screen.getAllByText(/Times in/i);
+      const readyHint = hints.find((h) => h.textContent?.includes("Asia/Kolkata"));
+      expect(readyHint).toBeDefined();
+    }, { timeout: 3000 });
   });
 
   it("shows company name (not UUID) in client picker trigger when detail.clientId is pre-set", async () => {
