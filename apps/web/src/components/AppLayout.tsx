@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Role } from "@svyft/shared";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
+import { NotificationBell } from "@/features/notifications/NotificationBell";
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth();
@@ -33,6 +34,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           )}
         </nav>
         <div className="flex items-center gap-3 text-sm">
+          <NotificationBell />
           <span className="text-muted-foreground">
             {user?.name} ({user?.role})
           </span>

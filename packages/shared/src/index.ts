@@ -12,3 +12,4 @@ export * from "./points";
 export * from "./legs";
 export * from "./route";
 export * from "./timezone";
+export * from "./notifications";

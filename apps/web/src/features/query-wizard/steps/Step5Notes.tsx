@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { patchJson } from "@/lib/api";
 import { useWizard } from "../WizardContext";
 import { useSaveQuery } from "../useQueryDetail";
+import { useEmails } from "../useEmails";
 import type { StepSaveFn } from "./Step1Client";
 
 interface Step5NotesProps {
@@ -30,6 +31,7 @@ export function Step5Notes({ registerSave }: Step5NotesProps) {
   const { detail, queryId } = useWizard();
   const { patch } = useSaveQuery();
   const qc = useQueryClient();
+  const { list: emailList } = useEmails(queryId);
 
   // Internal Notes local state
   const [internalNotes, setInternalNotes] = useState<string>(
@@ -146,6 +148,33 @@ export function Step5Notes({ registerSave }: Step5NotesProps) {
           })}
         </div>
       </div>
+
+      {/* Section: Email Log */}
+      {queryId && (
+        <div className="space-y-2">
+          <h2 className="text-base font-semibold">Emails Logged</h2>
+          {emailList.data && emailList.data.length > 0 ? (
+            <ul className="space-y-2" aria-label="Email log">
+              {emailList.data.map((email) => (
+                <li
+                  key={email.id}
+                  className="rounded-md border px-3 py-2 text-sm text-muted-foreground flex flex-col gap-0.5"
+                >
+                  <span className="font-medium text-foreground">
+                    {email.subject}
+                  </span>
+                  <span className="text-xs">
+                    {email.template} · {email.toAddress ?? "—"} ·{" "}
+                    {new Date(email.createdAt).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No emails logged yet.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

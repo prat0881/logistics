@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { EventEmitterModule } from "@nestjs/event-emitter";
+import { ScheduleModule } from "@nestjs/schedule";
 import { ServeStaticModule } from "@nestjs/serve-static";
 import { join } from "node:path";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -17,6 +18,9 @@ import { CargoModule } from "./modules/cargo/cargo.module";
 import { PointsModule } from "./modules/points/points.module";
 import { LegsModule } from "./modules/legs/legs.module";
 import { RoutingModule } from "./modules/routing/routing.module";
+import { EmailsModule } from "./modules/emails/emails.module";
+import { NotificationsModule } from "./modules/notifications/notifications.module";
+import { EscalationsModule } from "./modules/escalations/escalations.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -32,6 +36,7 @@ const staticImports =
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
     ...staticImports,
     PrismaModule,
     AuthModule,
@@ -46,6 +51,9 @@ const staticImports =
     PointsModule,
     LegsModule,
     RoutingModule,
+    EmailsModule,
+    NotificationsModule,
+    EscalationsModule,
     HealthModule,
   ],
 })

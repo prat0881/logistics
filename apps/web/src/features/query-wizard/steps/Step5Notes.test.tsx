@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
+import type { EmailLogDto } from "@svyft/shared";
 import { QueryWizardPage } from "../QueryWizardPage";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
@@ -243,6 +244,137 @@ describe("Step5Notes", () => {
 
     const body = notesPatches[notesPatches.length - 1] as Record<string, unknown>;
     expect(body).toHaveProperty("internalNotes", "Important shipment notes");
+  });
+
+  // ── Task 8: Send Follow-up / Acknowledgement + email log ──────────────────
+
+  it("Send Follow-up is disabled when every checklist item is checked", async () => {
+    const allChecked = CHECKLIST_ITEMS.map((i) => ({ ...i, checked: true }));
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } } };
+        if (url === `/api/queries/${QUERY_ID}/emails`)
+          return { status: 200, body: [] };
+        if (url.includes(`/api/queries/${QUERY_ID}`))
+          return { status: 200, body: { ...baseDetail, checklist: allChecked } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=4` },
+    );
+
+    await navigateToStep5();
+    await screen.findByText("Weight confirmed");
+
+    const followUpBtn = await screen.findByRole("button", { name: /send follow-up/i });
+    expect(followUpBtn).toBeDisabled();
+  });
+
+  it("Send Follow-up POSTs /emails/follow-up when ≥1 checklist item is unchecked", async () => {
+    const posts: string[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } } };
+        if (url === `/api/queries/${QUERY_ID}/emails/follow-up` && init?.method === "POST") {
+          posts.push(url);
+          return { status: 200, body: {} };
+        }
+        if (url === `/api/queries/${QUERY_ID}/emails`)
+          return { status: 200, body: [] };
+        if (url.includes(`/api/queries/${QUERY_ID}`))
+          return { status: 200, body: baseDetail }; // has unchecked items
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=4` },
+    );
+
+    await navigateToStep5();
+    await screen.findByText("Weight confirmed");
+
+    const followUpBtn = await screen.findByRole("button", { name: /send follow-up/i });
+    expect(followUpBtn).not.toBeDisabled();
+    await userEvent.click(followUpBtn);
+
+    await waitFor(() => {
+      expect(posts).toContain(`/api/queries/${QUERY_ID}/emails/follow-up`);
+    });
+  });
+
+  it("Send Acknowledgement POSTs /emails/acknowledgement and the email appears in the log", async () => {
+    const posts: string[] = [];
+    let emailsCallCount = 0;
+
+    const loggedEmail: EmailLogDto = {
+      id: "email-1",
+      queryId: QUERY_ID,
+      template: "ACKNOWLEDGEMENT",
+      fromAddress: "noreply@svyft.ai",
+      toAddress: "client@example.com",
+      subject: "Acknowledgement of your query",
+      bodyRendered: "We have received your query.",
+      status: "LOGGED",
+      createdAt: "2026-01-15T10:30:00+00:00",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } } };
+        if (url === `/api/queries/${QUERY_ID}/emails/acknowledgement` && init?.method === "POST") {
+          posts.push(url);
+          return { status: 200, body: {} };
+        }
+        if (url === `/api/queries/${QUERY_ID}/emails`) {
+          emailsCallCount += 1;
+          // Return the logged email after the POST has fired
+          return { status: 200, body: emailsCallCount > 1 ? [loggedEmail] : [] };
+        }
+        if (url.includes(`/api/queries/${QUERY_ID}`))
+          return { status: 200, body: baseDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=4` },
+    );
+
+    await navigateToStep5();
+    await screen.findByText("Weight confirmed");
+
+    const ackBtn = await screen.findByRole("button", { name: /send acknowledgement/i });
+    expect(ackBtn).not.toBeDisabled();
+    await userEvent.click(ackBtn);
+
+    await waitFor(() => {
+      expect(posts).toContain(`/api/queries/${QUERY_ID}/emails/acknowledgement`);
+    });
+
+    // After the POST invalidates the email list query, the log row should appear
+    await waitFor(() => {
+      expect(screen.getByText(/Acknowledgement of your query/i)).toBeInTheDocument();
+    });
   });
 
   it("renders all 9 checklist boxes enabled, even for a non-DG query", async () => {
