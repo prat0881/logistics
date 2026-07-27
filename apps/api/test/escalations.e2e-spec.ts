@@ -88,4 +88,46 @@ describe("Escalations (e2e)", () => {
     await svc.runDue(new Date(Date.now() + 7 * 3600_000));
     expect(await prisma.escalation.count({ where: { queryId: q2, firedAt: { not: null } } })).toBe(0);
   });
+
+  it("inactive users are NOT notified by runDue fan-out", async () => {
+    // Seed an inactive Manager alongside the existing active Manager
+    const inactiveUser = await prisma.user.create({
+      data: {
+        name: "InactiveMgr",
+        email: `${PFX}inactive-mgr@x.com`,
+        passwordHash: "x",
+        role: "MANAGER",
+        isActive: false,
+      },
+    });
+
+    // Create a fresh query to isolate this test
+    const q3row = await prisma.query.create({
+      data: { queryCode: `${PFX}inactive-${Date.now()}`, shipmentDescription: `${PFX}inactive` },
+    });
+    const q3 = q3row.id;
+
+    await svc.createForQuery(q3, new Date("2026-02-01T00:00:00Z"));
+    // Run past T2H due time so the T2H tier fires (notifies MANAGER role)
+    await svc.runDue(new Date("2026-02-01T03:00:00Z"));
+
+    // Inactive user must have received NO notifications for this query
+    expect(
+      await prisma.notification.count({ where: { recipientUserId: inactiveUser.id, queryId: q3 } }),
+    ).toBe(0);
+
+    // The active Manager must have received at least one notification for this query
+    const activeMgr = await prisma.user.findFirst({
+      where: { email: `${PFX}mgr@x.com` },
+      select: { id: true },
+    });
+    expect(activeMgr).not.toBeNull();
+    expect(
+      await prisma.notification.count({ where: { recipientUserId: activeMgr!.id, queryId: q3 } }),
+    ).toBeGreaterThanOrEqual(1);
+
+    // Cleanup extra data created by this test
+    await prisma.query.delete({ where: { id: q3 } });
+    await prisma.user.delete({ where: { id: inactiveUser.id } });
+  });
 });

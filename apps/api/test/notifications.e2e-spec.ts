@@ -90,6 +90,7 @@ describe("Notifications (e2e)", () => {
       .get("/api/notifications")
       .set("Cookie", cookie(U1))
       .expect(200);
+    expect(list.body.length).toBe(2);
     expect(list.body.every((n: { id: string }) => u1Ids.includes(n.id))).toBe(true);
   });
 

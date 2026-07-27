@@ -16,7 +16,6 @@ export function useEmails(queryId: string | undefined) {
     queryKey: ["emails", queryId],
     queryFn: () => fetchJson<EmailLogDto[]>(`/api/queries/${queryId}/emails`),
     enabled: !!queryId,
-    select: (data) => [...data].reverse(), // newest-first
   });
 
   const sendFollowUp = useMutation({

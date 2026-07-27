@@ -60,14 +60,19 @@ export class EscalationsService {
         where: { id: esc.id, firedAt: null, cancelledAt: null }, data: { firedAt: now },
       });
       if (claim.count === 0) continue;
-      const users = await this.prisma.user.findMany({
-        where: { role: esc.recipientRole, isActive: true }, select: { id: true },
-      });
-      await this.notifications.createMany(users.map((u) => u.id), {
-        type: NotificationType.ESCALATION, queryId: esc.queryId, tenantId: esc.tenantId,
-        message: `Query ${esc.query.queryCode} awaiting action — ${TIER_LABEL[esc.tier]} escalation`,
-      });
-      await this.emails.compose(EmailTemplate.ESCALATION, esc.queryId, null);
+      try {
+        const users = await this.prisma.user.findMany({
+          where: { role: esc.recipientRole, isActive: true }, select: { id: true },
+        });
+        await this.notifications.createMany(users.map((u) => u.id), {
+          type: NotificationType.ESCALATION, queryId: esc.queryId, tenantId: esc.tenantId,
+          message: `Query ${esc.query.queryCode} awaiting action — ${TIER_LABEL[esc.tier]} escalation`,
+        });
+        await this.emails.compose(EmailTemplate.ESCALATION, esc.queryId, null);
+      } catch (err) {
+        this.logger.error(`runDue notify/compose failed for escalation ${esc.id}`, err as Error);
+        continue;
+      }
       fired++;
     }
     return { fired };
