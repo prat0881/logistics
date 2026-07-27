@@ -19,6 +19,7 @@ import { PointsModule } from "./modules/points/points.module";
 import { LegsModule } from "./modules/legs/legs.module";
 import { RoutingModule } from "./modules/routing/routing.module";
 import { EmailsModule } from "./modules/emails/emails.module";
+import { NotificationsModule } from "./modules/notifications/notifications.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -50,6 +51,7 @@ const staticImports =
     LegsModule,
     RoutingModule,
     EmailsModule,
+    NotificationsModule,
     HealthModule,
   ],
 })
