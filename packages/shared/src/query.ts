@@ -6,6 +6,7 @@ import type { FreightMode } from "./config";
 import type { LegStatus } from "./status";
 import type { LegExecutionStatus } from "./legs";
 import type { CargoDto } from "./cargo";
+import { isValidIanaZone } from "./timezone";
 
 export const Priority = { LOW: "LOW", MEDIUM: "MEDIUM", HIGH: "HIGH", URGENT: "URGENT" } as const;
 export type Priority = (typeof Priority)[keyof typeof Priority];
@@ -85,6 +86,8 @@ export const querySaveSchema = z
     dgIndicator: z.boolean(),
     readyDate: isoDate,
     targetDelivery: isoDate,
+    readyDateTimezone: z.string().refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
+    targetDeliveryTimezone: z.string().refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
     internalNotes: z.string().max(500),
     assignedUserId: z.string().uuid(),
   })
@@ -411,6 +414,8 @@ export type QueryDetail = {
   dgIndicator: boolean;
   readyDate: string | null;
   targetDelivery: string | null;
+  readyDateTimezone: string | null;
+  targetDeliveryTimezone: string | null;
   internalNotes: string | null;
   status: (typeof QUERY_STATUSES)[number];
   rfqReadyAt: string | null;

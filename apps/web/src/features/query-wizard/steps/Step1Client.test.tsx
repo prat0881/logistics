@@ -39,6 +39,8 @@ const draftDetail = {
   shipmentDescription: null,
   readyDate: null,
   targetDelivery: null,
+  readyDateTimezone: null,
+  targetDeliveryTimezone: null,
   internalNotes: null,
   tenantId: null,
   rfqReadyAt: null,
@@ -459,7 +461,11 @@ describe("Step1Client", () => {
 
     // The Ready Date field should show the UTC instant converted to Asia/Kolkata wall-clock
     await waitFor(() => {
-      const readyDateInput = screen.getByLabelText(/Ready Date/i) as HTMLInputElement;
+      // getByLabelText with a function matcher: match labels whose text is "Ready Date"
+      // (with optional " *" from required marker) but NOT "Ready Date timezone".
+      const readyDateInput = screen.getByLabelText(
+        (content) => /^Ready Date(\s*\*)?$/i.test(content),
+      ) as HTMLInputElement;
       // 2026-06-15T03:30Z in Asia/Kolkata (UTC+5:30) = 2026-06-15T09:00
       expect(readyDateInput.value).toBe("2026-06-15T09:00");
     });
@@ -533,6 +539,156 @@ describe("Step1Client", () => {
 
     // Deadline must not change after manual edit
     expect(deadline.value).toBe(manualDeadline);
+  });
+
+  it("renders Ready-zone and Target-zone pickers defaulting to Asia/Kolkata, and Ready field hint reflects the zone", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // Ready-zone picker should render and default to Asia/Kolkata
+    await waitFor(() => {
+      const readyZonePicker = screen.getByRole("button", { name: /Ready Date timezone/i });
+      expect(readyZonePicker).toBeInTheDocument();
+      expect(readyZonePicker.textContent).toContain("Asia/Kolkata");
+    }, { timeout: 3000 });
+
+    // Target-zone picker should render and default to Asia/Kolkata
+    await waitFor(() => {
+      const targetZonePicker = screen.getByRole("button", { name: /Target Delivery timezone/i });
+      expect(targetZonePicker).toBeInTheDocument();
+      expect(targetZonePicker.textContent).toContain("Asia/Kolkata");
+    }, { timeout: 3000 });
+
+    // Ready field's "Times in" hint should reflect the picked zone (Asia/Kolkata)
+    await waitFor(() => {
+      const hints = screen.getAllByText(/Times in/i);
+      const readyHint = hints.find((h) => h.textContent?.includes("Asia/Kolkata"));
+      expect(readyHint).toBeDefined();
+    }, { timeout: 3000 });
+  });
+
+  it("non-Kolkata org (Asia/Singapore) — zone pickers show real org zone, not Kolkata default", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Singapore" } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+
+    // Regression: must show Asia/Singapore (GMT+08:00), NOT Asia/Kolkata (the DEFAULT_ORG_TIMEZONE)
+    // This would fail under the old bug where defaultValues seeded Kolkata synchronously and
+    // the seed-when-empty effect found the field non-empty and skipped setting the real zone.
+    await waitFor(() => {
+      const readyZonePicker = screen.getByRole("button", { name: /Ready Date timezone/i });
+      expect(readyZonePicker.textContent).toContain("Asia/Singapore");
+      expect(readyZonePicker.textContent).not.toContain("Asia/Kolkata");
+    }, { timeout: 3000 });
+
+    await waitFor(() => {
+      const targetZonePicker = screen.getByRole("button", { name: /Target Delivery timezone/i });
+      expect(targetZonePicker.textContent).toContain("Asia/Singapore");
+      expect(targetZonePicker.textContent).not.toContain("Asia/Kolkata");
+    }, { timeout: 3000 });
+  });
+
+  it("org-zone clobber regression: user edits before org-zone resolves survive after it resolves", async () => {
+    // Defer the org-timezone response so we can simulate an edit during the fetch window.
+    // We bypass mockFetch for this test and install a raw vi.fn that returns Promises directly,
+    // allowing us to hold the org-timezone response until after the user has made an edit.
+    let resolveOrgTz!: () => void;
+    const orgTzDeferred = new Promise<void>((res) => { resolveOrgTz = res; });
+
+    const detailWithContact = {
+      ...draftDetail,
+      contactName: "Original Name",
+    };
+
+    const makeMockResponse = (body: unknown, status = 200) =>
+      Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
+      } as Response);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/api/auth/me"))
+          return makeMockResponse({ user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } });
+        if (url.includes("/api/config/org-timezone"))
+          return orgTzDeferred.then(() => makeMockResponse({ timezone: "Asia/Singapore" }));
+        if (url.includes("/api/queries/q9")) return makeMockResponse(detailWithContact);
+        if (url.includes("/api/clients")) return makeMockResponse({ items: [], total: 0, page: 1, pageSize: 20 });
+        if (url.includes("/api/vessels")) return makeMockResponse({ items: [], total: 0, page: 1, pageSize: 20 });
+        return makeMockResponse({});
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    // Wait for the form to render with the detail's contact name
+    await screen.findByText("YAL26-0009");
+    const contactNameInput = screen.getByPlaceholderText("Contact name") as HTMLInputElement;
+    await waitFor(() => expect(contactNameInput.value).toBe("Original Name"));
+
+    // User edits the contact name BEFORE org-timezone fetch resolves
+    await userEvent.clear(contactNameInput);
+    await userEvent.type(contactNameInput, "Edited Name");
+    expect(contactNameInput.value).toBe("Edited Name");
+
+    // Now resolve the org-timezone fetch (simulates the deferred fetch returning Asia/Singapore)
+    resolveOrgTz();
+
+    // Wait for the org zone to appear in the zone picker (confirms the seed effect ran)
+    await waitFor(() => {
+      const readyZonePicker = screen.getByRole("button", { name: /Ready Date timezone/i });
+      expect(readyZonePicker.textContent).toContain("Asia/Singapore");
+    }, { timeout: 3000 });
+
+    // The user's edit to contactName must NOT have been wiped by the seed effect re-run
+    expect(contactNameInput.value).toBe("Edited Name");
   });
 
   it("shows company name (not UUID) in client picker trigger when detail.clientId is pre-set", async () => {

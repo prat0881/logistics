@@ -554,7 +554,7 @@ describe("PointEditor", () => {
     });
   });
 
-  describe("timezone field (Task 10)", () => {
+  describe("timezone field (Task 8 — TimezoneCombobox)", () => {
     const makeFetch = (orgZone = "Asia/Kolkata") =>
       vi.fn((url: string, _init?: RequestInit) => {
         if (url.includes("/api/auth/me"))
@@ -579,7 +579,7 @@ describe("PointEditor", () => {
         } as Response);
       });
 
-    it("(a) new point defaults timezone to org zone (Asia/Singapore)", async () => {
+    it("(a) new point defaults timezone to org zone — combobox trigger shows zone + offset", async () => {
       // Use Asia/Singapore — guaranteed to be in Intl.supportedValuesOf("timeZone").
       vi.stubGlobal("fetch", makeFetch("Asia/Singapore"));
 
@@ -594,22 +594,18 @@ describe("PointEditor", () => {
         { user: testUser },
       );
 
-      // After org-timezone loads, useEffect calls form.setValue("timezone", "Asia/Singapore").
-      // Radix SelectTrigger renders the selected zone text in its inner span.
+      // After org-timezone loads, the seeding useEffect fires and the TimezoneCombobox
+      // trigger button text becomes "Asia/Singapore (GMT+08:00)".
       await waitFor(() => {
-        // The "Timezone" label must exist
-        expect(
-          screen.getByText(/^Timezone$/),
-        ).toBeInTheDocument();
-        // The SelectTrigger span displays the selected option text
-        expect(
-          screen.getAllByText("Asia/Singapore").length,
-        ).toBeGreaterThanOrEqual(1);
+        expect(screen.getByText(/^Timezone$/)).toBeInTheDocument();
+        // The combobox trigger button contains the zone name and its offset.
+        const btn = screen.getByRole("button", { name: /point timezone/i });
+        expect(btn.textContent).toMatch(/Asia\/Singapore/);
+        expect(btn.textContent).toMatch(/GMT\+08:00/);
       });
     });
 
-    it("(b) edit mode shows the point's own timezone (America/New_York)", async () => {
-      // Use America/New_York — guaranteed to be in Intl.supportedValuesOf("timeZone").
+    it("(b) edit mode shows the point's own timezone in the combobox trigger", async () => {
       vi.stubGlobal("fetch", makeFetch("Asia/Singapore"));
 
       const editPoint = {
@@ -642,12 +638,11 @@ describe("PointEditor", () => {
         { user: testUser },
       );
 
-      // SelectTrigger renders the point's stored zone — it's in the IANA list so it renders.
+      // The combobox trigger shows the stored zone from the point, not the org zone.
       await waitFor(() => {
         expect(screen.getByText(/^Timezone$/)).toBeInTheDocument();
-        expect(
-          screen.getAllByText("America/New_York").length,
-        ).toBeGreaterThanOrEqual(1);
+        const btn = screen.getByRole("button", { name: /point timezone/i });
+        expect(btn.textContent).toMatch(/America\/New_York/);
       });
     });
 
@@ -675,13 +670,9 @@ describe("PointEditor", () => {
       });
     });
 
-    it("(d) new point with org timezone Asia/Kolkata (Intl alias) appends it to the options list", async () => {
-      // Asia/Kolkata is NOT returned by Intl.supportedValuesOf("timeZone") — only Asia/Calcutta is.
-      // After the org-timezone query resolves, zoneOptions appends Asia/Kolkata so the hidden
-      // <select>/<option> and the Select items both contain it.
-      // NOTE: We check screen.getAllByText (finds the hidden <option>) rather than within(trigger)
-      // because Radix's trigger display mechanism does not retroactively update when a SelectItem
-      // is added after the Select has already initialized without a matching item.
+    it("(d) org timezone Asia/Kolkata is shown in the combobox trigger (TimezoneCombobox handles alias)", async () => {
+      // TimezoneCombobox prepends unknown zones to the list, so Asia/Kolkata is
+      // always a valid selection even if Intl.supportedValuesOf only knows Asia/Calcutta.
       vi.stubGlobal("fetch", makeFetch("Asia/Kolkata"));
 
       renderWithProviders(
@@ -695,13 +686,11 @@ describe("PointEditor", () => {
         { user: testUser },
       );
 
-      // After the org-timezone query resolves the seeding useEffect runs and sets the form value.
-      // orgZone is proactively included in zoneOptions, so Asia/Kolkata appears in the trigger
-      // and in the Radix hidden select from the first render.
+      // After org-timezone resolves, the seeding useEffect sets the form value to "Asia/Kolkata".
+      // TimezoneCombobox prepends the value to its zone list so the trigger shows it.
       await waitFor(() => {
-        expect(
-          screen.getAllByText("Asia/Kolkata").length,
-        ).toBeGreaterThanOrEqual(1);
+        const btn = screen.getByRole("button", { name: /point timezone/i });
+        expect(btn.textContent).toMatch(/Asia\/Kolkata/);
       });
     });
   });

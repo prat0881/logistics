@@ -266,6 +266,8 @@ model Query {
   // dates
   readyDate               DateTime?
   targetDelivery          DateTime?
+  readyDateTimezone       String?
+  targetDeliveryTimezone  String?
   // notes + assignment + system status
   internalNotes           String?
   status                  QueryStatus @default(DRAFT)

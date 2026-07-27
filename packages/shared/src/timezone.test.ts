@@ -74,3 +74,11 @@ describe("zoneLabel / formatInZone", () => {
     expect(formatInZone("", "Asia/Kolkata")).toBe("");
   });
 });
+
+describe("zoneLabel padded offset", () => {
+  it("returns a padded GMT offset for fixed-offset zones", () => {
+    expect(zoneLabel("Asia/Kolkata")).toBe("GMT+05:30");
+    expect(zoneLabel("Asia/Singapore")).toBe("GMT+08:00");
+    expect(zoneLabel("UTC")).toMatch(/GMT|UTC/);
+  });
+});

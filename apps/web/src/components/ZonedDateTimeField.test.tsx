@@ -19,7 +19,11 @@ describe("ZonedDateTimeField", () => {
   it("shows the stored UTC instant as the zone's wall-clock", () => {
     render(<Harness zone="Asia/Kolkata" initial="2026-06-15T03:30:00.000Z" />);
     expect((screen.getByLabelText(/Ready/i) as HTMLInputElement).value).toBe("2026-06-15T09:00");
-    expect(screen.getByText(/Times in/i)).toBeInTheDocument();
+    expect(screen.getByText(/Times in Asia\/Kolkata \(GMT\+05:30\)/)).toBeInTheDocument();
+  });
+  it("shows the IANA zone + offset in the hint", () => {
+    render(<Harness zone="Asia/Kolkata" initial="2026-06-15T03:30:00.000Z" />);
+    expect(screen.getByText(/Times in Asia\/Kolkata \(GMT\+05:30\)/)).toBeInTheDocument();
   });
   it("writes back a UTC instant interpreted in the zone", () => {
     render(<Harness zone="Asia/Kolkata" />);

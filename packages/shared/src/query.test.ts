@@ -326,6 +326,16 @@ describe("F3 compares real instants across zones", () => {
   });
 });
 
+describe("Query timezone fields", () => {
+  it("accepts valid IANA zones on readyDate/targetDelivery timezone; rejects junk", () => {
+    expect(querySaveSchema.safeParse({ readyDateTimezone: "Asia/Singapore", targetDeliveryTimezone: "Europe/London" }).success).toBe(true);
+    expect(querySaveSchema.safeParse({ readyDateTimezone: "Not/AZone" }).success).toBe(false);
+  });
+  it("leaves them optional (empty draft still valid)", () => {
+    expect(querySaveSchema.safeParse({}).success).toBe(true);
+  });
+});
+
 describe("collectChecklistFindings (Notes + all boxes mandatory, Create-enforced)", () => {
   const items = (checked: boolean) =>
     [{ key: "weight-confirmed", checked, label: "Weight confirmed" }, { key: "packing-list", checked, label: "Packing list received" }];

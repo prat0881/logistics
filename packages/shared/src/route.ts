@@ -70,11 +70,6 @@ function toTime(d: Date | string | null): number | null {
   const t = new Date(d).getTime();
   return Number.isNaN(t) ? null : t;
 }
-function sameInstant(a: Date | string | null, b: Date | string | null): boolean {
-  const ta = toTime(a);
-  const tb = toTime(b);
-  return ta !== null && tb !== null && ta === tb;
-}
 
 export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
   const findings: Finding[] = [];
@@ -186,7 +181,7 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
     }
   }
 
-  // Per cargo-row subgraph — R1/R2/R4/R6/C2/T1/T2/R9.
+  // Per cargo-row subgraph — R1/R2/R4/R6/C2/T1/R9.
   for (const c of graph.cargo) {
     const legs = (legsByCargo.get(c.id) ?? []).map((id) => legById.get(id)).filter((l): l is RouteLeg => !!l);
     if (legs.length === 0) continue; // R3 already flagged
@@ -245,8 +240,6 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
     let cur = start;
     let steps = 0;
     let prevLeg: RouteLeg | null = null;
-    let firstLeg: RouteLeg | null = null;
-    let lastLeg: RouteLeg | null = null;
     let broke = false;
     while (cur !== end) {
       if (visited.has(cur)) {
@@ -262,8 +255,6 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
         break;
       }
       const leg = outs[0];
-      if (!firstLeg) firstLeg = leg;
-      lastLeg = leg;
       if (prevLeg) {
         const prevArr = toTime(prevLeg.targetDelivery);
         const dep = toTime(leg.readyDate);
@@ -283,12 +274,6 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
     // C2 — all of this row's legs consumed by the single chain.
     if (!broke && steps !== edges.length)
       findings.push({ rule: "C2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: not all its legs form one continuous chain` });
-
-    // T2 — first leg readyDate = query readyDate; last leg targetDelivery = query targetDelivery.
-    if (!broke && firstLeg && !sameInstant(firstLeg.readyDate, graph.query.readyDate))
-      findings.push({ rule: "T2", severity: sev(), scope: { type: "leg", id: firstLeg.id }, message: `First leg ${firstLeg.legCode} Ready Date must equal the query Ready Date` });
-    if (!broke && lastLeg && !sameInstant(lastLeg.targetDelivery, graph.query.targetDelivery))
-      findings.push({ rule: "T2", severity: sev(), scope: { type: "leg", id: lastLeg.id }, message: `Last leg ${lastLeg.legCode} Target Delivery must equal the query Target Delivery` });
   }
 
   return findings;

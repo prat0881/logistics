@@ -75,11 +75,11 @@ export function utcToZonedInput(utcIso: string, zone: string): string {
   );
 }
 
-/** Short zone name at an optional instant (e.g. "GMT+5:30", "EST"). */
+/** Padded GMT offset at an optional instant (e.g. "GMT+05:30", "GMT-04:00"). */
 export function zoneLabel(zone: string, atUtcIso?: string): string {
-  const d = atUtcIso ? new Date(atUtcIso) : new Date(0);
-  const part = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "short" })
-    .formatToParts(Number.isNaN(d.getTime()) ? new Date(0) : d)
+  const d = atUtcIso ? new Date(atUtcIso) : new Date();
+  const part = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" })
+    .formatToParts(Number.isNaN(d.getTime()) ? new Date() : d)
     .find((p) => p.type === "timeZoneName");
   return part?.value ?? zone;
 }

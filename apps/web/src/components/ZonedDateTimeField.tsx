@@ -46,7 +46,7 @@ export function ZonedDateTimeField<TFieldValues extends FieldValues = FieldValue
               }}
             />
           </FormControl>
-          <p className="text-xs text-muted-foreground">Times in {zoneLabel(zone)}</p>
+          <p className="text-xs text-muted-foreground">Times in {zone} ({zoneLabel(zone)})</p>
           <FormMessage />
         </FormItem>
       )}

@@ -40,12 +40,7 @@ import {
 } from "@/components/ui/form";
 import { usePoints } from "./usePoints";
 import { useOrgTimezone } from "@/features/config/useOrgTimezone";
-
-// Full IANA timezone list — computed once at module scope.
-const IANA_ZONES: string[] =
-  typeof Intl.supportedValuesOf === "function"
-    ? Intl.supportedValuesOf("timeZone")
-    : ["UTC"];
+import { TimezoneCombobox } from "@/components/TimezoneCombobox";
 
 /** Existing point row shape (from API / query detail). */
 interface PointRow {
@@ -511,40 +506,18 @@ export function PointEditor({
             <FormField
               control={form.control}
               name="timezone"
-              render={({ field }) => {
-                // Include the org zone proactively (even before it's seeded into the field)
-                // so the Radix hidden <select> always has the option when value changes.
-                const extraZones: string[] = [];
-                if (orgZone && !IANA_ZONES.includes(orgZone)) extraZones.push(orgZone);
-                if (field.value && !IANA_ZONES.includes(field.value) && !extraZones.includes(field.value)) extraZones.push(field.value);
-                const zoneOptions = extraZones.length ? [...IANA_ZONES, ...extraZones] : IANA_ZONES;
-                return (
-                  <FormItem>
-                    <FormLabel>
-                      Timezone
-                      <RequiredMark field="timezone" type={activeType} />
-                    </FormLabel>
-                    <FormControl>
-                      <Select
-                        value={field.value ?? ""}
-                        onValueChange={field.onChange}
-                      >
-                        <SelectTrigger data-testid="timezone-trigger">
-                          <SelectValue placeholder="Select timezone" />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-72">
-                          {zoneOptions.map((z) => (
-                            <SelectItem key={z} value={z}>
-                              {z}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                );
-              }}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    Timezone
+                    <RequiredMark field="timezone" type={activeType} />
+                  </FormLabel>
+                  <FormControl>
+                    <TimezoneCombobox value={field.value ?? undefined} onChange={field.onChange} ariaLabel="Point timezone" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
 
             {/* Contact fields (PICKUP / DELIVERY / WAREHOUSE) */}

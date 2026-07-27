@@ -27,6 +27,7 @@ import { useAuth } from "@/features/auth/AuthProvider";
 import { useOrgTimezone } from "@/features/config/useOrgTimezone";
 import { resolveQueryFieldZone } from "@/lib/zones";
 import { ZonedDateTimeField } from "@/components/ZonedDateTimeField";
+import { TimezoneCombobox } from "@/components/TimezoneCombobox";
 import { ClientPicker } from "../pickers/ClientPicker";
 import { VesselPicker } from "../pickers/VesselPicker";
 
@@ -74,6 +75,8 @@ function fromDetail(detail: QueryDetail | undefined): Partial<QuerySaveInput> {
     portOfCall: detail.portOfCall ?? undefined,
     readyDate: detail.readyDate ?? undefined,
     targetDelivery: detail.targetDelivery ?? undefined,
+    readyDateTimezone: detail.readyDateTimezone ?? undefined,
+    targetDeliveryTimezone: detail.targetDeliveryTimezone ?? undefined,
   };
 }
 
@@ -82,10 +85,7 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
   const { user } = useAuth();
   const isAdmin = user?.role === Role.ADMINISTRATOR;
 
-  const { orgZone } = useOrgTimezone();
-  const graph = { points: detail?.points ?? [], legs: detail?.legs ?? [] };
-  const zoneFor = (f: Parameters<typeof resolveQueryFieldZone>[0]) =>
-    resolveQueryFieldZone(f, graph, orgZone);
+  const { orgZone, isLoading } = useOrgTimezone();
 
   const [selectedClientId, setSelectedClientId] = useState<string | undefined>(
     detail?.clientId ?? undefined,
@@ -102,27 +102,51 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
 
   const form = useForm<QuerySaveInput>({
     resolver: zodResolver(querySaveSchema),
-    defaultValues: fromDetail(detail),
+    defaultValues: {
+      ...fromDetail(detail),
+    },
   });
+
+  const watchedReadyTz = form.watch("readyDateTimezone");
+  const watchedTargetTz = form.watch("targetDeliveryTimezone");
+  const graph = {
+    points: detail?.points ?? [],
+    legs: detail?.legs ?? [],
+    readyDateTimezone: watchedReadyTz,
+    targetDeliveryTimezone: watchedTargetTz,
+  };
+  const zoneFor = (f: Parameters<typeof resolveQueryFieldZone>[0]) =>
+    resolveQueryFieldZone(f, graph, orgZone);
 
   // Tracks whether the exec has manually edited the Response Deadline field.
   // When false, the field is recomputed from queryDate + priority on every priority change.
   const deadlineTouchedRef = useRef(false);
 
-  // Reset form when detail loads/changes
+  // Reset the form when a query detail loads/changes. Deps do NOT include orgZone, so a
+  // late-resolving org-timezone fetch can never re-trigger a full-form reset (which would
+  // clobber the exec's un-saved edits).
   useEffect(() => {
-    if (detail) {
-      form.reset(fromDetail(detail));
-      setSelectedClientId(detail.clientId ?? undefined);
-      setSelectedVesselId(detail.vesselId ?? undefined);
-      setSelectedVesselName(detail.vesselName ?? undefined);
-      // If the loaded detail already has a deadline, treat it as "touched" so we
-      // don't overwrite the server-persisted value.
-      if (detail.responseDeadline) {
-        deadlineTouchedRef.current = true;
-      }
+    if (!detail) return;
+    form.reset({ ...fromDetail(detail) });
+    setSelectedClientId(detail.clientId ?? undefined);
+    setSelectedVesselId(detail.vesselId ?? undefined);
+    setSelectedVesselName(detail.vesselName ?? undefined);
+    // If the loaded detail already has a deadline, treat it as "touched" so we
+    // don't overwrite the server-persisted value.
+    if (detail.responseDeadline) {
+      deadlineTouchedRef.current = true;
     }
   }, [detail, form]);
+
+  // Seed the timezone fields to the real org zone once known, only when still empty.
+  // Declared AFTER the reset effect so on the initial flush it runs after reset (not wiped).
+  // Empty-guarded → never clobbers a stored zone or a user pick. Re-runs when the fetch
+  // resolves (orgZone/isLoading change) WITHOUT resetting any other field.
+  useEffect(() => {
+    if (isLoading || !orgZone) return;
+    if (!form.getValues("readyDateTimezone")) form.setValue("readyDateTimezone", orgZone);
+    if (!form.getValues("targetDeliveryTimezone")) form.setValue("targetDeliveryTimezone", orgZone);
+  }, [detail, isLoading, orgZone, form]);
 
   // Auto-default Response Deadline = queryDate + priority-hours (recompute until touched).
   const watchedPriority = form.watch("priority");
@@ -587,6 +611,23 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
               zone={zoneFor("readyDate")}
               required
             />
+            <FormField
+              control={form.control}
+              name="readyDateTimezone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Ready Date timezone</FormLabel>
+                  <FormControl>
+                    <TimezoneCombobox
+                      value={field.value ?? undefined}
+                      onChange={field.onChange}
+                      ariaLabel="Ready Date timezone"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             {/* Target Delivery */}
             <ZonedDateTimeField
@@ -595,6 +636,23 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
               label="Target Delivery"
               zone={zoneFor("targetDelivery")}
               required
+            />
+            <FormField
+              control={form.control}
+              name="targetDeliveryTimezone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Target Delivery timezone</FormLabel>
+                  <FormControl>
+                    <TimezoneCombobox
+                      value={field.value ?? undefined}
+                      onChange={field.onChange}
+                      ariaLabel="Target Delivery timezone"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
           </div>
         </div>
