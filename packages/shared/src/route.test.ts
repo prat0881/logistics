@@ -136,6 +136,27 @@ describe("R6 — mass balance", () => {
   });
 });
 
+describe("R1 — clear message when one cargo row is split across parallel legs", () => {
+  it("names the parallel-drop cause (fork) instead of the generic chain message", () => {
+    const g = validGraph();
+    g.points.push({ id: "de2", type: "DELIVERY", name: "Consignee2", streetAddress: "10 Rd", city: "Bremen", postalCode: "28195", country: "DE", contactName: "C", contactPhone: "+491230000", contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Europe/Berlin" });
+    // Same cargo c1 leaves the pickup on two legs (pu->de, pu->de2) → parallel drop.
+    g.legs = [
+      { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "de", readyDate: READY, targetDelivery: TARGET },
+      { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "pu", destinationPointId: "de2", readyDate: READY, targetDelivery: TARGET },
+    ];
+    g.legCargo = [
+      { legId: "l1", cargoItemId: "c1" },
+      { legId: "l2", cargoItemId: "c1" },
+    ];
+    const r1 = validateRoute(g, "create").find((f) => f.rule === "R1");
+    expect(r1).toBeDefined();
+    expect(r1!.message).toMatch(/parallel legs/i);
+    expect(r1!.message).toContain("L1");
+    expect(r1!.message).toContain("L2");
+  });
+});
+
 describe("R7/R8 — downstream readiness", () => {
   it("flags a missing country on an endpoint", () => {
     const g = validGraph();

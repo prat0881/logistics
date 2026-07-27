@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -44,6 +44,7 @@ import { ZonedDateTimeField } from "@/components/ZonedDateTimeField";
 import { useLegs } from "./useLegs";
 import { PointEditor } from "./PointEditor";
 import { CargoAssignmentControl } from "./CargoAssignmentControl";
+import { computeCargoConflicts } from "./cargoConflicts";
 
 interface LegEditorProps {
   open: boolean;
@@ -127,6 +128,19 @@ export function LegEditor({
   const destPoint = detail.points.find((p) => p.id === watchedDestId);
 
   const legLike = { originPointId: watchedOriginId, destinationPointId: watchedDestId };
+
+  // Cargo already carried by another leg sharing this leg's origin (parallel drop) or
+  // destination (merge) — assigning it here would break the single-chain rule (D5/R1),
+  // so the CargoAssignmentControl disables it with an "already on L#" note.
+  const cargoConflicts = useMemo(
+    () =>
+      computeCargoConflicts(detail.legs, {
+        id: leg?.id,
+        originPointId: watchedOriginId,
+        destinationPointId: watchedDestId,
+      }),
+    [detail.legs, leg?.id, watchedOriginId, watchedDestId],
+  );
 
   // Client-side V-M1 warning (non-blocking)
   const showClientVm1Warning =
@@ -339,6 +353,7 @@ export function LegEditor({
                       cargo={detail.cargo}
                       value={field.value ?? []}
                       onChange={field.onChange}
+                      conflicts={cargoConflicts}
                     />
                   )}
                 />

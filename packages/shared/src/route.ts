@@ -223,7 +223,23 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
       findings.push({ rule: "R6", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: a point does not balance (what enters must leave)` });
 
     if (sources.length !== 1 || sinks.length !== 1) {
-      findings.push({ rule: "R1", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: its legs do not form a single continuous Pickup→Delivery chain` });
+      // Clarify the most common cause: one atomic cargo row (D5) split across parallel
+      // legs — it leaves a point on >1 leg (fork / parallel drop) or arrives on >1 leg
+      // (merge). Name the point + legs so the fix ("one cargo row per destination") is
+      // obvious, instead of the generic "not a single continuous chain".
+      const forkPt = [...outdeg.entries()].find(([, d]) => d > 1)?.[0];
+      const mergePt = [...indeg.entries()].find(([, d]) => d > 1)?.[0];
+      let message: string;
+      if (forkPt) {
+        const codes = (outEdges.get(forkPt) ?? []).map((e) => e.legCode).join(" & ");
+        message = `Cargo ${c.poReference} can't be split across parallel legs — it leaves ${nameOf(forkPt)} on ${codes}. Give each destination its own cargo row.`;
+      } else if (mergePt) {
+        const codes = edges.filter((e) => e.destinationPointId === mergePt).map((e) => e.legCode).join(" & ");
+        message = `Cargo ${c.poReference} can't be built from parallel legs — ${codes} both arrive at ${nameOf(mergePt)}. Give each origin its own cargo row.`;
+      } else {
+        message = `Cargo ${c.poReference}: its legs do not form a single continuous Pickup→Delivery chain`;
+      }
+      findings.push({ rule: "R1", severity: sev(), scope: { type: "cargo", id: c.id }, message });
       continue;
     }
     const start = sources[0];
