@@ -221,6 +221,44 @@ describe("RouteDiagram", () => {
     expect(screen.getByText(/add a point or leg to start the route/i)).toBeInTheDocument();
   });
 
+  it("keeps every node inside the SVG viewBox when a cycle inflates depths (blank-canvas regression)", () => {
+    // Repro: a valid Pickup→Warehouse→Airport→Delivery route where L1's origin is
+    // later changed to the Airport, forming a 2-cycle Warehouse↔Airport. The depth
+    // relaxation runs to its iteration cap and inflates depths; nodes must still be
+    // positioned within the drawn viewBox width — otherwise the canvas renders blank
+    // and the user can no longer click a box/edge to fix the bad leg.
+    const NODE_W = 168; // mirror the layout constant (module-private)
+    const detail = makeDetail({
+      points: [
+        { id: "pk", type: "PICKUP", name: "Pickup" },
+        { id: "wh", type: "WAREHOUSE", name: "Warehouse" },
+        { id: "ap", type: "AIRPORT", name: "Airport", iataCode: "JFK" },
+        { id: "dl", type: "DELIVERY", name: "Delivery" },
+      ],
+      legs: [
+        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "ap", destinationPointId: "wh", assignedCargoIds: [] },
+        { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "wh", destinationPointId: "ap", assignedCargoIds: [] },
+        { id: "l3", legCode: "L3", mode: "ROAD", originPointId: "ap", destinationPointId: "dl", assignedCargoIds: [] },
+      ],
+    });
+    const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
+
+    const svg = container.querySelector('svg[role="img"]') as SVGSVGElement;
+    expect(svg).not.toBeNull();
+    const vbWidth = Number(svg.getAttribute("viewBox")!.split(/\s+/)[2]);
+
+    const nodes = Array.from(container.querySelectorAll("[data-point-id]")) as SVGGElement[];
+    expect(nodes.length).toBe(4);
+    for (const n of nodes) {
+      const m = /translate\(\s*([-\d.]+)[ ,]+([-\d.]+)\s*\)/.exec(n.getAttribute("transform") ?? "");
+      expect(m).not.toBeNull();
+      const x = Number(m![1]);
+      // The node's full box (x .. x+NODE_W) must fit within the viewBox width.
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x + NODE_W).toBeLessThanOrEqual(vbWidth);
+    }
+  });
+
   // ── Task 2: onEditPoint / onEditLeg ─────────────────────────────────────────
 
   const detailWithRoute = makeDetail({

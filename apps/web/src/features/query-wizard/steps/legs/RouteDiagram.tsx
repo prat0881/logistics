@@ -708,19 +708,26 @@ function computeLayout(graph: ReturnType<typeof toRouteGraph>): Layout {
     else columns.set(d, [id]);
   }
 
+  // Position by COLUMN RANK (index in the sorted-depth list), never the raw depth.
+  // A cycle makes the relaxation loop above run to its iteration cap and inflate
+  // raw depths (e.g. 9,10,11,12), so raw depth != column index. Since `width`
+  // below derives from the column COUNT, using the raw depth for x would place
+  // nodes far outside the viewBox and clip them → a blank canvas the user can no
+  // longer click to fix the bad leg. Ranking collapses the columns back to a
+  // compact 0..n-1 range that always fits the computed width.
   const pos = new Map<string, Pt>();
   let maxRows = 0;
   const sortedDepths = [...columns.keys()].sort((a, b) => a - b);
-  for (const d of sortedDepths) {
+  sortedDepths.forEach((d, col) => {
     const ids = columns.get(d)!;
     maxRows = Math.max(maxRows, ids.length);
     ids.forEach((id, row) => {
       pos.set(id, {
-        x: PAD + d * (NODE_W + COL_GAP),
+        x: PAD + col * (NODE_W + COL_GAP),
         y: PAD + row * (NODE_H + ROW_GAP),
       });
     });
-  }
+  });
 
   const cols = sortedDepths.length || 1;
   const width = PAD * 2 + cols * NODE_W + (cols - 1) * COL_GAP;
