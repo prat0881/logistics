@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { EventEmitterModule } from "@nestjs/event-emitter";
+import { ScheduleModule } from "@nestjs/schedule";
 import { ServeStaticModule } from "@nestjs/serve-static";
 import { join } from "node:path";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -32,6 +33,7 @@ const staticImports =
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     EventEmitterModule.forRoot(),
+    ScheduleModule.forRoot(),
     ...staticImports,
     PrismaModule,
     AuthModule,
