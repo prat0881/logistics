@@ -112,6 +112,30 @@ model Vessel {
   @@index([tenantId])
 }
 
+model FreightForwarder {
+  id                   String        @id @default(uuid()) @db.Uuid
+  tenantId             String?       @db.Uuid
+  freightForwarderCode String        @unique
+  companyName          String        @unique
+  companyAddress       String?
+  pic                  String
+  contactNumber        String
+  email                String
+  availableCountries   String[]
+  modes                FreightMode[]
+  handleDg             Boolean       @default(false)
+  vatTrnEori           String?
+  whLocation           String?
+  defaultCurrency      String?
+  paymentTerms         String?
+  typicalLeadTime      String?
+  status               MasterStatus  @default(ACTIVE)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  @@index([tenantId])
+}
+
 model FreightDensityFactor {
   id        String      @id @default(uuid()) @db.Uuid
   tenantId  String?     @db.Uuid

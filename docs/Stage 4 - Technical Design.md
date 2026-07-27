@@ -125,7 +125,7 @@ Every table carries `id` (uuid), nullable `tenantId`, `createdAt`/`updatedAt` (S
 **`freight-forwarders`**
 | Entity | Key columns | Notes |
 |---|---|---|
-| **FreightForwarder** | companyName, address?, pic, contactNumber, email, **availableCountries[]**, **modes[]** (ROAD·AIR·SEA), **handleDg** (bool), vatTrnEori?, whLocation?, **defaultCurrency**?, paymentTerms?, typicalLeadTime?, **status** (ACTIVE·INACTIVE) | Admin-maintained. `availableCountries`+`modes`+`handleDg` drive eligibility (§8-spec S1). Inactive → excluded from new eligible lists; historical RFQs unaffected. |
+| **FreightForwarder** | **freightForwarderCode** ᵁ (`FF-####`), companyName ᵁ, address?, pic, contactNumber, email, **availableCountries[]**, **modes[]** (ROAD·AIR·SEA), **handleDg** (bool), vatTrnEori?, whLocation?, **defaultCurrency**?, paymentTerms?, typicalLeadTime?, **status** (ACTIVE·INACTIVE) | Admin-maintained. `freightForwarderCode` minted via `CodeSequence` (key `FREIGHT_FORWARDER`), mirroring `VS-`/`CL-`. `availableCountries`+`modes`+`handleDg` drive eligibility (§8-spec S1). Inactive → excluded from new eligible lists; historical RFQs unaffected. |
 
 **`rfq`**
 | Entity | Key columns | Notes |

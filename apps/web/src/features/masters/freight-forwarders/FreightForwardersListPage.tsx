@@ -1,0 +1,86 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { Role } from "@svyft/shared";
+import { useAuth } from "@/features/auth/AuthProvider";
+import { useFreightForwarders } from "../useMasters";
+import { Input } from "@/components/ui/input";
+import { PaginationBar } from "@/components/PaginationBar";
+
+export function FreightForwardersListPage() {
+  const { user } = useAuth();
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const canWrite = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
+  const { data, isLoading } = useFreightForwarders({ q, page, pageSize });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="font-display text-xl font-semibold tracking-tight">Freight Forwarders</h1>
+        {canWrite && (
+          <Link
+            to="/masters/freight-forwarders/new"
+            className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            New freight forwarder
+          </Link>
+        )}
+      </div>
+      <Input
+        placeholder="Search company, code, PIC, email…"
+        value={q}
+        onChange={(e) => { setQ(e.target.value); setPage(1); }}
+      />
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-border bg-card">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="px-4 py-2 font-medium">Code</th>
+                <th className="px-4 py-2 font-medium">Company</th>
+                <th className="px-4 py-2 font-medium">PIC</th>
+                <th className="px-4 py-2 font-medium">Modes</th>
+                <th className="px-4 py-2 font-medium">DG</th>
+                <th className="px-4 py-2 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data?.items.length ? (
+                data.items.map((f) => (
+                  <tr key={f.id} className="border-b border-border last:border-0 hover:bg-muted/50">
+                    <td className="px-4 py-2 font-mono tabular-nums text-muted-foreground">{f.freightForwarderCode}</td>
+                    <td className="px-4 py-2">
+                      <Link to={`/masters/freight-forwarders/${f.id}`} className="font-medium text-primary hover:underline">
+                        {f.companyName}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2">{f.pic}</td>
+                    <td className="px-4 py-2">{f.modes.join(", ")}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{f.handleDg ? "Yes" : "No"}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{f.status}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    {q ? "No freight forwarders match your search." : "No freight forwarders yet."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={data?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+      />
+    </div>
+  );
+}

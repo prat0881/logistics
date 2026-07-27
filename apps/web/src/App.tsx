@@ -10,6 +10,8 @@ import { ClientsListPage } from "@/features/masters/clients/ClientsListPage";
 import { ClientFormPage } from "@/features/masters/clients/ClientFormPage";
 import { VesselsListPage } from "@/features/masters/vessels/VesselsListPage";
 import { VesselFormPage } from "@/features/masters/vessels/VesselFormPage";
+import { FreightForwardersListPage } from "@/features/masters/freight-forwarders/FreightForwardersListPage";
+import { FreightForwarderFormPage } from "@/features/masters/freight-forwarders/FreightForwarderFormPage";
 import { ConfigPage } from "@/features/admin/ConfigPage";
 import { QueriesListPage } from "@/features/query-list/QueriesListPage";
 import { QueryWizardPage } from "@/features/query-wizard/QueryWizardPage";
@@ -109,6 +111,30 @@ export function App() {
         element={
           <Protected>
             <VesselFormPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/freight-forwarders"
+        element={
+          <Protected>
+            <FreightForwardersListPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/freight-forwarders/new"
+        element={
+          <Protected>
+            <FreightForwarderFormPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/freight-forwarders/:id"
+        element={
+          <Protected>
+            <FreightForwarderFormPage />
           </Protected>
         }
       />

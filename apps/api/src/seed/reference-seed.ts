@@ -20,7 +20,7 @@ const CHECKLIST: { itemKey: string; label: string; order: number; dgConditional?
 ];
 
 export async function seedReferenceData(prisma: PrismaClient): Promise<void> {
-  for (const key of ["CLIENT", "VESSEL"]) {
+  for (const key of ["CLIENT", "VESSEL", "FREIGHT_FORWARDER"]) {
     await prisma.codeSequence.upsert({
       where: { key },
       create: { key, lastNumber: 0 },
