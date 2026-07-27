@@ -18,6 +18,7 @@ import type { FindingTab } from "@svyft/shared";
 import { STEPS } from "./WizardContext";
 import { useWizard } from "./WizardContext";
 import { useSaveQuery } from "./useQueryDetail";
+import { useEmails } from "./useEmails";
 
 interface WizardShellProps {
   children: ReactNode;
@@ -47,9 +48,37 @@ export function WizardShell({
   const navigate = useNavigate();
   const { detail, queryId, step, setStep, goNext, goBack } = useWizard();
   const { patch } = useSaveQuery();
+  const { sendFollowUp, sendAck } = useEmails(queryId);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+
+  // Follow-up is disabled when every checklist item is checked (nothing missing).
+  const allChecked =
+    (detail?.checklist ?? []).length > 0 &&
+    (detail?.checklist ?? []).every((c) => c.checked);
+
+  const handleSendFollowUp = async () => {
+    setSaveError(null);
+    setSaveSuccess(null);
+    try {
+      await sendFollowUp.mutateAsync();
+      setSaveSuccess("Follow-up email logged.");
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to log follow-up.");
+    }
+  };
+
+  const handleSendAck = async () => {
+    setSaveError(null);
+    setSaveSuccess(null);
+    try {
+      await sendAck.mutateAsync();
+      setSaveSuccess("Acknowledgement email logged.");
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to log acknowledgement.");
+    }
+  };
 
   const completedSteps = new Set<string>(
     STEPS.slice(0, step).map((s) => s.key),
@@ -217,25 +246,41 @@ export function WizardShell({
           Save
         </Button>
         {isFinalStep ? (
-          <Button
-            onClick={async () => {
-              if (!onCreateQuery) return;
-              setSaving(true);
-              setSaveError(null);
-              setSaveSuccess(null);
-              try {
-                await onCreateQuery();
-              } catch (err) {
-                // G3: surface non-422 create failures instead of swallowing them.
-                setSaveError(err instanceof Error ? err.message : "unknown error");
-              } finally {
-                setSaving(false);
-              }
-            }}
-            disabled={saving || !queryId}
-          >
-            Create Query
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              onClick={handleSendFollowUp}
+              disabled={saving || !queryId || allChecked || sendFollowUp.isPending}
+            >
+              Send Follow-up
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleSendAck}
+              disabled={saving || !queryId || sendAck.isPending}
+            >
+              Send Acknowledgement
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!onCreateQuery) return;
+                setSaving(true);
+                setSaveError(null);
+                setSaveSuccess(null);
+                try {
+                  await onCreateQuery();
+                } catch (err) {
+                  // G3: surface non-422 create failures instead of swallowing them.
+                  setSaveError(err instanceof Error ? err.message : "unknown error");
+                } finally {
+                  setSaving(false);
+                }
+              }}
+              disabled={saving || !queryId}
+            >
+              Create Query
+            </Button>
+          </>
         ) : (
           <Button onClick={handleNext} disabled={saving}>
             Next
