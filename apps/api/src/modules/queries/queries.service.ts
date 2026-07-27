@@ -6,6 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { Prisma } from "@prisma/client";
 import {
   collectCreateFindings,
@@ -61,6 +62,7 @@ export class QueriesService {
     private readonly projector: QueryStatusProjector,
     private readonly legs: LegsService,
     private readonly routing: RoutingService,
+    private readonly events: EventEmitter2,
   ) {}
 
   // ── List (GET /queries) ────────────────────────────────────────────────────────
@@ -249,7 +251,7 @@ export class QueriesService {
     const year = new Date().getFullYear();
     const data = this.toData(input);
     delete data.queryDate; // set to now() by the column default; backdate is Admin-only via PATCH
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       const seq = await tx.querySequence.upsert({
         where: { year },
         create: { year, lastNumber: 1 },
@@ -275,6 +277,8 @@ export class QueriesService {
       await this.syncDgIndicator(query.id, tx);
       return this.getWithin(tx, query.id);
     });
+    await this.events.emitAsync("query.created", { queryId: created.id, createdAt: new Date(created.createdAt) });
+    return created;
   }
 
   async get(id: string) {
@@ -402,6 +406,8 @@ export class QueriesService {
       await tx.query.update({ where: { id }, data: { rfqReadyAt: new Date() } });
       await this.projector.recompute(id, tx); // all legs READY_FOR_RFQ + rfqReady ⇒ RFQ_READY
     });
+
+    await this.events.emitAsync("query.rfq_ready", { queryId: id });
 
     const updated = await this.prisma.query.findUnique({ where: { id }, select: { id: true, status: true } });
     return updated!;

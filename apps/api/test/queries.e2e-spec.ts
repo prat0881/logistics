@@ -6,6 +6,7 @@ import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
 import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
@@ -234,5 +235,14 @@ describe("Queries (e2e)", () => {
       .patch(`/api/queries/${created.body.id}/checklist`).set("Cookie", cookie(Role.EXECUTIVE))
       .send({ items: [{ itemKey: "not-a-real-item", checked: true }] })
       .expect(400);
+  });
+
+  it("creating a query schedules 3 escalations; a rfq_ready event cancels them", async () => {
+    const created = await request(app.getHttpServer()).post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ shipmentDescription: `${PFX}esc` }).expect(201);
+    const id = created.body.id;
+    expect(await prisma.escalation.count({ where: { queryId: id, cancelledAt: null } })).toBe(3);
+    await app.get(EventEmitter2).emitAsync("query.rfq_ready", { queryId: id });
+    expect(await prisma.escalation.count({ where: { queryId: id, cancelledAt: { not: null } } })).toBe(3);
   });
 });
