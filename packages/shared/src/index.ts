@@ -6,6 +6,7 @@ export * from "./masters";
 export * from "./config";
 export * from "./reference";
 export * from "./status";
+export * from "./rfq";
 export * from "./change";
 export * from "./query";
 export * from "./cargo";

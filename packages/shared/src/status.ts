@@ -49,12 +49,39 @@ export const LegStatus = {
 export type LegStatus = (typeof LegStatus)[keyof typeof LegStatus];
 export const LEG_STATUSES = Object.values(LegStatus) as [LegStatus, ...LegStatus[]];
 
+// Leg events — add the Stage-4 forward triggers (VALIDATE_PASS/REOPEN already present).
 export const LegEvent = {
   VALIDATE_PASS: "validate.pass",
   REOPEN: "reopen",
+  SEND_RFQ: "rfq.send",
+  QUOTE_PARTIAL: "quote.partial",
+  QUOTE_FULL: "quote.full",
 } as const;
 export type LegEvent = (typeof LegEvent)[keyof typeof LegEvent];
 export const LEG_EVENTS = Object.values(LegEvent) as [LegEvent, ...LegEvent[]];
+
+// ── Quote status vocabulary (spec §9.1 — Forwarder status) ──────────────────────
+export const QuoteStatus = {
+  SELECT: "SELECT",
+  RFQ_SENT: "RFQ_SENT",
+  QUOTED: "QUOTED",
+  EXPIRED: "EXPIRED",
+  INVALID: "INVALID",
+  REQUOTED: "REQUOTED",
+  CLOSED: "CLOSED",
+  APPROVED: "APPROVED",
+} as const;
+export type QuoteStatus = (typeof QuoteStatus)[keyof typeof QuoteStatus];
+export const QUOTE_STATUSES = Object.values(QuoteStatus) as [QuoteStatus, ...QuoteStatus[]];
+
+export const QuoteEvent = {
+  SEND: "send",       // SELECT → RFQ_SENT (on distribute)
+  SUBMIT: "submit",   // RFQ_SENT → QUOTED
+  EXPIRE: "expire",   // RFQ_SENT → EXPIRED
+  INVALIDATE: "invalidate", // QUOTED → INVALID (change-order, sub-build 6)
+} as const;
+export type QuoteEvent = (typeof QuoteEvent)[keyof typeof QuoteEvent];
+export const QUOTE_EVENTS = Object.values(QuoteEvent) as [QuoteEvent, ...QuoteEvent[]];
 
 // ── Query status vocabulary (§9.1) — derived/rollup, never hand-set ─────────────
 export const QueryStatus = {

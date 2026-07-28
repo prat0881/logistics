@@ -10,6 +10,7 @@ import { HealthModule } from "./modules/health/health.module";
 import { ClientsModule } from "./modules/clients/clients.module";
 import { VesselsModule } from "./modules/vessels/vessels.module";
 import { FreightForwardersModule } from "./modules/freight-forwarders/freight-forwarders.module";
+import { RfqModule } from "./modules/rfq/rfq.module";
 import { ConfigDataModule } from "./modules/config/config-data.module";
 import { StatusModule } from "./modules/status/status.module";
 import { ChangesModule } from "./modules/changes/changes.module";
@@ -44,6 +45,7 @@ const staticImports =
     ClientsModule,
     VesselsModule,
     FreightForwardersModule,
+    RfqModule,
     ConfigDataModule,
     StatusModule,
     ChangesModule,

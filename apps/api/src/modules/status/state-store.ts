@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import type { LegStatus } from "@svyft/shared";
+import type { LegStatus, QuoteStatus } from "@svyft/shared";
 import type { Prisma } from "@prisma/client";
 
 // How fire reads AND writes an entity's current state (§7.2). Owned statuses (leg) live in a
@@ -53,12 +53,20 @@ export class DispatchingStateStore implements StatusStateStore {
       const leg = await tx.leg.findUnique({ where: { id: entityId }, select: { status: true } });
       return leg?.status ?? null;
     }
+    if (entity === "quote") {
+      const quote = await tx.quote.findUnique({ where: { id: entityId }, select: { status: true } });
+      return quote?.status ?? null;
+    }
     return this.log.load(entity, entityId, tx);
   }
 
   async save(entity: string, entityId: string, to: string, tx: Prisma.TransactionClient): Promise<void> {
     if (entity === "leg") {
       await tx.leg.update({ where: { id: entityId }, data: { status: to as LegStatus } });
+      return;
+    }
+    if (entity === "quote") {
+      await tx.quote.update({ where: { id: entityId }, data: { status: to as QuoteStatus } });
       return;
     }
     return this.log.save(entity, entityId, to, tx);

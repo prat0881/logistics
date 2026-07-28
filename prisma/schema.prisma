@@ -136,6 +136,56 @@ model FreightForwarder {
   @@index([tenantId])
 }
 
+model Rfq {
+  id                 String       @id @default(uuid()) @db.Uuid
+  tenantId           String?      @db.Uuid
+  queryId            String       @db.Uuid
+  query              Query        @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  freightForwarderId String       @db.Uuid
+  rfqNumber          String       @unique
+  accessTokenHash    String       @unique
+  submissionDeadline DateTime
+  incoterms          Incoterms?
+  currency           String?
+  quoteValidityUntil DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  quotes Quote[]
+
+  @@unique([queryId, freightForwarderId])
+  @@index([queryId])
+  @@index([tenantId])
+}
+
+model Quote {
+  id                 String      @id @default(uuid()) @db.Uuid
+  tenantId           String?     @db.Uuid
+  queryId            String      @db.Uuid
+  query              Query       @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  legId              String      @db.Uuid
+  leg                Leg         @relation(fields: [legId], references: [id], onDelete: Cascade)
+  freightForwarderId String      @db.Uuid
+  rfqId              String?     @db.Uuid
+  rfq                Rfq?        @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  status             QuoteStatus @default(SELECT)
+  manifestSnapshot   Json?
+  submittedAt        DateTime?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@unique([legId, freightForwarderId])
+  @@index([queryId])
+  @@index([legId])
+  @@index([rfqId])
+  @@index([tenantId])
+}
+
+model RfqSequence {
+  queryId    String @id @db.Uuid
+  lastNumber Int    @default(0)
+}
+
 model FreightDensityFactor {
   id        String      @id @default(uuid()) @db.Uuid
   tenantId  String?     @db.Uuid
@@ -246,6 +296,17 @@ enum LegStatus {
   CLOSED
 }
 
+enum QuoteStatus {
+  SELECT
+  RFQ_SENT
+  QUOTED
+  EXPIRED
+  INVALID
+  REQUOTED
+  CLOSED
+  APPROVED
+}
+
 enum LegExecutionStatus {
   PENDING
   IN_TRANSIT
@@ -307,6 +368,8 @@ model Query {
   files     FileAsset[]
   points    Point[]
   legs      Leg[]
+  rfqs      Rfq[]
+  quotes    Quote[]
 
   notifications Notification[]
   escalations   Escalation[]
@@ -404,6 +467,7 @@ model Leg {
   updatedAt             DateTime           @updatedAt
 
   legCargo LegCargo[]
+  quotes   Quote[]
 
   @@unique([queryId, legCode])
   @@index([queryId])

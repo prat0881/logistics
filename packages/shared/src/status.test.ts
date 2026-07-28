@@ -136,7 +136,7 @@ describe("status vocabularies", () => {
       "DELIVERED",
       "CLOSED",
     ]);
-    expect(LEG_EVENTS).toEqual(["validate.pass", "reopen"]);
+    expect(LEG_EVENTS).toEqual(["validate.pass", "reopen", "rfq.send", "quote.partial", "quote.full"]);
     expect(QUERY_STATUSES).toEqual([
       "DRAFT",
       "CREATED",
@@ -163,5 +163,25 @@ describe("deriveQueryStatus — zero-leg query-level milestones (Plan 4)", () =>
   });
   it("downstream milestones still override the zero-leg branch", () => {
     expect(deriveQueryStatus([], { rfqReady: true, closed: true })).toBe(QueryStatus.CLOSED);
+  });
+});
+
+import { QuoteStatus, QUOTE_STATUSES, QuoteEvent, LegEvent } from "./status";
+
+describe("quote status vocabulary", () => {
+  it("declares the Stage-4 quote states", () => {
+    expect(QUOTE_STATUSES).toEqual(
+      expect.arrayContaining(["SELECT", "RFQ_SENT", "QUOTED", "EXPIRED", "INVALID"]),
+    );
+    expect(QuoteStatus.SELECT).toBe("SELECT");
+  });
+  it("adds the leg forward events", () => {
+    expect(LegEvent.SEND_RFQ).toBe("rfq.send");
+    expect(LegEvent.QUOTE_PARTIAL).toBe("quote.partial");
+    expect(LegEvent.QUOTE_FULL).toBe("quote.full");
+  });
+  it("declares quote events", () => {
+    expect(QuoteEvent.SEND).toBe("send");
+    expect(QuoteEvent.SUBMIT).toBe("submit");
   });
 });
