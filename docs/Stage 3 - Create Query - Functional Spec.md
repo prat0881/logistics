@@ -396,6 +396,8 @@ Internal coordination layer — never exposed to client-facing views.
 
 Severity: **Blocking** (prevents progression) or **Warning** (advisory). Trigger points: *save* (leg/field save), *create* (Create Query), *RFQ* (RFQ generation, later stage). During Draft, structural issues are shown as **warnings**; at **Create Query** they become **blocking**.
 
+> **Currency (kept in lockstep with the engine):** this catalogue is the source of truth for the rules; the shared `validateRoute(graph, phase)` engine (`packages/shared/src/route.ts`) and its tests (`route.test.ts`) implement exactly it. Recent business changes are folded in below — **R2** and **R5** relaxed and **T2** retired (Req & Issues rounds). On any conflict, spec + code win over older notes.
+
 ### 10.1 Field-level
 
 | # | Rule | Severity | Trigger |
@@ -412,12 +414,14 @@ Severity: **Blocking** (prevents progression) or **Warning** (advisory). Trigger
 | # | Rule | Severity | Trigger |
 |---|---|---|---|
 | R1 | Each cargo row's assigned legs form an **unbroken chain** (each leg's destination = next leg's origin). | Blocking | create |
-| R2 | Every chain **starts at a Pickup** and **ends at a Delivery** (not a warehouse/hub). | Blocking | create |
+| R2 | Each chain **starts at any point type _except_ a Delivery** (a Delivery is where cargo arrives, never where it begins) and may **end at any point type**. | Blocking | create |
 | R3 | **No orphans:** no leg without cargo, no cargo row without legs, no point unused by any leg. | Blocking | create |
 | R4 | **No cycles;** each cargo row's path is a **simple path** (no point revisited). | Blocking | create |
-| R5 | At least one Pickup point and one Delivery point exist for the query. | Blocking | create |
+| R5 | **Minimum route:** the query has **at least one saved leg**, and **every leg connects two _different_ points** (no self-loop). | Blocking | create |
 
 > **On parallel legs:** continuity (R1) is checked **per cargo row**, along that row's own simple path — not as one global sequence over all legs. The route is a **graph**: a point can have several incoming and several outgoing legs (e.g. two pickups feeding one hub, or one hub fanning to two deliveries). Parallel legs belong to **different cargo rows** and meet at shared points; each row's own chain still reads destination → next origin.
+>
+> **A single cargo row is atomic (D5) and can never split:** it must **leave a point on exactly one leg** (no fork / parallel drop) and **arrive on exactly one leg** (no merge). Ship one product to several destinations by giving **each destination its own cargo row** — enforced by R1/R6 (a fork/merge breaks the single chain), surfaced with an explicit message, and blocked proactively in the leg editor (a cargo already on a leg sharing this leg's origin/destination is disabled).
 
 ### 10.3 Route — cargo mass-balance
 
@@ -444,8 +448,9 @@ Severity: **Blocking** (prevents progression) or **Warning** (advisory). Trigger
 | # | Rule | Severity | Trigger |
 |---|---|---|---|
 | T1 | A leg cannot depart before the previous leg on a cargo row's chain arrives. | Warning (draft) / Blocking (create) | save / create |
-| T2 | First leg Ready Date = query Ready Date; last leg Target Delivery = query Target Delivery. | Blocking | create |
 | T3 | A hub's onward-leg Ready Date ≥ MAX of feeding legs' Target Delivery (§8.5). | Warning (draft) / Blocking (create) | save / create |
+
+> **T2 retired (Round 2):** the old "first/last leg date = query date" equality was removed. Query Ready/Target (the client-agreed window, each with its own explicit timezone) and leg dates (the operational plan) are **decoupled**. `Ready ≤ Target` still holds at both the query and leg level, and hub timing stays with T1/T3 — all compared as real UTC instants.
 
 ### 10.7 Completeness
 
