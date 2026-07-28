@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { QuoteStatus } from "./status";
 import type { Incoterms } from "./query";
 import type { FreightMode } from "./config";
+import type { FreightForwarderDto } from "./masters";
 
 export interface ManifestSnapshotCargo {
   cargoItemId: string;
@@ -89,4 +90,13 @@ export interface QuoteDto {
   rfqId: string | null; // null while SELECT (pre-distribute)
   status: QuoteStatus;
   submittedAt: string | null; // ISO
+}
+
+/** Read model that hydrates the Query Workspace grid: all quotes + RFQs for a
+ *  query, plus the FF-card data for every FF referenced by a quote (so a frozen
+ *  FF renders even when it is no longer in the filtered eligible list). */
+export interface QueryRfqStateDto {
+  quotes: QuoteDto[];
+  rfqs: RfqDto[];
+  freightForwarders: FreightForwarderDto[];
 }
