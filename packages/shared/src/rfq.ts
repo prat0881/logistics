@@ -57,6 +57,17 @@ export type DistributeInput = z.infer<typeof distributeSchema>;
 export const ffSelectionSchema = z.object({ ffIds: z.array(z.string().uuid()) });
 export type FfSelectionInput = z.infer<typeof ffSelectionSchema>;
 
+export const reissueTokenSchema = z.object({ freightForwarderId: z.string().uuid() });
+export type ReissueTokenInput = z.infer<typeof reissueTokenSchema>;
+
+/** Result of rotating an RFQ's access token (identity = queryId × freightForwarderId). */
+export interface ReissueTokenResult {
+  rfqId: string;
+  rfqNumber: string;
+  freightForwarderId: string;
+  accessToken: string; // the new raw 256-bit token, returned once
+}
+
 /** One FF's RFQ for a query (identity = queryId × freightForwarderId). */
 export interface RfqDto {
   id: string;

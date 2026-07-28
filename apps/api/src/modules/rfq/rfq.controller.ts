@@ -1,5 +1,12 @@
 import { Body, Controller, Get, Param, Post, Put, Query } from "@nestjs/common";
-import { distributeSchema, ffSelectionSchema, type DistributeInput, type FfSelectionInput } from "@svyft/shared";
+import {
+  distributeSchema,
+  ffSelectionSchema,
+  reissueTokenSchema,
+  type DistributeInput,
+  type FfSelectionInput,
+  type ReissueTokenInput,
+} from "@svyft/shared";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { RequestUser } from "../auth/types";
@@ -48,5 +55,16 @@ export class RfqController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.rfq.distributeLeg(id, legId, body, user);
+  }
+
+  // Executive+ (no @Roles) — authenticated only. Keyed by (query, FF) so it works even
+  // when the lost distribute response is exactly why the caller has no rfqId.
+  @Post("rfqs/reissue-token")
+  reissueToken(
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(reissueTokenSchema)) body: ReissueTokenInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.rfq.reissueToken(id, body.freightForwarderId, user);
   }
 }

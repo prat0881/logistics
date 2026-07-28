@@ -155,11 +155,26 @@ model Rfq {
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 
-  quotes Quote[]
+  quotes        Quote[]
+  tokenReissues RfqTokenReissue[]
 
   @@unique([queryId, freightForwarderId])
   @@index([queryId])
   @@index([freightForwarderId])
+  @@index([tenantId])
+}
+
+// Audit trail for RFQ access-token rotations (one row per re-issue). The initial
+// mint is implicit in Rfq.createdAt; these record each subsequent rotation + actor.
+model RfqTokenReissue {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String?  @db.Uuid
+  rfqId     String   @db.Uuid
+  rfq       Rfq      @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  actorId   String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@index([rfqId])
   @@index([tenantId])
 }
 

@@ -8,6 +8,7 @@ import {
   type DistributeInput,
   type DistributeResult,
   type DistributeRfqEntry,
+  type ReissueTokenResult,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { RequestUser } from "../auth/types";
@@ -120,6 +121,32 @@ export class RfqService {
 
     const result = await this.performDistribution(query, ready, deadline, user);
     return { ...result, skipped: [...skipped, ...result.skipped] };
+  }
+
+  /**
+   * Rotate an RFQ's access token (identity = query × FF) and record an audit row.
+   * Recovery path: if the distribute response that carried the raw token was lost,
+   * the token is unrecoverable (the hash is one-way) — this mints a fresh one.
+   * Touches only accessTokenHash; deadline / status / quotes / manifest are intact.
+   */
+  async reissueToken(
+    queryId: string,
+    freightForwarderId: string,
+    user: RequestUser,
+  ): Promise<ReissueTokenResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const rfq = await tx.rfq.findUnique({
+        where: { queryId_freightForwarderId: { queryId, freightForwarderId } },
+        select: { id: true, rfqNumber: true },
+      });
+      if (!rfq) throw new NotFoundException("No RFQ found for this freight forwarder on this query");
+      const { token, hash } = this.token.mint();
+      await tx.rfq.update({ where: { id: rfq.id }, data: { accessTokenHash: hash } });
+      await tx.rfqTokenReissue.create({
+        data: { rfqId: rfq.id, actorId: user.userId, tenantId: user.tenantId },
+      });
+      return { rfqId: rfq.id, rfqNumber: rfq.rfqNumber, freightForwarderId, accessToken: token };
+    });
   }
 
   async distributeLeg(
