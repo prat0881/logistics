@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { StageRail, isRfqStageEnabled } from "@/features/rfq-workspace/StageRail";
 import type { Finding, QueryForValidation, CargoForValidation, QuerySaveInput } from "@svyft/shared";
 import {
   collectCreateFindings,
@@ -10,7 +11,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { WizardProvider, STEPS, useWizard } from "./WizardContext";
 import { WizardShell } from "./WizardShell";
-import { useSaveQuery, useCreateQuery } from "./useQueryDetail";
+import { useQueryDetail, useSaveQuery, useCreateQuery } from "./useQueryDetail";
 import {
   Step1Client,
   Step2Shipment,
@@ -195,10 +196,18 @@ function WizardInner({ id }: { id?: string }) {
  */
 export function QueryWizardPage() {
   const { id } = useParams<{ id: string }>();
+  const { data: railDetail } = useQueryDetail(id);
 
   return (
-    <WizardProvider id={id}>
-      <WizardInner id={id} />
-    </WizardProvider>
+    <>
+      {id && railDetail && (
+        <div className="mb-4">
+          <StageRail queryId={id} active="create" rfqEnabled={isRfqStageEnabled(railDetail.status)} />
+        </div>
+      )}
+      <WizardProvider id={id}>
+        <WizardInner id={id} />
+      </WizardProvider>
+    </>
   );
 }
