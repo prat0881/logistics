@@ -83,8 +83,8 @@ Functions:
 
 ### 6. Reference data (shared const)
 
-- `FREIGHT_DENSITY_FACTORS: Record<FreightMode, number>` = `{ AIR: 167, SEA: 1000, ROAD: 333 }` kg/CBM (spec **S12**). Seeds `QuoteCargoLine.freightDensity` in the portal (labelled "default", editable).
-- `AIR_CHARGE_PRESETS` / `SEA_CHARGE_PRESETS`: `{ zone: ChargeZone, presetKey: string, label: string }[]` — the mandatory lines from spec §7.4.3.1 / §7.4.3.2, in order:
+- **Density factors — already exist, do NOT re-add.** A `FreightDensityFactor` table (`{ mode @unique, kgPerCbm Int }`, seeded Air 167 / Sea 1000 / Road 333 per **S12**, create-only + admin-editable via `ConfigDataService.densityFactors`/`updateDensityFactor`) is already in the schema + seed + config surface. So 4a adds **no** density const: the pure engine takes `densityKgPerCbm` as a parameter; SB4b seeds `QuoteCargoLine.freightDensity` from that table on portal load, and SB4c fetches the factors from the existing config surface. (This corrects the original draft, which proposed a redundant shared const.)
+- `AIR_CHARGE_PRESETS` / `SEA_CHARGE_PRESETS`: `{ zone: ChargeZone, presetKey: string, label: string }[]` — the mandatory lines from spec §7.4.3.1 / §7.4.3.2, in order (**new** — these do not exist):
   - **Air · Origin:** Export Customs Clearance · Documentation Charges · Origin THC / Airport Handling · Security / Screening Charges · Warehouse / Pre-storage at OAP
   - **Air · Main Freight:** Air Freight Charges · Security Exchange (SEC) · Airline / Carrier Surcharge · Heavy Weight Surcharge
   - **Air · Destination:** Destination THC / Airport Handling · Import Customs Clearance · Last Mile Handling / Lift Gate · Storage 1 Free Day Charges
