@@ -655,7 +655,7 @@ export function validateQuote(draft: QuoteDraft, deadlineIso: string, nowIso: st
 - Consumes: `FreightMode` (`./config`), `WarehousePosition` (`./quote`).
 - Produces: `classifyWarehousePositions(legs: WhLeg[], warehousePointIds: string[]): Record<string, WarehousePosition>` where `WhLeg = { originPointId: string | null; destinationPointId: string | null; mode: FreightMode | null }`.
 
-**Algorithm:** order the FF's legs into a point sequence by walking the edges from the source (a point that is only ever an origin) to the sink; the **pivot** = the index of the first `AIR`/`SEA` leg's origin point (the main carriage start), or the sequence midpoint when the FF has no main carriage (Road-only). A warehouse point at sequence index `< pivot` ⇒ `ORIGIN`, else `DESTINATION`. Non-contiguous assignments (disjoint segments) are ordered per segment; a warehouse not reachable in any ordered segment defaults to `ORIGIN`.
+**Algorithm:** order the FF's legs into a point sequence by walking the edges from the source (a point that is only ever an origin) to the sink; the **pivot** = the index of the first `AIR`/`SEA` leg's origin point (the main carriage start), or the sequence midpoint when the FF has no main carriage (Road-only). A warehouse point at sequence index `< pivot` ⇒ `ORIGIN`, else `DESTINATION`. Non-contiguous assignments (disjoint segments) are ordered per segment; a warehouse not reachable in any ordered segment defaults to `DESTINATION` (matches the implementation + code-comment — corrected from an earlier `ORIGIN` in this prose; degenerate case, never fires in real flows where warehouses are leg endpoints).
 
 - [ ] **Step 1: Write the failing test** (append):
 ```ts
