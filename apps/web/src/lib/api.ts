@@ -89,6 +89,18 @@ export async function patchJson<T>(url: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+export async function putJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return raise(res, url);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
 export async function del(url: string): Promise<void> {
   const res = await fetch(url, { method: "DELETE", credentials: "include" });
   if (!res.ok) return raise(res, url);
