@@ -25,6 +25,12 @@ export class RfqController {
     return this.eligibility.getEligibleFfs(id, legId, broaden === "true");
   }
 
+  // Executive+ (no @Roles) — authenticated only. Read model for the Query Workspace grid.
+  @Get("rfq-state")
+  rfqState(@Param("id") id: string) {
+    return this.rfq.getRfqState(id);
+  }
+
   // Executive+ (no @Roles) — authenticated only, per the resolved RBAC decision
   @Put("legs/:legId/ff-selection")
   setSelection(

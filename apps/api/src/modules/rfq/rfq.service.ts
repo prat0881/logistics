@@ -9,6 +9,8 @@ import {
   type DistributeResult,
   type DistributeRfqEntry,
   type ReissueTokenResult,
+  type QueryRfqStateDto,
+  type FreightForwarderDto,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { RequestUser } from "../auth/types";
@@ -147,6 +149,61 @@ export class RfqService {
       });
       return { rfqId: rfq.id, rfqNumber: rfq.rfqNumber, freightForwarderId, accessToken: token };
     });
+  }
+
+  async getRfqState(queryId: string): Promise<QueryRfqStateDto> {
+    const query = await this.prisma.query.findUnique({ where: { id: queryId }, select: { id: true } });
+    if (!query) throw new NotFoundException("Query not found");
+
+    const [quotes, rfqs] = await Promise.all([
+      this.prisma.quote.findMany({ where: { queryId }, orderBy: { legId: "asc" } }),
+      this.prisma.rfq.findMany({ where: { queryId }, orderBy: { rfqNumber: "asc" } }),
+    ]);
+
+    const ffIds = [...new Set(quotes.map((q) => q.freightForwarderId))];
+    const ffs = ffIds.length
+      ? await this.prisma.freightForwarder.findMany({ where: { id: { in: ffIds } }, orderBy: { companyName: "asc" } })
+      : [];
+
+    return {
+      quotes: quotes.map((q) => ({
+        id: q.id,
+        queryId: q.queryId,
+        legId: q.legId,
+        freightForwarderId: q.freightForwarderId,
+        rfqId: q.rfqId,
+        status: q.status,
+        submittedAt: q.submittedAt ? q.submittedAt.toISOString() : null,
+      })),
+      rfqs: rfqs.map((r) => ({
+        id: r.id,
+        queryId: r.queryId,
+        freightForwarderId: r.freightForwarderId,
+        rfqNumber: r.rfqNumber,
+        submissionDeadline: r.submissionDeadline.toISOString(),
+        incoterms: r.incoterms,
+        currency: r.currency,
+        quoteValidityUntil: r.quoteValidityUntil ? r.quoteValidityUntil.toISOString() : null,
+      })),
+      freightForwarders: ffs.map((f): FreightForwarderDto => ({
+        id: f.id,
+        freightForwarderCode: f.freightForwarderCode,
+        companyName: f.companyName,
+        companyAddress: f.companyAddress,
+        pic: f.pic,
+        contactNumber: f.contactNumber,
+        email: f.email,
+        availableCountries: f.availableCountries,
+        modes: f.modes as FreightForwarderDto["modes"],
+        handleDg: f.handleDg,
+        vatTrnEori: f.vatTrnEori,
+        whLocation: f.whLocation,
+        defaultCurrency: f.defaultCurrency,
+        paymentTerms: f.paymentTerms,
+        typicalLeadTime: f.typicalLeadTime,
+        status: f.status as FreightForwarderDto["status"],
+      })),
+    };
   }
 
   async distributeLeg(

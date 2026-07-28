@@ -15,6 +15,7 @@ import { FreightForwarderFormPage } from "@/features/masters/freight-forwarders/
 import { ConfigPage } from "@/features/admin/ConfigPage";
 import { QueriesListPage } from "@/features/query-list/QueriesListPage";
 import { QueryWizardPage } from "@/features/query-wizard/QueryWizardPage";
+import { QueryWorkspaceHub } from "@/features/rfq-workspace/QueryWorkspaceHub";
 
 function Protected({ children }: { children: ReactNode }) {
   return (
@@ -47,6 +48,14 @@ export function App() {
         element={
           <Protected>
             <QueryWizardPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/queries/:id/workspace"
+        element={
+          <Protected>
+            <QueryWorkspaceHub />
           </Protected>
         }
       />
