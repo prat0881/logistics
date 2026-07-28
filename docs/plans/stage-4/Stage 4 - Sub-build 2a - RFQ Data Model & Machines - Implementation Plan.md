@@ -872,7 +872,7 @@ git commit -m "feat(api): leg forward edges + leg-status rollup from quote resol
 
 > **Dependency:** execute after FF Master (PR #24) merges to `main`; branch 2a off updated `main`. (2a only needs FF Master's `FreightForwarder` table for the `Quote.freightForwarderId` FK — no hard code dependency, but keeping the sequence clean avoids a stacked-branch merge.)
 
-Plan complete and saved to `docs/Stage 4 - Sub-build 2a - RFQ Data Model & Machines - Implementation Plan.md`. Two execution options:
+Plan complete and saved to `docs/plans/stage-4/Stage 4 - Sub-build 2a - RFQ Data Model & Machines - Implementation Plan.md`. Two execution options:
 
 1. **Subagent-Driven (recommended)** — fresh subagent per task, review between tasks, fast iteration.
 2. **Inline Execution** — batch execution with checkpoints.
