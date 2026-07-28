@@ -96,7 +96,15 @@ describe("GET /queries/:id/rfq-state (e2e)", () => {
   });
 
   it("401s an unauthenticated request", async () => {
-    const query = await prisma.query.findFirstOrThrow({ where: { queryCode: CODE } });
-    await request(app.getHttpServer()).get(`/api/queries/${query.id}/rfq-state`).expect(401);
+    await request(app.getHttpServer())
+      .get(`/api/queries/00000000-0000-0000-0000-000000000000/rfq-state`)
+      .expect(401);
+  });
+
+  it("404s for an unknown query", async () => {
+    await request(app.getHttpServer())
+      .get(`/api/queries/00000000-0000-0000-0000-000000000000/rfq-state`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(404);
   });
 });
