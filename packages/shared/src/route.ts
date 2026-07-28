@@ -245,11 +245,12 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
     const start = sources[0];
     const end = sinks[0];
     const startP = pointById.get(start);
-    const endP = pointById.get(end);
-    if (startP && startP.type !== PointType.PICKUP)
-      findings.push({ rule: "R2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: chain must start at a Pickup (starts at ${startP.type})` });
-    if (endP && endP.type !== PointType.DELIVERY)
-      findings.push({ rule: "R2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: chain must end at a Delivery (ends at ${endP.type})` });
+    // R2 (business rule): a cargo chain may START at any point type EXCEPT a Delivery —
+    // a Delivery is where cargo arrives, never where it begins — and may END at any point
+    // type (no end-type constraint). The single-unbroken-path requirement stays with
+    // R1/R4/R6; R5 still requires the query to hold at least one Pickup and Delivery.
+    if (startP && startP.type === PointType.DELIVERY)
+      findings.push({ rule: "R2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins` });
 
     // R1/R4/T1 — walk the unique chain start→end.
     const visited = new Set<string>();

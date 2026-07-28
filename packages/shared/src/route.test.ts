@@ -95,10 +95,20 @@ describe("R1/R2 — continuity & endpoints", () => {
     g.legs[1].originPointId = "pu"; // l2 no longer starts where l1 ends (wh)
     expect(rules(g, "create")).toContain("R1");
   });
-  it("flags a chain not starting at a pickup", () => {
+  it("flags a chain that STARTS at a Delivery point (R2 — cargo can't begin at a delivery)", () => {
     const g = validGraph();
-    g.points[0].type = "WAREHOUSE"; // starts at a warehouse
+    g.points[0].type = "DELIVERY"; // the source node is now a delivery
     expect(rules(g, "create")).toContain("R2");
+  });
+  it("does NOT flag a chain that starts at a Warehouse (any non-delivery start is allowed)", () => {
+    const g = validGraph();
+    g.points[0].type = "WAREHOUSE"; // start at a warehouse — allowed by the updated R2
+    expect(rules(g, "create")).not.toContain("R2");
+  });
+  it("does NOT flag a chain that ENDS at a non-delivery point (any end is allowed)", () => {
+    const g = validGraph();
+    g.points[2].type = "AIRPORT"; // ends at an airport instead of a delivery — allowed
+    expect(rules(g, "create")).not.toContain("R2");
   });
 });
 
