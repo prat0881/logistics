@@ -24,9 +24,9 @@ These decisions shape this spec and differ from the original PRD:
 | D2 | **Points (locations) are first-class, reusable objects.** | A leg selects an existing point or creates a new one; route connectivity is by shared-point reference, not text matching. |
 | D3 | **Mode is a per-leg property.** Shipment-level "Freight Mode" is removed as an input. | Each leg carries its own mode (Road/Air/Sea). A read-only "Modes" summary is derived from the legs for lists/dashboards. |
 | D4 | **Freight Density and Chargeable Weight live at cargo level and are deferred to Stage 4** (FF sets each row's density; chargeable weight is calculated then — one value per row). | In Stage 3 both are empty/read-only. The leg carries the full cargo manifest + roll-ups (packages, CBM, gross, net) and a **Total Chargeable Weight** (Σ of its rows' chargeable weights, filled in Stage 4). **No density and no DG at leg level.** |
-| D5 | **Cargo rows are atomic** — exactly one pickup and one delivery per row (no forking/splitting a row across destinations). | Each cargo row's path is a simple chain of legs. |
+| D5 | **Cargo rows are atomic** — each row travels a **single unbroken chain** with one start point and one end point (no forking/splitting a row across destinations). | Each cargo row's path is a simple chain of legs; start may be any point type except a Delivery, end any type (see R2, §10.2). |
 | D6 | **Divergent routing is allowed** — multiple hubs permitted; the old "single common hub" rule is dropped. | The hub effective-date (MAX) rule applies at every hub. |
-| D7 | **Cargo is attached to a leg by explicit selection** — when building a leg, the executive ticks which cargo rows ride it. | Continuity validation confirms the ticked legs actually connect a row's pickup → delivery. |
+| D7 | **Cargo is attached to a leg by explicit selection** — when building a leg, the executive ticks which cargo rows ride it. | Continuity validation confirms the ticked legs actually form a row's single continuous chain (start → end). |
 | D8 | **Legs are saved individually** (leg-wise), with a stable ID from creation; partial/draft legs are allowed. | Enables per-leg validation, per-leg status, and stable downstream references. |
 | D9 | **Change handling is query-wide and impact-aware** (not leg-only). | Any field can be changed at any time; the system checks impact and either applies freely or runs a change-order (see §11). |
 | D10 | **Cargo tracking model defined now; tracking UI deferred to Stage 8–9.** | Legs carry an execution status; a cargo row's live position is derived from its leg chain. |
@@ -162,8 +162,8 @@ Primary business reference for the query. All values are **manual entry** in thi
 | ETB | DateTime | Optional | No | After ETA, before ETD. |
 | ETD | DateTime | Optional | No | After ETB. |
 | Port of Call | Text / Lookup | Optional | No | Intermediate stop where the vessel loads/unloads. |
-| Ready Date | DateTime | **Mandatory** | No | Cargo-ready date. **Feeds the first leg's Ready Date** (§8.5). |
-| Target Delivery | DateTime | **Mandatory** | No | Required client delivery date. **Feeds the last leg's Target Delivery** (§8.5). |
+| Ready Date | DateTime | **Mandatory** | No | Cargo-ready date — the **client-agreed window**, in its own explicit timezone; **decoupled from leg dates** (Round 2, §8.5). Ready ≤ Target. |
+| Target Delivery | DateTime | **Mandatory** | No | Required client delivery date — the **client-agreed window**, in its own explicit timezone; **decoupled from leg dates** (Round 2, §8.5). |
 
 ---
 
@@ -276,8 +276,8 @@ A point is created once and can be referenced as an endpoint by multiple legs (t
 | Destination Point | Point ref | **Mandatory** | Select an existing point or create a new one. |
 | Mode | Dropdown | **Mandatory** | Road / Air / Sea. Determines valid endpoint types and the density factor for chargeable weight. |
 | Assigned Cargo | Multi-select | **Mandatory (≥1)** | Ticked from the full cargo list (D7). |
-| Ready Date | DateTime | **Mandatory** | First leg inherits query Ready Date; last leg — see Target Delivery; intermediate legs set manually. |
-| Target Delivery | DateTime | **Mandatory** | Last leg inherits query Target Delivery; intermediate legs set manually; a hub's effective ready date = MAX of feeding legs (§8.5). |
+| Ready Date | DateTime | **Mandatory** | Set per leg (operational plan), anchored to the **origin point's** timezone; **independent of the query Ready Date** — query and leg dates are decoupled (Round 2, §8.5). Ready ≤ Target. |
+| Target Delivery | DateTime | **Mandatory** | Set per leg, anchored to the **destination point's** timezone; **independent of the query Target Delivery** (decoupled, Round 2). A hub's effective ready date = MAX of feeding legs (§8.5, T3). |
 | Cargo Manifest | Reference | — | The **complete cargo object** for every attached row (all fields from §7.3). This is what the FF sees per leg in Stage 4. |
 | Total Packages / Total CBM / Total Gross Wt / Total Net Wt | Calculated | Auto | Leg-level roll-ups from the attached cargo (Stage 3). |
 | Total Chargeable Weight (T) | Read-only | — | Σ of the attached rows' cargo-level chargeable weights. **Empty in Stage 3**; populated in Stage 4 once FFs set density (§8.6). No Freight Density and no DG at leg level. |
@@ -327,13 +327,13 @@ Internal coordination layer — never exposed to client-facing views.
 - **L2 · Points are first-class (D2):** origin/destination reference reusable point objects; two legs "connect" only when they share the same point object.
 - **L3 · Per-leg mode (D3):** each leg has its own mode; the shipment "Modes" summary is derived from all legs.
 - **L4 · Cargo attached by selection (D7):** a leg carries only the cargo rows ticked for it; a row is ticked on every leg along its path.
-- **L5 · Atomic cargo rows (D5):** each cargo row has exactly one pickup and one delivery; its assigned legs must form a single continuous chain from that pickup to that delivery.
+- **L5 · Atomic cargo rows (D5):** each cargo row has **exactly one start point and one end point**; its assigned legs must form a **single continuous chain** from start to end — the start may be any point type except a Delivery, the end any type (R2). No forking/splitting a row across destinations.
 - **L6 · Divergent routing allowed (D6):** multiple pickups/hubs/deliveries are permitted; there is no single-common-hub requirement.
 
 ### 8.5 Leg dates & hub convergence
-- The **first leg** of a cargo row's chain inherits the query-level **Ready Date**; the **last leg** inherits the query-level **Target Delivery**.
-- **Intermediate legs** have their Ready/Target dates set manually by the executive.
-- **Hub effective date (MAX):** where several legs feed one hub/point, the onward leg cannot depart before the **latest** arriving leg — the point's effective ready date = **MAX** of the feeding legs' Target Delivery dates. Applied at **every** hub (D6).
+- **Query dates and leg dates are decoupled** (Round 2 — T2 retired): the query-level **Ready Date / Target Delivery** are the *client-agreed window* (each in its own explicit timezone); a cargo row's **leg** dates are the *operational plan*. Every leg's Ready/Target is set independently by the executive — **not** inherited from the query.
+- **Ready ≤ Target** holds at both the query and the leg level, compared as real UTC instants (leg Ready anchors to the origin point's zone, leg Target to the destination's).
+- **Hub effective date (MAX):** where several legs feed one hub/point, the onward leg cannot depart before the **latest** arriving leg — the point's effective ready date = **MAX** of the feeding legs' Target Delivery dates. Applied at **every** hub (D6, rule T3).
 
 ### 8.6 Weights — cargo level vs leg level (D4)
 - **Cargo level:** each cargo row has a **Freight Density** and a **Chargeable Weight**, both **empty/read-only in Stage 3**. In Stage 4 the FF sets that row's density and the system computes chargeable weight = greater of (a) gross weight (t) and (b) volumetric weight = CBM × density (t). **One chargeable weight per cargo row.**
