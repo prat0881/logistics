@@ -20,7 +20,7 @@ function legStatusVariant(s: LegStatus): BadgeVariant {
 // Leg status display labels
 const LEG_LABEL: Record<LegStatus, string> = {
   DRAFT: "Draft",
-  READY_FOR_RFQ: "Ready For Rfq",
+  READY_FOR_RFQ: "Ready for RFQ",
   RFQ_SENT: "RFQ Sent",
   PARTIALLY_QUOTED: "Partially Quoted",
   FULLY_QUOTED: "Fully Quoted",
