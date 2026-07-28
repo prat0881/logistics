@@ -38,6 +38,8 @@ describe("FfSelectionGrid", () => {
     await waitFor(() =>
       expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("ff-selection"))).toBe(true),
     );
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("ff-selection"))!;
+    expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({ ffIds: ["a"] });
   });
 
   it("renders a frozen (RFQ_SENT) FF read-only with its forwarder badge", async () => {

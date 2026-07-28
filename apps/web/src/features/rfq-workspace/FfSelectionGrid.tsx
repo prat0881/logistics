@@ -37,8 +37,10 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
     () => new Set(legQuotes.filter((q) => q.status === "SELECT").map((q) => q.freightForwarderId)),
   );
   useEffect(() => {
+    // Don't clobber the optimistic toggle while the mutation is in flight.
+    if (setSelection.isPending) return;
     setSelected(new Set(legQuotes.filter((q) => q.status === "SELECT").map((q) => q.freightForwarderId)));
-  }, [legQuotes]);
+  }, [legQuotes, setSelection.isPending]);
 
   // Display = eligible ∪ any FF that already has a quote (so frozen/off-list FFs still show).
   const display = useMemo(() => {
