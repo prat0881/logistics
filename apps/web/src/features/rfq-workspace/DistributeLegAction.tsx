@@ -49,6 +49,7 @@ export function DistributeLegAction({ queryId, legId, deadlineLocal, canDistribu
   async function run(confirm: boolean) {
     setCodes([]);
     setMessage(null);
+    setResult(null);
     try {
       const res = await distribute.mutateAsync({ submissionDeadline: localToIso(deadlineLocal), confirm });
       setResult(res);
