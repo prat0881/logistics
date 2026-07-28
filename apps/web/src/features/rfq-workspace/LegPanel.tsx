@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { LegStatusBadge } from "./statusBadges";
 import { FfSelectionGrid } from "./FfSelectionGrid";
+import { DistributeLegAction } from "./DistributeLegAction";
 
 interface LegPanelProps {
   queryId: string;
@@ -97,8 +98,12 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs }: Leg
                 className="w-56"
               />
             </div>
-            {/* Distribute action added in Task 7 */}
-            <div data-testid={`distribute-slot-${leg.id}`} />
+            <DistributeLegAction
+              queryId={queryId}
+              legId={leg.id}
+              deadlineLocal={deadline}
+              canDistribute={legQuotes.some((q) => q.status === "SELECT")}
+            />
           </div>
         </div>
       )}
