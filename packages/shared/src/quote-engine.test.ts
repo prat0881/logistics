@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeChargeableWeight, computeQuoteTotals, validateQuote } from "./quote-engine";
+import { computeChargeableWeight, computeQuoteTotals, validateQuote, classifyWarehousePositions } from "./quote-engine";
 import type { QuoteDraft } from "./quote";
 import { AIR_CHARGE_PRESETS } from "./quote";
 
@@ -92,5 +92,24 @@ describe("validateQuote (§10.4 Q1–Q8)", () => {
     const d = validAir(); d.mode = "ROAD"; d.charges = [];
     d.trucking = [{ legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "FIXED", amount: null }];
     expect(validateQuote(d, deadline, now).some((f) => f.rule === "Q1")).toBe(true);
+  });
+});
+
+describe("classifyWarehousePositions (§6.4)", () => {
+  it("labels warehouses before/after the main air carriage", () => {
+    // WH(w1) → OriginAirport(a1) --AIR--> DestAirport(a2) → WH(w2)
+    const legs = [
+      { originPointId: "w1", destinationPointId: "a1", mode: "ROAD" as const },
+      { originPointId: "a1", destinationPointId: "a2", mode: "AIR" as const },
+      { originPointId: "a2", destinationPointId: "w2", mode: "ROAD" as const },
+    ];
+    expect(classifyWarehousePositions(legs, ["w1", "w2"])).toEqual({ w1: "ORIGIN", w2: "DESTINATION" });
+  });
+  it("Road-only: splits warehouses by the chain midpoint", () => {
+    const legs = [
+      { originPointId: "w1", destinationPointId: "m", mode: "ROAD" as const },
+      { originPointId: "m", destinationPointId: "w2", mode: "ROAD" as const },
+    ];
+    expect(classifyWarehousePositions(legs, ["w1", "w2"])).toEqual({ w1: "ORIGIN", w2: "DESTINATION" });
   });
 });
