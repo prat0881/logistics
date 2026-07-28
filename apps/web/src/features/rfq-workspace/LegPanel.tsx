@@ -1,13 +1,15 @@
 import { useState } from "react";
-import type { QueryLegDto, QueryPointDto, QuoteDto, FreightForwarderDto } from "@svyft/shared";
+import type { QueryLegDto, QueryPointDto, QuoteDto, FreightForwarderDto, CargoDto } from "@svyft/shared";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { LegStatusBadge } from "./statusBadges";
 import { FfSelectionGrid } from "./FfSelectionGrid";
 import { DistributeLegAction } from "./DistributeLegAction";
+import { PreviewRfqDialog } from "./PreviewRfqDialog";
 
 interface LegPanelProps {
   queryId: string;
@@ -15,6 +17,7 @@ interface LegPanelProps {
   points: QueryPointDto[];
   legQuotes: QuoteDto[];
   referencedFfs: FreightForwarderDto[];
+  cargo: CargoDto[];
 }
 
 /** "YYYY-MM-DDTHH:mm" (local) for <input type="datetime-local">, defaulted +48h. */
@@ -34,9 +37,11 @@ function fmtDate(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString() : "—";
 }
 
-export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs }: LegPanelProps) {
+export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo }: LegPanelProps) {
   const [open, setOpen] = useState(true);
   const [deadline, setDeadline] = useState(defaultDeadlineLocal());
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const hasSent = legQuotes.some((q) => q.status !== "SELECT");
 
   return (
     <Card className="overflow-hidden">
@@ -98,6 +103,9 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs }: Leg
                 className="w-56"
               />
             </div>
+            {!hasSent && (
+              <Button variant="outline" onClick={() => setPreviewOpen(true)}>Preview RFQ</Button>
+            )}
             <DistributeLegAction
               queryId={queryId}
               legId={leg.id}
@@ -107,6 +115,7 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs }: Leg
           </div>
         </div>
       )}
+      <PreviewRfqDialog open={previewOpen} onOpenChange={setPreviewOpen} leg={leg} points={points} cargo={cargo} />
     </Card>
   );
 }

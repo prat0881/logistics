@@ -37,7 +37,7 @@ describe("LegPanel", () => {
       if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
       return { status: 404 };
     }));
-    wrap(<LegPanel queryId="q1" leg={leg} points={points} legQuotes={[]} referencedFfs={[]} />);
+    wrap(<LegPanel queryId="q1" leg={leg} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} />);
     // defaults open → header + summary + grid all visible
     expect(screen.getByText("Main air leg")).toBeInTheDocument();
     expect(screen.getByText("Ready for RFQ")).toBeInTheDocument();
