@@ -88,8 +88,6 @@ const detailWithClientAndNotesFindings = {
       netWt: null,
       grossWt: "5",
       volumeCbm: "0.006",
-      freightDensity: null,
-      chargeableWeight: null,
     },
   ],
   // Checklist empty → collectChecklistFindings emits blocking for notes tab
@@ -153,7 +151,6 @@ const detailWithClientAndNotesFindings = {
       targetDelivery: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
       status: "DRAFT",
       executionStatus: "NOT_STARTED",
-      totalChargeableWeight: null,
       createdAt: "2026-01-01T00:00:00+00:00",
       updatedAt: "2026-01-01T00:00:00+00:00",
       assignedCargoIds: [CARGO_ID],

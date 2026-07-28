@@ -2,7 +2,7 @@ import { ImpactClass, type CargoUpdateInput } from "@svyft/shared";
 
 // Cargo field → impact class (§11.1). Weight/dims/DG = RfqDefining (FFs quote against
 // them); labels/refs/docs = Corrective; add/remove a row = Structural. volumeCbm is
-// generated and freightDensity/chargeableWeight are Stage-4 → never edited here.
+// DB-generated → never edited here.
 // Typed as Record<keyof CargoUpdateInput | ..., ImpactClass> (rather than the looser
 // EntityImpactMap) so the compiler REQUIRES an entry for EVERY cargoUpdateSchema field —
 // mirrors queryImpactMap (see query.impact.ts). Still structurally assignable to

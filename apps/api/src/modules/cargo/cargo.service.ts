@@ -165,8 +165,6 @@ export class CargoService {
       { header: "Net Wt (kg)", key: "netWt", width: 12 },
       { header: "Gross Wt (kg)", key: "grossWt", width: 12 },
       { header: "Volume (CBM)", key: "volumeCbm", width: 14 },
-      { header: "Freight Density", key: "freightDensity", width: 14 },
-      { header: "Chargeable Wt (T)", key: "chargeableWeight", width: 16 },
     ];
     ws.getRow(1).font = { bold: true };
     for (const r of rows) {
@@ -185,8 +183,6 @@ export class CargoService {
         netWt: r.netWt == null ? "" : Number(r.netWt),
         grossWt: Number(r.grossWt),
         volumeCbm: r.volumeCbm == null ? "" : Number(r.volumeCbm),
-        freightDensity: "", // null/read-only in Stage 3 (D4)
-        chargeableWeight: "", // null/read-only in Stage 3 (D4)
       });
     }
     // exceljs's own .d.ts declares a local `Buffer extends ArrayBuffer {}` for writeBuffer()'s

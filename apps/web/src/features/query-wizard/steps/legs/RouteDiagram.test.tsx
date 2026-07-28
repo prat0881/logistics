@@ -52,8 +52,6 @@ function makeDetail(over: {
     netWt: null,
     grossWt: "10",
     volumeCbm: "1",
-    freightDensity: null,
-    chargeableWeight: null,
   })) as QueryDetail["cargo"];
   const legs = (over.legs ?? []).map((l) => ({
     tenantId: null,
@@ -66,7 +64,6 @@ function makeDetail(over: {
     targetDelivery: null,
     status: "DRAFT",
     executionStatus: "PENDING",
-    totalChargeableWeight: null,
     createdAt: "2026-01-01T00:00:00+00:00",
     updatedAt: "2026-01-01T00:00:00+00:00",
     rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },

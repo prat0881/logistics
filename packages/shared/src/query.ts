@@ -338,7 +338,6 @@ export type QueryLegDto = {
   targetDelivery: string | null;  // DateTime → ISO string in JSON
   status: LegStatus;
   executionStatus: LegExecutionStatus;
-  totalChargeableWeight: string | null; // Decimal → string in JSON
   createdAt: string;
   updatedAt: string;
   // Derived fields added by shapeQuery
