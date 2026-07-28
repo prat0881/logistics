@@ -133,6 +133,9 @@ model FreightForwarder {
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
 
+  rfqs   Rfq[]
+  quotes Quote[]
+
   @@index([tenantId])
 }
 
@@ -141,7 +144,8 @@ model Rfq {
   tenantId           String?      @db.Uuid
   queryId            String       @db.Uuid
   query              Query        @relation(fields: [queryId], references: [id], onDelete: Cascade)
-  freightForwarderId String       @db.Uuid
+  freightForwarderId String           @db.Uuid
+  freightForwarder   FreightForwarder @relation(fields: [freightForwarderId], references: [id], onDelete: Restrict)
   rfqNumber          String       @unique
   accessTokenHash    String       @unique
   submissionDeadline DateTime
@@ -155,6 +159,7 @@ model Rfq {
 
   @@unique([queryId, freightForwarderId])
   @@index([queryId])
+  @@index([freightForwarderId])
   @@index([tenantId])
 }
 
@@ -165,7 +170,8 @@ model Quote {
   query              Query       @relation(fields: [queryId], references: [id], onDelete: Cascade)
   legId              String      @db.Uuid
   leg                Leg         @relation(fields: [legId], references: [id], onDelete: Cascade)
-  freightForwarderId String      @db.Uuid
+  freightForwarderId String           @db.Uuid
+  freightForwarder   FreightForwarder @relation(fields: [freightForwarderId], references: [id], onDelete: Restrict)
   rfqId              String?     @db.Uuid
   rfq                Rfq?        @relation(fields: [rfqId], references: [id], onDelete: Cascade)
   status             QuoteStatus @default(SELECT)
@@ -177,6 +183,7 @@ model Quote {
   @@unique([legId, freightForwarderId])
   @@index([queryId])
   @@index([legId])
+  @@index([freightForwarderId])
   @@index([rfqId])
   @@index([tenantId])
 }

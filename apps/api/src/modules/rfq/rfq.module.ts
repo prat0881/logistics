@@ -7,10 +7,15 @@ import { quoteMachine } from "./quote.machine";
 import { LegQuoteProjector } from "./leg-quote.projector";
 import type { StatusMachine } from "../status/status.types";
 import { LegStatus, LegEvent } from "@svyft/shared";
+import { FreightForwardersModule } from "../freight-forwarders/freight-forwarders.module";
+import { RfqController } from "./rfq.controller";
+import { EligibilityService } from "./eligibility.service";
+import { RfqService } from "./rfq.service";
 
 @Module({
-  imports: [StatusModule],
-  providers: [RfqNumberService, RfqTokenService, LegQuoteProjector],
+  imports: [StatusModule, FreightForwardersModule],
+  controllers: [RfqController],
+  providers: [RfqNumberService, RfqTokenService, LegQuoteProjector, EligibilityService, RfqService],
   exports: [RfqNumberService, RfqTokenService],
 })
 export class RfqModule implements OnModuleInit {

@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import type { FreightForwarder, FreightMode } from "@prisma/client";
 import type { FreightForwarderCreateInput, FreightForwarderUpdateInput, Paginated } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 
@@ -62,6 +63,26 @@ export class FreightForwardersService {
     } catch (e) {
       throw this.mapUnique(e);
     }
+  }
+
+  async findEligible(criteria: {
+    countries: string[];
+    mode: FreightMode | null;
+    requireDg: boolean;
+    broaden: boolean;
+  }): Promise<FreightForwarder[]> {
+    const active = await this.prisma.freightForwarder.findMany({
+      where: { status: "ACTIVE", ...(criteria.requireDg ? { handleDg: true } : {}) },
+      orderBy: { companyName: "asc" },
+    });
+    if (criteria.broaden) return active;
+    return active.filter((ff) => {
+      const modeOk = criteria.mode === null || ff.modes.includes(criteria.mode);
+      const countryOk =
+        criteria.countries.length === 0 ||
+        criteria.countries.every((c) => ff.availableCountries.includes(c));
+      return modeOk && countryOk;
+    });
   }
 
   private mapUnique(e: unknown): unknown {

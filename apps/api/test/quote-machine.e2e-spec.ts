@@ -12,6 +12,7 @@ describe("Quote machine (e2e)", () => {
   let quoteId: string;
   let queryId: string;
   let legId: string;
+  let ffId: string;
 
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -26,11 +27,25 @@ describe("Quote machine (e2e)", () => {
       data: { queryId: query.id, legCode: "L-QMACH", status: "READY_FOR_RFQ" },
     });
     legId = leg.id;
+    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: "FF-E2E-QMACH" } });
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: "FF-E2E-QMACH",
+        companyName: "QMach FF E2E",
+        pic: "PIC",
+        contactNumber: "+10000000000",
+        email: "qmach@e2e.test",
+        availableCountries: ["AE"],
+        modes: ["AIR"],
+        handleDg: true,
+      },
+    });
+    ffId = ff.id;
     const quote = await prisma.quote.create({
       data: {
         queryId: query.id,
         legId: leg.id,
-        freightForwarderId: query.id /* any uuid — soft ref for fixture */,
+        freightForwarderId: ff.id,
         status: "SELECT",
       },
     });
@@ -38,8 +53,9 @@ describe("Quote machine (e2e)", () => {
   });
 
   afterAll(async () => {
-    // FK-safe order: quote → leg → query; ignore missing rows.
+    // FK-safe order: quote → ff → leg → query; ignore missing rows.
     await prisma.quote.deleteMany({ where: { id: quoteId } }).catch(() => {});
+    await prisma.freightForwarder.deleteMany({ where: { id: ffId } }).catch(() => {});
     await prisma.leg.deleteMany({ where: { id: legId } }).catch(() => {});
     await prisma.query.deleteMany({ where: { id: queryId } }).catch(() => {});
     await moduleRef.close();
