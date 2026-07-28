@@ -23,6 +23,8 @@ describe("QueryOverviewHeader", () => {
     expect(screen.getByText("AIR")).toBeInTheDocument();
     expect(screen.getByText("RFQ Sent")).toBeInTheDocument();
     expect(screen.getByText(/5 pkg/i)).toBeInTheDocument();   // 3 + 2 packages
+    expect(screen.getByText(/20 CBM/i)).toBeInTheDocument();  // 12 + 8 CBM
+    expect(screen.getByText(/800 kg/i)).toBeInTheDocument();  // 500 + 300 kg
     expect(screen.getByText(/Shanghai Port/)).toBeInTheDocument();
     expect(screen.getByText(/Dubai/)).toBeInTheDocument();
   });

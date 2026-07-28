@@ -23,7 +23,7 @@ function queryStatusVariant(s: string) {
 }
 
 function pointLabel(p: PointRef): string {
-  return p.name ?? [p.city, p.country].filter(Boolean).join(", ") ?? p.country ?? "—";
+  return p.name ?? ([p.city, p.country].filter(Boolean).join(", ") || "—");
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
