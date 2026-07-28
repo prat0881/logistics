@@ -306,7 +306,7 @@ describe("QueryWizard e2e — 422 server block", () => {
         rule: "R2",
         severity: "blocking",
         scope: { type: "cargo", id: CARGO_ID },
-        message: "Cargo PO-E2E-001: chain must start at a Pickup",
+        message: "Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins",
       },
     ];
 
@@ -344,7 +344,7 @@ describe("QueryWizard e2e — 422 server block", () => {
     // The server 422 finding should render
     await waitFor(() =>
       expect(
-        screen.getByText("Cargo PO-E2E-001: chain must start at a Pickup"),
+        screen.getByText("Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins"),
       ).toBeInTheDocument(),
     );
 

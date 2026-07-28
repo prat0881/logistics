@@ -221,6 +221,94 @@ describe("RouteDiagram", () => {
     expect(screen.getByText(/add a point or leg to start the route/i)).toBeInTheDocument();
   });
 
+  it("keeps every node inside the SVG viewBox when a cycle inflates depths (blank-canvas regression)", () => {
+    // Repro: a valid Pickup→Warehouse→Airport→Delivery route where L1's origin is
+    // later changed to the Airport, forming a 2-cycle Warehouse↔Airport. The depth
+    // relaxation runs to its iteration cap and inflates depths; nodes must still be
+    // positioned within the drawn viewBox width — otherwise the canvas renders blank
+    // and the user can no longer click a box/edge to fix the bad leg.
+    const NODE_W = 168; // mirror the layout constant (module-private)
+    const detail = makeDetail({
+      points: [
+        { id: "pk", type: "PICKUP", name: "Pickup" },
+        { id: "wh", type: "WAREHOUSE", name: "Warehouse" },
+        { id: "ap", type: "AIRPORT", name: "Airport", iataCode: "JFK" },
+        { id: "dl", type: "DELIVERY", name: "Delivery" },
+      ],
+      legs: [
+        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "ap", destinationPointId: "wh", assignedCargoIds: [] },
+        { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "wh", destinationPointId: "ap", assignedCargoIds: [] },
+        { id: "l3", legCode: "L3", mode: "ROAD", originPointId: "ap", destinationPointId: "dl", assignedCargoIds: [] },
+      ],
+    });
+    const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
+
+    const svg = container.querySelector('svg[role="img"]') as SVGSVGElement;
+    expect(svg).not.toBeNull();
+    const vbWidth = Number(svg.getAttribute("viewBox")!.split(/\s+/)[2]);
+
+    const nodes = Array.from(container.querySelectorAll("[data-point-id]")) as SVGGElement[];
+    expect(nodes.length).toBe(4);
+    for (const n of nodes) {
+      const m = /translate\(\s*([-\d.]+)[ ,]+([-\d.]+)\s*\)/.exec(n.getAttribute("transform") ?? "");
+      expect(m).not.toBeNull();
+      const x = Number(m![1]);
+      // The node's full box (x .. x+NODE_W) must fit within the viewBox width.
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x + NODE_W).toBeLessThanOrEqual(vbWidth);
+    }
+  });
+
+  it("fans out parallel legs between the same two points so each stays visible and clickable", () => {
+    // Repro: several legs run directly Pickup→Delivery. Without a per-edge offset
+    // they render the identical cubic and stack exactly on top of each other — the
+    // legs underneath are invisible and can't be clicked to edit. Each must get a
+    // distinct path so all three are individually reachable.
+    const detail = makeDetail({
+      points: [
+        { id: "pk", type: "PICKUP", name: "Pickup" },
+        { id: "dl", type: "DELIVERY", name: "Delivery" },
+      ],
+      legs: [
+        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pk", destinationPointId: "dl", assignedCargoIds: [] },
+        { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "pk", destinationPointId: "dl", assignedCargoIds: [] },
+        { id: "l3", legCode: "L3", mode: "ROAD", originPointId: "pk", destinationPointId: "dl", assignedCargoIds: [] },
+      ],
+    });
+    const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
+    const dOf = (legId: string) =>
+      container.querySelector(`[data-leg-id="${legId}"] path`)?.getAttribute("d") ?? null;
+    const d1 = dOf("l1");
+    const d2 = dOf("l2");
+    const d3 = dOf("l3");
+    expect(d1).toBeTruthy();
+    expect(d2).toBeTruthy();
+    expect(d3).toBeTruthy();
+    // All three geometries are distinct → fanned apart, none hidden beneath another.
+    expect(new Set([d1, d2, d3]).size).toBe(3);
+  });
+
+  it("fans out anti-parallel legs (A→B and B→A) so a 2-cycle's edges don't overlap", () => {
+    // A→B and B→A share the same unordered point pair; they must also separate,
+    // otherwise a cycle draws one edge on top of the other.
+    const detail = makeDetail({
+      points: [
+        { id: "a", type: "WAREHOUSE", name: "A" },
+        { id: "b", type: "AIRPORT", name: "B", iataCode: "BBB" },
+      ],
+      legs: [
+        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "a", destinationPointId: "b", assignedCargoIds: [] },
+        { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "b", destinationPointId: "a", assignedCargoIds: [] },
+      ],
+    });
+    const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
+    const d1 = container.querySelector('[data-leg-id="l1"] path')?.getAttribute("d");
+    const d2 = container.querySelector('[data-leg-id="l2"] path')?.getAttribute("d");
+    expect(d1).toBeTruthy();
+    expect(d2).toBeTruthy();
+    expect(d1).not.toEqual(d2);
+  });
+
   // ── Task 2: onEditPoint / onEditLeg ─────────────────────────────────────────
 
   const detailWithRoute = makeDetail({

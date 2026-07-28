@@ -235,14 +235,15 @@ describe("toRouteGraph", () => {
     ]);
   });
 
-  it("validateRoute flags a broken chain (R2) on a chain that ends at a WAREHOUSE in create phase", () => {
-    // p1 PICKUP → p2 WAREHOUSE, single leg carrying c1. The chain ends at a
-    // warehouse, not a delivery → R2 blocking at create.
+  it("validateRoute flags R2 when a cargo chain STARTS at a Delivery point in create phase", () => {
+    // p1 DELIVERY → p2 WAREHOUSE, single leg carrying c1. A chain may start at any point
+    // type EXCEPT a delivery (a delivery is where cargo arrives) → R2 blocking at create.
+    // (Ending at a warehouse is allowed now, so the start-type is what R2 checks here.)
     const brokenDetail = makeDetail({
       readyDate: null,
       targetDelivery: null,
       points: [
-        { id: "p1", type: "PICKUP" },
+        { id: "p1", type: "DELIVERY" },
         { id: "p2", type: "WAREHOUSE" },
       ],
       cargo: [{ id: "c1", poReference: "PO1" }],

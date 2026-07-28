@@ -88,11 +88,16 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
     pushToMap(cargosByLeg, lc.legId, lc.cargoItemId);
   }
 
-  // R5 — at least one pickup and one delivery for the query.
-  if (!graph.points.some((p) => p.type === PointType.PICKUP))
-    findings.push({ rule: "R5", severity: sev(), scope: { type: "query", id: graph.query.id }, message: "At least one Pickup point is required" });
-  if (!graph.points.some((p) => p.type === PointType.DELIVERY))
-    findings.push({ rule: "R5", severity: sev(), scope: { type: "query", id: graph.query.id }, message: "At least one Delivery point is required" });
+  // R5 — minimum route: at least one saved leg, and every leg connects two DIFFERENT
+  // points (no self-loop). Relaxed from the old "must have a Pickup and a Delivery point":
+  // with R2 allowing any non-Delivery start and any end, the route just needs a real leg.
+  // Point typing / continuity stay with R2/R3/R1/R4/R6.
+  if (graph.legs.length === 0)
+    findings.push({ rule: "R5", severity: sev(), scope: { type: "query", id: graph.query.id }, message: "A route needs at least one leg" });
+  for (const leg of graph.legs) {
+    if (leg.originPointId && leg.destinationPointId && leg.originPointId === leg.destinationPointId)
+      findings.push({ rule: "R5", severity: sev(), scope: { type: "leg", id: leg.id }, message: `Leg ${leg.legCode} must connect two different points (its origin and destination are the same)` });
+  }
 
   // R3 — no orphans.
   for (const leg of graph.legs) {
@@ -223,17 +228,34 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
       findings.push({ rule: "R6", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: a point does not balance (what enters must leave)` });
 
     if (sources.length !== 1 || sinks.length !== 1) {
-      findings.push({ rule: "R1", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: its legs do not form a single continuous Pickup→Delivery chain` });
+      // Clarify the most common cause: one atomic cargo row (D5) split across parallel
+      // legs — it leaves a point on >1 leg (fork / parallel drop) or arrives on >1 leg
+      // (merge). Name the point + legs so the fix ("one cargo row per destination") is
+      // obvious, instead of the generic "not a single continuous chain".
+      const forkPt = [...outdeg.entries()].find(([, d]) => d > 1)?.[0];
+      const mergePt = [...indeg.entries()].find(([, d]) => d > 1)?.[0];
+      let message: string;
+      if (forkPt) {
+        const codes = (outEdges.get(forkPt) ?? []).map((e) => e.legCode).join(" & ");
+        message = `Cargo ${c.poReference} can't be split across parallel legs — it leaves ${nameOf(forkPt)} on ${codes}. Give each destination its own cargo row.`;
+      } else if (mergePt) {
+        const codes = edges.filter((e) => e.destinationPointId === mergePt).map((e) => e.legCode).join(" & ");
+        message = `Cargo ${c.poReference} can't be built from parallel legs — ${codes} both arrive at ${nameOf(mergePt)}. Give each origin its own cargo row.`;
+      } else {
+        message = `Cargo ${c.poReference}: its legs do not form a single continuous Pickup→Delivery chain`;
+      }
+      findings.push({ rule: "R1", severity: sev(), scope: { type: "cargo", id: c.id }, message });
       continue;
     }
     const start = sources[0];
     const end = sinks[0];
     const startP = pointById.get(start);
-    const endP = pointById.get(end);
-    if (startP && startP.type !== PointType.PICKUP)
-      findings.push({ rule: "R2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: chain must start at a Pickup (starts at ${startP.type})` });
-    if (endP && endP.type !== PointType.DELIVERY)
-      findings.push({ rule: "R2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: chain must end at a Delivery (ends at ${endP.type})` });
+    // R2 (business rule): a cargo chain may START at any point type EXCEPT a Delivery —
+    // a Delivery is where cargo arrives, never where it begins — and may END at any point
+    // type (no end-type constraint). The single-unbroken-path requirement stays with
+    // R1/R4/R6; R5 still requires the query to hold at least one Pickup and Delivery.
+    if (startP && startP.type === PointType.DELIVERY)
+      findings.push({ rule: "R2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins` });
 
     // R1/R4/T1 — walk the unique chain start→end.
     const visited = new Set<string>();

@@ -32,6 +32,7 @@ const COL_GAP = 96; // horizontal gap between depth columns
 const ROW_GAP = 28; // vertical gap between nodes sharing a depth
 const PAD = 24; // viewBox padding
 const LEGEND_H = 34;
+const EDGE_SPREAD = 34; // vertical px between fanned legs sharing an endpoint pair
 
 type Highlight = { finding: "blocking" | "warning" | null };
 
@@ -82,7 +83,17 @@ export function RouteDiagram({
 
   const graph = useMemo(() => toRouteGraph(detail), [detail]);
 
-  const layout = useMemo(() => computeLayout(graph), [graph]);
+  // Fan-out offsets for legs sharing an endpoint pair (parallel/anti-parallel
+  // edges) so they don't stack on the identical curve and hide the ones beneath.
+  // vBulge reserves vertical room so the bowed curves aren't clipped by the viewBox.
+  const bows = useMemo(() => computeEdgeBows(graph.legs), [graph.legs]);
+  const vBulge = useMemo(() => {
+    let m = 0;
+    for (const b of bows.values()) m = Math.max(m, Math.abs(b));
+    return m > 0 ? Math.ceil(m * 0.75) + 4 : 0;
+  }, [bows]);
+
+  const layout = useMemo(() => computeLayout(graph, vBulge), [graph, vBulge]);
 
   // Resolve findings → per-point / per-leg highlight severity.
   const highlights = useMemo(
@@ -170,6 +181,7 @@ export function RouteDiagram({
                 leg={leg}
                 from={o}
                 to={d}
+                bow={bows.get(leg.id) ?? 0}
                 highlight={hl}
                 messages={highlights.legMsgs.get(leg.id) ?? []}
                 reducedMotion={prefersReducedMotion}
@@ -231,6 +243,7 @@ function Edge({
   leg,
   from,
   to,
+  bow,
   highlight,
   messages,
   reducedMotion,
@@ -241,6 +254,8 @@ function Edge({
   leg: ReturnType<typeof toRouteGraph>["legs"][number];
   from: Pt;
   to: Pt;
+  /** Vertical offset (px) fanning legs that share this endpoint pair apart. */
+  bow: number;
   highlight: Highlight;
   messages: string[];
   reducedMotion: boolean;
@@ -255,8 +270,11 @@ function Edge({
   const y2 = to.y + NODE_H / 2;
 
   // A gentle cubic so same-column / back-references don't overlap the nodes.
+  // `bow` offsets the control points vertically so legs sharing this endpoint
+  // pair fan apart instead of stacking on the identical curve (endpoints stay
+  // anchored; only the mid bulges).
   const dx = Math.max(40, (x2 - x1) / 2);
-  const path = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+  const path = `M ${x1} ${y1} C ${x1 + dx} ${y1 + bow}, ${x2 - dx} ${y2 + bow}, ${x2} ${y2}`;
 
   // Highlight precedence: blocking > warning > mode default.
   let stroke = modeColor(leg.mode);
@@ -273,7 +291,8 @@ function Edge({
     width = 3;
   }
 
-  const mid = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+  // The cubic's vertical peak sits at ~0.75·bow; place the legCode chip on the curve.
+  const mid = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 + bow * 0.75 };
   const dash = modeDash(leg.mode);
 
   const activate = () => onEditLeg?.(leg.id);
@@ -656,7 +675,7 @@ interface Layout {
  * stacked vertically. Isolated points (no leg) go in a trailing column so
  * orphans are still drawn.
  */
-function computeLayout(graph: ReturnType<typeof toRouteGraph>): Layout {
+function computeLayout(graph: ReturnType<typeof toRouteGraph>, vBulge = 0): Layout {
   const pointIds = graph.points.map((p) => p.id);
   const depth = new Map<string, number>(pointIds.map((id) => [id, 0]));
 
@@ -708,25 +727,69 @@ function computeLayout(graph: ReturnType<typeof toRouteGraph>): Layout {
     else columns.set(d, [id]);
   }
 
+  // Position by COLUMN RANK (index in the sorted-depth list), never the raw depth.
+  // A cycle makes the relaxation loop above run to its iteration cap and inflate
+  // raw depths (e.g. 9,10,11,12), so raw depth != column index. Since `width`
+  // below derives from the column COUNT, using the raw depth for x would place
+  // nodes far outside the viewBox and clip them → a blank canvas the user can no
+  // longer click to fix the bad leg. Ranking collapses the columns back to a
+  // compact 0..n-1 range that always fits the computed width.
   const pos = new Map<string, Pt>();
   let maxRows = 0;
   const sortedDepths = [...columns.keys()].sort((a, b) => a - b);
-  for (const d of sortedDepths) {
+  sortedDepths.forEach((d, col) => {
     const ids = columns.get(d)!;
     maxRows = Math.max(maxRows, ids.length);
     ids.forEach((id, row) => {
       pos.set(id, {
-        x: PAD + d * (NODE_W + COL_GAP),
-        y: PAD + row * (NODE_H + ROW_GAP),
+        x: PAD + col * (NODE_W + COL_GAP),
+        y: PAD + vBulge + row * (NODE_H + ROW_GAP),
       });
     });
-  }
+  });
 
   const cols = sortedDepths.length || 1;
   const width = PAD * 2 + cols * NODE_W + (cols - 1) * COL_GAP;
-  const height = PAD * 2 + maxRows * NODE_H + Math.max(0, maxRows - 1) * ROW_GAP;
+  const height =
+    PAD * 2 + vBulge * 2 + maxRows * NODE_H + Math.max(0, maxRows - 1) * ROW_GAP;
 
-  return { width: Math.max(width, 320), height: Math.max(height, NODE_H + PAD * 2), pos };
+  return {
+    width: Math.max(width, 320),
+    height: Math.max(height, NODE_H + PAD * 2 + vBulge * 2),
+    pos,
+  };
+}
+
+// ── multi-edge fan-out ────────────────────────────────────────────────────────
+
+/**
+ * Legs sharing the same *unordered* endpoint pair — parallel legs (Pickup→Delivery
+ * drawn several times) or the two edges of an A↔B cycle — would otherwise render the
+ * identical cubic and stack exactly on top of each other, so the legs underneath are
+ * invisible and can't be clicked to edit. Give each a symmetric vertical bow so the
+ * group fans apart. A group of one keeps bow 0 (a straight edge). The key is unordered
+ * so opposite-direction legs land in the same group and separate too.
+ */
+function computeEdgeBows(
+  legs: ReturnType<typeof toRouteGraph>["legs"],
+): Map<string, number> {
+  const groups = new Map<string, string[]>();
+  for (const l of legs) {
+    if (!l.originPointId || !l.destinationPointId) continue;
+    const key = [l.originPointId, l.destinationPointId].sort().join("::");
+    const arr = groups.get(key);
+    if (arr) arr.push(l.id);
+    else groups.set(key, [l.id]);
+  }
+  const bows = new Map<string, number>();
+  for (const ids of groups.values()) {
+    const n = ids.length;
+    if (n < 2) continue; // single edge → straight (bow 0)
+    ids.forEach((id, i) => {
+      bows.set(id, (i - (n - 1) / 2) * EDGE_SPREAD);
+    });
+  }
+  return bows;
 }
 
 // ── findings → highlights ────────────────────────────────────────────────────

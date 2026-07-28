@@ -125,4 +125,46 @@ describe("CargoAssignmentControl", () => {
     );
     expect(screen.getByText(/assign at least one cargo row/i)).toBeInTheDocument();
   });
+
+  it("disables an unchecked cargo that is already on a parallel leg and names that leg", () => {
+    render(
+      <CargoAssignmentControl
+        cargo={[CARGO_A, CARGO_B]}
+        value={[]}
+        onChange={vi.fn()}
+        conflicts={new Map([[CARGO_A.id, "L1"]])}
+      />,
+    );
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes[0]).toBeDisabled(); // CARGO_A conflicts → disabled
+    expect(checkboxes[1]).not.toBeDisabled(); // CARGO_B is free
+    expect(screen.getByText(/already on L1/i)).toBeInTheDocument();
+  });
+
+  it("does not fire onChange when a disabled (conflicting) cargo is clicked", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <CargoAssignmentControl
+        cargo={[CARGO_A]}
+        value={[]}
+        onChange={onChange}
+        conflicts={new Map([[CARGO_A.id, "L1"]])}
+      />,
+    );
+    await user.click(screen.getByRole("checkbox"));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps a conflicting cargo enabled if it is already checked here (so it can be removed)", () => {
+    render(
+      <CargoAssignmentControl
+        cargo={[CARGO_A]}
+        value={[CARGO_A.id]}
+        onChange={vi.fn()}
+        conflicts={new Map([[CARGO_A.id, "L1"]])}
+      />,
+    );
+    expect(screen.getByRole("checkbox")).not.toBeDisabled();
+  });
 });

@@ -61,13 +61,25 @@ describe("V-M1 is always blocking (both phases)", () => {
   });
 });
 
-describe("R5 — need a pickup and a delivery", () => {
-  it("flags a graph with no delivery point", () => {
+describe("R5 — minimum route (≥1 leg; each leg connects two different points)", () => {
+  it("flags a query with no legs", () => {
     const g = validGraph();
-    g.points = g.points.filter((p) => p.type !== "DELIVERY");
-    g.legs = [g.legs[0]];
-    g.legCargo = [{ legId: "l1", cargoItemId: "c1" }];
+    g.legs = [];
+    g.legCargo = [];
     expect(rules(g, "create")).toContain("R5");
+  });
+  it("flags a leg whose origin and destination are the same point (self-loop)", () => {
+    const g = validGraph();
+    g.legs[0].destinationPointId = g.legs[0].originPointId; // pu -> pu
+    expect(rules(g, "create")).toContain("R5");
+  });
+  it("does NOT require a Pickup or Delivery point anymore — a valid two-point leg suffices", () => {
+    const g = validGraph();
+    // Retype endpoints away from pickup/delivery; still distinct points wired by legs.
+    g.points[0].type = "WAREHOUSE";
+    g.points[2].type = "AIRPORT";
+    g.points[2].iataCode = "HAM";
+    expect(rules(g, "create")).not.toContain("R5");
   });
 });
 
@@ -95,10 +107,20 @@ describe("R1/R2 — continuity & endpoints", () => {
     g.legs[1].originPointId = "pu"; // l2 no longer starts where l1 ends (wh)
     expect(rules(g, "create")).toContain("R1");
   });
-  it("flags a chain not starting at a pickup", () => {
+  it("flags a chain that STARTS at a Delivery point (R2 — cargo can't begin at a delivery)", () => {
     const g = validGraph();
-    g.points[0].type = "WAREHOUSE"; // starts at a warehouse
+    g.points[0].type = "DELIVERY"; // the source node is now a delivery
     expect(rules(g, "create")).toContain("R2");
+  });
+  it("does NOT flag a chain that starts at a Warehouse (any non-delivery start is allowed)", () => {
+    const g = validGraph();
+    g.points[0].type = "WAREHOUSE"; // start at a warehouse — allowed by the updated R2
+    expect(rules(g, "create")).not.toContain("R2");
+  });
+  it("does NOT flag a chain that ENDS at a non-delivery point (any end is allowed)", () => {
+    const g = validGraph();
+    g.points[2].type = "AIRPORT"; // ends at an airport instead of a delivery — allowed
+    expect(rules(g, "create")).not.toContain("R2");
   });
 });
 
@@ -133,6 +155,27 @@ describe("R6 — mass balance", () => {
       { legId: "l2", cargoItemId: "c1" },
     ];
     expect(rules(g, "create")).toContain("R6");
+  });
+});
+
+describe("R1 — clear message when one cargo row is split across parallel legs", () => {
+  it("names the parallel-drop cause (fork) instead of the generic chain message", () => {
+    const g = validGraph();
+    g.points.push({ id: "de2", type: "DELIVERY", name: "Consignee2", streetAddress: "10 Rd", city: "Bremen", postalCode: "28195", country: "DE", contactName: "C", contactPhone: "+491230000", contactEmail: null, warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Europe/Berlin" });
+    // Same cargo c1 leaves the pickup on two legs (pu->de, pu->de2) → parallel drop.
+    g.legs = [
+      { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "de", readyDate: READY, targetDelivery: TARGET },
+      { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "pu", destinationPointId: "de2", readyDate: READY, targetDelivery: TARGET },
+    ];
+    g.legCargo = [
+      { legId: "l1", cargoItemId: "c1" },
+      { legId: "l2", cargoItemId: "c1" },
+    ];
+    const r1 = validateRoute(g, "create").find((f) => f.rule === "R1");
+    expect(r1).toBeDefined();
+    expect(r1!.message).toMatch(/parallel legs/i);
+    expect(r1!.message).toContain("L1");
+    expect(r1!.message).toContain("L2");
   });
 });
 
