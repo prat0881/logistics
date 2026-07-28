@@ -61,13 +61,25 @@ describe("V-M1 is always blocking (both phases)", () => {
   });
 });
 
-describe("R5 — need a pickup and a delivery", () => {
-  it("flags a graph with no delivery point", () => {
+describe("R5 — minimum route (≥1 leg; each leg connects two different points)", () => {
+  it("flags a query with no legs", () => {
     const g = validGraph();
-    g.points = g.points.filter((p) => p.type !== "DELIVERY");
-    g.legs = [g.legs[0]];
-    g.legCargo = [{ legId: "l1", cargoItemId: "c1" }];
+    g.legs = [];
+    g.legCargo = [];
     expect(rules(g, "create")).toContain("R5");
+  });
+  it("flags a leg whose origin and destination are the same point (self-loop)", () => {
+    const g = validGraph();
+    g.legs[0].destinationPointId = g.legs[0].originPointId; // pu -> pu
+    expect(rules(g, "create")).toContain("R5");
+  });
+  it("does NOT require a Pickup or Delivery point anymore — a valid two-point leg suffices", () => {
+    const g = validGraph();
+    // Retype endpoints away from pickup/delivery; still distinct points wired by legs.
+    g.points[0].type = "WAREHOUSE";
+    g.points[2].type = "AIRPORT";
+    g.points[2].iataCode = "HAM";
+    expect(rules(g, "create")).not.toContain("R5");
   });
 });
 

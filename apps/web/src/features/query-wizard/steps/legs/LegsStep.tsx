@@ -16,7 +16,7 @@ const LEGS_STEP_INDEX = 3;
 /**
  * RouteNoticesStrip — the top summary strip (replaces the old FindingsPanel list).
  * Shows a one-line count + the query-scoped findings that don't map to a single box
- * (e.g. "At least one Pickup point is required"). Per-box detail lives on hover.
+ * (e.g. "A route needs at least one leg"). Per-box detail lives on hover.
  */
 function RouteNoticesStrip({ grouped }: { grouped: GroupedFindings }) {
   if (grouped.blocking.length === 0) return null;

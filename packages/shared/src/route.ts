@@ -88,11 +88,16 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
     pushToMap(cargosByLeg, lc.legId, lc.cargoItemId);
   }
 
-  // R5 — at least one pickup and one delivery for the query.
-  if (!graph.points.some((p) => p.type === PointType.PICKUP))
-    findings.push({ rule: "R5", severity: sev(), scope: { type: "query", id: graph.query.id }, message: "At least one Pickup point is required" });
-  if (!graph.points.some((p) => p.type === PointType.DELIVERY))
-    findings.push({ rule: "R5", severity: sev(), scope: { type: "query", id: graph.query.id }, message: "At least one Delivery point is required" });
+  // R5 — minimum route: at least one saved leg, and every leg connects two DIFFERENT
+  // points (no self-loop). Relaxed from the old "must have a Pickup and a Delivery point":
+  // with R2 allowing any non-Delivery start and any end, the route just needs a real leg.
+  // Point typing / continuity stay with R2/R3/R1/R4/R6.
+  if (graph.legs.length === 0)
+    findings.push({ rule: "R5", severity: sev(), scope: { type: "query", id: graph.query.id }, message: "A route needs at least one leg" });
+  for (const leg of graph.legs) {
+    if (leg.originPointId && leg.destinationPointId && leg.originPointId === leg.destinationPointId)
+      findings.push({ rule: "R5", severity: sev(), scope: { type: "leg", id: leg.id }, message: `Leg ${leg.legCode} must connect two different points (its origin and destination are the same)` });
+  }
 
   // R3 — no orphans.
   for (const leg of graph.legs) {
