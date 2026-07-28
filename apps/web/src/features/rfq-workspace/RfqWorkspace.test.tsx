@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -25,9 +25,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("RfqWorkspace", () => {
   it("renders header + leg panels and runs Distribute All", async () => {
-    const calls: string[] = [];
     vi.stubGlobal("fetch", mockFetch((url, init) => {
-      calls.push(`${init?.method ?? "GET"} ${url}`);
       if (url.endsWith("/api/queries/q1")) return { status: 200, body: queryDetail };
       if (url.includes("/rfq-state")) return { status: 200, body: { quotes: [], rfqs: [], freightForwarders: [] } };
       if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
@@ -41,7 +39,9 @@ describe("RfqWorkspace", () => {
     expect(screen.getByText("Air leg")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /distribute all/i }));
-    expect(await screen.findAllByText(/L1/)).not.toHaveLength(0);
-    await waitFor(() => expect(screen.getByText(/nothing selected/i)).toBeInTheDocument());
+    // the skipped-summary line rendered (single text node — robust)
+    expect(await screen.findByText(/nothing selected/i)).toBeInTheDocument();
+    // "L1" now appears twice: in the leg panel header AND in the skipped line
+    expect(screen.getAllByText(/L1/)).toHaveLength(2);
   });
 });
