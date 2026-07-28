@@ -91,8 +91,6 @@ const fullDraftDetail = {
       netWt: null,
       grossWt: "10",
       volumeCbm: "0.006",
-      freightDensity: null,
-      chargeableWeight: null,
     },
   ],
   points: [
@@ -155,7 +153,6 @@ const fullDraftDetail = {
       targetDelivery: TARGET_DELIVERY_Q9,
       status: "DRAFT",
       executionStatus: "NOT_STARTED",
-      totalChargeableWeight: null,
       createdAt: "2026-01-01T00:00:00+00:00",
       updatedAt: "2026-01-01T00:00:00+00:00",
       assignedCargoIds: [CARGO_ID_Q9],

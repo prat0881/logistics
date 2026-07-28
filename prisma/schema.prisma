@@ -550,8 +550,6 @@ model CargoItem {
   // GENERATED ALWAYS AS ((dimL*dimW*dimH*qty)/1e6) STORED — see the hand-edited migration.
   // @default(dbgenerated(...)) is the exact `db pull` form → drift-free; never written by the app.
   volumeCbm        Decimal?       @default(dbgenerated("((((\"dimL\" * \"dimW\") * \"dimH\") * (qty)::numeric) / (1000000)::numeric)")) @db.Decimal(14, 6)
-  freightDensity   Decimal?       @db.Decimal(12, 3) // null in Stage 3 (D4)
-  chargeableWeight Decimal?       @db.Decimal(12, 3) // null in Stage 3 (D4)
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -613,7 +611,6 @@ model Leg {
   targetDelivery        DateTime?
   status                LegStatus          @default(DRAFT)
   executionStatus       LegExecutionStatus @default(PENDING)
-  totalChargeableWeight Decimal?           @db.Decimal(12, 3)
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 
@@ -634,7 +631,6 @@ model LegCargo {
   leg              Leg       @relation(fields: [legId], references: [id], onDelete: Cascade)
   cargoItemId      String    @db.Uuid
   cargoItem        CargoItem @relation(fields: [cargoItemId], references: [id], onDelete: Cascade)
-  manifestSnapshot Json?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 

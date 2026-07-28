@@ -73,8 +73,6 @@ const cargoRowDto = {
   netWt: "50",
   grossWt: "60",
   volumeCbm: "2.5000",
-  freightDensity: null,
-  chargeableWeight: null,
 };
 
 const detailWithCargo = { ...baseDetail, cargo: [cargoRowDto] };

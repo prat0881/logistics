@@ -10,8 +10,7 @@ export type ReferenceTag = (typeof ReferenceTag)[keyof typeof ReferenceTag];
 export const REFERENCE_TAGS = Object.values(ReferenceTag) as [ReferenceTag, ...ReferenceTag[]];
 
 // A cargo row (§7.3). Core fields required (a row is atomic data entry + volumeCbm
-// is a generated column needing non-null dims/qty). freightDensity/chargeableWeight
-// are Stage-4 (never sent here); volumeCbm is DB-generated (never sent here).
+// is a generated column needing non-null dims/qty). volumeCbm is DB-generated (never written by the app).
 export const cargoCreateSchema = z
   .object({
     poReference: z.string().trim().min(1).max(120),
@@ -73,6 +72,4 @@ export interface CargoDto {
   netWt: string | null;
   grossWt: string;
   volumeCbm: string | null; // Prisma Decimal serialises to string
-  freightDensity: string | null; // null in Stage 3
-  chargeableWeight: string | null; // null in Stage 3
 }

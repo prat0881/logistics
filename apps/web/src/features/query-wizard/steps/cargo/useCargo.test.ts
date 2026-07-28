@@ -30,8 +30,6 @@ const baseCargoDto = {
   netWt: "50",
   grossWt: "60",
   volumeCbm: "2.5",
-  freightDensity: null,
-  chargeableWeight: null,
 };
 
 afterEach(() => vi.unstubAllGlobals());
