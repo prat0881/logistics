@@ -26,7 +26,7 @@ describe("useFfPortal", () => {
     vi.stubGlobal("fetch", fx);
     const { result } = renderHook(() => useFfRfq("bad"), { wrapper: wrapper() });
     await waitFor(() => expect(result.current.isError).toBe(true));
-    expect((result.current.error as { status: number }).status).toBe(401);
+    expect((result.current.error as unknown as { status: number }).status).toBe(401);
     expect(fx).toHaveBeenCalledTimes(1);
   });
 

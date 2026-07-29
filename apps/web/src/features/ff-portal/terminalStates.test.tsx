@@ -148,6 +148,6 @@ describe("terminalStates", () => {
     expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
     const grandTotal = screen.getByTestId("grand-total");
     expect(grandTotal).toBeInTheDocument();
-    expect(grandTotal).toHaveTextContent(rfq.currency);
+    expect(grandTotal).toHaveTextContent(rfq.currency!);
   });
 });

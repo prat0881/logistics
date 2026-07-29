@@ -19,7 +19,7 @@ describe("portalClient", () => {
 
   it("401 throws PortalError(401) and does NOT import lib/api onUnauthorized", async () => {
     vi.stubGlobal("fetch", mockFetch(() => ({ status: 401, body: { message: "bad token" } })));
-    const err = await portalGet("/api/ff/rfq/bad").catch((e) => e);
+    const err = await portalGet("/api/ff/rfq/bad").catch((e) => e as PortalError) as PortalError;
     expect(err).toBeInstanceOf(PortalError);
     expect(err.status).toBe(401);
   });
@@ -27,14 +27,14 @@ describe("portalClient", () => {
   it("422 carries findings on the error", async () => {
     const findings = [{ rule: "Q1", severity: "blocking", scope: { type: "leg", id: "L1" }, message: "x" }];
     vi.stubGlobal("fetch", mockFetch(() => ({ status: 422, body: { findings } })));
-    const err: PortalError = await portalPost("/api/ff/rfq/tok/quotes/L1/submit", {}).catch((e) => e);
+    const err = await portalPost("/api/ff/rfq/tok/quotes/L1/submit", {}).catch((e) => e as PortalError) as PortalError;
     expect(err.status).toBe(422);
     expect(err.findings).toEqual(findings);
   });
 
   it("409 throws PortalError(409)", async () => {
     vi.stubGlobal("fetch", mockFetch(() => ({ status: 409, body: {} })));
-    const err: PortalError = await portalPost("/api/ff/rfq/tok/quotes/L1/submit", {}).catch((e) => e);
+    const err = await portalPost("/api/ff/rfq/tok/quotes/L1/submit", {}).catch((e) => e as PortalError) as PortalError;
     expect(err.status).toBe(409);
   });
 
