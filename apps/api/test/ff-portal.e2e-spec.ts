@@ -159,7 +159,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       legId,
       mode: "AIR",
       currency: "USD",
-      quoteValidityUntil: "2026-12-01T00:00:00.000Z",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
       cargo: leg.seededDensity.map((d) => ({
         cargoItemId: d.cargoItemId,
         grossWtT: 1,
@@ -256,6 +256,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .expect(201);
 
     expect(res.body.status).toBe("QUOTED");
+    expect(res.body.quoteId).toBeDefined();
 
     const q = await prisma.quote.findFirst({
       where: { legId },
@@ -264,6 +265,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     expect(q?.status).toBe("QUOTED");
     expect(q?.submittedAt).not.toBeNull();
     expect(q?.chargeLines.length).toBeGreaterThan(0);
+    expect(q?.quoteCargoLines.length).toBeGreaterThan(0);
     expect(Number(q?.grandTotal)).toBeGreaterThan(0);
 
     const leg = await prisma.leg.findUnique({ where: { id: legId } });
