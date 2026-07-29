@@ -199,6 +199,7 @@ model Quote {
   grandTotal             Decimal? @db.Decimal(14, 2)
   dgSurchargeNote        String?
   termsConditions        String?
+  draftJson              Json?
 
   quoteCargoLines       QuoteCargoLine[]
   chargeLines           ChargeLine[]
