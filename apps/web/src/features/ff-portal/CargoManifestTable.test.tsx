@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { CargoManifestTable } from "./CargoManifestTable";
 
 const cargo = [{ cargoItemId: "c1", poReference: "PO-1", productName: "Pumps", hsCode: "8413",
@@ -11,8 +11,9 @@ describe("CargoManifestTable", () => {
     render(<CargoManifestTable cargo={cargo} />);
     expect(screen.getByText("PO-1")).toBeInTheDocument();
     expect(screen.getByText("Pumps")).toBeInTheDocument();
-    // "DG" appears in both the column header and the warning badge
-    expect(screen.getAllByText("DG").length).toBeGreaterThanOrEqual(2);
+    // Scope DG badge assertion to the data row, avoiding collision with the "DG" column header
+    const dgRow = screen.getByText("Pumps").closest("tr")!;
+    expect(within(dgRow).getByText("DG")).toBeInTheDocument();
     expect(screen.getByText("1500")).toBeInTheDocument();
   });
   it("shows an empty state", () => {
@@ -23,10 +24,10 @@ describe("CargoManifestTable", () => {
     const safeCargo = [{ cargoItemId: "c2", poReference: "PO-2", productName: "Books", hsCode: null,
       packageType: "Box", isDangerous: false, qty: 10, dimL: "0.5", dimW: "0.3", dimH: "0.2",
       netWt: "50", grossWt: "60", volumeCbm: "0.03" }] as never;
-    const { container } = render(<CargoManifestTable cargo={safeCargo} />);
-    // The "DG" column header exists but no Badge cell should contain "DG"
-    const badges = container.querySelectorAll('[class*="bg-warning"]');
-    expect(badges).toHaveLength(0);
+    render(<CargoManifestTable cargo={safeCargo} />);
+    // Scope to the data row — "DG" must not appear as a badge in this row
+    const plainRow = screen.getByText("Books").closest("tr")!;
+    expect(within(plainRow).queryByText("DG")).toBeNull();
     // Shows placeholder dash for non-DG in data cell
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
