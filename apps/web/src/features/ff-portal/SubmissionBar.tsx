@@ -82,7 +82,7 @@ export function SubmissionBar({
         {/* Action buttons */}
         <div className="flex items-center gap-2">
           {savedAt != null && (
-            <span className="text-sm text-green-600">Saved ✓</span>
+            <span className="text-sm text-success">Saved ✓</span>
           )}
           <Button
             type="button"

@@ -55,7 +55,7 @@ export function ChargeZonePanel() {
               {rows.map(({ f, idx }) => {
                 const chargeAtIdx = draft.charges?.[idx];
                 const isPreset = (chargeAtIdx?.presetKey ?? null) != null;
-                const label = chargeAtIdx?.label ?? "";
+                const label = chargeAtIdx?.label ?? (f as { label?: string }).label ?? "charge";
 
                 return (
                   <div
