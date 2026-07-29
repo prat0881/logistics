@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import type { FfPortalRfqDto } from "@svyft/shared";
 import { useFfRfq } from "./useFfPortal";
@@ -41,6 +41,13 @@ function FfPortalLoaded({
 }): JSX.Element {
   const [currency, setCurrency] = useState<string | null>(rfq.currency);
   const [validity, setValidity] = useState<string | null>(rfq.quoteValidityUntil);
+
+  useEffect(() => {
+    if (currency == null && rfq.currency != null) setCurrency(rfq.currency);
+  }, [rfq.currency, currency]);
+  useEffect(() => {
+    if (validity == null && rfq.quoteValidityUntil != null) setValidity(rfq.quoteValidityUntil);
+  }, [rfq.quoteValidityUntil, validity]);
 
   const expired = Date.now() > Date.parse(rfq.submissionDeadline);
 

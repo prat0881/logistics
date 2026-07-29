@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { Routes, Route } from "react-router-dom";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
@@ -71,22 +71,13 @@ describe("FfPortalPage terminal states", () => {
 
 describe("FfPortalPage loading state", () => {
   it("shows a loading indicator while the rfq is being fetched", async () => {
-    let resolve: (v: unknown) => void;
-    const pending = new Promise((res) => { resolve = res; });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => pending),
-    );
-    renderAt("tok");
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (typeof url === "string" && url.includes("/api/ff/rfq/")) return new Promise(() => {}); // never resolves → stays loading
+      return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}), text: () => Promise.resolve("") } as Response); // auth/me etc.
+    }));
+    await act(async () => { renderAt("tok"); });
     // The loading spinner/status should be visible before fetch resolves
     expect(screen.getByRole("status")).toBeInTheDocument();
-    // Clean up by resolving the promise
-    resolve!({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve(okRfq),
-      text: () => Promise.resolve(JSON.stringify(okRfq)),
-    });
   });
 });
 
