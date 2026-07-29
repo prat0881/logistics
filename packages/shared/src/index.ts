@@ -17,3 +17,4 @@ export * from "./timezone";
 export * from "./notifications";
 export * from "./quote";
 export * from "./quote-engine";
+export * from "./ff-portal";
