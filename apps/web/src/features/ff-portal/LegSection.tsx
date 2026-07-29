@@ -204,7 +204,7 @@ function LegSectionForm({
         <QuoteFindingsSummary findings={displayedFindings} onNavigate={handleNavigate} />
 
         {/* Submission bar — anchored for "terms" navigation */}
-        <div id={sectionAnchorId(leg.legId, "terms")}>
+        <section id={sectionAnchorId(leg.legId, "terms")}>
           <SubmissionBar
             showDgNote={showDgNote}
             currency={currency}
@@ -216,7 +216,7 @@ function LegSectionForm({
             onSaveDraft={onSaveDraft}
             onSubmit={onSubmit}
           />
-        </div>
+        </section>
       </div>
     </FormProvider>
   );

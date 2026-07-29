@@ -86,10 +86,7 @@ describe("LegSection submit gate", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: /submit quote/i }));
     expect(await screen.findByRole("alert")).toBeInTheDocument(); // findings shown (charges unpriced etc.)
-    expect(fx).not.toHaveBeenCalledWith(
-      expect.stringContaining("/submit"),
-      expect.anything(),
-    );
+    expect(fx).not.toHaveBeenCalled(); // client gate: zero network calls on invalid submit
   });
 });
 
