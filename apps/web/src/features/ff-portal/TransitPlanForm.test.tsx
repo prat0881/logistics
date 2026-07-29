@@ -23,6 +23,7 @@ function HarnessWithSurcharge() {
     <FormProvider {...form}>
       <TransitPlanForm />
       <output data-testid="surcharge">{surcharge ?? ""}</output>
+      <output data-testid="surcharge-type">{typeof surcharge}</output>
     </FormProvider>
   );
 }
@@ -31,7 +32,9 @@ describe("TransitPlanForm", () => {
   it("writes an ISO instant when a departure datetime is chosen", async () => {
     render(<Harness />);
     await userEvent.type(screen.getByLabelText(/departure/i), "2026-08-05T10:00");
-    expect(screen.getByTestId("dep").textContent).toMatch(/^2026-08-05T/);
+    const written = screen.getByTestId("dep").textContent ?? "";
+    expect(written).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(Number.isFinite(new Date(written).getTime())).toBe(true);
   });
 
   it("writes a numeric value when carrierSurcharge is set", async () => {
@@ -40,5 +43,6 @@ describe("TransitPlanForm", () => {
     await userEvent.clear(surchargeInput);
     await userEvent.type(surchargeInput, "150");
     expect(screen.getByTestId("surcharge").textContent).toBe("150");
+    expect(screen.getByTestId("surcharge-type")).toHaveTextContent("number");
   });
 });
