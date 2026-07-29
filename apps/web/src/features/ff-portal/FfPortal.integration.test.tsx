@@ -252,10 +252,17 @@ describe("FfPortal integration — happy path", () => {
     // Assert: PATCH body carries RFQ-level currency and quoteValidityUntil (the merge)
     // These were NEVER typed into a per-leg field — they come from page-level state seeded from the RFQ
     const patchCall = calls[patchIdx];
-    expect((patchCall.body as Record<string, unknown>)?.currency).toBe("USD");
-    expect((patchCall.body as Record<string, unknown>)?.quoteValidityUntil).toBe(
+    const patchBody = patchCall.body as Record<string, unknown>;
+    expect(patchBody?.currency).toBe("USD");
+    expect(patchBody?.quoteValidityUntil).toBe(
       "2999-02-01T00:00:00.000Z",
     );
+
+    // Assert: the user-typed amount (2000) for "Air Freight" serialized into PATCH body charges
+    const patchCharges = patchBody?.charges as Array<Record<string, unknown>> | undefined;
+    const airFreightCharge = patchCharges?.find((c) => c.presetKey === "AIR_MAIN_FREIGHT");
+    expect(airFreightCharge).toBeDefined();
+    expect(airFreightCharge?.amount).toBe(2000);
   });
 });
 

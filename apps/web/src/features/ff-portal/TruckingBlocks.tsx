@@ -30,7 +30,7 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
             <div className="grid grid-cols-2 gap-3">
               {/* Trucking type */}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Type</label>
+                <label htmlFor={`trk-type-${pointId}`} className="text-xs font-medium text-muted-foreground">Type</label>
                 <Select
                   value={row?.truckingType ?? "DEDICATED"}
                   onValueChange={(v) =>
@@ -39,7 +39,7 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
                     })
                   }
                 >
-                  <SelectTrigger aria-label={`Trucking type for ${name}`}>
+                  <SelectTrigger id={`trk-type-${pointId}`} aria-label={`Trucking type for ${name}`}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -51,7 +51,7 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
 
               {/* Basis */}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Basis</label>
+                <label htmlFor={`trk-basis-${pointId}`} className="text-xs font-medium text-muted-foreground">Basis</label>
                 <Select
                   value={row?.basis ?? "PER_TRUCK"}
                   onValueChange={(v) =>
@@ -60,7 +60,7 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
                     })
                   }
                 >
-                  <SelectTrigger aria-label={`Basis for ${name}`}>
+                  <SelectTrigger id={`trk-basis-${pointId}`} aria-label={`Basis for ${name}`}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -75,8 +75,9 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
 
             {/* Amount */}
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Amount</label>
+              <label htmlFor={`trk-amount-${pointId}`} className="text-xs font-medium text-muted-foreground">Amount</label>
               <NumberField
+                id={`trk-amount-${pointId}`}
                 aria-label={`Amount for ${name}`}
                 value={row?.amount ?? null}
                 onChange={(v) =>
@@ -87,8 +88,9 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
 
             {/* Remarks */}
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Remarks</label>
+              <label htmlFor={`trk-remarks-${pointId}`} className="text-xs font-medium text-muted-foreground">Remarks</label>
               <Textarea
+                id={`trk-remarks-${pointId}`}
                 aria-label={`Remarks for ${name}`}
                 placeholder="Remarks (optional)"
                 {...register(`trucking.${i}.remarks` as const)}
