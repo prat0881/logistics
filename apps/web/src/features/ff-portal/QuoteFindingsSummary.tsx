@@ -5,16 +5,15 @@ import type { PortalSection } from "./findingNav";
 
 interface QuoteFindingsSummaryProps {
   findings: Finding[];
-  legId: string;
   onNavigate: (section: PortalSection) => void;
 }
 
 export function QuoteFindingsSummary({ findings, onNavigate }: QuoteFindingsSummaryProps) {
-  const deduped = dedupeFindings(findings).filter((f) => f.severity === "blocking");
-  if (deduped.length === 0) return null;
+  const blocking = dedupeFindings(findings.filter((f) => f.severity === "blocking"));
+  if (blocking.length === 0) return null;
 
   const bySection = new Map<PortalSection, Finding[]>();
-  for (const f of deduped) {
+  for (const f of blocking) {
     const section = findingSection(f);
     const existing = bySection.get(section);
     if (existing) existing.push(f);
@@ -24,7 +23,7 @@ export function QuoteFindingsSummary({ findings, onNavigate }: QuoteFindingsSumm
   return (
     <div role="alert" className="space-y-3 rounded-md border border-destructive/30 bg-destructive/10 p-4">
       <p className="text-sm font-semibold text-destructive">
-        Resolve {deduped.length} issue{deduped.length === 1 ? "" : "s"} before submitting:
+        Resolve {blocking.length} issue{blocking.length === 1 ? "" : "s"} before submitting:
       </p>
       {PORTAL_SECTION_ORDER.filter((s) => bySection.has(s)).map((section) => {
         const items = bySection.get(section)!;

@@ -12,14 +12,14 @@ const findings: Finding[] = [
 describe("QuoteFindingsSummary", () => {
   it("renders blocking findings and calls onNavigate on click", async () => {
     const onNavigate = vi.fn();
-    render(<QuoteFindingsSummary findings={findings} legId="L1" onNavigate={onNavigate} />);
+    render(<QuoteFindingsSummary findings={findings} onNavigate={onNavigate} />);
     expect(screen.getByRole("alert")).toBeInTheDocument();
     await userEvent.click(screen.getByText("Currency is required"));
     expect(onNavigate).toHaveBeenCalledWith("rfq");
   });
 
   it("returns null with no blocking findings", () => {
-    const { container } = render(<QuoteFindingsSummary findings={[]} legId="L1" onNavigate={() => {}} />);
+    const { container } = render(<QuoteFindingsSummary findings={[]} onNavigate={() => {}} />);
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -27,7 +27,7 @@ describe("QuoteFindingsSummary", () => {
     const warningFindings: Finding[] = [
       { rule: "Q4", severity: "warning", scope: { type: "field", id: "currency" }, message: "Currency warning only" },
     ];
-    const { container } = render(<QuoteFindingsSummary findings={warningFindings} legId="L1" onNavigate={() => {}} />);
+    const { container } = render(<QuoteFindingsSummary findings={warningFindings} onNavigate={() => {}} />);
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByText("Currency warning only")).not.toBeInTheDocument();
   });
