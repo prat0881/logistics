@@ -9,6 +9,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { seedReferenceData } from "../src/seed/reference-seed";
 
 const PREFIX = "FF-PORTAL";
 const CODE = `YAL00-${PREFIX}`;
@@ -45,6 +46,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     await app.init();
     prisma = moduleRef.get(PrismaService);
     jwt = moduleRef.get(JwtService);
+    await seedReferenceData(prisma);
     await cleanup();
   });
 
@@ -153,7 +155,9 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     expect(leg.seededCharges.map((c: { presetKey: string }) => c.presetKey)).toContain(
       "AIR_MAIN_FREIGHT",
     ); // Air presets
-    expect(leg.seededDensity[0].freightDensity).toBeGreaterThan(0); // Air density (seeded from FreightDensityFactor)
+    const air = (await prisma.freightDensityFactor.findUnique({ where: { mode: "AIR" } }))!.kgPerCbm;
+    expect(leg.seededDensity).toHaveLength(1);
+    expect(leg.seededDensity[0].freightDensity).toBe(air); // Air density (seeded from FreightDensityFactor)
     expect(leg.draft).toBeNull();
   });
 
