@@ -16,6 +16,7 @@ import { ConfigPage } from "@/features/admin/ConfigPage";
 import { QueriesListPage } from "@/features/query-list/QueriesListPage";
 import { QueryWizardPage } from "@/features/query-wizard/QueryWizardPage";
 import { QueryWorkspaceHub } from "@/features/rfq-workspace/QueryWorkspaceHub";
+import { FfPortalPage } from "@/features/ff-portal/FfPortalPage";
 
 function Protected({ children }: { children: ReactNode }) {
   return (
@@ -34,6 +35,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/ff/rfq/:token" element={<FfPortalPage />} />
       <Route path="/" element={<Navigate to="/queries" replace />} />
       <Route
         path="/queries"
