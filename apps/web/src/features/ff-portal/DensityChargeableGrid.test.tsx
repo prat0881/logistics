@@ -19,11 +19,11 @@ function Harness() {
 describe("DensityChargeableGrid", () => {
   it("recomputes chargeable weight live when density changes", async () => {
     render(<Harness />);
-    expect(screen.getByText("—")).toBeInTheDocument();                 // no density yet
+    expect(screen.getByTestId("cw-c1")).toHaveTextContent("—");         // no density yet
     await userEvent.type(screen.getByLabelText(/density.*PO-1/i), "300"); // volumetric = 2.5*300/1000 = 0.75t < 1.5t gross
-    expect(await screen.findByText("1.500")).toBeInTheDocument();       // max(1.5, 0.75)
+    expect(await screen.findByTestId("cw-c1")).toHaveTextContent("1.500"); // max(1.5, 0.75)
     await userEvent.clear(screen.getByLabelText(/density.*PO-1/i));
     await userEvent.type(screen.getByLabelText(/density.*PO-1/i), "1000"); // volumetric = 2.5t > 1.5t
-    expect(await screen.findByText("2.500")).toBeInTheDocument();
+    expect(await screen.findByTestId("cw-c1")).toHaveTextContent("2.500");
   });
 });
