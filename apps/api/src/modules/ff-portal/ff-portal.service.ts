@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { ForbiddenException, Injectable } from "@nestjs/common";
 import { AIR_CHARGE_PRESETS, SEA_CHARGE_PRESETS, classifyWarehousePositions } from "@svyft/shared";
 import type { FfPortalRfqDto, FfPortalLegDto, ManifestSnapshot, QuoteDraft } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -78,5 +78,27 @@ export class FfPortalService {
       freightForwarder: { companyName: ff?.companyName ?? "" },
       legs,
     };
+  }
+
+  private quoteForLeg(scope: FfScope, legId: string) {
+    const q = scope.quotes.find((x) => x.legId === legId);
+    if (!q) throw new ForbiddenException("This leg is not part of your RFQ");
+    return q;
+  }
+
+  async saveDraft(scope: FfScope, legId: string, draft: QuoteDraft): Promise<{ savedAt: string }> {
+    const q = this.quoteForLeg(scope, legId);
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.quote.update({ where: { id: q.id }, data: { draftJson: draft as unknown as object } }),
+      this.prisma.rfq.update({
+        where: { id: scope.rfq.id },
+        data: {
+          currency: draft.currency ?? undefined,
+          quoteValidityUntil: draft.quoteValidityUntil ? new Date(draft.quoteValidityUntil) : undefined,
+        },
+      }),
+    ]);
+    return { savedAt: now.toISOString() };
   }
 }

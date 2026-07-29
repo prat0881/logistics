@@ -61,11 +61,13 @@ describe("GET /ff/rfq/:token (e2e)", () => {
    * → FreightForwarder → PUT ff-selection → POST distribute.
    * The distribute response carries rfqs[0].accessToken.
    */
+  let fixtureSeq = 0;
   async function distributeFixture(): Promise<{ token: string; legId: string }> {
     const admin = cookie(Role.ADMINISTRATOR);
+    const seq = ++fixtureSeq;
 
     const query = await prisma.query.create({
-      data: { queryCode: `${CODE}-FIXTURE`, incoterms: "FOB" },
+      data: { queryCode: `${CODE}-FIXTURE-${seq}`, incoterms: "FOB" },
     });
 
     const origin = await prisma.point.create({
@@ -94,7 +96,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
-        legCode: `L-${PREFIX}-1`,
+        legCode: `L-${PREFIX}-${seq}`,
         mode: "AIR",
         status: "READY_FOR_RFQ",
         originPointId: origin.id,
@@ -107,11 +109,11 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
     const ff = await prisma.freightForwarder.create({
       data: {
-        freightForwarderCode: `FF-${PREFIX}-A`,
-        companyName: `FF ${PREFIX} Co`,
+        freightForwarderCode: `FF-${PREFIX}-${seq}`,
+        companyName: `FF ${PREFIX} Co ${seq}`,
         pic: "P",
         contactNumber: "+1000000000",
-        email: `ff-${PREFIX.toLowerCase()}@e2e.test`,
+        email: `ff-${PREFIX.toLowerCase()}-${seq}@e2e.test`,
         availableCountries: ["CN", "AE"],
         modes: ["AIR"],
         handleDg: false,
@@ -163,5 +165,33 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
   it("rejects a bad token with 401", async () => {
     await request(app.getHttpServer()).get("/api/ff/rfq/deadbeef").expect(401);
+  });
+
+  it("PATCH saves a draft and GET resumes it; a foreign leg is 403", async () => {
+    const { token, legId } = await distributeFixture();
+    const draft = {
+      legId,
+      mode: "AIR",
+      currency: "EUR",
+      quoteValidityUntil: "2026-09-01T00:00:00.000Z",
+      cargo: [],
+      charges: [{ zone: "ORIGIN", presetKey: "AIR_ORIGIN_THC", label: "Origin THC", amount: 42 }],
+      trucking: [],
+      warehouse: [],
+      transit: null,
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(draft)
+      .expect(200);
+    const res = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+    expect(res.body.legs[0].draft.charges[0].amount).toBe(42);
+    expect(res.body.currency).toBe("EUR"); // upserted to Rfq
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/00000000-0000-0000-0000-000000000000`)
+      .send(draft)
+      .expect(403);
   });
 });
