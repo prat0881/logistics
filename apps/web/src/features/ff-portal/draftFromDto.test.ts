@@ -33,11 +33,14 @@ describe("draftFromDto", () => {
     const d = draftFromDto(leg, rfq);
     expect(d.charges).toEqual([]);
     expect(d.trucking[0]).toMatchObject({ legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: null });
+    expect(d.warehouse).toEqual([]);
   });
 
   it("prefers an existing draft but overwrites currency/validity from the RFQ", () => {
-    const leg = { ...airLeg(), draft: { legId: "L1", currency: "EUR", quoteValidityUntil: "2020-01-01T00:00:00.000Z", cargo: [], charges: [], trucking: [], warehouse: [], transit: null, dgSurchargeNote: "x", termsConditions: null, mode: "AIR" } } as FfPortalLegDto;
+    const leg = { ...airLeg(), draft: { legId: "STALE", currency: "EUR", quoteValidityUntil: "2020-01-01T00:00:00.000Z", cargo: [], charges: [], trucking: [], warehouse: [], transit: null, dgSurchargeNote: "x", termsConditions: null, mode: "SEA" } } as FfPortalLegDto;
     const d = draftFromDto(leg, rfq);
+    expect(d.legId).toBe("L1");
+    expect(d.mode).toBe("AIR");
     expect(d.currency).toBe("USD");
     expect(d.quoteValidityUntil).toBe("2026-09-01T00:00:00.000Z");
     expect(d.dgSurchargeNote).toBe("x");
