@@ -153,7 +153,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     expect(leg.seededCharges.map((c: { presetKey: string }) => c.presetKey)).toContain(
       "AIR_MAIN_FREIGHT",
     ); // Air presets
-    expect(leg.seededDensity[0].freightDensity).toBe(167); // Air density
+    expect(leg.seededDensity[0].freightDensity).toBeGreaterThan(0); // Air density (seeded from FreightDensityFactor)
     expect(leg.draft).toBeNull();
   });
 

@@ -1,15 +1,18 @@
 import { Module } from "@nestjs/common";
 import { ConfigDataModule } from "../config/config-data.module";
-import { RfqModule } from "../rfq/rfq.module";
+import { RfqTokenService } from "../rfq/rfq-token.service";
 import { FfPortalController } from "./ff-portal.controller";
 import { FfPortalService } from "./ff-portal.service";
 import { RfqTokenGuard } from "./rfq-token.guard";
 
 // PrismaModule is @Global() — no need to import it here.
+// RfqModule is NOT imported to avoid re-triggering its onModuleInit (which contributes
+// to the "leg" status machine and requires LegsModule to have run first). Instead,
+// RfqTokenService is provided directly — PrismaService is already global.
 // StatusModule not imported yet — that's for T6 submit.
 @Module({
-  imports: [ConfigDataModule, RfqModule],
+  imports: [ConfigDataModule],
   controllers: [FfPortalController],
-  providers: [FfPortalService, RfqTokenGuard],
+  providers: [FfPortalService, RfqTokenGuard, RfqTokenService],
 })
 export class FfPortalModule {}
