@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import type { FfPortalRfqDto, QuoteDraft } from "@svyft/shared";
 import { quoteDraftSchema } from "@svyft/shared";
 import { Public } from "../auth/decorators/public.decorator";
@@ -26,5 +26,11 @@ export class FfPortalController {
     @Body(new ZodValidationPipe(quoteDraftSchema)) draft: QuoteDraft,
   ) {
     return this.portal.saveDraft(scope, legId, draft);
+  }
+
+  @Post("quotes/:legId/submit")
+  @HttpCode(201)
+  submit(@FfScope() scope: FfScopeType, @Param("legId") legId: string) {
+    return this.portal.submit(scope, legId);
   }
 }

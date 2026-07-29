@@ -1,8 +1,18 @@
-import { ForbiddenException, Injectable } from "@nestjs/common";
-import { AIR_CHARGE_PRESETS, SEA_CHARGE_PRESETS, classifyWarehousePositions } from "@svyft/shared";
-import type { FfPortalRfqDto, FfPortalLegDto, ManifestSnapshot, QuoteDraft } from "@svyft/shared";
+import { ConflictException, ForbiddenException, Injectable, UnprocessableEntityException } from "@nestjs/common";
+import {
+  AIR_CHARGE_PRESETS,
+  SEA_CHARGE_PRESETS,
+  classifyWarehousePositions,
+  validateQuote,
+  computeQuoteTotals,
+  computeChargeableWeight,
+  QuoteEvent,
+} from "@svyft/shared";
+import type { FfPortalRfqDto, FfPortalLegDto, ManifestSnapshot, QuoteDraft, Finding } from "@svyft/shared";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ConfigDataService } from "../config/config-data.service";
+import { StatusService } from "../status/status.service";
 import type { FfScope } from "../rfq/rfq-token.service";
 
 @Injectable()
@@ -10,6 +20,7 @@ export class FfPortalService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigDataService,
+    private readonly status: StatusService,
   ) {}
 
   async resolveScope(scope: FfScope): Promise<FfPortalRfqDto> {
@@ -100,5 +111,168 @@ export class FfPortalService {
       }),
     ]);
     return { savedAt: now.toISOString() };
+  }
+
+  async submit(scope: FfScope, legId: string): Promise<{ quoteId: string; status: "QUOTED" }> {
+    const q = this.quoteForLeg(scope, legId);
+    if (q.status !== "RFQ_SENT") {
+      throw new ConflictException("This quote has already been submitted or is not open");
+    }
+
+    const manifest = q.manifestSnapshot as ManifestSnapshot;
+    const stored = (
+      (await this.prisma.quote.findUnique({ where: { id: q.id }, select: { draftJson: true } }))?.draftJson ?? {}
+    ) as Partial<QuoteDraft>;
+
+    // ── re-derive the AUTHORITATIVE draft: immutables from the manifest/classifier, editable from the stored draft ──
+    const whLegs = scope.quotes.map((x) => ({
+      originPointId: x.leg.originPoint?.id ?? null,
+      destinationPointId: x.leg.destinationPoint?.id ?? null,
+      mode: (x.leg.mode ?? null) as "AIR" | "SEA" | "ROAD" | null,
+    }));
+    const whPointIds = scope.quotes.flatMap((x) =>
+      [x.leg.originPoint, x.leg.destinationPoint]
+        .filter((p): p is NonNullable<typeof p> => !!p && p.type === "WAREHOUSE")
+        .map((p) => p.id),
+    );
+    const whPos = classifyWarehousePositions(whLegs, whPointIds);
+
+    const draft: QuoteDraft = {
+      legId,
+      mode: q.leg.mode as "AIR" | "SEA" | "ROAD",
+      currency: scope.rfq.currency,
+      quoteValidityUntil: scope.rfq.quoteValidityUntil?.toISOString() ?? null,
+      cargo: manifest.cargo.map((c) => ({
+        cargoItemId: c.cargoItemId,
+        grossWtT: Number(c.grossWt) / 1000,
+        cbm: Number(c.volumeCbm ?? 0),
+        isDangerous: c.isDangerous,
+        freightDensity: stored.cargo?.find((s) => s.cargoItemId === c.cargoItemId)?.freightDensity ?? null,
+      })),
+      charges: (stored.charges ?? []).map((c) => ({ ...c })),
+      trucking: (stored.trucking ?? []).map((t) => ({ ...t })),
+      warehouse: (stored.warehouse ?? []).map((w) => ({
+        ...w,
+        position: whPos[w.warehousePointId] ?? w.position,
+      })),
+      transit: stored.transit ?? null,
+      dgSurchargeNote: stored.dgSurchargeNote ?? null,
+      termsConditions: stored.termsConditions ?? null,
+    };
+
+    // ── validate (§10.4 Q1–Q8) ──
+    const findings: Finding[] = validateQuote(
+      draft,
+      scope.rfq.submissionDeadline.toISOString(),
+      new Date().toISOString(),
+    );
+    if (findings.length) throw new UnprocessableEntityException({ findings });
+
+    // ── materialize (one tx) ──
+    const totals = computeQuoteTotals(draft);
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // Delete existing child rows
+        await tx.quoteCargoLine.deleteMany({ where: { quoteId: q.id } });
+        await tx.chargeLine.deleteMany({ where: { quoteId: q.id } });
+        await tx.truckingCharge.deleteMany({ where: { quoteId: q.id } });
+        await tx.warehouseStagingLine.deleteMany({ where: { quoteId: q.id } });
+        await tx.transitPlan.deleteMany({ where: { quoteId: q.id } });
+
+        // Create child rows
+        await tx.quoteCargoLine.createMany({
+          data: draft.cargo.map((c) => ({
+            quoteId: q.id,
+            cargoItemId: c.cargoItemId,
+            freightDensity: c.freightDensity!,
+            chargeableWeightT: computeChargeableWeight(c.grossWtT, c.cbm, c.freightDensity!),
+          })),
+        });
+
+        await tx.chargeLine.createMany({
+          data: draft.charges.map((c, i) => ({
+            quoteId: q.id,
+            zone: c.zone,
+            label: c.label,
+            isPreset: c.presetKey != null,
+            presetKey: c.presetKey,
+            amount: c.amount!,
+            note: c.note,
+            sortOrder: i,
+          })),
+        });
+
+        for (const t of draft.trucking) {
+          await tx.truckingCharge.create({
+            data: {
+              quoteId: q.id,
+              legEndpointPointId: t.legEndpointPointId,
+              truckingType: t.truckingType,
+              basis: t.basis,
+              amount: t.amount!,
+              remarks: t.remarks,
+            },
+          });
+        }
+
+        for (const w of draft.warehouse) {
+          await tx.warehouseStagingLine.create({
+            data: {
+              quoteId: q.id,
+              warehousePointId: w.warehousePointId,
+              position: w.position,
+              label: w.label,
+              isPreset: false,
+              amount: w.amount!,
+              cargoAcceptanceWindow: w.cargoAcceptanceWindow,
+            },
+          });
+        }
+
+        if (draft.transit) {
+          await tx.transitPlan.create({
+            data: {
+              quoteId: q.id,
+              carrier: draft.transit.carrier ?? null,
+              flightVoyageNo: draft.transit.flightVoyageNo ?? null,
+              departureDate: new Date(draft.transit.departureDate!),
+              arrivalDate: new Date(draft.transit.arrivalDate!),
+              carrierSurcharge: draft.transit.carrierSurcharge ?? null,
+              guaranteedTransitDays: draft.transit.guaranteedTransitDays ?? null,
+            },
+          });
+        }
+
+        await tx.quote.update({
+          where: { id: q.id },
+          data: {
+            totalChargeableWeightT: totals.totalChargeableWeightT,
+            grandTotal: totals.grandTotal,
+            dgSurchargeNote: draft.dgSurchargeNote,
+            termsConditions: draft.termsConditions,
+            submittedAt: new Date(),
+            draftJson: Prisma.DbNull,
+          },
+        });
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2003") {
+        throw new UnprocessableEntityException({
+          findings: [
+            {
+              rule: "FK",
+              severity: "blocking",
+              scope: { type: "leg", id: legId },
+              message: "A priced pickup/warehouse point no longer exists — refresh and re-price.",
+            },
+          ],
+        });
+      }
+      throw e;
+    }
+
+    // ── fire AFTER the tx (the one door) → RFQ_SENT→QUOTED → leg/query rollups ──
+    await this.status.fire("quote", q.id, QuoteEvent.SUBMIT, { queryId: scope.rfq.queryId });
+    return { quoteId: q.id, status: "QUOTED" };
   }
 }

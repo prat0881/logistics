@@ -140,6 +140,50 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     return { token: entry.accessToken as string, legId: leg.id };
   }
 
+  /**
+   * Build a complete valid Air draft from the GET response body.
+   * - cargo: from seededDensity (re-derives grossWtT/cbm server-side; we send placeholders)
+   * - charges: every preset priced at amount=10 (satisfies Q1)
+   * - trucking/warehouse: empty (no trucking/warehouse endpoints in fixture)
+   * - transit: departure + arrival set (satisfies Q6)
+   * - currency: USD (satisfies Q4)
+   * - quoteValidityUntil: after the RFQ deadline (satisfies Q3)
+   * - no DG cargo → dgSurchargeNote: null (Q5 skipped)
+   */
+  function fullValidDraft(
+    legId: string,
+    getBody: { legs: Array<{ seededDensity: Array<{ cargoItemId: string; freightDensity: number }>; seededCharges: Array<{ zone: string; presetKey: string; label: string }> }> },
+  ) {
+    const leg = getBody.legs[0];
+    return {
+      legId,
+      mode: "AIR",
+      currency: "USD",
+      quoteValidityUntil: "2026-12-01T00:00:00.000Z",
+      cargo: leg.seededDensity.map((d) => ({
+        cargoItemId: d.cargoItemId,
+        grossWtT: 1,
+        cbm: 1,
+        isDangerous: false,
+        freightDensity: d.freightDensity,
+      })),
+      charges: leg.seededCharges.map((c) => ({
+        zone: c.zone,
+        presetKey: c.presetKey,
+        label: c.label,
+        amount: 10,
+      })),
+      trucking: [],
+      warehouse: [],
+      transit: {
+        departureDate: "2026-08-12T00:00:00.000Z",
+        arrivalDate: "2026-08-14T00:00:00.000Z",
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+  }
+
   it("GET resolves the scoped RFQ with seeded presets + density (no auth cookie)", async () => {
     const { token, legId } = await distributeFixture();
 
@@ -193,5 +237,118 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .patch(`/api/ff/rfq/${token}/quotes/00000000-0000-0000-0000-000000000000`)
       .send(draft)
       .expect(403);
+  });
+
+  // ── submit tests ──
+
+  it("submit: valid Air quote → 201 QUOTED, leg rolls up, child tables populated", async () => {
+    const { token, legId } = await distributeFixture();
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(fullValidDraft(legId, got.body))
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .expect(201);
+
+    expect(res.body.status).toBe("QUOTED");
+
+    const q = await prisma.quote.findFirst({
+      where: { legId },
+      include: { chargeLines: true, quoteCargoLines: true },
+    });
+    expect(q?.status).toBe("QUOTED");
+    expect(q?.submittedAt).not.toBeNull();
+    expect(q?.chargeLines.length).toBeGreaterThan(0);
+    expect(Number(q?.grandTotal)).toBeGreaterThan(0);
+
+    const leg = await prisma.leg.findUnique({ where: { id: legId } });
+    expect(leg?.status).toBe("FULLY_QUOTED"); // only FF on the leg
+  });
+
+  it("submit: missing density/currency → 422 findings, Quote stays RFQ_SENT", async () => {
+    const { token, legId } = await distributeFixture();
+
+    // PATCH a draft that is missing currency and has empty cargo (no density) + no charges
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send({
+        legId,
+        mode: "AIR",
+        currency: null,
+        quoteValidityUntil: null,
+        cargo: [],
+        charges: [],
+        trucking: [],
+        warehouse: [],
+        transit: null,
+        dgSurchargeNote: null,
+        termsConditions: null,
+      })
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .expect(422);
+
+    expect(res.body.findings.map((f: { rule: string }) => f.rule)).toEqual(
+      expect.arrayContaining(["Q1", "Q4"]),
+    );
+
+    const q = await prisma.quote.findFirst({ where: { legId } });
+    expect(q?.status).toBe("RFQ_SENT");
+  });
+
+  it("submit: past the deadline → 422 with Q7", async () => {
+    const { token, legId } = await distributeFixture();
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+
+    // Find the rfq via the quote/leg and force the deadline into the past
+    const q = await prisma.quote.findFirst({ where: { legId }, select: { rfqId: true } });
+    await prisma.rfq.update({
+      where: { id: q!.rfqId! },
+      data: { submissionDeadline: new Date(Date.now() - 1000) },
+    });
+
+    // PATCH a valid draft
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(fullValidDraft(legId, got.body))
+      .expect(200);
+
+    // POST submit → should fail with Q7 (deadline passed)
+    const res = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .expect(422);
+
+    expect(res.body.findings.map((f: { rule: string }) => f.rule)).toEqual(
+      expect.arrayContaining(["Q7"]),
+    );
+  });
+
+  it("submit: an already-QUOTED quote → 409", async () => {
+    const { token, legId } = await distributeFixture();
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(fullValidDraft(legId, got.body))
+      .expect(200);
+
+    // First submit → 201 QUOTED
+    await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .expect(201);
+
+    // Second submit → 409 (already submitted)
+    await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .expect(409);
   });
 });
