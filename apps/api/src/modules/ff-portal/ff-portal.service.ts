@@ -160,6 +160,27 @@ export class FfPortalService {
       termsConditions: stored.termsConditions ?? null,
     };
 
+    // ── scope-check: every trucking/warehouse point must belong to this FF's legs ──
+    const scopedPointIds = new Set(
+      scope.quotes
+        .flatMap((x) => [x.leg.originPoint?.id, x.leg.destinationPoint?.id])
+        .filter((id): id is string => !!id),
+    );
+    const badPoint =
+      draft.trucking.find((t) => !scopedPointIds.has(t.legEndpointPointId))?.legEndpointPointId ??
+      draft.warehouse.find((w) => !scopedPointIds.has(w.warehousePointId))?.warehousePointId;
+    if (badPoint)
+      throw new UnprocessableEntityException({
+        findings: [
+          {
+            rule: "SCOPE",
+            severity: "blocking",
+            scope: { type: "point", id: badPoint },
+            message: "A priced point is not part of this RFQ's legs.",
+          },
+        ],
+      });
+
     // ── validate (§10.4 Q1–Q8) ──
     const findings: Finding[] = validateQuote(
       draft,

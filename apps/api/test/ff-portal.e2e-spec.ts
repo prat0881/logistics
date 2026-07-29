@@ -353,4 +353,83 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
       .expect(409);
   });
+
+  // ── Opus whole-branch review: security / immutability tests ──
+
+  it("submit: foreign point in warehouse → 422 SCOPE, Quote stays RFQ_SENT", async () => {
+    const { token, legId } = await distributeFixture();
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+
+    // Build a valid draft but inject a foreign warehousePointId
+    const tampered = {
+      ...fullValidDraft(legId, got.body),
+      warehouse: [
+        {
+          warehousePointId: "00000000-0000-0000-0000-000000000000",
+          position: "ORIGIN",
+          label: "X",
+          amount: 10,
+        },
+      ],
+    };
+
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(tampered)
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .expect(422);
+
+    // Must contain a SCOPE finding referencing the foreign point
+    expect(
+      res.body.findings.some(
+        (f: { rule: string; scope?: { type: string } }) =>
+          f.rule === "SCOPE" || f.scope?.type === "point",
+      ),
+    ).toBe(true);
+
+    // Quote must NOT have been persisted
+    const q = await prisma.quote.findFirst({ where: { legId } });
+    expect(q?.status).toBe("RFQ_SENT");
+  });
+
+  it("submit: tampered cargo immutables (grossWtT/isDangerous) are ignored — server re-derives from manifest", async () => {
+    const { token, legId } = await distributeFixture();
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+
+    // Build a valid draft, then tamper cargo immutables
+    const base = fullValidDraft(legId, got.body);
+    const tampered = {
+      ...base,
+      cargo: base.cargo.map((c: { cargoItemId: string; freightDensity: number }) => ({
+        ...c,
+        grossWtT: 9999,
+        isDangerous: true, // lie — fixture cargo is non-DG
+      })),
+    };
+
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(tampered)
+      .expect(200);
+
+    // Submit must succeed (server re-derives honest values → Q5 DG note not required)
+    const res = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .expect(201);
+
+    expect(res.body.status).toBe("QUOTED");
+
+    // Persisted chargeableWeightT must reflect the MANIFEST weight, not ~9999
+    const q = await prisma.quote.findFirst({
+      where: { legId },
+      include: { quoteCargoLines: true },
+    });
+    expect(q?.quoteCargoLines.length).toBeGreaterThan(0);
+    expect(Number(q!.quoteCargoLines[0].chargeableWeightT)).toBeLessThan(10);
+  });
 });
