@@ -157,7 +157,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     ); // Air presets
     const air = (await prisma.freightDensityFactor.findUnique({ where: { mode: "AIR" } }))!.kgPerCbm;
     expect(leg.seededDensity).toHaveLength(1);
-    expect(leg.seededDensity[0].freightDensity).toBe(air); // Air density (seeded from FreightDensityFactor)
+    expect(leg.seededDensity[0].freightDensity).toBe(Number(air)); // Air density (seeded from FreightDensityFactor)
     expect(leg.draft).toBeNull();
   });
 
