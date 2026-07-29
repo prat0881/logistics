@@ -93,6 +93,26 @@ describe("validateQuote (§10.4 Q1–Q8)", () => {
     d.trucking = [{ legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "FIXED", amount: null }];
     expect(validateQuote(d, deadline, now).some((f) => f.rule === "Q1")).toBe(true);
   });
+  it("Q3: flags a missing (absent) validity", () => {
+    const d = validAir(); d.quoteValidityUntil = null;
+    const f = validateQuote(d, deadline, now).find((x) => x.rule === "Q3");
+    expect(f?.scope).toEqual({ type: "field", id: "quoteValidityUntil" });
+  });
+  it("Q4: currency absent fires alone", () => {
+    const d = validAir(); d.currency = null;
+    expect(validateQuote(d, deadline, now).map((f) => f.rule)).toEqual(["Q4"]);
+  });
+  it("Q5: DG cargo without a note fires alone", () => {
+    const d = validAir(); d.cargo[0].isDangerous = true;
+    expect(validateQuote(d, deadline, now).map((f) => f.rule)).toEqual(["Q5"]);
+  });
+  it("Q6: a missing arrival date fires alone", () => {
+    const d = validAir(); d.transit = { departureDate: "2026-08-12T00:00:00.000Z", arrivalDate: null };
+    expect(validateQuote(d, deadline, now).map((f) => f.rule)).toEqual(["Q6"]);
+  });
+  it("Q7: past the deadline fires alone", () => {
+    expect(validateQuote(validAir(), deadline, "2026-08-11T00:00:00.000Z").map((f) => f.rule)).toEqual(["Q7"]);
+  });
 });
 
 describe("classifyWarehousePositions (§6.4)", () => {
