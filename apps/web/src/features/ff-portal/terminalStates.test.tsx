@@ -92,4 +92,62 @@ describe("terminalStates", () => {
     expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
     expect(screen.getByTestId("grand-total")).toBeInTheDocument();
   });
+
+  it("AlreadySubmittedSummary falls back to draftFromDto when leg.draft is null", () => {
+    const rfq: FfPortalRfqDto = {
+      rfqNumber: "R-2",
+      incoterms: "EXW",
+      submissionDeadline: "2026-09-01T00:00:00.000Z",
+      currency: "USD",
+      quoteValidityUntil: "2026-09-30T00:00:00.000Z",
+      freightForwarder: { companyName: "Beta FF" },
+      legs: [],
+    };
+
+    const leg: FfPortalLegDto = {
+      legId: "L2",
+      quoteId: "Q2",
+      status: "QUOTED",
+      mode: "AIR",
+      manifest: {
+        cargo: [
+          {
+            cargoItemId: "c2",
+            poReference: "PO-2",
+            productName: "Valves",
+            hsCode: "8481",
+            packageType: "Pallet",
+            isDangerous: false,
+            qty: 4,
+            dimL: "1.0",
+            dimW: "0.8",
+            dimH: "0.6",
+            netWt: "800",
+            grossWt: "2000",
+            volumeCbm: "3.0",
+          },
+        ],
+      } as never,
+      endpoints: [
+        {
+          pointId: "w2",
+          type: "WAREHOUSE",
+          name: "Origin WH 2",
+          country: "SG",
+          warehousePosition: "ORIGIN",
+        },
+      ],
+      seededCharges: [
+        { zone: "MAIN_FREIGHT", presetKey: "air_freight", label: "Air Freight" },
+      ],
+      seededDensity: [{ cargoItemId: "c2", freightDensity: 600 }],
+      draft: null,
+    } as never;
+
+    render(<AlreadySubmittedSummary leg={leg} rfq={rfq} />);
+    expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
+    const grandTotal = screen.getByTestId("grand-total");
+    expect(grandTotal).toBeInTheDocument();
+    expect(grandTotal).toHaveTextContent(rfq.currency);
+  });
 });
