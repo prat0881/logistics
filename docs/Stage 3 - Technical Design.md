@@ -141,7 +141,7 @@ Every table also carries `id` (uuid PK), nullable `tenantId`, and `createdAt`/`u
 | **Query** (root) | **queryCode** ᵁ `YALYY-NNNN`, queryDate, priority (default MEDIUM), responseDeadline(+remarks), clientId ᶠᵏ, **contact snapshot** (name/designation/email/phone/whatsappEnabled/fax), **vessel block** (vesselId ᶠᵏ?, vesselName, imoNumber, eta, etb, etd, portOfCall), incoterms (enum), shipmentDescription, **dgIndicator**, readyDate, targetDelivery, internalNotes, **status**, rfqReadyAt?, assignedUserId ᶠᵏ | `status` system-written only (§4.5, §7.2). Contact + vessel fields are **snapshots** so master edits never rewrite historical queries (§7.1). |
 | **Point** (single-table inheritance) | queryId ᶠᵏ, **type** (PICKUP·DELIVERY·WAREHOUSE·AIRPORT·SEAPORT), name, streetAddress, city, postalCode, country, contactName, contactPhone, contactEmail, warehouseType?, iataCode?, icaoCode?, unLocode?, terminal? | One table + type discriminator; per-type required fields enforced in Zod, not DB nullability. Reusable within the query → connectivity by shared point (D2). |
 | **Leg** | queryId ᶠᵏ, **legCode** (stable, never reused within a query), legName?, originPointId ᶠᵏ, destinationPointId ᶠᵏ, **mode** (ROAD·AIR·SEA), readyDate, targetDelivery, **status**, **executionStatus** (PENDING·IN_TRANSIT·COMPLETED), totalChargeableWeight? | Roll-ups (packages/CBM/gross/net) computed on read. `executionStatus` = tracking model (§12 of spec), UI in Stage 8–9. `totalChargeableWeight` null in Stage 3 (D4). |
-| **CargoItem** | queryId ᶠᵏ, rowIndex, poReference, productName, referenceTags[] (HEAVY·FRAGILE·NON_STACKABLE), hsCode?, packageType, **isDangerous**, msdsFileId ᶠᵏ?, qty(>0), dimL, dimW, dimH (cm), netWt?, grossWt, **volumeCbm** (generated), freightDensity?, chargeableWeight? | `volumeCbm` = Postgres generated column `(L·W·H·qty)/1e6`. `freightDensity`/`chargeableWeight` null in Stage 3, filled by FF in Stage 4 (D4). |
+| **CargoItem** | queryId ᶠᵏ, rowIndex, poReference?, productName, referenceTags[] (HEAVY·FRAGILE·NON_STACKABLE·**OUT_OF_GAUGE**), hsCode?, packageType, **isDangerous**, msdsFileId ᶠᵏ?, qty(>0), dimL, dimW, dimH, **dimUnit** (CM·MM, default CM), netWt?, grossWt, **weightUnit** (KG·GM, default KG), **volumeCbm** (generated, always m³), freightDensity?, chargeableWeight? | `poReference` is optional (Round 3). `dimUnit`/`weightUnit` stored per row. `volumeCbm` = unit-aware Postgres generated column: `(L·W·H·qty) / (CASE WHEN dimUnit='MM' THEN 1e9 ELSE 1e6 END)` — always cubic metres (m³) regardless of entry unit. `Incoterms` enum includes **`NA`** (stored value; displayed "N/A" — Round 3 fix for the N/A persistence bug). `freightDensity`/`chargeableWeight` null in Stage 3, filled by FF in Stage 4 (D4). |
 | **LegCargo** (join) | legId ᶠᵏ, cargoItemId ᶠᵏ, **manifestSnapshot** JSONB? | unique(legId, cargoItemId). Explicit tick (D7). `manifestSnapshot` null in Stage 3; reserved for the Stage-4 RFQ freeze (spec §7.4.3). |
 | **FileAsset** | queryId ᶠᵏ, kind (MSDS…), filename, mime, sizeBytes, storageKey, uploadedById | Behind a storage service: local disk in dev → object store later (§8.4). |
 | **ChecklistDefinition** | itemKey, label, order, dgConditional | Admin-maintained reference data; seeded with the 9 items (spec §7.5). |
@@ -165,7 +165,7 @@ Every table also carries `id` (uuid PK), nullable `tenantId`, and `createdAt`/`u
 |---|---|---|
 | **StatusTransition** (append-only) | entity, entityId, from, to, event, actorId, at | Written by `StatusService.fire`. Operational history; distinct from audit (§7.7). |
 
-*(Incoterms = fixed 11-value enum; Country = static reference list.)*
+*(Incoterms = 12-value enum: EXW·FCA·FAS·FOB·CFR·CIF·CPT·CIP·DAP·DPU·DDP·**NA** — `NA` added in Round 3, displayed "N/A"; Country = static reference list.)*
 
 ### 4.3 Modeling decisions
 1. **Point = single-table inheritance.** One `points` table + `type` discriminator + per-type Zod validation. Legs FK cleanly to any point and the routing engine reads a uniform node shape.
@@ -179,6 +179,8 @@ Minted on **first persist** (first Save, or first leg save — whichever comes f
 - **Derived-on-read, never stored:** `Query.freightMode` (distinct leg modes), `Query.origin`/`destination` (from pickup/delivery points), leg roll-ups (packages/CBM/gross/net). Zero drift.
 - **Two deliberate exceptions:** `CargoItem.volumeCbm` (a deterministic Postgres *generated column*) and `Query.dgIndicator` (a stored bool a service keeps in sync — auto-true when any cargo is DG, with manual override allowed, spec §7.2).
 - **Status is persisted but system-only** (§7.2).
+- **Leg weight roll-ups (Round 3):** `totalGrossWt` and `totalNetWt` **normalize to kg** before summing — rows with `weightUnit = GM` are divided by 1000 before being added. This means leg-level weight roll-ups are always in **kg**, regardless of the per-row entry unit.
+- **Leg CBM roll-up (Round 3):** `totalCbm` sums `volumeCbm` values directly — each row's `volumeCbm` is already in m³ (unit-aware generated column), so the sum is m³ with no further conversion.
 
 ### 4.6 Tenant-readiness
 Every table carries a nullable `tenantId`; all reads pass through a scoping helper/interceptor. Single-tenant today; multi-tenant is a config flip, not a migration.
