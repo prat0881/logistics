@@ -237,6 +237,25 @@ describe("Queries (e2e)", () => {
       .expect(400);
   });
 
+  it("saves and returns Incoterms 'NA' (regression: N/A was silently dropped)", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ shipmentDescription: `${PFX}na-incoterms` })
+      .expect(201);
+    const queryId = created.body.id;
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${queryId}`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ incoterms: "NA" })
+      .expect(200);
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${queryId}`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(200);
+    expect(res.body.incoterms).toBe("NA");
+  });
+
   it("creating a query schedules 3 escalations; a rfq_ready event cancels them", async () => {
     const created = await request(app.getHttpServer()).post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
       .send({ shipmentDescription: `${PFX}esc` }).expect(201);
