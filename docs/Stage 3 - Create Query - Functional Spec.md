@@ -23,7 +23,7 @@ These decisions shape this spec and differ from the original PRD:
 | D1 | **Manual, plug-n-play leg creation.** The Leg Generation Matrix, Multimodal Combination, and Service Type are **removed**. | The executive composes legs by hand; no auto-generated structure. |
 | D2 | **Points (locations) are first-class, reusable objects.** | A leg selects an existing point or creates a new one; route connectivity is by shared-point reference, not text matching. |
 | D3 | **Mode is a per-leg property.** Shipment-level "Freight Mode" is removed as an input. | Each leg carries its own mode (Road/Air/Sea). A read-only "Modes" summary is derived from the legs for lists/dashboards. |
-| D4 | **Freight Density and Chargeable Weight live at cargo level and are deferred to Stage 4** (FF sets each row's density; chargeable weight is calculated then — one value per row). | In Stage 3 both are empty/read-only. The leg carries the full cargo manifest + roll-ups (packages, CBM, gross, net) and a **Total Chargeable Weight** (Σ of its rows' chargeable weights, filled in Stage 4). **No density and no DG at leg level.** |
+| D4 | **Freight Density and Chargeable Weight live at cargo level and are deferred to Stage 4** (FF sets each row's density; chargeable weight is calculated then — one value per row). | In Stage 3 both are empty/read-only. The leg carries the full cargo manifest + roll-ups (packages, CBM, gross, net) and a **Total Chargeable Weight** (Σ of its rows' chargeable weights, filled in Stage 4). **No density and no DG at leg level.** **Stage-4 display (post-testing fixes R1):** the per-leg net-weight roll-up (`totalNetWt`) is hidden in the workspace leg panel when its value is 0; it is shown only when a genuine positive value is present. Display-only; no model change. |
 | D5 | **Cargo rows are atomic** — each row travels a **single unbroken chain** with one start point and one end point (no forking/splitting a row across destinations). | Each cargo row's path is a simple chain of legs; start may be any point type except a Delivery, end any type (see R2, §10.2). |
 | D6 | **Divergent routing is allowed** — multiple hubs permitted; the old "single common hub" rule is dropped. | The hub effective-date (MAX) rule applies at every hub. |
 | D7 | **Cargo is attached to a leg by explicit selection** — when building a leg, the executive ticks which cargo rows ride it. | Continuity validation confirms the ticked legs actually form a row's single continuous chain (start → end). |
@@ -192,10 +192,10 @@ Cargo captured as a dynamic multi-row table (one row per package type/reference)
 | # | Integer (auto) | Auto | Sequential row index. |
 | PO / Reference | Text | **Mandatory** | PO or shipment reference. |
 | Product Name | Text | **Mandatory** | — |
-| Reference Tags | Multi-badge | Optional | Heavy / Fragile / Non-Stackable (multiple allowed). |
+| Reference Tags | Multi-badge | Optional | Heavy / Fragile / Non-Stackable (multiple allowed). **Stage-4 display:** these tags (plus the DG flag below) are now surfaced as consolidated deduped icons in the downstream Query Workspace header — each characteristic shown at most once across all cargo; a Stage-4 post-testing display addition. Create-Query capture is unchanged. |
 | HS / HSN Code | Number | Optional | Per row. |
 | Package Type | Text | **Mandatory** | e.g. Carton, Crate, Box, Pallet, Loose, Drum, Can. |
-| DG | Checkbox | **Mandatory** | When checked, reveals MSDS upload and sets shipment DG indicator. |
+| DG | Checkbox | **Mandatory** | When checked, reveals MSDS upload and sets shipment DG indicator. (See Reference Tags note above — DG is included in the Stage-4 workspace consolidated icon display.) |
 | MSDS | File (PDF) | Conditional | Visible/required only when DG is checked. PDF only; shows filename with remove option. |
 | Qty | Integer | **Mandatory** | Must be > 0. |
 | Dims L×W×H | Numeric ×3 | **Mandatory** | Centimetres; three inline fields shown as one column. |
