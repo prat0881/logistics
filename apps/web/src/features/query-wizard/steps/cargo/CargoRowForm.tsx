@@ -10,7 +10,7 @@ import {
   WEIGHT_UNITS,
   cbmFromDims,
 } from "@svyft/shared";
-import type { CargoCreateInput, CargoUpdateInput, CargoDto, ReferenceTag, DimUnit, WeightUnit } from "@svyft/shared";
+import type { CargoCreateInput, CargoUpdateInput, CargoDto, ReferenceTag, DimUnit } from "@svyft/shared";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
