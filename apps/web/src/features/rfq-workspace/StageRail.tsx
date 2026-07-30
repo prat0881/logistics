@@ -60,7 +60,8 @@ function Step({ index, label, to, state }: { index: number; label: string; to?: 
     </span>
   );
   const body = <span className="flex items-center gap-2">{dot}{text}</span>;
+  const current = state === "current" ? "step" : undefined;
   return to
-    ? <Link to={to} className="rounded-md px-1 py-0.5 transition-opacity hover:opacity-80">{body}</Link>
-    : <span className="px-1 py-0.5" aria-disabled="true">{body}</span>;
+    ? <Link to={to} aria-current={current} className="rounded-md px-1 py-0.5 transition-opacity hover:opacity-80">{body}</Link>
+    : <span className="px-1 py-0.5 cursor-not-allowed" aria-disabled="true" aria-current={current}>{body}</span>;
 }

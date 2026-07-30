@@ -124,4 +124,22 @@ describe("RfqWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: /collapse all/i }));
     expect(screen.queryByLabelText(/submission deadline/i)).not.toBeInTheDocument();
   });
+
+  it("opens a leg when its edge is clicked in the route diagram", async () => {
+    (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = vi.fn();
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.endsWith("/api/queries/q1")) return { status: 200, body: twoLegDetail("RFQ_READY") };
+      if (url.includes("/rfq-state")) return { status: 200, body: { quotes: [], rfqs: [], freightForwarders: [] } };
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+      return { status: 404 };
+    }));
+    wrap(<RfqWorkspace queryId="q1" />);
+    await screen.findByText("YAL26-0001");
+    // L1 open by default → deadline-l1 in DOM, deadline-l2 not
+    expect(document.getElementById("deadline-l1")).toBeTruthy();
+    expect(document.getElementById("deadline-l2")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^Leg L2/ }));
+    expect(document.getElementById("deadline-l2")).toBeTruthy();
+    expect(document.getElementById("deadline-l1")).toBeNull();
+  });
 });

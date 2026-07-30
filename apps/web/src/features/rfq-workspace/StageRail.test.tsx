@@ -37,4 +37,16 @@ describe("StageRail", () => {
     expect(screen.queryByRole("link", { name: /rfq/i })).not.toBeInTheDocument();
     expect(screen.getByText("RFQ")).toBeInTheDocument();
   });
+
+  it("renders numbered indices and marks earlier steps done", () => {
+    render(
+      <MemoryRouter>
+        <StageRail queryId="q1" active="rfq" rfqEnabled />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("2")).toBeInTheDocument(); // RFQ (current) shows its index
+    expect(screen.getByText("3")).toBeInTheDocument(); // Quotes (upcoming)
+    expect(screen.getByText("4")).toBeInTheDocument(); // Award (upcoming)
+    expect(screen.queryByText("1")).toBeNull();        // Create is done → checkmark, not "1"
+  });
 });

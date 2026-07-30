@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -162,5 +162,20 @@ describe("FfSelectionGrid", () => {
     expect(screen.getByText(/showing 10 of 12/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /load 10 more/i }));
     expect(screen.getByText("Forwarder 11")).toBeInTheDocument();
+  });
+
+  it("sorts the table by Forwarder when the header is clicked", async () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [ff("a", "Alpha FF"), ff("z", "Zulu FF")] };
+      return { status: 404 };
+    }));
+    wrap(<FfSelectionGrid queryId="q1" legId="l1" legQuotes={[]} referencedFfs={[]} />);
+    await screen.findByText("Alpha FF");
+    await userEvent.click(screen.getByRole("button", { name: /^table$/i }));
+    let rows = screen.getAllByRole("row").slice(1); // skip header row
+    expect(within(rows[0]).getByText("Alpha FF")).toBeInTheDocument(); // ascending default
+    await userEvent.click(screen.getByRole("button", { name: /forwarder/i }));
+    rows = screen.getAllByRole("row").slice(1);
+    expect(within(rows[0]).getByText("Zulu FF")).toBeInTheDocument(); // descending
   });
 });

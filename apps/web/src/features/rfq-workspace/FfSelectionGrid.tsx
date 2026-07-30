@@ -96,6 +96,7 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
     <button
       type="button"
       onClick={() => setView(v)}
+      aria-pressed={view === v}
       className={cn(
         "px-3 py-1 text-xs font-medium",
         view === v ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground hover:bg-muted",
@@ -150,6 +151,8 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
             </Button>
           )}
         </div>
+      ) : filtered.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No forwarders match your search.</p>
       ) : view === "cards" ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((f) => {
@@ -184,15 +187,15 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
             <table className="w-full text-left text-sm">
               <thead className="sticky top-0 z-10 bg-muted text-xs uppercase tracking-wide text-muted-foreground">
                 <tr className="border-b border-border">
-                  <th scope="col" className="w-10 px-3 py-2" />
-                  <th scope="col" className="px-3 py-2 font-medium">
+                  <th scope="col" className="w-10 px-4 py-2" />
+                  <th scope="col" className="px-4 py-2 font-medium" aria-sort={sortAsc ? "ascending" : "descending"}>
                     <button type="button" className="inline-flex items-center gap-1" onClick={() => setSortAsc((s) => !s)}>
                       Forwarder <span aria-hidden>{sortAsc ? "↑" : "↓"}</span>
                     </button>
                   </th>
-                  <th scope="col" className="px-3 py-2 font-medium">Country</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Modes</th>
-                  <th scope="col" className="px-3 py-2 font-medium">Status</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Country</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Modes</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -201,7 +204,7 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
                   const status = statusByFf.get(f.id);
                   return (
                     <tr key={f.id} className="border-b border-border last:border-0 hover:bg-muted/50">
-                      <td className="px-3 py-2">
+                      <td className="px-4 py-2">
                         <Checkbox
                           aria-label={`Select ${f.companyName}`}
                           checked={isChecked(f.id)}
@@ -209,15 +212,15 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
                           onCheckedChange={(v) => toggle(f.id, v === true)}
                         />
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-4 py-2">
                         <span className="font-medium">{f.companyName}</span>
                         {isFrozen && (
                           <div className="mt-1"><RegeneratePortalLink queryId={queryId} freightForwarderId={f.id} /></div>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-muted-foreground">{countryText(f)}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{f.modes.join(", ")}</td>
-                      <td className="px-3 py-2">{status ? <ForwarderStatusBadge status={status} /> : "—"}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{countryText(f)}</td>
+                      <td className="px-4 py-2 text-muted-foreground">{f.modes.join(", ")}</td>
+                      <td className="px-4 py-2">{status ? <ForwarderStatusBadge status={status} /> : "—"}</td>
                     </tr>
                   );
                 })}

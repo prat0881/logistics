@@ -50,6 +50,7 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={open}
         className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
       >
         {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}

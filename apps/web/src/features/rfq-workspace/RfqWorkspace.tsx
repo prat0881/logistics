@@ -45,7 +45,7 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
   function jumpToLeg(legId: string) {
     setOpenLegId(legId);
     requestAnimationFrame(() =>
-      document.getElementById(`legcard-${legId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      document.getElementById(`legcard-${legId}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" }),
     );
   }
 
