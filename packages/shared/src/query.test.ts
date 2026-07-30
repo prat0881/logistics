@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   Incoterms,
   INCOTERMS,
+  incotermsLabel,
   Priority,
   PRIORITIES,
   querySaveSchema,
@@ -14,29 +15,27 @@ import {
 
 describe("Query vocabularies", () => {
   it("pins the 12 Incoterms", () => {
-    expect(INCOTERMS).toEqual([
-      "EXW",
-      "FCA",
-      "FAS",
-      "FOB",
-      "CFR",
-      "CIF",
-      "CPT",
-      "CIP",
-      "DAP",
-      "DPU",
-      "DDP",
-      "N/A",
-    ]);
+    expect(INCOTERMS).toEqual(["EXW","FCA","FAS","FOB","CFR","CIF","CPT","CIP","DAP","DPU","DDP","NA"]);
   });
-  it("accepts N/A as a valid incoterms value", () => {
-    expect(querySaveSchema.safeParse({ incoterms: "N/A" }).success).toBe(true);
+  it("accepts NA as a valid incoterms value", () => {
+    expect(querySaveSchema.safeParse({ incoterms: "NA" }).success).toBe(true);
   });
   it("pins priorities", () => {
     expect(PRIORITIES).toEqual(["LOW", "MEDIUM", "HIGH", "URGENT"]);
   });
   it("pins the response-deadline hour map", () => {
     expect(RESPONSE_DEADLINE_HOURS).toEqual({ LOW: 48, MEDIUM: 24, HIGH: 18, URGENT: 12 });
+  });
+});
+
+describe("incoterms NA", () => {
+  it("stores NA (no slash) and pins the 12-value array", () => {
+    expect(Incoterms.NA).toBe("NA");
+    expect(INCOTERMS).toEqual(["EXW","FCA","FAS","FOB","CFR","CIF","CPT","CIP","DAP","DPU","DDP","NA"]);
+  });
+  it("displays NA as 'N/A'", () => {
+    expect(incotermsLabel("NA")).toBe("N/A");
+    expect(incotermsLabel("FOB")).toBe("FOB");
   });
 });
 

@@ -29,7 +29,7 @@ export function defaultResponseDeadline(queryDate: string, priority: Priority): 
   return new Date(ms).toISOString();
 }
 
-// §7.2 — fixed 11-value Incoterms enum.
+// §7.2 — fixed 12-value Incoterms enum (NA stored without slash; display via incotermsLabel).
 export const Incoterms = {
   EXW: "EXW",
   FCA: "FCA",
@@ -42,10 +42,15 @@ export const Incoterms = {
   DAP: "DAP",
   DPU: "DPU",
   DDP: "DDP",
-  NA: "N/A",
+  NA: "NA",
 } as const;
 export type Incoterms = (typeof Incoterms)[keyof typeof Incoterms];
 export const INCOTERMS = Object.values(Incoterms) as [Incoterms, ...Incoterms[]];
+
+/** Returns "N/A" for the NA enum value; returns the value unchanged for all other Incoterms. */
+export function incotermsLabel(v: Incoterms): string {
+  return v === "NA" ? "N/A" : v;
+}
 
 export const FileKind = { MSDS: "MSDS" } as const;
 export type FileKind = (typeof FileKind)[keyof typeof FileKind];
