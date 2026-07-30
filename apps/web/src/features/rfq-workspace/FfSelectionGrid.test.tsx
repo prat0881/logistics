@@ -8,7 +8,8 @@ import { mockFetch } from "@/test/mock-fetch";
 import { FfSelectionGrid } from "./FfSelectionGrid";
 
 const ff = (id: string, name: string): FreightForwarderDto => ({
-  id, freightForwarderCode: id, companyName: name, companyAddress: null, pic: "P",
+  id, freightForwarderCode: id, companyName: name, companyAddress: null,
+  city: null, postalCode: null, country: null, pic: "P",
   contactNumber: "+1", email: `${id}@x.com`, availableCountries: ["AE"], modes: ["AIR"],
   handleDg: false, vatTrnEori: null, whLocation: null, defaultCurrency: null,
   paymentTerms: "NET 30", typicalLeadTime: "2d", status: "ACTIVE",

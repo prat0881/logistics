@@ -77,4 +77,24 @@ describe("freightForwarderCreateSchema", () => {
       false,
     );
   });
+  it("keeps optional address fields on the parsed output", () => {
+    const parsed = freightForwarderCreateSchema.safeParse({
+      ...validFf,
+      companyAddress: "1 Cargo Way",
+      city: "Singapore",
+      postalCode: "049145",
+      country: "Singapore",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.city).toBe("Singapore");
+      expect(parsed.data.postalCode).toBe("049145");
+      expect(parsed.data.country).toBe("Singapore");
+    }
+  });
+  it("rejects a country longer than 120 chars", () => {
+    expect(
+      freightForwarderCreateSchema.safeParse({ ...validFf, country: "x".repeat(121) }).success,
+    ).toBe(false);
+  });
 });

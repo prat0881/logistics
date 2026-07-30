@@ -91,6 +91,9 @@ export interface Paginated<T> {
 export const freightForwarderCreateSchema = z.object({
   companyName: z.string().min(1).max(200),
   companyAddress: z.string().max(500).optional(),
+  city: z.string().max(120).optional(),
+  postalCode: z.string().max(20).optional(),
+  country: z.string().max(120).optional(),
   pic: z.string().min(1).max(160),
   contactNumber: z.string().regex(/^\+[1-9]\d{6,14}$/, "Phone must be E.164"),
   email: z.string().email(),
@@ -113,6 +116,9 @@ export interface FreightForwarderDto {
   freightForwarderCode: string;
   companyName: string;
   companyAddress: string | null;
+  city: string | null;
+  postalCode: string | null;
+  country: string | null;
   pic: string;
   contactNumber: string;
   email: string;

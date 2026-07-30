@@ -95,4 +95,33 @@ describe("FreightForwarders (e2e)", () => {
       .expect(200);
     expect(res.body.total).toBeGreaterThanOrEqual(1);
   });
+
+  it("round-trips the postal address fields (street/city/postal/country)", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/api/freight-forwarders")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({
+        ...valid,
+        companyName: `${CO} Addr`,
+        email: "addr@ff-e2e.example",
+        companyAddress: "1 Cargo Way",
+        city: "Singapore",
+        postalCode: "049145",
+        country: "Singapore",
+      })
+      .expect(201);
+    expect(created.body.city).toBe("Singapore");
+    expect(created.body.postalCode).toBe("049145");
+    expect(created.body.country).toBe("Singapore");
+    const read = await request(app.getHttpServer())
+      .get(`/api/freight-forwarders/${created.body.id}`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(200);
+    expect(read.body).toMatchObject({
+      companyAddress: "1 Cargo Way",
+      city: "Singapore",
+      postalCode: "049145",
+      country: "Singapore",
+    });
+  });
 });
