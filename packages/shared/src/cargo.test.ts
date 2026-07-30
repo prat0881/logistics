@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { REFERENCE_TAGS, referenceTagLabel, cargoCreateSchema, cargoUpdateSchema } from "./cargo";
+import { REFERENCE_TAGS, referenceTagLabel, cargoCreateSchema, cargoUpdateSchema, cargoLabel } from "./cargo";
 import { DIM_UNITS, WEIGHT_UNITS, cbmFromDims, toKg } from "./cargo";
 
 describe("ReferenceTag vocabulary", () => {
@@ -75,6 +75,14 @@ describe("cargo schema round-3", () => {
     const r = cargoCreateSchema.parse({ ...base, dimUnit: "MM", weightUnit: "GM" });
     expect(r.dimUnit).toBe("MM");
     expect(r.weightUnit).toBe("GM");
+  });
+});
+
+describe("cargoLabel", () => {
+  it("prefers PO, falls back to product name, then Row n", () => {
+    expect(cargoLabel({ poReference: "PO-1", productName: "Steel", rowIndex: 0 })).toBe("PO-1");
+    expect(cargoLabel({ poReference: "", productName: "Steel", rowIndex: 0 })).toBe("Steel");
+    expect(cargoLabel({ poReference: null, productName: "", rowIndex: 2 })).toBe("Row 3");
   });
 });
 

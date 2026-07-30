@@ -19,6 +19,14 @@ export function toKg(weight: number, weightUnit: WeightUnit): number {
   return weightUnit === "GM" ? weight / 1000 : weight;
 }
 
+export function cargoLabel(c: { poReference?: string | null; productName?: string | null; rowIndex?: number }): string {
+  const po = c.poReference?.trim();
+  if (po) return po;
+  const name = c.productName?.trim();
+  if (name) return name;
+  return `Row ${(c.rowIndex ?? 0) + 1}`;
+}
+
 // §7.3 reference tags (multi-badge).
 export const ReferenceTag = {
   HEAVY: "HEAVY",
