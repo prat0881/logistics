@@ -80,7 +80,8 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo
               <dt className="text-xs text-muted-foreground">Manifest totals</dt>
               <dd>
                 {leg.rollup.totalPackages} pkg · {leg.rollup.totalCbm} CBM ·{" "}
-                {leg.rollup.totalGrossWt} kg gross · {leg.rollup.totalNetWt} kg net
+                {leg.rollup.totalGrossWt} kg gross
+                {leg.rollup.totalNetWt > 0 && <> · {leg.rollup.totalNetWt} kg net</>}
               </dd>
             </div>
           </dl>
