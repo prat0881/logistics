@@ -409,6 +409,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       data: {
         queryId: query.id,
         rowIndex: 0,
+        poReference: "PO",
         productName: "GmWidget",
         packageType: "BOX",
         qty: 1,
