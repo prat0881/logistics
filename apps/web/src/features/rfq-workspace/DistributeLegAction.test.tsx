@@ -13,15 +13,29 @@ function wrap(ui: ReactNode) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("DistributeLegAction", () => {
-  it("distributes and shows the minted RFQ number", async () => {
+  it("distributes and shows the minted RFQ number + portal link input", async () => {
     vi.stubGlobal("fetch", mockFetch((url, init) => {
       if (url.includes("/distribute") && init?.method === "POST")
-        return { status: 201, body: { rfqs: [{ freightForwarderId: "a", rfqId: "r1", rfqNumber: "YAL26-0001-RFQ001", minted: true, accessToken: "T".repeat(64), legIds: ["l1"] }], distributedLegIds: ["l1"], skipped: [] } };
+        return { status: 201, body: { rfqs: [{ freightForwarderId: "a", rfqId: "r1", rfqNumber: "YAL26-0001-RFQ001", minted: true, accessToken: "TOK", legIds: ["l1"] }], distributedLegIds: ["l1"], skipped: [] } };
       return { status: 404 };
     }));
     wrap(<DistributeLegAction queryId="q1" legId="l1" deadlineLocal="2026-08-01T10:00" canDistribute />);
     await userEvent.click(screen.getByRole("button", { name: /^distribute rfq$/i }));
     expect(await screen.findByText(/YAL26-0001-RFQ001/)).toBeInTheDocument();
+    const linkInput = await screen.findByLabelText(/portal link/i) as HTMLInputElement;
+    expect(linkInput.value).toContain("/ff/rfq/TOK");
+  });
+
+  it("updated rows (no accessToken) show no portal link", async () => {
+    vi.stubGlobal("fetch", mockFetch((url, init) => {
+      if (url.includes("/distribute") && init?.method === "POST")
+        return { status: 201, body: { rfqs: [{ freightForwarderId: "a", rfqId: "r2", rfqNumber: "YAL26-0001-RFQ002", minted: false, legIds: ["l1"] }], distributedLegIds: ["l1"], skipped: [] } };
+      return { status: 404 };
+    }));
+    wrap(<DistributeLegAction queryId="q1" legId="l1" deadlineLocal="2026-08-01T10:00" canDistribute />);
+    await userEvent.click(screen.getByRole("button", { name: /^distribute rfq$/i }));
+    expect(await screen.findByText(/YAL26-0001-RFQ002/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/portal link/i)).toBeNull();
   });
 
   it("renders F1/F4/F5 gate codes inline on 400", async () => {
