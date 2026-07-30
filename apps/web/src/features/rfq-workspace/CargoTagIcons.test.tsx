@@ -42,4 +42,14 @@ describe("CargoTagIcons", () => {
     const { container } = render(<CargoTagIcons cargo={[cargo({})]} />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("renders Fragile icon when cargo has FRAGILE tag", () => {
+    render(<CargoTagIcons cargo={[cargo({ referenceTags: ["FRAGILE"] })]} />);
+    expect(screen.getByLabelText(/fragile/i)).toBeInTheDocument();
+  });
+
+  it("renders Non-stackable icon when cargo has NON_STACKABLE tag", () => {
+    render(<CargoTagIcons cargo={[cargo({ referenceTags: ["NON_STACKABLE"] })]} />);
+    expect(screen.getByLabelText(/non-stackable/i)).toBeInTheDocument();
+  });
 });

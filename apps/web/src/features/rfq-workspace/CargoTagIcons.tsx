@@ -1,8 +1,8 @@
 import { Weight, Wine, Layers, TriangleAlert } from "lucide-react";
-import type { CargoDto } from "@svyft/shared";
+import type { CargoDto, ReferenceTag } from "@svyft/shared";
 
 export function CargoTagIcons({ cargo }: { cargo: CargoDto[] }) {
-  const has = (tag: string) => cargo.some((c) => c.referenceTags.includes(tag as never));
+  const has = (tag: ReferenceTag) => cargo.some((c) => c.referenceTags.includes(tag));
   const dg = cargo.some((c) => c.isDangerous);
 
   const items: { key: string; label: string; icon: React.ReactElement }[] = [];
