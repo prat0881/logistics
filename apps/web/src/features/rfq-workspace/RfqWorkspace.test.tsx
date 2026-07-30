@@ -91,10 +91,10 @@ describe("RfqWorkspace", () => {
     expect(screen.getByRole("region", { name: /route overview/i })).toBeInTheDocument();
   });
 
-  it("hides Route overview section for distributed status (RFQ_SENT)", async () => {
+  it("shows Route overview section for distributed status too (RFQ_SENT)", async () => {
     stubFetch(makeQueryDetail("RFQ_SENT"));
     wrap(<RfqWorkspace queryId="q1" />);
     await screen.findByText("YAL26-0001");
-    expect(screen.queryByRole("region", { name: /route overview/i })).toBeNull();
+    expect(screen.getByRole("region", { name: /route overview/i })).toBeInTheDocument();
   });
 });

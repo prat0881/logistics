@@ -103,7 +103,7 @@ Six targeted UX/display fixes shipped after initial testing. No schema or API ch
 
 1. **Portal link copyable over HTTP** — the distribute result exposes a selectable `PortalLinkRow` with a `copyToClipboard` helper (clipboard API + `execCommand` fallback; no secure-context assumption).
 2. **Regenerate portal link per FF** — a "Regenerate portal link" action on each distributed FF's card calls the existing reissue-token endpoint (`POST /queries/:id/rfqs/reissue-token`, PR #29), invalidates the old token, and returns a fresh copyable link.
-3. **Read-only route overview in the workspace** — a `RouteDiagram` (hover tooltips, no editing) is shown after the query header, visible only while the query is in a pre-distribution status (DRAFT / CREATED / RFQ_READY). Distinct from the FF-scoped diagram in §7.3.4.
+3. **Read-only route overview in the workspace** — a `RouteDiagram` (hover tooltips, no editing) is shown after the query header on **every query, before and after distribution** (the initial pre-distribution status gate was removed in **PR #38** — it hid the overview on the distributed queries operators actually work with). Distinct from the FF-scoped diagram in §7.3.4.
 4. **Cargo characteristic icons in Totals** — the Query Overview Header Totals now shows `CargoTagIcons`: Heavy / Fragile / Non-stackable (from `referenceTags`) + DG (from `isDangerous`), deduped across all cargo, each shown once.
 5. **Net weight hidden when 0** — the per-leg Net Wt roll-up in the leg summary is suppressed when the value is 0; shown only for genuine positive numbers.
 6. **FF card: payment terms / lead time removed** — those fields no longer appear on the FF selection card (they remain in the FF Master and the FF Master editor).

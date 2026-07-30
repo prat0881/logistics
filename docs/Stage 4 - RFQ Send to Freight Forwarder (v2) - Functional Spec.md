@@ -154,7 +154,7 @@ Read-only, persistent at the top of the Stage 4 workspace. All values are **deri
 
 > **Post-testing fix R1 (item 3):** The Totals row in the header also shows consolidated **cargo characteristic icons** deduped across all legs' cargo: Heavy / Fragile / Non-stackable (from `referenceTags`) and a **DG** indicator (from `isDangerous`). Each icon appears at most once regardless of how many cargo rows carry the tag.
 
-> **Post-testing fix R1 (item 2):** Immediately after the query header, and **only while the query is in a pre-distribution status** (DRAFT / CREATED / RFQ_READY), a **read-only `RouteDiagram`** is displayed showing the full shipment route with hover tooltips on each node. It is purely a visualisation aid — no editing. This is distinct from the FF-scoped route diagram in §7.3.4, which is rendered inside the FF Portal and scoped to the FF's assigned legs only.
+> **Post-testing fix R1 (item 2; gate removed in PR #38):** Immediately after the query header, on **every query in the workspace — before and after RFQ distribution**, a **read-only `RouteDiagram`** is displayed showing the full shipment route with hover tooltips on each node. It is purely a visualisation aid — no editing. (An earlier revision gated this to pre-distribution status only; because the workspace is used mostly during/after distribution, that gate was removed so the route overview is a persistent reference.) This is distinct from the FF-scoped route diagram in §7.3.4, which is rendered inside the FF Portal and scoped to the FF's assigned legs only.
 
 ---
 
