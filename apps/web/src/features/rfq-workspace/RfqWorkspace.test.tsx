@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -76,8 +76,12 @@ describe("RfqWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: /distribute all/i }));
     // the skipped-summary line rendered (single text node — robust)
     expect(await screen.findByText(/nothing selected/i)).toBeInTheDocument();
-    // "L1" appears in: leg panel header, route diagram SVG chip, and the skipped line
-    expect(screen.getAllByText(/L1/).length).toBeGreaterThanOrEqual(2);
+    // 1) "L1" appears in the leg panel toggle button (leg code chip)
+    const legToggleBtn = screen.getByRole("button", { name: /Air leg/i });
+    expect(within(legToggleBtn).getByText("L1")).toBeInTheDocument();
+    // 2) "L1" appears in the skipped-distribution result paragraph
+    const skippedLine = screen.getByText(/skipped/i);
+    expect(skippedLine).toHaveTextContent(/L1/);
   });
 
   it("shows Route overview section for pre-distribution status (RFQ_READY)", async () => {
