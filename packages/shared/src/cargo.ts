@@ -1,5 +1,24 @@
 import { z } from "zod";
 
+export const DimUnit = { CM: "CM", MM: "MM" } as const;
+export type DimUnit = (typeof DimUnit)[keyof typeof DimUnit];
+export const DIM_UNITS = Object.values(DimUnit) as [DimUnit, ...DimUnit[]];
+
+export const WeightUnit = { KG: "KG", GM: "GM" } as const;
+export type WeightUnit = (typeof WeightUnit)[keyof typeof WeightUnit];
+export const WEIGHT_UNITS = Object.values(WeightUnit) as [WeightUnit, ...WeightUnit[]];
+
+/** Volume in cubic metres from dims in the chosen unit. cm³/1e6 = m³; mm³/1e9 = m³. */
+export function cbmFromDims(dimL: number, dimW: number, dimH: number, qty: number, dimUnit: DimUnit): number {
+  const div = dimUnit === "MM" ? 1e9 : 1e6;
+  return (dimL * dimW * dimH * qty) / div;
+}
+
+/** Normalize a weight in the chosen unit to kilograms. */
+export function toKg(weight: number, weightUnit: WeightUnit): number {
+  return weightUnit === "GM" ? weight / 1000 : weight;
+}
+
 // §7.3 reference tags (multi-badge).
 export const ReferenceTag = {
   HEAVY: "HEAVY",

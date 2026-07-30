@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { REFERENCE_TAGS, cargoCreateSchema, cargoUpdateSchema } from "./cargo";
+import { DIM_UNITS, WEIGHT_UNITS, cbmFromDims, toKg } from "./cargo";
 
 describe("ReferenceTag vocabulary", () => {
   it("pins the tag order", () => {
@@ -46,5 +47,22 @@ describe("cargoCreateSchema", () => {
 describe("cargoUpdateSchema", () => {
   it("rejects netWt > grossWt when both are present (F5)", () => {
     expect(cargoUpdateSchema.safeParse({ netWt: 600, grossWt: 500 }).success).toBe(false);
+  });
+});
+
+describe("units", () => {
+  it("pins the unit arrays", () => {
+    expect(DIM_UNITS).toEqual(["CM", "MM"]);
+    expect(WEIGHT_UNITS).toEqual(["KG", "GM"]);
+  });
+  it("cbmFromDims returns m³ and is unit-consistent (same box, either unit)", () => {
+    // 100×50×40 cm, qty 2 → 0.4 m³
+    expect(cbmFromDims(100, 50, 40, 2, "CM")).toBeCloseTo(0.4, 6);
+    // same box in mm → same 0.4 m³
+    expect(cbmFromDims(1000, 500, 400, 2, "MM")).toBeCloseTo(0.4, 6);
+  });
+  it("toKg normalizes grams", () => {
+    expect(toKg(5, "KG")).toBe(5);
+    expect(toKg(5000, "GM")).toBe(5);
   });
 });
