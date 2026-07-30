@@ -15,7 +15,7 @@
 - **New fields are optional** (`.optional()` / `String?` / `string | null`). **Country is free text** (`z.string().max(120)`), no enum. **Rename is label-only** — the field/column identifier stays `companyAddress`.
 - **DTO fields are required keys with nullable values** (`city: string | null`), matching the existing `companyAddress: string | null` style. Every object literal typed as `FreightForwarderDto` must include the keys.
 - **Run `tsc` per package** after each package's change (vitest/jest via esbuild/ts-jest don't fail the build on type errors in test files).
-- **Postgres dev DB** runs via `docker compose -f docker-compose.dev.yml up -d`; migrations via `prisma migrate`. `DATABASE_URL`/`DIRECT_URL` come from `.env`.
+- **Postgres dev DB**: already running as container `svyft-postgres-task4` on `localhost:5433` (do NOT `docker compose up` — port 5432 is held by another project). `DATABASE_URL`/`DIRECT_URL` come from `apps/api/.env` (repo-root `.env` has none) — prefix prisma/DB commands with `set -a; . ./apps/api/.env; set +a;`. Migrations are **hand-authored + `prisma migrate deploy`**; `prisma migrate dev` is unusable here (spurious `SET DEFAULT` drift on the `CargoItem.volumeCbm` generated column → 42601).
 - **RBAC unchanged** — FF create/update already gate to `ADMINISTRATOR`/`MANAGER`.
 - **Commit after each task.**
 
@@ -110,10 +110,12 @@ git commit -m "feat(shared): add optional city/postalCode/country to FF schema +
 **Interfaces:**
 - Produces: `FreightForwarder` Prisma model + regenerated client gain `city`, `postalCode`, `country` (all `String?` → `string | null`). Consumed by Task 3's `rfq.service.ts` mapper (`f.city`, etc.).
 
-- [ ] **Step 1: Ensure the dev database is running**
+- [ ] **Step 1: Confirm the dev database is up (do NOT use docker compose here)**
 
-Run: `docker compose -f docker-compose.dev.yml up -d`
-Expected: Postgres container up (port `${DEV_DB_PORT:-5432}`).
+The dev Postgres is already running as container `svyft-postgres-task4` on `localhost:5433` (db/user/pass = `svyft`), migrated through `20260730100051_round3_cargo_units`. **Do NOT run `docker compose up`** — its default port 5432 is held by an unrelated project. Prisma reads the connection string from `apps/api/.env` (the repo-root `.env` has none), so every prisma command in this task is prefixed with `set -a; . ./apps/api/.env; set +a;`.
+
+Verify: `set -a; . ./apps/api/.env; set +a; pnpm exec prisma migrate status --schema prisma/schema.prisma`
+Expected: "Database schema is up to date!" (existing migrations applied, none pending).
 
 - [ ] **Step 2: Add the columns to the schema**
 
@@ -125,17 +127,32 @@ In `prisma/schema.prisma`, in `model FreightForwarder`, add three lines directly
   country              String?
 ```
 
-- [ ] **Step 3: Create and apply the migration (regenerates the client)**
+- [ ] **Step 3: Hand-author the migration (do NOT use `prisma migrate dev`)**
 
-Run: `pnpm exec prisma migrate dev --name add_ff_address_fields --schema prisma/schema.prisma`
-Expected: a new `prisma/migrations/<timestamp>_add_ff_address_fields/` folder is created, applied to the dev DB, and the Prisma Client is regenerated. (If it reports drift/shadow-DB issues, resolve per README before continuing — do not use `db push`.)
+`prisma migrate dev` cannot be used in this repo: it diffs schema→DB and emits a spurious `ALTER COLUMN "volumeCbm" SET DEFAULT …` on the `CargoItem.volumeCbm` **generated column** (`@default(dbgenerated(...))` representing a `GENERATED ALWAYS AS … STORED` column), which Postgres rejects (error 42601) and rolls the whole migration back. The repo's convention (see prior migrations) is to hand-author, then apply with `migrate deploy` — which runs the folder SQL verbatim without schema-diffing.
 
-- [ ] **Step 4: Verify the generated SQL is additive**
+Create the folder `prisma/migrations/<TS>_add_ff_address_fields/` where `<TS>` is a UTC timestamp greater than the latest existing migration — generate it with `date -u +%Y%m%d%H%M%S`. Write `migration.sql` with ONLY the additive FF columns:
 
-Run: `grep -R "ADD COLUMN" prisma/migrations/*add_ff_address_fields*/migration.sql`
-Expected: three `ADD COLUMN "city"`, `"postalCode"`, `"country"` statements, all nullable (no `NOT NULL`, no backfill).
+```sql
+-- AlterTable
+ALTER TABLE "FreightForwarder" ADD COLUMN     "city" TEXT,
+ADD COLUMN     "postalCode" TEXT,
+ADD COLUMN     "country" TEXT;
+```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Apply the migration and regenerate the client**
+
+Run: `set -a; . ./apps/api/.env; set +a; pnpm exec prisma migrate deploy --schema prisma/schema.prisma`
+Expected: the new `<TS>_add_ff_address_fields` migration is found and applied (no `volumeCbm` drift — deploy does not diff the schema).
+Then: `set -a; . ./apps/api/.env; set +a; pnpm exec prisma generate --schema prisma/schema.prisma`
+Expected: "Generated Prisma Client" — so Task 3 can read `f.city` / `f.postalCode` / `f.country`.
+
+- [ ] **Step 5: Verify the columns exist and are nullable**
+
+Run: `docker exec svyft-postgres-task4 psql -U svyft -d svyft -c '\d "FreightForwarder"'`
+Expected: `city`, `postalCode`, `country` present as `text`, nullable (no `not null`).
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add prisma/schema.prisma prisma/migrations
