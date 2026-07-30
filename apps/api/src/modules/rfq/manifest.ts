@@ -1,4 +1,5 @@
 import type { Incoterms } from "@prisma/client";
+import { toKg } from "@svyft/shared";
 import type { ManifestSnapshot } from "@svyft/shared";
 import type { LegRfqContext } from "./leg-context";
 
@@ -33,8 +34,10 @@ export function buildManifestSnapshot(
       dimL: lc.cargoItem.dimL.toString(),
       dimW: lc.cargoItem.dimW.toString(),
       dimH: lc.cargoItem.dimH.toString(),
-      netWt: lc.cargoItem.netWt ? lc.cargoItem.netWt.toString() : null,
-      grossWt: lc.cargoItem.grossWt.toString(),
+      netWt: lc.cargoItem.netWt
+        ? toKg(Number(lc.cargoItem.netWt), lc.cargoItem.weightUnit).toString()
+        : null,
+      grossWt: toKg(Number(lc.cargoItem.grossWt), lc.cargoItem.weightUnit).toString(),
       volumeCbm: lc.cargoItem.volumeCbm ? lc.cargoItem.volumeCbm.toString() : null,
     })),
     frozenAt: frozenAt.toISOString(),

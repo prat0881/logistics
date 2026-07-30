@@ -52,6 +52,8 @@ function makeDetail(over: {
     netWt: null,
     grossWt: "10",
     volumeCbm: "1",
+    dimUnit: "CM",
+    weightUnit: "KG",
   })) as QueryDetail["cargo"];
   const legs = (over.legs ?? []).map((l) => ({
     tenantId: null,

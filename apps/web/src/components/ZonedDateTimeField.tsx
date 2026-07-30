@@ -40,7 +40,9 @@ export function ZonedDateTimeField<TFieldValues extends FieldValues = FieldValue
               className={readOnly ? "bg-muted" : undefined}
               value={utcToZonedInput(field.value ?? "", zone)}
               onChange={(e) => {
-                const v = e.target.value;
+                let v = e.target.value;
+                const wasEmpty = !field.value;
+                if (v && wasEmpty) v = v.slice(0, 14) + "00"; // "YYYY-MM-DDTHH:" + "00"
                 field.onChange(v ? zonedInputToUtc(v, zone) : undefined);
                 onChanged?.();
               }}

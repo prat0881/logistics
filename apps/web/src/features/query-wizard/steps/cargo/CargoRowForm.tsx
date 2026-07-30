@@ -5,8 +5,12 @@ import {
   cargoCreateSchema,
   cargoUpdateSchema,
   REFERENCE_TAGS,
+  referenceTagLabel,
+  DIM_UNITS,
+  WEIGHT_UNITS,
+  cbmFromDims,
 } from "@svyft/shared";
-import type { CargoCreateInput, CargoUpdateInput, CargoDto, ReferenceTag } from "@svyft/shared";
+import type { CargoCreateInput, CargoUpdateInput, CargoDto, ReferenceTag, DimUnit } from "@svyft/shared";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -18,6 +22,13 @@ import {
   FormControl,
   FormMessage,
 } from "@/components/ui/form";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import type { useCargo } from "./useCargo";
 
 type CargoActions = ReturnType<typeof useCargo>;
@@ -87,30 +98,33 @@ function ReferenceTags({
             checked={value.includes(tag)}
             onCheckedChange={() => toggle(tag)}
           />
-          <span>{tag.replace(/_/g, " ")}</span>
+          <span>{referenceTagLabel(tag)}</span>
         </label>
       ))}
     </div>
   );
 }
 
-/** Live CBM preview = (L*W*H*qty)/1e6 */
+/** Live CBM preview using unit-aware cbmFromDims */
 function VolumeCbmPreview({
   dimL,
   dimW,
   dimH,
   qty,
+  dimUnit,
 }: {
   dimL: number | undefined;
   dimW: number | undefined;
   dimH: number | undefined;
   qty: number | undefined;
+  dimUnit: DimUnit;
 }) {
   const hasAll = dimL && dimW && dimH && qty && dimL > 0 && dimW > 0 && dimH > 0 && qty > 0;
-  const cbm = hasAll ? (dimL * dimW * dimH * qty) / 1e6 : null;
+  const cbm = hasAll ? cbmFromDims(dimL, dimW, dimH, qty, dimUnit) : null;
   return (
     <Input
       readOnly
+      aria-label="Volume (CBM)"
       className="bg-muted font-mono tabular-nums"
       value={cbm !== null ? cbm.toFixed(4) : "—"}
     />
@@ -134,6 +148,8 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
       dimH: undefined as unknown as number,
       netWt: undefined,
       grossWt: undefined as unknown as number,
+      dimUnit: "CM",
+      weightUnit: "KG",
     },
   });
 
@@ -142,6 +158,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
   const dimW = useWatch({ control: form.control, name: "dimW" });
   const dimH = useWatch({ control: form.control, name: "dimH" });
   const qty = useWatch({ control: form.control, name: "qty" });
+  const dimUnit = useWatch({ control: form.control, name: "dimUnit" }) ?? "CM";
 
   const handleSubmit = form.handleSubmit(async (data) => {
     await onSubmit(data);
@@ -159,7 +176,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
             name="poReference"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>PO / Reference <span className="text-destructive">*</span></FormLabel>
+                <FormLabel>PO / Reference</FormLabel>
                 <FormControl>
                   <Input {...field} placeholder="PO-001" />
                 </FormControl>
@@ -254,7 +271,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
           {/* Qty */}
           <FormField
             control={form.control}
@@ -281,7 +298,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
             name="dimL"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>L (cm) <span className="text-destructive">*</span></FormLabel>
+                <FormLabel>L <span className="text-destructive">*</span></FormLabel>
                 <FormControl>
                   <NumericInput value={field.value} onChange={field.onChange} placeholder="100" className="font-mono tabular-nums" />
                 </FormControl>
@@ -296,7 +313,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
             name="dimW"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>W (cm) <span className="text-destructive">*</span></FormLabel>
+                <FormLabel>W <span className="text-destructive">*</span></FormLabel>
                 <FormControl>
                   <NumericInput value={field.value} onChange={field.onChange} placeholder="50" className="font-mono tabular-nums" />
                 </FormControl>
@@ -311,7 +328,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
             name="dimH"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>H (cm) <span className="text-destructive">*</span></FormLabel>
+                <FormLabel>H <span className="text-destructive">*</span></FormLabel>
                 <FormControl>
                   <NumericInput value={field.value} onChange={field.onChange} placeholder="50" className="font-mono tabular-nums" />
                 </FormControl>
@@ -319,16 +336,31 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
               </FormItem>
             )}
           />
+
+          {/* Dimension Unit */}
+          <FormField
+            control={form.control}
+            name="dimUnit"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Unit</FormLabel>
+                <Select value={field.value ?? "CM"} onValueChange={field.onChange}>
+                  <SelectTrigger aria-label="Dimension unit"><SelectValue /></SelectTrigger>
+                  <SelectContent>{DIM_UNITS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+                </Select>
+              </FormItem>
+            )}
+          />
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {/* Net Wt */}
           <FormField
             control={form.control}
             name="netWt"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Net Wt (kg)</FormLabel>
+                <FormLabel>Net Wt</FormLabel>
                 <FormControl>
                   <NumericInput value={field.value ?? undefined} onChange={field.onChange} placeholder="50" className="font-mono tabular-nums" />
                 </FormControl>
@@ -343,7 +375,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
             name="grossWt"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Gross Wt (kg) <span className="text-destructive">*</span></FormLabel>
+                <FormLabel>Gross Wt <span className="text-destructive">*</span></FormLabel>
                 <FormControl>
                   <NumericInput value={field.value} onChange={field.onChange} placeholder="60" className="font-mono tabular-nums" />
                 </FormControl>
@@ -352,10 +384,25 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
             )}
           />
 
+          {/* Weight Unit */}
+          <FormField
+            control={form.control}
+            name="weightUnit"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Unit</FormLabel>
+                <Select value={field.value ?? "KG"} onValueChange={field.onChange}>
+                  <SelectTrigger aria-label="Weight unit"><SelectValue /></SelectTrigger>
+                  <SelectContent>{WEIGHT_UNITS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+                </Select>
+              </FormItem>
+            )}
+          />
+
           {/* Volume CBM (live preview) */}
           <div className="space-y-2">
             <label className="text-sm font-medium">Volume (CBM)</label>
-            <VolumeCbmPreview dimL={dimL} dimW={dimW} dimH={dimH} qty={qty} />
+            <VolumeCbmPreview dimL={dimL} dimW={dimW} dimH={dimH} qty={qty} dimUnit={dimUnit as DimUnit} />
           </div>
         </div>
 
@@ -411,10 +458,17 @@ function EditForm({
       dimH: Number(row.dimH),
       netWt: row.netWt !== null ? Number(row.netWt) : undefined,
       grossWt: Number(row.grossWt),
+      dimUnit: row.dimUnit,
+      weightUnit: row.weightUnit,
     },
   });
 
   const isDangerous = useWatch({ control: form.control, name: "isDangerous" });
+  const editDimL = useWatch({ control: form.control, name: "dimL" });
+  const editDimW = useWatch({ control: form.control, name: "dimW" });
+  const editDimH = useWatch({ control: form.control, name: "dimH" });
+  const editQty = useWatch({ control: form.control, name: "qty" });
+  const editDimUnit = useWatch({ control: form.control, name: "dimUnit" }) ?? "CM";
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = form.handleSubmit(async (data) => {
@@ -429,8 +483,6 @@ function EditForm({
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const cbm = row.volumeCbm !== null ? Number(row.volumeCbm) : null;
-
   return (
     <Form {...form}>
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -438,7 +490,7 @@ function EditForm({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField control={form.control} name="poReference" render={({ field }) => (
             <FormItem>
-              <FormLabel>PO / Reference <span className="text-destructive">*</span></FormLabel>
+              <FormLabel>PO / Reference</FormLabel>
               <FormControl><Input {...field} /></FormControl>
               <FormMessage />
             </FormItem>
@@ -505,7 +557,7 @@ function EditForm({
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
           <FormField control={form.control} name="qty" render={({ field }) => (
             <FormItem>
               <FormLabel>Qty <span className="text-destructive">*</span></FormLabel>
@@ -518,7 +570,7 @@ function EditForm({
 
           <FormField control={form.control} name="dimL" render={({ field }) => (
             <FormItem>
-              <FormLabel>L (cm)</FormLabel>
+              <FormLabel>L</FormLabel>
               <FormControl>
                 <NumericInput value={field.value} onChange={field.onChange} className="font-mono tabular-nums" />
               </FormControl>
@@ -528,7 +580,7 @@ function EditForm({
 
           <FormField control={form.control} name="dimW" render={({ field }) => (
             <FormItem>
-              <FormLabel>W (cm)</FormLabel>
+              <FormLabel>W</FormLabel>
               <FormControl>
                 <NumericInput value={field.value} onChange={field.onChange} className="font-mono tabular-nums" />
               </FormControl>
@@ -538,19 +590,30 @@ function EditForm({
 
           <FormField control={form.control} name="dimH" render={({ field }) => (
             <FormItem>
-              <FormLabel>H (cm)</FormLabel>
+              <FormLabel>H</FormLabel>
               <FormControl>
                 <NumericInput value={field.value} onChange={field.onChange} className="font-mono tabular-nums" />
               </FormControl>
               <FormMessage />
             </FormItem>
           )} />
+
+          {/* Dimension Unit */}
+          <FormField control={form.control} name="dimUnit" render={({ field }) => (
+            <FormItem>
+              <FormLabel>Unit</FormLabel>
+              <Select value={field.value ?? "CM"} onValueChange={field.onChange}>
+                <SelectTrigger aria-label="Dimension unit"><SelectValue /></SelectTrigger>
+                <SelectContent>{DIM_UNITS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormItem>
+          )} />
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <FormField control={form.control} name="netWt" render={({ field }) => (
             <FormItem>
-              <FormLabel>Net Wt (kg)</FormLabel>
+              <FormLabel>Net Wt</FormLabel>
               <FormControl>
                 <NumericInput value={field.value ?? undefined} onChange={field.onChange} className="font-mono tabular-nums" />
               </FormControl>
@@ -560,7 +623,7 @@ function EditForm({
 
           <FormField control={form.control} name="grossWt" render={({ field }) => (
             <FormItem>
-              <FormLabel>Gross Wt (kg) <span className="text-destructive">*</span></FormLabel>
+              <FormLabel>Gross Wt <span className="text-destructive">*</span></FormLabel>
               <FormControl>
                 <NumericInput value={field.value} onChange={field.onChange} className="font-mono tabular-nums" />
               </FormControl>
@@ -568,13 +631,20 @@ function EditForm({
             </FormItem>
           )} />
 
+          {/* Weight Unit */}
+          <FormField control={form.control} name="weightUnit" render={({ field }) => (
+            <FormItem>
+              <FormLabel>Unit</FormLabel>
+              <Select value={field.value ?? "KG"} onValueChange={field.onChange}>
+                <SelectTrigger aria-label="Weight unit"><SelectValue /></SelectTrigger>
+                <SelectContent>{WEIGHT_UNITS.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormItem>
+          )} />
+
           <div className="space-y-2">
             <label className="text-sm font-medium">Volume (CBM)</label>
-            <Input
-              readOnly
-              className="bg-muted font-mono tabular-nums"
-              value={cbm !== null ? cbm.toFixed(4) : "—"}
-            />
+            <VolumeCbmPreview dimL={editDimL} dimW={editDimW} dimH={editDimH} qty={editQty} dimUnit={editDimUnit as DimUnit} />
           </div>
         </div>
 

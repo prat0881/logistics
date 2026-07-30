@@ -56,7 +56,7 @@ export class CargoService {
             queryId,
             tenantId: user.tenantId,
             rowIndex: (max._max.rowIndex ?? 0) + 1,
-            poReference: input.poReference,
+            poReference: input.poReference ?? "",
             productName: input.productName,
             referenceTags: input.referenceTags ?? [],
             hsCode: input.hsCode ?? null,
@@ -68,6 +68,8 @@ export class CargoService {
             dimH: input.dimH,
             netWt: input.netWt ?? null,
             grossWt: input.grossWt,
+            dimUnit: input.dimUnit,
+            weightUnit: input.weightUnit,
           },
         });
         await this.queries.syncDgIndicator(queryId, tx);

@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within, render, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
 import { QueryWizardPage } from "../QueryWizardPage";
 import { renderWithProviders } from "@/test/renderWithProviders";
+import { CargoRowForm } from "./cargo/CargoRowForm";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -73,6 +74,8 @@ const cargoRowDto = {
   netWt: "50",
   grossWt: "60",
   volumeCbm: "2.5000",
+  dimUnit: "CM" as const,
+  weightUnit: "KG" as const,
 };
 
 const detailWithCargo = { ...baseDetail, cargo: [cargoRowDto] };
@@ -389,6 +392,91 @@ describe("Step3Cargo", () => {
     });
   });
 
+  it("saves a cargo row with a blank PO and offers the Out of Gauge Cargo tag", async () => {
+    const submit = vi.fn().mockResolvedValue(undefined);
+
+    // Track what was POSTed to the cargo endpoint
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}`)
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve(baseDetail),
+          text: () => Promise.resolve(JSON.stringify(baseDetail)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}/cargo` && init?.method === "POST") {
+        const body = JSON.parse((init as RequestInit).body as string);
+        submit(body);
+        return Promise.resolve({
+          ok: true, status: 201,
+          json: () => Promise.resolve({ ...cargoRowDto, poReference: "" }),
+          text: () => Promise.resolve(JSON.stringify(cargoRowDto)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=2` },
+    );
+
+    await navigateToStep3();
+
+    // Open add-cargo dialog
+    const addRowBtn = await screen.findByRole("button", { name: /add row/i });
+    await userEvent.click(addRowBtn);
+
+    // Fill required fields — leave PO blank
+    const productInput = await screen.findByPlaceholderText(/product name/i);
+    await userEvent.type(productInput, "Widget");
+
+    const pkgInput = screen.getByPlaceholderText(/carton/i);
+    await userEvent.type(pkgInput, "Box");
+
+    const qtyInput = screen.getByPlaceholderText("1");
+    await userEvent.type(qtyInput, "1");
+
+    const lInput = screen.getByPlaceholderText("100");
+    await userEvent.type(lInput, "1");
+
+    const fiftyInputs = screen.getAllByPlaceholderText("50");
+    await userEvent.type(fiftyInputs[0], "1");
+    await userEvent.type(fiftyInputs[1], "1");
+
+    const grossWtInput = screen.getByPlaceholderText("60");
+    await userEvent.type(grossWtInput, "1");
+
+    // The "Out of Gauge Cargo" label should be visible (tag label via referenceTagLabel)
+    expect(screen.getByText("Out of Gauge Cargo")).toBeInTheDocument();
+
+    // Submit without filling PO
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    // Submit should have been called with poReference: ""
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledWith(expect.objectContaining({ poReference: "" }));
+    });
+  });
+
   it("removes a cargo row: DELETEs /cargo/:cid after confirmation", async () => {
     const user = userEvent.setup();
 
@@ -455,6 +543,179 @@ describe("Step3Cargo", () => {
           (init as RequestInit)?.method === "DELETE",
       );
       expect(deleteCall).toBeTruthy();
+    });
+  });
+});
+
+  it("I1: cargo review table shows dim and weight units alongside raw values", async () => {
+    const mmCargoRow = {
+      ...cargoRowDto,
+      dimL: "1000",
+      dimW: "500",
+      dimH: "400",
+      grossWt: "5000",
+      netWt: "4000",
+      dimUnit: "MM" as const,
+      weightUnit: "GM" as const,
+      volumeCbm: "0.4000",
+    };
+    const detailWithMmCargo = { ...baseDetail, cargo: [mmCargoRow] };
+
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}`)
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve(detailWithMmCargo),
+          text: () => Promise.resolve(JSON.stringify(detailWithMmCargo)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=2` },
+    );
+    await navigateToStep3();
+    await screen.findByText("Widget A");
+
+    // Unit labels "MM" should appear alongside dim values, "GM" alongside weights
+    const allMm = screen.getAllByText("MM");
+    expect(allMm.length).toBeGreaterThanOrEqual(3); // L, W, H each have MM label
+    const allGm = screen.getAllByText("GM");
+    expect(allGm.length).toBeGreaterThanOrEqual(1); // gross wt has GM label
+  });
+
+// ── Direct CargoRowForm unit tests (unit dropdowns + CBM preview) ──────────────
+
+/** Render the Add form in isolation and return a { submit } spy. */
+function renderAddCargo() {
+  const submit = vi.fn().mockResolvedValue(undefined);
+  render(
+    <CargoRowForm mode="add" onSubmit={submit} onCancel={() => {}} />,
+  );
+  return { submit };
+}
+
+/** Fill the minimum required fields in the Add form. */
+async function fillRequired(fields: {
+  productName: string;
+  packageType: string;
+  qty: string;
+  dimL: string;
+  dimW: string;
+  dimH: string;
+  grossWt: string;
+}) {
+  await userEvent.type(screen.getByPlaceholderText(/product name/i), fields.productName);
+  await userEvent.type(screen.getByPlaceholderText(/carton/i), fields.packageType);
+  await userEvent.type(screen.getByPlaceholderText("1"), fields.qty);
+  await userEvent.type(screen.getByPlaceholderText("100"), fields.dimL);
+  const fiftyInputs = screen.getAllByPlaceholderText("50");
+  await userEvent.type(fiftyInputs[0], fields.dimW);
+  await userEvent.type(fiftyInputs[1], fields.dimH);
+  await userEvent.type(screen.getByPlaceholderText("60"), fields.grossWt);
+}
+
+/**
+ * Drive a Radix Select by changing the hidden native <select aria-hidden="true">
+ * that is a sibling of the SelectTrigger.
+ * el is the SelectTrigger (found via getByLabelText on aria-label).
+ * We walk up the DOM to the closest FormItem container and then find
+ * the hidden native select within it.
+ */
+function selectOption(el: HTMLElement, value: string) {
+  // The Radix SelectTrigger is inside a FormItem div.
+  // The native <select aria-hidden="true"> is in the same FormItem (rendered by Radix).
+  // Walk up to the FormItem container and search within it.
+  const container = el.closest(".space-y-2") ?? el.closest('[class*="space-y"]') ?? el.parentElement?.parentElement ?? el.parentElement;
+  const nativeSelect = container
+    ? container.querySelector<HTMLSelectElement>('select[aria-hidden="true"]')
+    : null;
+  if (nativeSelect) {
+    fireEvent.change(nativeSelect, { target: { value } });
+  } else {
+    // Fallback: fire directly on el (may not update RHF but at least doesn't throw)
+    fireEvent.change(el, { target: { value } });
+  }
+}
+
+/** Click the Save button. */
+async function clickSave() {
+  await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+}
+
+describe("CargoRowForm — unit dropdowns + CBM preview", () => {
+  it("has one dim-unit (CM/MM) + one weight-unit (KG/GM) selector and CBM tracks the unit", async () => {
+    const { submit } = renderAddCargo();
+    // one dropdown each (default CM/KG)
+    const dimUnit = screen.getByLabelText("Dimension unit");
+    const wtUnit = screen.getByLabelText("Weight unit");
+    await fillRequired({ productName: "W", packageType: "Box", qty: "2", dimL: "1000", dimW: "500", dimH: "400", grossWt: "1" });
+    selectOption(dimUnit, "MM");          // drive the hidden native <select>
+    // CBM preview shows 0.4000 for the mm box
+    expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("0.4000");
+    selectOption(wtUnit, "GM");
+    await clickSave();
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ dimUnit: "MM", weightUnit: "GM" }));
+  });
+
+  it("T13: edit form CBM preview is live — changing dims updates the preview", async () => {
+    const row: typeof cargoRowDto = {
+      ...cargoRowDto,
+      qty: 2,
+      dimL: "100",
+      dimW: "50",
+      dimH: "40",
+      dimUnit: "CM",
+      weightUnit: "KG",
+      volumeCbm: "0.4000",
+    };
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <CargoRowForm
+        mode="edit"
+        row={row}
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        uploadMsds={vi.fn()}
+      />,
+    );
+
+    // Initial CBM: 100×50×40×2 / 1e6 = 0.4 m³ — loaded from form defaultValues
+    const cbmInput = screen.getByLabelText("Volume (CBM)");
+    expect(cbmInput).toHaveValue("0.4000");
+
+    // Change L to 200 using fireEvent.change for reliable numeric field update
+    // dimL is the only input with value "100" (qty=2, dimW=50, dimH=40, grossWt=from row)
+    const lInput = screen.getByDisplayValue("100");
+    fireEvent.change(lInput, { target: { value: "200" } });
+    // 200×50×40×2 / 1e6 = 0.8 m³
+    await waitFor(() => {
+      expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("0.8000");
+    });
+
+    // Switch dim unit from CM to MM via the hidden native select
+    const dimUnitTrigger = screen.getByLabelText("Dimension unit");
+    selectOption(dimUnitTrigger, "MM");
+    // Same dims in MM: 200×50×40×2 / 1e9 = 0.0008 m³
+    await waitFor(() => {
+      expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("0.0008");
     });
   });
 });

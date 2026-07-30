@@ -162,7 +162,10 @@ Primary business reference for the query. All values are **manual entry** in thi
 | ETB | DateTime | Optional | No | After ETA, before ETD. |
 | ETD | DateTime | Optional | No | After ETB. |
 | Port of Call | Text / Lookup | Optional | No | Intermediate stop where the vessel loads/unloads. |
-| Ready Date | DateTime | **Mandatory** | No | Cargo-ready date — the **client-agreed window**, in its own explicit timezone; **decoupled from leg dates** (Round 2, §8.5). Ready ≤ Target. |
+
+> **Round 3 rename (UI labels only):** the Step-1 form section previously labelled **"Delivery"** is now labelled **"Shipment Dates"**. The field previously labelled **"Ready Date"** is now labelled **"Target Pickup"** (internal field name `readyDate` and its DB column are **unchanged** — this is a display-label change only).
+
+| Target Pickup | DateTime | **Mandatory** | No | Cargo-ready date — the **client-agreed window**, in its own explicit timezone; **decoupled from leg dates** (Round 2, §8.5). Ready ≤ Target. UI label only; the internal field is `readyDate`. |
 | Target Delivery | DateTime | **Mandatory** | No | Required client delivery date — the **client-agreed window**, in its own explicit timezone; **decoupled from leg dates** (Round 2, §8.5). |
 
 ---
@@ -173,7 +176,7 @@ Foundational shipment parameters. **Simplified from the original PRD**: Freight 
 
 | Field | Type | Mandatory | Rules / Notes |
 |---|---|---|---|
-| Incoterms | Dropdown | **Mandatory** | One of EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU, DDP. Stored with the query. |
+| Incoterms | Dropdown | **Mandatory** | One of EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU, DDP, **N/A**. Default **N/A** (a valid value; stored as `NA`, displayed "N/A"). Stored with the query. |
 | Shipment Description | Free text | Optional | Plain text, 200-char limit, HTML/script sanitised. |
 | DG Indicator | Checkbox | Optional | Shipment-level dangerous-goods flag. **Auto-set** when any cargo row is flagged DG (§7.3); may also be set manually. When set, MSDS is expected per DG cargo row. |
 
@@ -190,18 +193,18 @@ Cargo captured as a dynamic multi-row table (one row per package type/reference)
 | Column | Type | Mandatory | Unit / Rules |
 |---|---|---|---|
 | # | Integer (auto) | Auto | Sequential row index. |
-| PO / Reference | Text | **Mandatory** | PO or shipment reference. |
+| PO / Reference | Text | **Optional** | PO or shipment reference. Optional (Round 3); when blank, the cargo-row label falls back to Product Name. |
 | Product Name | Text | **Mandatory** | — |
-| Reference Tags | Multi-badge | Optional | Heavy / Fragile / Non-Stackable (multiple allowed). **Stage-4 display:** these tags (plus the DG flag below) are now surfaced as consolidated deduped icons in the downstream Query Workspace header — each characteristic shown at most once across all cargo; a Stage-4 post-testing display addition. Create-Query capture is unchanged. |
+| Reference Tags | Multi-badge | Optional | Heavy / Fragile / Non-Stackable / **Out of Gauge Cargo** (multiple allowed). **Stage-4 display:** these tags (plus the DG flag below) are now surfaced as consolidated deduped icons in the downstream Query Workspace header — each characteristic shown at most once across all cargo; a Stage-4 post-testing display addition. Create-Query capture is unchanged. |
 | HS / HSN Code | Number | Optional | Per row. |
 | Package Type | Text | **Mandatory** | e.g. Carton, Crate, Box, Pallet, Loose, Drum, Can. |
 | DG | Checkbox | **Mandatory** | When checked, reveals MSDS upload and sets shipment DG indicator. (See Reference Tags note above — DG is included in the Stage-4 workspace consolidated icon display.) |
 | MSDS | File (PDF) | Conditional | Visible/required only when DG is checked. PDF only; shows filename with remove option. |
 | Qty | Integer | **Mandatory** | Must be > 0. |
-| Dims L×W×H | Numeric ×3 | **Mandatory** | Centimetres; three inline fields shown as one column. |
-| Net Wt | Numeric | Optional | kg. Must be ≤ Gross Wt if provided. |
-| Gross Wt | Numeric | **Mandatory** | kg. Total incl. packaging. Basis for chargeable weight per leg. |
-| Volume (CBM) | Calculated | Auto | `(L × W × H × Qty) / 1,000,000` (L/W/H in cm). Read-only. |
+| Dims L×W×H | Numeric ×3 + unit | **Mandatory** | Three inline L/W/H fields with **one shared unit dropdown (CM / MM, default CM)**. The same unit applies to all three dimensions on this row. |
+| Net Wt | Numeric | Optional | **KG or GM** (shared unit dropdown with Gross Wt, default KG). Must be ≤ Gross Wt if provided. |
+| Gross Wt | Numeric | **Mandatory** | **KG or GM** (same unit as Net Wt; one dropdown governs both). Total incl. packaging. Basis for chargeable weight per leg. |
+| Volume (CBM) | Calculated | Auto | Always **cubic metres (m³)**: cm input → `(L × W × H × Qty) / 1,000,000`; mm input → `(L × W × H × Qty) / 1,000,000,000`. Read-only. There is no CBM unit selector — CBM is m³ by definition. |
 | Freight Density | Read-only | — | kg/CBM. **Empty in Stage 3**; set by the Freight Forwarder in Stage 4. |
 | Chargeable Wt (T) | Read-only | — | **Empty in Stage 3**; auto-calculated in Stage 4 once density is set. |
 | × (remove) | Action | — | Removes the row (undo via discard). |
@@ -402,12 +405,14 @@ Severity: **Blocking** (prevents progression) or **Warning** (advisory). Trigger
 
 | # | Rule | Severity | Trigger |
 |---|---|---|---|
-| F1 | Query mandatory fields present (client, POC, email, phone, Ready Date, Target Delivery, Incoterms). | Blocking | create |
+| F1 | Query mandatory fields present (client, POC, email, phone, Target Pickup / `readyDate`, Target Delivery, Incoterms). PO / Reference is **not** in the mandatory set (Round 3 — now optional). | Blocking | create |
 | F2 | Email regex valid; phone E.164 valid; IMO 7-digit; IATA 3-char; ICAO 4-char; UN/LOCODE 5-char. | Blocking | save |
 | F3 | ETA < ETB < ETD (when provided). | Blocking | save |
 | F4 | Response Deadline not in the past. | Blocking | save |
-| F5 | Cargo: Qty > 0; Gross Wt present; if Net Wt provided, Net ≤ Gross. | Blocking (Net ≤ Gross = Warning inline) | save |
+| F5 | Cargo: Qty > 0; Gross Wt present; if Net Wt provided, Net ≤ Gross; `dimUnit` and `weightUnit` recorded per row. PO / Reference is **not** required (Round 3 — optional). | Blocking (Net ≤ Gross = Warning inline) | save |
 | F6 | DG cargo row requires an MSDS (PDF) file. | Blocking | create |
+
+> **Note — datetime minute default (Round 3):** all datetime inputs across all screens (Step-1 Target Pickup / Target Delivery / ETA / ETB / ETD / Response Deadline; leg Ready Date / Target Delivery; ETA / ETB / ETD) **default the minute component to `:00`** when a fresh value is entered. The minute field remains fully editable — this is a soft default, not a lock.
 
 ### 10.2 Route — connectivity & continuity
 

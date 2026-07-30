@@ -21,7 +21,7 @@ function validGraph(): RouteGraph {
       { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pu", destinationPointId: "wh", readyDate: READY, targetDelivery: MID },
       { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "wh", destinationPointId: "de", readyDate: MID, targetDelivery: TARGET },
     ],
-    cargo: [{ id: "c1", poReference: "PO-1", isDangerous: false, msdsFileId: null, grossWt: 100, volumeCbm: 1 }],
+    cargo: [{ id: "c1", poReference: "PO-1", productName: "PO-1 goods", rowIndex: 0, isDangerous: false, msdsFileId: null, grossWt: 100, volumeCbm: 1 }],
     legCargo: [
       { legId: "l1", cargoItemId: "c1" },
       { legId: "l2", cargoItemId: "c1" },
@@ -91,7 +91,7 @@ describe("R3 — orphans", () => {
   });
   it("flags a cargo row with no legs", () => {
     const g = validGraph();
-    g.cargo.push({ id: "c2", poReference: "PO-2", isDangerous: false, msdsFileId: null, grossWt: 5, volumeCbm: 0.1 });
+    g.cargo.push({ id: "c2", poReference: "PO-2", productName: "PO-2 goods", rowIndex: 1, isDangerous: false, msdsFileId: null, grossWt: 5, volumeCbm: 0.1 });
     expect(rules(g, "create")).toContain("R3");
   });
   it("flags an unused point", () => {
@@ -210,6 +210,17 @@ describe("R8 — timezone is required for every point type at create phase", () 
   });
 });
 
+describe("R2 — uses product name in finding when PO is blank", () => {
+  it("uses Product Name in a finding when PO is blank", () => {
+    const g = validGraph();
+    g.points[0].type = "DELIVERY";
+    g.cargo[0].poReference = "";
+    (g.cargo[0] as { productName?: string }).productName = "Steel Coils";
+    const r2 = validateRoute(g, "create").find((f) => f.rule === "R2");
+    expect(r2?.message).toContain("Steel Coils");
+  });
+});
+
 describe("R9 — DG needs MSDS on every carrying leg", () => {
   it("flags DG cargo without an MSDS", () => {
     const g = validGraph();
@@ -245,7 +256,7 @@ describe("T1/T3 — temporal", () => {
     const g = validGraph();
     // add a second feeding leg into sp with a later target than l1
     g.points.push({ id: "pu2", type: "PICKUP", name: "S2", streetAddress: "2", city: "Pune", postalCode: "411001", country: "IN", contactName: "C", contactPhone: "+915555555", contactEmail: "c@x.com", warehouseType: null, iataCode: null, icaoCode: null, unLocode: null, terminal: null, timezone: "Asia/Kolkata" });
-    g.cargo.push({ id: "c2", poReference: "PO-2", isDangerous: false, msdsFileId: null, grossWt: 50, volumeCbm: 0.5 });
+    g.cargo.push({ id: "c2", poReference: "PO-2", productName: "PO-2 goods", rowIndex: 1, isDangerous: false, msdsFileId: null, grossWt: 50, volumeCbm: 0.5 });
     g.legs.push({ id: "l3", legCode: "L3", mode: "ROAD", originPointId: "pu2", destinationPointId: "wh", readyDate: READY, targetDelivery: "2026-08-07T00:00:00.000Z" });
     g.legCargo.push({ legId: "l3", cargoItemId: "c2" }, { legId: "l2", cargoItemId: "c2" });
     // l2 departs wh at MID (08-05) < max feeding target (08-07)

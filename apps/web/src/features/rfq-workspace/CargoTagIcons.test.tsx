@@ -20,6 +20,8 @@ const cargo = (over: Partial<CargoDto>): CargoDto => ({
   netWt: null,
   grossWt: "500",
   volumeCbm: null,
+  dimUnit: "CM",
+  weightUnit: "KG",
   ...over,
 });
 

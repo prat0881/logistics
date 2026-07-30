@@ -2,6 +2,7 @@
 import type { Finding, Severity } from "./findings";
 import type { FreightMode } from "./config";
 import { PointType, POINT_REQUIRED_FIELDS } from "./points";
+import { cargoLabel } from "./cargo";
 
 export interface RouteGraphQuery {
   id: string;
@@ -38,6 +39,8 @@ export interface RouteLeg {
 export interface RouteCargo {
   id: string;
   poReference: string;
+  productName: string;
+  rowIndex: number;
   isDangerous: boolean;
   msdsFileId: string | null;
   grossWt: number | string | null;
@@ -106,7 +109,7 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
   }
   for (const c of graph.cargo) {
     if (!(legsByCargo.get(c.id)?.length))
-      findings.push({ rule: "R3", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference} is not assigned to any leg` });
+      findings.push({ rule: "R3", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${cargoLabel(c)} is not assigned to any leg` });
   }
   const usedPoints = new Set<string>();
   for (const leg of graph.legs) {
@@ -194,7 +197,7 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
     // R9 — DG cargo ⇒ MSDS present on every carrying leg.
     if (c.isDangerous && !c.msdsFileId) {
       for (const l of legs)
-        findings.push({ rule: "R9", severity: sev(), scope: { type: "leg", id: l.id }, message: `Leg ${l.legCode} carries dangerous cargo ${c.poReference} without an MSDS` });
+        findings.push({ rule: "R9", severity: sev(), scope: { type: "leg", id: l.id }, message: `Leg ${l.legCode} carries dangerous cargo ${cargoLabel(c)} without an MSDS` });
     }
 
     const edges = legs.filter((l) => l.originPointId && l.destinationPointId);
@@ -225,7 +228,7 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
       else imbalanced = true;
     }
     if (imbalanced)
-      findings.push({ rule: "R6", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: a point does not balance (what enters must leave)` });
+      findings.push({ rule: "R6", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${cargoLabel(c)}: a point does not balance (what enters must leave)` });
 
     if (sources.length !== 1 || sinks.length !== 1) {
       // Clarify the most common cause: one atomic cargo row (D5) split across parallel
@@ -237,12 +240,12 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
       let message: string;
       if (forkPt) {
         const codes = (outEdges.get(forkPt) ?? []).map((e) => e.legCode).join(" & ");
-        message = `Cargo ${c.poReference} can't be split across parallel legs — it leaves ${nameOf(forkPt)} on ${codes}. Give each destination its own cargo row.`;
+        message = `Cargo ${cargoLabel(c)} can't be split across parallel legs — it leaves ${nameOf(forkPt)} on ${codes}. Give each destination its own cargo row.`;
       } else if (mergePt) {
         const codes = edges.filter((e) => e.destinationPointId === mergePt).map((e) => e.legCode).join(" & ");
-        message = `Cargo ${c.poReference} can't be built from parallel legs — ${codes} both arrive at ${nameOf(mergePt)}. Give each origin its own cargo row.`;
+        message = `Cargo ${cargoLabel(c)} can't be built from parallel legs — ${codes} both arrive at ${nameOf(mergePt)}. Give each origin its own cargo row.`;
       } else {
-        message = `Cargo ${c.poReference}: its legs do not form a single continuous Pickup→Delivery chain`;
+        message = `Cargo ${cargoLabel(c)}: its legs do not form a single continuous Pickup→Delivery chain`;
       }
       findings.push({ rule: "R1", severity: sev(), scope: { type: "cargo", id: c.id }, message });
       continue;
@@ -255,7 +258,7 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
     // type (no end-type constraint). The single-unbroken-path requirement stays with
     // R1/R4/R6; R5 still requires the query to hold at least one Pickup and Delivery.
     if (startP && startP.type === PointType.DELIVERY)
-      findings.push({ rule: "R2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins` });
+      findings.push({ rule: "R2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${cargoLabel(c)}: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins` });
 
     // R1/R4/T1 — walk the unique chain start→end.
     const visited = new Set<string>();
@@ -265,14 +268,14 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
     let broke = false;
     while (cur !== end) {
       if (visited.has(cur)) {
-        findings.push({ rule: "R4", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: route revisits ${nameOf(cur)} (cycle)` });
+        findings.push({ rule: "R4", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${cargoLabel(c)}: route revisits ${nameOf(cur)} (cycle)` });
         broke = true;
         break;
       }
       visited.add(cur);
       const outs = outEdges.get(cur) ?? [];
       if (outs.length !== 1) {
-        findings.push({ rule: "R1", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: broken or forking chain at ${nameOf(cur)}` });
+        findings.push({ rule: "R1", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${cargoLabel(c)}: broken or forking chain at ${nameOf(cur)}` });
         broke = true;
         break;
       }
@@ -287,7 +290,7 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
       cur = leg.destinationPointId!;
       steps++;
       if (steps > edges.length) {
-        findings.push({ rule: "R4", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: route does not terminate (cycle)` });
+        findings.push({ rule: "R4", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${cargoLabel(c)}: route does not terminate (cycle)` });
         broke = true;
         break;
       }
@@ -295,7 +298,7 @@ export function validateRoute(graph: RouteGraph, phase: RoutePhase): Finding[] {
 
     // C2 — all of this row's legs consumed by the single chain.
     if (!broke && steps !== edges.length)
-      findings.push({ rule: "C2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${c.poReference}: not all its legs form one continuous chain` });
+      findings.push({ rule: "C2", severity: sev(), scope: { type: "cargo", id: c.id }, message: `Cargo ${cargoLabel(c)}: not all its legs form one continuous chain` });
   }
 
   return findings;

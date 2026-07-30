@@ -1,9 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { REFERENCE_TAGS, cargoCreateSchema, cargoUpdateSchema } from "./cargo";
+import { REFERENCE_TAGS, referenceTagLabel, cargoCreateSchema, cargoUpdateSchema, cargoLabel } from "./cargo";
+import { DIM_UNITS, WEIGHT_UNITS, cbmFromDims, toKg } from "./cargo";
 
 describe("ReferenceTag vocabulary", () => {
   it("pins the tag order", () => {
-    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE"]);
+    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE", "OUT_OF_GAUGE"]);
+  });
+});
+
+describe("reference tags", () => {
+  it("includes OUT_OF_GAUGE", () => {
+    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE", "OUT_OF_GAUGE"]);
+  });
+  it("labels OUT_OF_GAUGE as 'Out of Gauge Cargo'", () => {
+    expect(referenceTagLabel("OUT_OF_GAUGE")).toBe("Out of Gauge Cargo");
+    expect(referenceTagLabel("NON_STACKABLE")).toBe("Non Stackable");
   });
 });
 
@@ -37,7 +48,7 @@ describe("cargoCreateSchema", () => {
     expect(cargoCreateSchema.safeParse({ ...base, dimL: 200000 }).success).toBe(false);
   });
   it("rejects whitespace-only required text (G8)", () => {
-    expect(cargoCreateSchema.safeParse({ ...base, poReference: "   " }).success).toBe(false);
+    // poReference is now optional — blank/whitespace is accepted
     expect(cargoCreateSchema.safeParse({ ...base, productName: "  " }).success).toBe(false);
     expect(cargoCreateSchema.safeParse({ ...base, packageType: " " }).success).toBe(false);
   });
@@ -46,5 +57,53 @@ describe("cargoCreateSchema", () => {
 describe("cargoUpdateSchema", () => {
   it("rejects netWt > grossWt when both are present (F5)", () => {
     expect(cargoUpdateSchema.safeParse({ netWt: 600, grossWt: 500 }).success).toBe(false);
+  });
+});
+
+describe("cargo schema round-3", () => {
+  const base = { productName: "Widget", packageType: "Carton", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 };
+  it("accepts a blank/absent PO reference", () => {
+    expect(cargoCreateSchema.safeParse(base).success).toBe(true);
+    expect(cargoCreateSchema.safeParse({ ...base, poReference: "" }).success).toBe(true);
+  });
+  it("defaults dimUnit=CM and weightUnit=KG when omitted", () => {
+    const r = cargoCreateSchema.parse(base);
+    expect(r.dimUnit).toBe("CM");
+    expect(r.weightUnit).toBe("KG");
+  });
+  it("accepts explicit MM/GM units", () => {
+    const r = cargoCreateSchema.parse({ ...base, dimUnit: "MM", weightUnit: "GM" });
+    expect(r.dimUnit).toBe("MM");
+    expect(r.weightUnit).toBe("GM");
+  });
+  it("update schema rejects null poReference but accepts blank/omitted", () => {
+    expect(cargoUpdateSchema.safeParse({ poReference: null }).success).toBe(false);
+    expect(cargoUpdateSchema.safeParse({ poReference: "" }).success).toBe(true);
+    expect(cargoUpdateSchema.safeParse({}).success).toBe(true);
+  });
+});
+
+describe("cargoLabel", () => {
+  it("prefers PO, falls back to product name, then Row n", () => {
+    expect(cargoLabel({ poReference: "PO-1", productName: "Steel", rowIndex: 0 })).toBe("PO-1");
+    expect(cargoLabel({ poReference: "", productName: "Steel", rowIndex: 0 })).toBe("Steel");
+    expect(cargoLabel({ poReference: null, productName: "", rowIndex: 2 })).toBe("Row 3");
+  });
+});
+
+describe("units", () => {
+  it("pins the unit arrays", () => {
+    expect(DIM_UNITS).toEqual(["CM", "MM"]);
+    expect(WEIGHT_UNITS).toEqual(["KG", "GM"]);
+  });
+  it("cbmFromDims returns m³ and is unit-consistent (same box, either unit)", () => {
+    // 100×50×40 cm, qty 2 → 0.4 m³
+    expect(cbmFromDims(100, 50, 40, 2, "CM")).toBeCloseTo(0.4, 6);
+    // same box in mm → same 0.4 m³
+    expect(cbmFromDims(1000, 500, 400, 2, "MM")).toBeCloseTo(0.4, 6);
+  });
+  it("toKg normalizes grams", () => {
+    expect(toKg(5, "KG")).toBe(5);
+    expect(toKg(5000, "GM")).toBe(5);
   });
 });

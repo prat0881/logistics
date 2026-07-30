@@ -13,6 +13,7 @@ import {
   formatQueryCode,
   LegStatus,
   Role,
+  toKg,
   type ChangeRequest,
   type ChecklistPatchInput,
   type QueryListParams,
@@ -315,8 +316,8 @@ export class QueriesService {
         rollup: {
           totalPackages: attached.reduce((s, c) => s + c.qty, 0),
           totalCbm: attached.reduce((s, c) => s + num(c.volumeCbm), 0),
-          totalGrossWt: attached.reduce((s, c) => s + num(c.grossWt), 0),
-          totalNetWt: attached.reduce((s, c) => s + num(c.netWt), 0),
+          totalGrossWt: attached.reduce((s, c) => s + toKg(num(c.grossWt), c.weightUnit), 0),
+          totalNetWt: attached.reduce((s, c) => s + (c.netWt == null ? 0 : toKg(num(c.netWt), c.weightUnit)), 0),
         },
       };
     });

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { querySaveSchema, INCOTERMS } from "@svyft/shared";
+import { querySaveSchema, INCOTERMS, incotermsLabel } from "@svyft/shared";
 import type { QuerySaveInput, QueryDetail } from "@svyft/shared";
 import {
   Select,
@@ -30,7 +30,7 @@ interface Step2ShipmentProps {
 function fromDetail(detail: QueryDetail | undefined): Partial<QuerySaveInput> {
   if (!detail) return {};
   return {
-    incoterms: (detail.incoterms as QuerySaveInput["incoterms"]) ?? undefined,
+    incoterms: (detail.incoterms as QuerySaveInput["incoterms"]) ?? "NA",
     shipmentDescription: detail.shipmentDescription ?? undefined,
   };
 }
@@ -115,7 +115,7 @@ export function Step2Shipment({ registerSave }: Step2ShipmentProps) {
                   <SelectContent>
                     {INCOTERMS.map((term) => (
                       <SelectItem key={term} value={term}>
-                        {term}
+                        {incotermsLabel(term)}
                       </SelectItem>
                     ))}
                   </SelectContent>
