@@ -525,9 +525,13 @@ describe("Step1Client", () => {
 
     // Manual edit marks it touched — after this, priority changes should NOT recompute.
     // Use a dynamic future value so this test stays green indefinitely.
-    const manualDeadline = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+    // minutes snap to :00 on first entry into an empty field (round-3 datetime default)
+    const rawDeadline = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 16); // "YYYY-MM-DDTHH:mm" — matches datetime-local input format
+    // Force minutes to :00 so the value matches the :00-snap that ZonedDateTimeField applies
+    // on first keystroke into an empty field.
+    const manualDeadline = rawDeadline.slice(0, 13) + ":00"; // "YYYY-MM-DDTHH:00"
     await user.clear(deadline);
     await user.type(deadline, manualDeadline);
     expect(deadline.value).toBe(manualDeadline);
