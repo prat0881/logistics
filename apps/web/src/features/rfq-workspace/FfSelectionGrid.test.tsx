@@ -70,4 +70,48 @@ describe("FfSelectionGrid", () => {
     await userEvent.click(screen.getByRole("button", { name: /view all active/i }));
     expect(await screen.findByText("Gamma FF")).toBeInTheDocument();
   });
+
+  it("shows full country names, hides payment terms/lead time, and offers regenerate for distributed FFs", async () => {
+    const ffIn: FreightForwarderDto = {
+      ...ff("ff1", "India FF"),
+      availableCountries: ["IN"],
+      paymentTerms: "NET30",
+      typicalLeadTime: "5d",
+    };
+    vi.stubGlobal("fetch", mockFetch((url, init) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [ffIn] };
+      if (url.includes("/reissue-token") && init?.method === "POST") return { status: 200, body: { accessToken: "tok123" } };
+      return { status: 404 };
+    }));
+    wrap(
+      <FfSelectionGrid
+        queryId="q1" legId="l1"
+        legQuotes={[{ freightForwarderId: "ff1", status: "RFQ_SENT" }]}
+        referencedFfs={[ffIn]}
+      />,
+    );
+    // Full country name rendered in the country/mode paragraph, not the bare code
+    expect(await screen.findByText(/India · AIR/)).toBeInTheDocument();
+    expect(screen.queryByText(/\bIN\b/)).toBeNull();
+    // Payment terms and lead time are absent
+    expect(screen.queryByText(/NET30|Lead/)).toBeNull();
+    // Distributed FF shows Regenerate button
+    expect(screen.getByRole("button", { name: /regenerate portal link/i })).toBeInTheDocument();
+  });
+
+  it("does NOT show regenerate button for a SELECT (not-yet-distributed) FF", async () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [ff("ff2", "Select FF")] };
+      return { status: 404 };
+    }));
+    wrap(
+      <FfSelectionGrid
+        queryId="q1" legId="l1"
+        legQuotes={[{ freightForwarderId: "ff2", status: "SELECT" }]}
+        referencedFfs={[ff("ff2", "Select FF")]}
+      />,
+    );
+    expect(await screen.findByText("Select FF")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /regenerate portal link/i })).toBeNull();
+  });
 });

@@ -121,8 +121,8 @@ The lookup source for FF selection in this stage — same role Client Master and
 | VAT / TRN / EORI (Europe) | Text | Optional | Tax/customs registration identifier — required for customs documentation on the FF's quotes. |
 | W/H Location | Text | Optional | Warehouse location(s) operated by the FF, if any — relevant when the FF also offers consolidation/staging services. |
 | Default Currency | Dropdown | Optional | Pre-fills the FF's currency choice in the portal; FF may override per RFQ. |
-| Payment Terms | Text | Optional | e.g. NET 15, NET 30 — shown on the FF card for executive reference. |
-| Typical Lead Time | Text | Optional | e.g. "1d", "2d" — shown on the FF card. |
+| Payment Terms | Text | Optional | e.g. NET 15, NET 30. Kept in the FF Master; **no longer shown on the eligible-FF selection card** (Post-testing fix R1, item 5 — see §7.2.2). |
+| Typical Lead Time | Text | Optional | e.g. "1d", "2d". Kept in the FF Master; **no longer shown on the eligible-FF selection card** (Post-testing fix R1, item 5 — see §7.2.2). |
 | Active / Inactive | Toggle | Auto | Inactive FFs are excluded from new eligible-FF lists; existing historical RFQs are unaffected. |
 
 **Governance:**
@@ -152,6 +152,10 @@ Read-only, persistent at the top of the Stage 4 workspace. All values are **deri
 | Total Packages / CBM / Gross Wt | Rolled up across all legs' cargo | Per-leg totals also shown on each Leg Panel (§7.2). |
 | Query Status | Stage 3 §9 | Read-only badge; e.g. "RFQ Sent — 2 of 3 legs quoted". |
 
+> **Post-testing fix R1 (item 3):** The Totals row in the header also shows consolidated **cargo characteristic icons** deduped across all legs' cargo: Heavy / Fragile / Non-stackable (from `referenceTags`) and a **DG** indicator (from `isDangerous`). Each icon appears at most once regardless of how many cargo rows carry the tag.
+
+> **Post-testing fix R1 (item 2):** Immediately after the query header, and **only while the query is in a pre-distribution status** (DRAFT / CREATED / RFQ_READY), a **read-only `RouteDiagram`** is displayed showing the full shipment route with hover tooltips on each node. It is purely a visualisation aid — no editing. This is distinct from the FF-scoped route diagram in §7.3.4, which is rendered inside the FF Portal and scoped to the FF's assigned legs only.
+
 ---
 
 ### 7.2 Leg Panel
@@ -168,7 +172,7 @@ One panel per leg (Stage 3 §7.4.2 leg object), independently expandable/collaps
 | Mode | Stage 3 leg object | — |
 | Ready Date | Stage 3 leg object | — |
 | Target Delivery | Stage 3 leg object | — |
-| Cargo Details/Manifest totals (Packages / CBM / Gross Wt / Net Wt) | Stage 3 leg object roll-ups | — |
+| Cargo Details/Manifest totals (Packages / CBM / Gross Wt / Net Wt) | Stage 3 leg object roll-ups | **Post-testing fix R1 (item 4):** Net Wt is hidden when its value is 0; it is shown only when the rolled-up value is a genuine positive number. |
 | Leg Status | Stage 3 §9.2, extended in §9 below | e.g. "RFQ Sent — 2 of 3\. |
 
 #### 7.2.2 FF selection grid
@@ -177,7 +181,7 @@ One panel per leg (Stage 3 §7.4.2 leg object), independently expandable/collaps
 | :---- | :---- | :---- | :---- |
 | Eligible FF list | System-filtered | Auto | Filtered from FF Master by: leg's origin/destination Country \+ leg's Mode (§8). |
 | Selection (checkbox) | Checkbox/ (read-only) once that FF's status for this leg reaches RFQ Sent  | User | One or more FFs per leg. |
-| FF card: Name, Country, Modes Served, Payment Terms, Typical Lead Time | Read-only | Auto | From FF Master — reference only, to aid selection. |
+| FF card: Name, Country, Modes Served | Read-only | Auto | From FF Master — reference only, to aid selection. **Post-testing fix R1 (item 6):** Country is displayed as the full country name (e.g. "United Arab Emirates"), not as an ISO code. **Post-testing fix R1 (item 5):** Payment Terms and Typical Lead Time are no longer shown on the FF card (those fields remain in the FF Master and the FF Master editor; they were removed from the selection card to reduce noise). |
 | FF card: Status badge | Read-only | Auto | Per Forwarder Status Lifecycle (§9.1): Select / RFQ Sent / Expired / Quoted / Requoted / Closed / Approved. |
 | Eligible FF Count / Selected FF Count | Read-only | Auto | Displayed on the panel at all times. |
 | Submission Deadline | DateTime | System (default) / User (override) | System-defaulted to distribution time \+ 48h; Executive may adjust before distributing (§8, S6). |
@@ -683,7 +687,7 @@ All FF-facing emails in this stage are **transmitted live** (§2, D9). Dynamic t
 | :---- | :---- | :---- |
 | Select FF(s) | Per leg panel (§7.2.2) | Toggles FF selection for that leg only (§8, S2). No save required — reflected immediately in Selected FF Count. |
 | Preview RFQ | Per leg panel; before the first Distribute RFQ for that leg | Opens a read-only rendering of the RFQ package as it will appear to the selected FF(s) (§7.2.2). No system state change; does not send anything. |
-| Distribute RFQ | Per leg panel; enabled when ≥1 FF selected (§8, S4) | Runs §10.1 validation. On success: generates/amends the RFQ (§8, S3), sends the invitation or update email (§12.1/§12.2), updates Forwarder and Leg status (§9.1, §9.2). On failure: inline validation messages on the leg panel. |
+| Distribute RFQ | Per leg panel; enabled when ≥1 FF selected (§8, S4) | Runs §10.1 validation. On success: generates/amends the RFQ (§8, S3), sends the invitation or update email (§12.1/§12.2), updates Forwarder and Leg status (§9.1, §9.2). On failure: inline validation messages on the leg panel. **Post-testing fix R1 (item 1):** After distribution the portal link is surfaced in a selectable text field with a copy button; the copy uses `navigator.clipboard` with an `execCommand('copy')` fallback so it works over plain HTTP (no secure-context requirement). Each distributed FF's card also exposes a **"Regenerate portal link"** action that calls the existing reissue-token endpoint, invalidates the old link, and returns a fresh copyable link — used when the operator missed or lost the link from the original distribute response. |
 | View eligible FFs (broaden search) | Per leg panel, on E1 (§10.3) | Removes the country/mode filter; F5 (DG eligibility) still enforced at distribute. |
 | Modify Search Criteria | Per leg panel, on E1 | Returns to the filtered view; no state change. |
 

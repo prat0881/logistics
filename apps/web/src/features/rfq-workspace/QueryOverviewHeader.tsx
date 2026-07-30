@@ -1,5 +1,6 @@
 import type { QueryDetail, QueryStatus, PointRef } from "@svyft/shared";
 import { Badge } from "@/components/ui/badge";
+import { CargoTagIcons } from "./CargoTagIcons";
 
 const QUERY_STATUS_LABEL: Record<QueryStatus, string> = {
   DRAFT: "Draft",
@@ -76,7 +77,10 @@ export function QueryOverviewHeader({ query }: { query: QueryDetail }) {
           {query.destination.length ? query.destination.map(pointLabel).join(" · ") : "—"}
         </Field>
         <Field label="Totals">
-          {totals.pkg} pkg · {totals.cbm} CBM · {totals.gross} kg
+          <div className="space-y-1">
+            <div>{totals.pkg} pkg · {totals.cbm} CBM · {totals.gross} kg</div>
+            <CargoTagIcons cargo={query.cargo} />
+          </div>
         </Field>
       </dl>
     </section>

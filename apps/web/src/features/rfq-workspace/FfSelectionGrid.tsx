@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FreightForwarderDto, QuoteStatus } from "@svyft/shared";
+import { getCountryName } from "@svyft/shared";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { useEligibleFfs, useSetFfSelection } from "./useRfq";
 import { ForwarderStatusBadge } from "./statusBadges";
+import { RegeneratePortalLink } from "./RegeneratePortalLink";
 
 export interface LegQuote {
   freightForwarderId: string;
@@ -116,11 +118,9 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
                       {status && <ForwarderStatusBadge status={status} />}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {f.availableCountries.join(", ")} · {f.modes.join(", ")}
+                      {f.availableCountries.map(getCountryName).join(", ")} · {f.modes.join(", ")}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {f.paymentTerms ?? "—"} · Lead {f.typicalLeadTime ?? "—"}
-                    </p>
+                    {isFrozen && <RegeneratePortalLink queryId={queryId} freightForwarderId={f.id} />}
                   </div>
                 </CardContent>
               </Card>

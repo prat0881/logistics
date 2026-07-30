@@ -56,3 +56,8 @@ export const CURRENCIES = [
 
 export type CurrencyCode = (typeof CURRENCIES)[number]["code"];
 export const CURRENCY_CODES = CURRENCIES.map((c) => c.code) as [CurrencyCode, ...CurrencyCode[]];
+
+const COUNTRY_NAME_BY_CODE: Map<string, string> = new Map(COUNTRIES.map((c) => [c.code, c.name]));
+export function getCountryName(code: string): string {
+  return COUNTRY_NAME_BY_CODE.get(code) ?? code;
+}

@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { useRfqState, useDistributeAll } from "./useRfq";
 import { QueryOverviewHeader } from "./QueryOverviewHeader";
 import { LegPanel } from "./LegPanel";
+import { RouteDiagram } from "@/features/query-wizard/steps/legs/RouteDiagram";
+
+const PRE_DISTRIBUTION = new Set(["DRAFT", "CREATED", "RFQ_READY"]);
 
 const SKIP_REASON_LABEL: Record<string, string> = {
   "nothing-selected": "nothing selected",
@@ -42,6 +45,13 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
   return (
     <div className="space-y-5">
       <QueryOverviewHeader query={q} />
+
+      {PRE_DISTRIBUTION.has(q.status) && (
+        <section aria-label="Route overview" className="rounded-lg border border-border bg-card p-4 sm:p-6">
+          <h2 className="mb-3 font-display text-sm font-semibold text-muted-foreground">Route overview</h2>
+          <RouteDiagram detail={q} findings={[]} />
+        </section>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-lg font-semibold">RFQ distribution</h2>

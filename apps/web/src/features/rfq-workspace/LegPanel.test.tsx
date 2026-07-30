@@ -47,4 +47,32 @@ describe("LegPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /main air leg/i }));
     expect(screen.queryByText(/Eligible 0/i)).not.toBeInTheDocument();
   });
+
+  it("shows kg net when totalNetWt > 0", () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+      return { status: 404 };
+    }));
+    const legWithNet = {
+      ...leg,
+      rollup: { ...leg.rollup, totalNetWt: 120 },
+    } as unknown as QueryLegDto;
+    wrap(<LegPanel queryId="q1" leg={legWithNet} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} />);
+    expect(screen.getByText(/120 kg net/)).toBeInTheDocument();
+    expect(screen.getByText(/kg gross/)).toBeInTheDocument();
+  });
+
+  it("hides kg net when totalNetWt is 0, still shows gross", () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+      return { status: 404 };
+    }));
+    const legZeroNet = {
+      ...leg,
+      rollup: { ...leg.rollup, totalNetWt: 0 },
+    } as unknown as QueryLegDto;
+    wrap(<LegPanel queryId="q1" leg={legZeroNet} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} />);
+    expect(screen.queryByText(/kg net/)).not.toBeInTheDocument();
+    expect(screen.getByText(/kg gross/)).toBeInTheDocument();
+  });
 });

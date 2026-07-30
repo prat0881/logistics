@@ -1,7 +1,27 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { QueryDetail } from "@svyft/shared";
+import type { QueryDetail, CargoDto } from "@svyft/shared";
 import { QueryOverviewHeader } from "./QueryOverviewHeader";
+
+const makeCargo = (over: Partial<CargoDto>): CargoDto => ({
+  id: "c1",
+  rowIndex: 0,
+  poReference: "PO",
+  productName: "Product",
+  referenceTags: [],
+  isDangerous: false,
+  hsCode: null,
+  msdsFileId: null,
+  packageType: "BOX",
+  qty: 1,
+  dimL: "100",
+  dimW: "100",
+  dimH: "100",
+  netWt: null,
+  grossWt: "500",
+  volumeCbm: null,
+  ...over,
+});
 
 const query = {
   queryCode: "YAL26-0001",
@@ -14,6 +34,7 @@ const query = {
     { rollup: { totalPackages: 3, totalCbm: 12, totalGrossWt: 500, totalNetWt: 400 } },
     { rollup: { totalPackages: 2, totalCbm: 8, totalGrossWt: 300, totalNetWt: 250 } },
   ],
+  cargo: [],
 } as unknown as QueryDetail;
 
 describe("QueryOverviewHeader", () => {
@@ -27,5 +48,14 @@ describe("QueryOverviewHeader", () => {
     expect(screen.getByText(/800 kg/i)).toBeInTheDocument();  // 500 + 300 kg
     expect(screen.getByText(/Shanghai Port/)).toBeInTheDocument();
     expect(screen.getByText(/Dubai/)).toBeInTheDocument();
+  });
+
+  it("renders the Dangerous goods icon when a cargo row has isDangerous=true", () => {
+    const queryWithDg = {
+      ...query,
+      cargo: [makeCargo({ isDangerous: true })],
+    } as unknown as QueryDetail;
+    render(<QueryOverviewHeader query={queryWithDg} />);
+    expect(screen.getByLabelText(/dangerous goods/i)).toBeInTheDocument();
   });
 });
