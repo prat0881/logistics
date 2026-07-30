@@ -5,6 +5,7 @@ import {
   cargoCreateSchema,
   cargoUpdateSchema,
   REFERENCE_TAGS,
+  referenceTagLabel,
 } from "@svyft/shared";
 import type { CargoCreateInput, CargoUpdateInput, CargoDto, ReferenceTag } from "@svyft/shared";
 import { Input } from "@/components/ui/input";
@@ -87,7 +88,7 @@ function ReferenceTags({
             checked={value.includes(tag)}
             onCheckedChange={() => toggle(tag)}
           />
-          <span>{tag.replace(/_/g, " ")}</span>
+          <span>{referenceTagLabel(tag)}</span>
         </label>
       ))}
     </div>
@@ -159,7 +160,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (input: CargoCreateInput) =
             name="poReference"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>PO / Reference <span className="text-destructive">*</span></FormLabel>
+                <FormLabel>PO / Reference</FormLabel>
                 <FormControl>
                   <Input {...field} placeholder="PO-001" />
                 </FormControl>
@@ -438,7 +439,7 @@ function EditForm({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField control={form.control} name="poReference" render={({ field }) => (
             <FormItem>
-              <FormLabel>PO / Reference <span className="text-destructive">*</span></FormLabel>
+              <FormLabel>PO / Reference</FormLabel>
               <FormControl><Input {...field} /></FormControl>
               <FormMessage />
             </FormItem>

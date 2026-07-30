@@ -389,6 +389,91 @@ describe("Step3Cargo", () => {
     });
   });
 
+  it("saves a cargo row with a blank PO and offers the Out of Gauge Cargo tag", async () => {
+    const submit = vi.fn().mockResolvedValue(undefined);
+
+    // Track what was POSTed to the cargo endpoint
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}`)
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve(baseDetail),
+          text: () => Promise.resolve(JSON.stringify(baseDetail)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}/cargo` && init?.method === "POST") {
+        const body = JSON.parse((init as RequestInit).body as string);
+        submit(body);
+        return Promise.resolve({
+          ok: true, status: 201,
+          json: () => Promise.resolve({ ...cargoRowDto, poReference: "" }),
+          text: () => Promise.resolve(JSON.stringify(cargoRowDto)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=2` },
+    );
+
+    await navigateToStep3();
+
+    // Open add-cargo dialog
+    const addRowBtn = await screen.findByRole("button", { name: /add row/i });
+    await userEvent.click(addRowBtn);
+
+    // Fill required fields — leave PO blank
+    const productInput = await screen.findByPlaceholderText(/product name/i);
+    await userEvent.type(productInput, "Widget");
+
+    const pkgInput = screen.getByPlaceholderText(/carton/i);
+    await userEvent.type(pkgInput, "Box");
+
+    const qtyInput = screen.getByPlaceholderText("1");
+    await userEvent.type(qtyInput, "1");
+
+    const lInput = screen.getByPlaceholderText("100");
+    await userEvent.type(lInput, "1");
+
+    const fiftyInputs = screen.getAllByPlaceholderText("50");
+    await userEvent.type(fiftyInputs[0], "1");
+    await userEvent.type(fiftyInputs[1], "1");
+
+    const grossWtInput = screen.getByPlaceholderText("60");
+    await userEvent.type(grossWtInput, "1");
+
+    // The "Out of Gauge Cargo" label should be visible (tag label via referenceTagLabel)
+    expect(screen.getByText("Out of Gauge Cargo")).toBeInTheDocument();
+
+    // Submit without filling PO
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    // Submit should have been called with poReference: ""
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledWith(expect.objectContaining({ poReference: "" }));
+    });
+  });
+
   it("removes a cargo row: DELETEs /cargo/:cid after confirmation", async () => {
     const user = userEvent.setup();
 
