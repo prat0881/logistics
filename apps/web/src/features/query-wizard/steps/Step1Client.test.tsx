@@ -123,7 +123,7 @@ describe("Step1Client", () => {
       /Contact Name/i,
       /Email/i,
       /Phone/i,
-      /Ready Date/i,
+      /Target Pickup/i,
       /Target Delivery/i,
     ]) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
@@ -464,7 +464,7 @@ describe("Step1Client", () => {
       // getByLabelText with a function matcher: match labels whose text is "Ready Date"
       // (with optional " *" from required marker) but NOT "Ready Date timezone".
       const readyDateInput = screen.getByLabelText(
-        (content) => /^Ready Date(\s*\*)?$/i.test(content),
+        (content) => /^Target Pickup(\s*\*)?$/i.test(content),
       ) as HTMLInputElement;
       // 2026-06-15T03:30Z in Asia/Kolkata (UTC+5:30) = 2026-06-15T09:00
       expect(readyDateInput.value).toBe("2026-06-15T09:00");
@@ -567,7 +567,7 @@ describe("Step1Client", () => {
 
     // Ready-zone picker should render and default to Asia/Kolkata
     await waitFor(() => {
-      const readyZonePicker = screen.getByRole("button", { name: /Ready Date timezone/i });
+      const readyZonePicker = screen.getByRole("button", { name: /Target Pickup timezone/i });
       expect(readyZonePicker).toBeInTheDocument();
       expect(readyZonePicker.textContent).toContain("Asia/Kolkata");
     }, { timeout: 3000 });
@@ -615,7 +615,7 @@ describe("Step1Client", () => {
     // This would fail under the old bug where defaultValues seeded Kolkata synchronously and
     // the seed-when-empty effect found the field non-empty and skipped setting the real zone.
     await waitFor(() => {
-      const readyZonePicker = screen.getByRole("button", { name: /Ready Date timezone/i });
+      const readyZonePicker = screen.getByRole("button", { name: /Target Pickup timezone/i });
       expect(readyZonePicker.textContent).toContain("Asia/Singapore");
       expect(readyZonePicker.textContent).not.toContain("Asia/Kolkata");
     }, { timeout: 3000 });
@@ -683,12 +683,38 @@ describe("Step1Client", () => {
 
     // Wait for the org zone to appear in the zone picker (confirms the seed effect ran)
     await waitFor(() => {
-      const readyZonePicker = screen.getByRole("button", { name: /Ready Date timezone/i });
+      const readyZonePicker = screen.getByRole("button", { name: /Target Pickup timezone/i });
       expect(readyZonePicker.textContent).toContain("Asia/Singapore");
     }, { timeout: 3000 });
 
     // The user's edit to contactName must NOT have been wiped by the seed effect re-run
     expect(contactNameInput.value).toBe("Edited Name");
+  });
+
+  it("shows the Shipment Dates section with a Target Pickup label", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await screen.findByText("YAL26-0009");
+    expect(await screen.findByText("Shipment Dates")).toBeInTheDocument();
+    expect(screen.getByText("Target Pickup")).toBeInTheDocument();
+    expect(screen.queryByText(/^Ready Date$/)).not.toBeInTheDocument();
   });
 
   it("shows company name (not UUID) in client picker trigger when detail.clientId is pre-set", async () => {

@@ -600,14 +600,14 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
 
         {/* Section: Delivery */}
         <div>
-          <h2 className="text-base font-semibold mb-4">Delivery</h2>
+          <h2 className="text-base font-semibold mb-4">Shipment Dates</h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Ready Date */}
             <ZonedDateTimeField
               control={form.control}
               name="readyDate"
-              label="Ready Date"
+              label="Target Pickup"
               zone={zoneFor("readyDate")}
               required
             />
@@ -616,12 +616,12 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
               name="readyDateTimezone"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Ready Date timezone</FormLabel>
+                  <FormLabel>Target Pickup timezone</FormLabel>
                   <FormControl>
                     <TimezoneCombobox
                       value={field.value ?? undefined}
                       onChange={field.onChange}
-                      ariaLabel="Ready Date timezone"
+                      ariaLabel="Target Pickup timezone"
                     />
                   </FormControl>
                   <FormMessage />
