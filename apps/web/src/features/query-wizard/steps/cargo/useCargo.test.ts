@@ -30,6 +30,8 @@ const baseCargoDto = {
   netWt: "50",
   grossWt: "60",
   volumeCbm: "2.5",
+  dimUnit: "CM" as const,
+  weightUnit: "KG" as const,
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -78,6 +80,8 @@ describe("useCargo", () => {
           dimW: 50,
           dimH: 50,
           grossWt: 60,
+          dimUnit: "CM",
+          weightUnit: "KG",
         });
       });
 

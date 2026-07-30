@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within, render, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
 import { QueryWizardPage } from "../QueryWizardPage";
 import { renderWithProviders } from "@/test/renderWithProviders";
+import { CargoRowForm } from "./cargo/CargoRowForm";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -541,5 +542,80 @@ describe("Step3Cargo", () => {
       );
       expect(deleteCall).toBeTruthy();
     });
+  });
+});
+
+// ── Direct CargoRowForm unit tests (unit dropdowns + CBM preview) ──────────────
+
+/** Render the Add form in isolation and return a { submit } spy. */
+function renderAddCargo() {
+  const submit = vi.fn().mockResolvedValue(undefined);
+  render(
+    <CargoRowForm mode="add" onSubmit={submit} onCancel={() => {}} />,
+  );
+  return { submit };
+}
+
+/** Fill the minimum required fields in the Add form. */
+async function fillRequired(fields: {
+  productName: string;
+  packageType: string;
+  qty: string;
+  dimL: string;
+  dimW: string;
+  dimH: string;
+  grossWt: string;
+}) {
+  await userEvent.type(screen.getByPlaceholderText(/product name/i), fields.productName);
+  await userEvent.type(screen.getByPlaceholderText(/carton/i), fields.packageType);
+  await userEvent.type(screen.getByPlaceholderText("1"), fields.qty);
+  await userEvent.type(screen.getByPlaceholderText("100"), fields.dimL);
+  const fiftyInputs = screen.getAllByPlaceholderText("50");
+  await userEvent.type(fiftyInputs[0], fields.dimW);
+  await userEvent.type(fiftyInputs[1], fields.dimH);
+  await userEvent.type(screen.getByPlaceholderText("60"), fields.grossWt);
+}
+
+/**
+ * Drive a Radix Select by changing the hidden native <select aria-hidden="true">
+ * that is a sibling of the SelectTrigger.
+ * el is the SelectTrigger (found via getByLabelText on aria-label).
+ * We walk up the DOM to the closest FormItem container and then find
+ * the hidden native select within it.
+ */
+function selectOption(el: HTMLElement, value: string) {
+  // The Radix SelectTrigger is inside a FormItem div.
+  // The native <select aria-hidden="true"> is in the same FormItem (rendered by Radix).
+  // Walk up to the FormItem container and search within it.
+  const container = el.closest(".space-y-2") ?? el.closest('[class*="space-y"]') ?? el.parentElement?.parentElement ?? el.parentElement;
+  const nativeSelect = container
+    ? container.querySelector<HTMLSelectElement>('select[aria-hidden="true"]')
+    : null;
+  if (nativeSelect) {
+    fireEvent.change(nativeSelect, { target: { value } });
+  } else {
+    // Fallback: fire directly on el (may not update RHF but at least doesn't throw)
+    fireEvent.change(el, { target: { value } });
+  }
+}
+
+/** Click the Save button. */
+async function clickSave() {
+  await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+}
+
+describe("CargoRowForm — unit dropdowns + CBM preview", () => {
+  it("has one dim-unit (CM/MM) + one weight-unit (KG/GM) selector and CBM tracks the unit", async () => {
+    const { submit } = renderAddCargo();
+    // one dropdown each (default CM/KG)
+    const dimUnit = screen.getByLabelText("Dimension unit");
+    const wtUnit = screen.getByLabelText("Weight unit");
+    await fillRequired({ productName: "W", packageType: "Box", qty: "2", dimL: "1000", dimW: "500", dimH: "400", grossWt: "1" });
+    selectOption(dimUnit, "MM");          // drive the hidden native <select>
+    // CBM preview shows 0.4000 for the mm box
+    expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("0.4000");
+    selectOption(wtUnit, "GM");
+    await clickSave();
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ dimUnit: "MM", weightUnit: "GM" }));
   });
 });

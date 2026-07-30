@@ -54,6 +54,8 @@ export function toRouteGraph(detail: QueryDetail): RouteGraph {
   const cargo: RouteCargo[] = detail.cargo.map((c) => ({
     id: c.id,
     poReference: c.poReference,
+    productName: c.productName,
+    rowIndex: c.rowIndex,
     isDangerous: c.isDangerous,
     msdsFileId: c.msdsFileId,
     grossWt: c.grossWt,

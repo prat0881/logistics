@@ -21,6 +21,8 @@ const makeCargo = (id: string, po: string, name: string): CargoDto => ({
   netWt: null,
   grossWt: "5",
   volumeCbm: null,
+  dimUnit: "CM",
+  weightUnit: "KG",
 });
 
 const CARGO_A = makeCargo(

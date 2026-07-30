@@ -71,6 +71,8 @@ const baseDetail: QueryDetail = {
       netWt: null,
       grossWt: "5",
       volumeCbm: null,
+      dimUnit: "CM" as const,
+      weightUnit: "KG" as const,
     },
   ],
   checklist: [],
