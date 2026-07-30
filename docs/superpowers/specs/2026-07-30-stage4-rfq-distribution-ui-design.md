@@ -150,7 +150,7 @@ list.
   first 10, `Showing X of Y eligible` + **Load 10 more**. **No terms/lead** (D1).
 - Selection toggle, frozen (checked+disabled) FFs, broaden toggle, and empty state
   behave exactly as today, in both views.
-- Country rendered as code(s) (compact, matches the screenshot); modes joined.
+- Country rendered as **full names** via `getCountryName` (matches current behavior and the existing `FfSelectionGrid` test, which asserts "India" and that the bare code "IN" is absent); modes joined.
 
 ## 5. Data & backend
 None. Entirely `apps/web` presentation. No changes to `@svyft/shared`, `apps/api`,
