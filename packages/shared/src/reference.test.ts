@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { COUNTRIES, COUNTRY_CODES, CURRENCIES, CURRENCY_CODES } from "./reference";
+import { COUNTRIES, COUNTRY_CODES, CURRENCIES, CURRENCY_CODES, getCountryName } from "./reference";
 
 describe("reference data", () => {
   it("exposes country codes with unique 2-letter ISO codes", () => {
@@ -18,5 +18,14 @@ describe("reference data", () => {
   it("keeps CODES arrays in sync with the object lists", () => {
     expect(COUNTRY_CODES).toEqual(COUNTRIES.map((c) => c.code));
     expect(CURRENCY_CODES).toEqual(CURRENCIES.map((c) => c.code));
+  });
+});
+
+describe("getCountryName", () => {
+  it("maps a known code to its full name", () => {
+    expect(getCountryName("IN")).toBe("India");
+  });
+  it("falls back to the raw code when unknown", () => {
+    expect(getCountryName("ZZ")).toBe("ZZ");
   });
 });
