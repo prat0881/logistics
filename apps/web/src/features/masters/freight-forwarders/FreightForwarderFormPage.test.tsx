@@ -77,4 +77,39 @@ describe("FreightForwarderFormPage (create)", () => {
     await waitFor(() => expect(screen.getByText("ff list")).toBeInTheDocument());
     expect(calls).toContain("create");
   });
+
+  it("relabels address to Street Address and submits city/postal/country", async () => {
+    let body: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/freight-forwarders") && init?.method === "POST") {
+          body = JSON.parse(init.body as string);
+          return { status: 201, body: { id: "f9", freightForwarderCode: "FF-0009" } };
+        }
+        return { status: 404 };
+      }),
+    );
+    renderForm();
+    expect(await screen.findByLabelText(/street address/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/company address/i)).not.toBeInTheDocument();
+    await userEvent.type(await screen.findByLabelText(/company name/i), "Acme Freight");
+    await userEvent.type(screen.getByLabelText(/person in charge/i), "Jane Doe");
+    await userEvent.type(screen.getByLabelText(/contact number/i), "+15551234567");
+    await userEvent.type(screen.getByLabelText(/^email$/i), "ops@acme.example");
+    await userEvent.type(screen.getByLabelText(/^city$/i), "Singapore");
+    await userEvent.type(screen.getByLabelText(/postal code/i), "049145");
+    await userEvent.type(screen.getByLabelText(/^country$/i), "Singapore");
+    await userEvent.click(screen.getByRole("button", { name: /countries/i }));
+    await userEvent.click(await screen.findByText("Singapore"));
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: /^modes$/i }));
+    await userEvent.click(await screen.findByText("AIR"));
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(screen.getByText("ff list")).toBeInTheDocument());
+    expect(body).toMatchObject({ city: "Singapore", postalCode: "049145", country: "Singapore" });
+  });
 });
