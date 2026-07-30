@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const RANK: Record<string, number> = {
@@ -10,6 +11,8 @@ export function isRfqStageEnabled(status: string): boolean {
   return (RANK[status] ?? 0) >= RANK.RFQ_READY;
 }
 
+type StepState = "done" | "current" | "upcoming";
+
 interface StageRailProps {
   queryId: string;
   active: "create" | "rfq";
@@ -17,25 +20,47 @@ interface StageRailProps {
 }
 
 export function StageRail({ queryId, active, rfqEnabled }: StageRailProps) {
-  const base = "rounded-md px-3 py-1.5 text-sm font-medium transition-colors";
-  const on = "bg-primary text-primary-foreground";
-  const off = "text-muted-foreground hover:bg-muted";
+  const steps: Array<{ key: string; label: string; to?: string; state: StepState }> = [
+    { key: "create", label: "Create", to: `/queries/${queryId}`, state: active === "create" ? "current" : "done" },
+    { key: "rfq", label: "RFQ", to: rfqEnabled ? `/queries/${queryId}/workspace` : undefined, state: active === "rfq" ? "current" : "upcoming" },
+    { key: "quotes", label: "Quotes", state: "upcoming" },
+    { key: "award", label: "Award", state: "upcoming" },
+  ];
+
   return (
-    <nav aria-label="Query stages" className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
-      <Link to={`/queries/${queryId}`} className={cn(base, active === "create" ? on : off)}>
-        Create
-      </Link>
-      {rfqEnabled ? (
-        <Link to={`/queries/${queryId}/workspace`} className={cn(base, active === "rfq" ? on : off)}>
-          RFQ
-        </Link>
-      ) : (
-        <span className={cn(base, "cursor-not-allowed text-muted-foreground/50")} aria-disabled="true">
-          RFQ
-        </span>
-      )}
-      <span className={cn(base, "cursor-not-allowed text-muted-foreground/40")} aria-disabled="true">Quotes</span>
-      <span className={cn(base, "cursor-not-allowed text-muted-foreground/40")} aria-disabled="true">Award</span>
+    <nav aria-label="Query stages" className="flex items-center rounded-lg border border-border bg-card p-3 sm:p-4">
+      {steps.map((step, i) => (
+        <div key={step.key} className="flex flex-1 items-center last:flex-none">
+          <Step index={i} label={step.label} to={step.to} state={step.state} />
+          {i < steps.length - 1 && (
+            <span aria-hidden className={cn("mx-2 h-0.5 flex-1 rounded", step.state === "done" ? "bg-primary" : "bg-border")} />
+          )}
+        </div>
+      ))}
     </nav>
   );
+}
+
+function Step({ index, label, to, state }: { index: number; label: string; to?: string; state: StepState }) {
+  const dot = (
+    <span
+      className={cn(
+        "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold",
+        state === "done" && "border-primary bg-primary text-primary-foreground",
+        state === "current" && "border-primary bg-card text-primary ring-4 ring-primary/15",
+        state === "upcoming" && "border-border bg-card text-muted-foreground",
+      )}
+    >
+      {state === "done" ? <Check className="h-3.5 w-3.5" /> : index + 1}
+    </span>
+  );
+  const text = (
+    <span className={cn("text-sm font-medium", state === "upcoming" ? "text-muted-foreground" : "text-foreground")}>
+      {label}
+    </span>
+  );
+  const body = <span className="flex items-center gap-2">{dot}{text}</span>;
+  return to
+    ? <Link to={to} className="rounded-md px-1 py-0.5 transition-opacity hover:opacity-80">{body}</Link>
+    : <span className="px-1 py-0.5" aria-disabled="true">{body}</span>;
 }
