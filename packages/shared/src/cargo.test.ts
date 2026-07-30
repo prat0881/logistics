@@ -1,10 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { REFERENCE_TAGS, cargoCreateSchema, cargoUpdateSchema } from "./cargo";
+import { REFERENCE_TAGS, referenceTagLabel, cargoCreateSchema, cargoUpdateSchema } from "./cargo";
 import { DIM_UNITS, WEIGHT_UNITS, cbmFromDims, toKg } from "./cargo";
 
 describe("ReferenceTag vocabulary", () => {
   it("pins the tag order", () => {
-    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE"]);
+    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE", "OUT_OF_GAUGE"]);
+  });
+});
+
+describe("reference tags", () => {
+  it("includes OUT_OF_GAUGE", () => {
+    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE", "OUT_OF_GAUGE"]);
+  });
+  it("labels OUT_OF_GAUGE as 'Out of Gauge Cargo'", () => {
+    expect(referenceTagLabel("OUT_OF_GAUGE")).toBe("Out of Gauge Cargo");
+    expect(referenceTagLabel("NON_STACKABLE")).toBe("Non Stackable");
   });
 });
 

@@ -24,9 +24,20 @@ export const ReferenceTag = {
   HEAVY: "HEAVY",
   FRAGILE: "FRAGILE",
   NON_STACKABLE: "NON_STACKABLE",
+  OUT_OF_GAUGE: "OUT_OF_GAUGE",
 } as const;
 export type ReferenceTag = (typeof ReferenceTag)[keyof typeof ReferenceTag];
 export const REFERENCE_TAGS = Object.values(ReferenceTag) as [ReferenceTag, ...ReferenceTag[]];
+
+const REFERENCE_TAG_LABELS: Record<ReferenceTag, string> = {
+  HEAVY: "Heavy",
+  FRAGILE: "Fragile",
+  NON_STACKABLE: "Non Stackable",
+  OUT_OF_GAUGE: "Out of Gauge Cargo",
+};
+export function referenceTagLabel(tag: ReferenceTag): string {
+  return REFERENCE_TAG_LABELS[tag] ?? tag.replace(/_/g, " ");
+}
 
 // A cargo row (§7.3). Core fields required (a row is atomic data entry + volumeCbm
 // is a generated column needing non-null dims/qty). volumeCbm is DB-generated (never written by the app).
