@@ -3,7 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { mockFetch } from "@/test/mock-fetch";
-import { useRfqState, useSetFfSelection } from "./useRfq";
+import { useRfqState, useSetFfSelection, useReissueToken } from "./useRfq";
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -36,5 +36,19 @@ describe("useRfq hooks", () => {
     expect(res).toEqual({ selected: ["ff1"] });
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes("ff-selection"))!;
     expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({ ffIds: ["ff1"] });
+  });
+});
+
+describe("useReissueToken", () => {
+  it("posts freightForwarderId and returns the new token", async () => {
+    const fx = mockFetch(() => ({ status: 200, body: { rfqId: "r1", rfqNumber: "Q-1-RFQ001", freightForwarderId: "ff1", accessToken: "TOK" } }));
+    vi.stubGlobal("fetch", fx);
+    const { result } = renderHook(() => useReissueToken("q1"), { wrapper });
+    const res = await result.current.mutateAsync("ff1");
+    expect(res.accessToken).toBe("TOK");
+    expect(fx).toHaveBeenCalledWith(
+      "/api/queries/q1/rfqs/reissue-token",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ freightForwarderId: "ff1" }) }),
+    );
   });
 });
