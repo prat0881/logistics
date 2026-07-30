@@ -121,8 +121,8 @@ The lookup source for FF selection in this stage — same role Client Master and
 | VAT / TRN / EORI (Europe) | Text | Optional | Tax/customs registration identifier — required for customs documentation on the FF's quotes. |
 | W/H Location | Text | Optional | Warehouse location(s) operated by the FF, if any — relevant when the FF also offers consolidation/staging services. |
 | Default Currency | Dropdown | Optional | Pre-fills the FF's currency choice in the portal; FF may override per RFQ. |
-| Payment Terms | Text | Optional | e.g. NET 15, NET 30 — shown on the FF card for executive reference. |
-| Typical Lead Time | Text | Optional | e.g. "1d", "2d" — shown on the FF card. |
+| Payment Terms | Text | Optional | e.g. NET 15, NET 30. Kept in the FF Master; **no longer shown on the eligible-FF selection card** (Post-testing fix R1, item 5 — see §7.2.2). |
+| Typical Lead Time | Text | Optional | e.g. "1d", "2d". Kept in the FF Master; **no longer shown on the eligible-FF selection card** (Post-testing fix R1, item 5 — see §7.2.2). |
 | Active / Inactive | Toggle | Auto | Inactive FFs are excluded from new eligible-FF lists; existing historical RFQs are unaffected. |
 
 **Governance:**
