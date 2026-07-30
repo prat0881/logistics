@@ -48,7 +48,7 @@ describe("cargoCreateSchema", () => {
     expect(cargoCreateSchema.safeParse({ ...base, dimL: 200000 }).success).toBe(false);
   });
   it("rejects whitespace-only required text (G8)", () => {
-    expect(cargoCreateSchema.safeParse({ ...base, poReference: "   " }).success).toBe(false);
+    // poReference is now optional — blank/whitespace is accepted
     expect(cargoCreateSchema.safeParse({ ...base, productName: "  " }).success).toBe(false);
     expect(cargoCreateSchema.safeParse({ ...base, packageType: " " }).success).toBe(false);
   });
@@ -57,6 +57,24 @@ describe("cargoCreateSchema", () => {
 describe("cargoUpdateSchema", () => {
   it("rejects netWt > grossWt when both are present (F5)", () => {
     expect(cargoUpdateSchema.safeParse({ netWt: 600, grossWt: 500 }).success).toBe(false);
+  });
+});
+
+describe("cargo schema round-3", () => {
+  const base = { productName: "Widget", packageType: "Carton", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 };
+  it("accepts a blank/absent PO reference", () => {
+    expect(cargoCreateSchema.safeParse(base).success).toBe(true);
+    expect(cargoCreateSchema.safeParse({ ...base, poReference: "" }).success).toBe(true);
+  });
+  it("defaults dimUnit=CM and weightUnit=KG when omitted", () => {
+    const r = cargoCreateSchema.parse(base);
+    expect(r.dimUnit).toBe("CM");
+    expect(r.weightUnit).toBe("KG");
+  });
+  it("accepts explicit MM/GM units", () => {
+    const r = cargoCreateSchema.parse({ ...base, dimUnit: "MM", weightUnit: "GM" });
+    expect(r.dimUnit).toBe("MM");
+    expect(r.weightUnit).toBe("GM");
   });
 });
 

@@ -43,7 +43,7 @@ export function referenceTagLabel(tag: ReferenceTag): string {
 // is a generated column needing non-null dims/qty). volumeCbm is DB-generated (never written by the app).
 export const cargoCreateSchema = z
   .object({
-    poReference: z.string().trim().min(1).max(120),
+    poReference: z.string().trim().max(120).optional(),
     productName: z.string().trim().min(1).max(200),
     referenceTags: z.array(z.enum(REFERENCE_TAGS)).optional(),
     hsCode: z.string().max(40).optional(),
@@ -55,6 +55,8 @@ export const cargoCreateSchema = z
     dimH: z.number().positive().max(100000),
     netWt: z.number().nonnegative().max(1000000000).optional(),
     grossWt: z.number().positive().max(1000000000), // F5: gross present
+    dimUnit: z.enum(DIM_UNITS).default("CM"),
+    weightUnit: z.enum(WEIGHT_UNITS).default("KG"),
   })
   .refine((c) => c.netWt === undefined || c.netWt <= c.grossWt, {
     message: "Net weight must be ≤ gross weight",
@@ -65,7 +67,7 @@ export type CargoCreateInput = z.infer<typeof cargoCreateSchema>;
 // Update: all fields optional; keep the Net ≤ Gross guard when both are present.
 export const cargoUpdateSchema = z
   .object({
-    poReference: z.string().trim().min(1).max(120),
+    poReference: z.string().trim().max(120).nullable(),
     productName: z.string().trim().min(1).max(200),
     referenceTags: z.array(z.enum(REFERENCE_TAGS)),
     hsCode: z.string().max(40).nullable(),
@@ -77,6 +79,8 @@ export const cargoUpdateSchema = z
     dimH: z.number().positive().max(100000),
     netWt: z.number().nonnegative().max(1000000000).nullable(),
     grossWt: z.number().positive().max(1000000000),
+    dimUnit: z.enum(DIM_UNITS),
+    weightUnit: z.enum(WEIGHT_UNITS),
   })
   .partial()
   .refine((c) => c.netWt == null || c.grossWt == null || c.netWt <= c.grossWt, {
@@ -102,4 +106,6 @@ export interface CargoDto {
   netWt: string | null;
   grossWt: string;
   volumeCbm: string | null; // Prisma Decimal serialises to string
+  dimUnit: DimUnit;
+  weightUnit: WeightUnit;
 }
