@@ -11,6 +11,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useDistributeLeg } from "./useRfq";
+import { PortalLinkRow } from "./PortalLinkRow";
 
 export const GATE_CODE_LABEL: Record<string, string> = {
   F1_INCOMPLETE_LEG:
@@ -97,17 +98,7 @@ export function DistributeLegAction({ queryId, legId, deadlineLocal, canDistribu
               <span className="font-mono">{r.rfqNumber}</span>
               <span className="text-muted-foreground">{r.minted ? "sent" : "updated"}</span>
               {r.accessToken && (
-                <Button
-                  variant="link"
-                  size="sm"
-                  onClick={() =>
-                    void navigator.clipboard?.writeText(
-                      `${window.location.origin}/ff/rfq/${r.accessToken}`,
-                    )
-                  }
-                >
-                  Copy portal link
-                </Button>
+                <PortalLinkRow url={`${window.location.origin}/ff/rfq/${r.accessToken}`} />
               )}
             </div>
           ))}

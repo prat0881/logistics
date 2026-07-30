@@ -300,6 +300,18 @@ Reuse `EmailsService`/`EmailLog`. New templates (spec §12): RFQ Invitation, RFQ
 ### 8.6 File storage
 MSDS (Stage 3 `FilesService`) is surfaced **read-only** to the FF through the token-scoped portal — the file is served only when its cargo row belongs to a leg in the token's scope.
 
+### 8.7 Post-testing fixes — Round 1 (branch: fix/stage-4-testing-r1)
+
+No schema or API changes. Six UI/UX fixes shipped as web-only helpers:
+
+- **`copyToClipboard(text: string): Promise<boolean>`** — uses `navigator.clipboard.writeText` with an `execCommand('copy')` textarea fallback so portal-link copy works over plain HTTP (no secure-context assumption — TLS is a go-live gate, §8.1).
+- **`PortalLinkRow({ url })`** — selectable text field + copy button wrapping `copyToClipboard`; rendered on the FF card after a successful distribute.
+- **`getCountryName(code: string): string`** — resolves an ISO country code to its full display name using the static `COUNTRIES` reference list; used on FF selection cards.
+- **`CargoTagIcons({ cargo })`** — renders deduplicated Heavy / Fragile / Non-stackable (from `referenceTags`) + DG (from `isDangerous`) icons across all cargo rows; shown in the Query Overview Header Totals area.
+- **`RegeneratePortalLink({ queryId, freightForwarderId })`** — per-FF action component on the selection card; calls the existing `POST /queries/:id/rfqs/reissue-token` endpoint (PR #29) and renders the fresh link via `PortalLinkRow`.
+- **`useReissueToken(queryId)`** — TanStack mutation wrapping the reissue endpoint; returns `mutateAsync(ffId): Promise<ReissueTokenResult>`.
+- **`RouteDiagram` (read-only)** — reused with hover tooltips and no editing; displayed in the Query Workspace after the header on **every query, before and after distribution** (an earlier pre-distribution status gate was removed in PR #38, since the workspace is used mostly during/after distribution).
+
 ---
 
 ## 9. Frontend architecture & screens

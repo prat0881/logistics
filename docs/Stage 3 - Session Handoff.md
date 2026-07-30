@@ -151,6 +151,12 @@ pnpm monorepo · NestJS 10 (+ `@nestjs/event-emitter`) + Prisma 5 (Neon Postgres
 
 ## Known Issues Register (Plans 0–6)
 
+### Post-Stage-4 testing fixes touching Stage 3 (2026-07-30, PRs #37/#38)
+Three display/reuse changes landed in Stage-4 work that touch Stage-3 concepts. **No Stage-3 data model or Create-Query behavior was changed.**
+- **Read-only `RouteDiagram` reuse (PR #38):** The Stage-3 `RouteDiagram` component is now reused read-only in the Stage-4 `RfqWorkspace` as a persistent "Route overview" shown on every query (edit callbacks omitted → non-interactive; hover tooltips retained; pre-distribution status gate removed). See `docs/plans/stage-4/Stage 4 - Post-Testing Fixes R1 - Design.md` / `Stage 4 - Post-Testing Fixes R1 - Implementation Plan.md`.
+- **Consolidated cargo characteristic icons (PR #37):** `referenceTags` (Heavy/Fragile/Non-Stackable) and `isDangerous` are now surfaced as deduped small icons in the Stage-4 workspace query header Totals area — each characteristic shown at most once across all cargo rows. Display-only.
+- **Per-leg net weight hidden when zero (PR #37):** In the Stage-4 workspace leg panel the per-leg `totalNetWt` roll-up is hidden when the value is 0, shown only for a genuine positive value. Display-only.
+
 Nothing **open** is a live "broken-in-prod" blocker — the two real Plan-6 bugs (Critical non-admin 403, Important double-PATCH) were caught by review and fixed before merge. Below: a severity-tagged summary, then the detailed backing. **For external users, gate on the two 🟠 HIGH items; everything 🟡/🟢 is deferrable and mostly deliberate.**
 
 **🟠 HIGH — address before wider/external use**

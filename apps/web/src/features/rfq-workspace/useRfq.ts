@@ -4,6 +4,7 @@ import type {
   FreightForwarderDto,
   DistributeInput,
   DistributeResult,
+  ReissueTokenResult,
 } from "@svyft/shared";
 import { fetchJson, postJson, putJson } from "@/lib/api";
 
@@ -57,5 +58,12 @@ export function useDistributeAll(queryId: string) {
       qc.invalidateQueries({ queryKey: ["rfq-state", queryId] });
       qc.invalidateQueries({ queryKey: ["query", queryId] });
     },
+  });
+}
+
+export function useReissueToken(queryId: string) {
+  return useMutation({
+    mutationFn: (freightForwarderId: string) =>
+      postJson<ReissueTokenResult>(`/api/queries/${queryId}/rfqs/reissue-token`, { freightForwarderId }),
   });
 }
