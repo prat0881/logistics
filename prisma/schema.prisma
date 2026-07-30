@@ -118,6 +118,9 @@ model FreightForwarder {
   freightForwarderCode String        @unique
   companyName          String        @unique
   companyAddress       String?
+  city                 String?
+  postalCode           String?
+  country              String?
   pic                  String
   contactNumber        String
   email                String
