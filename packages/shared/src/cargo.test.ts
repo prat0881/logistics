@@ -76,6 +76,11 @@ describe("cargo schema round-3", () => {
     expect(r.dimUnit).toBe("MM");
     expect(r.weightUnit).toBe("GM");
   });
+  it("update schema rejects null poReference but accepts blank/omitted", () => {
+    expect(cargoUpdateSchema.safeParse({ poReference: null }).success).toBe(false);
+    expect(cargoUpdateSchema.safeParse({ poReference: "" }).success).toBe(true);
+    expect(cargoUpdateSchema.safeParse({}).success).toBe(true);
+  });
 });
 
 describe("cargoLabel", () => {

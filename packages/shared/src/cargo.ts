@@ -75,7 +75,7 @@ export type CargoCreateInput = z.infer<typeof cargoCreateSchema>;
 // Update: all fields optional; keep the Net ≤ Gross guard when both are present.
 export const cargoUpdateSchema = z
   .object({
-    poReference: z.string().trim().max(120).nullable(),
+    poReference: z.string().trim().max(120),
     productName: z.string().trim().min(1).max(200),
     referenceTags: z.array(z.enum(REFERENCE_TAGS)),
     hsCode: z.string().max(40).nullable(),
