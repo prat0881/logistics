@@ -161,11 +161,11 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
                   <TableCell>{row.productName}</TableCell>
                   <TableCell>{row.packageType}</TableCell>
                   <TableCell className="font-mono tabular-nums">{fmtNum(row.qty)}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimL, 0)}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimW, 0)}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimH, 0)}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.netWt, 2)}</TableCell>
-                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.grossWt, 2)}</TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimL, 0)} <span className="text-muted-foreground text-xs">{row.dimUnit}</span></TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimW, 0)} <span className="text-muted-foreground text-xs">{row.dimUnit}</span></TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.dimH, 0)} <span className="text-muted-foreground text-xs">{row.dimUnit}</span></TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.netWt, 2)} <span className="text-muted-foreground text-xs">{row.netWt !== null ? row.weightUnit : ""}</span></TableCell>
+                  <TableCell className="font-mono tabular-nums">{fmtDecimal(row.grossWt, 2)} <span className="text-muted-foreground text-xs">{row.weightUnit}</span></TableCell>
                   <TableCell className="font-mono tabular-nums">{fmtDecimal(row.volumeCbm, 4)}</TableCell>
                   {/* Stage 4 — read-only empty with hint */}
                   <TableCell

@@ -464,6 +464,11 @@ function EditForm({
   });
 
   const isDangerous = useWatch({ control: form.control, name: "isDangerous" });
+  const editDimL = useWatch({ control: form.control, name: "dimL" });
+  const editDimW = useWatch({ control: form.control, name: "dimW" });
+  const editDimH = useWatch({ control: form.control, name: "dimH" });
+  const editQty = useWatch({ control: form.control, name: "qty" });
+  const editDimUnit = useWatch({ control: form.control, name: "dimUnit" }) ?? "CM";
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = form.handleSubmit(async (data) => {
@@ -477,8 +482,6 @@ function EditForm({
     // Reset file input
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
-
-  const cbm = row.volumeCbm !== null ? Number(row.volumeCbm) : null;
 
   return (
     <Form {...form}>
@@ -641,12 +644,7 @@ function EditForm({
 
           <div className="space-y-2">
             <label className="text-sm font-medium">Volume (CBM)</label>
-            <Input
-              readOnly
-              aria-label="Volume (CBM)"
-              className="bg-muted font-mono tabular-nums"
-              value={cbm !== null ? cbm.toFixed(4) : "—"}
-            />
+            <VolumeCbmPreview dimL={editDimL} dimW={editDimW} dimH={editDimH} qty={editQty} dimUnit={editDimUnit as DimUnit} />
           </div>
         </div>
 

@@ -74,6 +74,8 @@ const cargoRowDto = {
   netWt: "50",
   grossWt: "60",
   volumeCbm: "2.5000",
+  dimUnit: "CM" as const,
+  weightUnit: "KG" as const,
 };
 
 const detailWithCargo = { ...baseDetail, cargo: [cargoRowDto] };
@@ -545,6 +547,60 @@ describe("Step3Cargo", () => {
   });
 });
 
+  it("I1: cargo review table shows dim and weight units alongside raw values", async () => {
+    const mmCargoRow = {
+      ...cargoRowDto,
+      dimL: "1000",
+      dimW: "500",
+      dimH: "400",
+      grossWt: "5000",
+      netWt: "4000",
+      dimUnit: "MM" as const,
+      weightUnit: "GM" as const,
+      volumeCbm: "0.4000",
+    };
+    const detailWithMmCargo = { ...baseDetail, cargo: [mmCargoRow] };
+
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      if (url === `/api/queries/${QUERY_ID}`)
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve(detailWithMmCargo),
+          text: () => Promise.resolve(JSON.stringify(detailWithMmCargo)),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response);
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(""),
+        blob: () => Promise.resolve(new Blob()),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=2` },
+    );
+    await navigateToStep3();
+    await screen.findByText("Widget A");
+
+    // Unit labels "MM" should appear alongside dim values, "GM" alongside weights
+    const allMm = screen.getAllByText("MM");
+    expect(allMm.length).toBeGreaterThanOrEqual(3); // L, W, H each have MM label
+    const allGm = screen.getAllByText("GM");
+    expect(allGm.length).toBeGreaterThanOrEqual(1); // gross wt has GM label
+  });
+
 // ── Direct CargoRowForm unit tests (unit dropdowns + CBM preview) ──────────────
 
 /** Render the Add form in isolation and return a { submit } spy. */
@@ -617,5 +673,49 @@ describe("CargoRowForm — unit dropdowns + CBM preview", () => {
     selectOption(wtUnit, "GM");
     await clickSave();
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({ dimUnit: "MM", weightUnit: "GM" }));
+  });
+
+  it("T13: edit form CBM preview is live — changing dims updates the preview", async () => {
+    const row: typeof cargoRowDto = {
+      ...cargoRowDto,
+      qty: 2,
+      dimL: "100",
+      dimW: "50",
+      dimH: "40",
+      dimUnit: "CM",
+      weightUnit: "KG",
+      volumeCbm: "0.4000",
+    };
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <CargoRowForm
+        mode="edit"
+        row={row}
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        uploadMsds={vi.fn()}
+      />,
+    );
+
+    // Initial CBM: 100×50×40×2 / 1e6 = 0.4 m³ — loaded from form defaultValues
+    const cbmInput = screen.getByLabelText("Volume (CBM)");
+    expect(cbmInput).toHaveValue("0.4000");
+
+    // Change L to 200 using fireEvent.change for reliable numeric field update
+    // dimL is the only input with value "100" (qty=2, dimW=50, dimH=40, grossWt=from row)
+    const lInput = screen.getByDisplayValue("100");
+    fireEvent.change(lInput, { target: { value: "200" } });
+    // 200×50×40×2 / 1e6 = 0.8 m³
+    await waitFor(() => {
+      expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("0.8000");
+    });
+
+    // Switch dim unit from CM to MM via the hidden native select
+    const dimUnitTrigger = screen.getByLabelText("Dimension unit");
+    selectOption(dimUnitTrigger, "MM");
+    // Same dims in MM: 200×50×40×2 / 1e9 = 0.0008 m³
+    await waitFor(() => {
+      expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("0.0008");
+    });
   });
 });
