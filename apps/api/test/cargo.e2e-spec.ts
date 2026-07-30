@@ -150,6 +150,28 @@ describe("Cargo (e2e)", () => {
       .expect(400);
   });
 
+  it("round-trips dimUnit/weightUnit and computes volumeCbm in m³ for CM and MM", async () => {
+    const q = await prisma.query.create({
+      data: { queryCode: `Z${Date.now()}U`.slice(0, 12), shipmentDescription: `${PFX}unit-q` },
+    });
+    // CM: 100×50×40 cm, qty 2 → 100*50*40*2 / 1e6 = 0.4 m³
+    const cm = await request(app.getHttpServer())
+      .post(`/api/queries/${q.id}/cargo`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ productName: "A", packageType: "Box", qty: 2, dimL: 100, dimW: 50, dimH: 40, grossWt: 1, dimUnit: "CM", weightUnit: "KG" })
+      .expect(201);
+    expect(cm.body.dimUnit).toBe("CM");
+    expect(Number(cm.body.volumeCbm)).toBeCloseTo(0.4, 4);
+    // MM: 1000×500×400 mm = same physical box, qty 2 → 1000*500*400*2 / 1e9 = 0.4 m³
+    const mm = await request(app.getHttpServer())
+      .post(`/api/queries/${q.id}/cargo`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ productName: "B", packageType: "Box", qty: 2, dimL: 1000, dimW: 500, dimH: 400, grossWt: 1, dimUnit: "MM", weightUnit: "GM" })
+      .expect(201);
+    expect(mm.body.weightUnit).toBe("GM");
+    expect(Number(mm.body.volumeCbm)).toBeCloseTo(0.4, 4);
+  });
+
   it("exports cargo to an .xlsx workbook whose single worksheet is named Product", async () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${queryId}/cargo`)

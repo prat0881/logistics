@@ -24,6 +24,8 @@ export const cargoImpactMap: Record<
   dimH: ImpactClass.RfqDefining,
   netWt: ImpactClass.RfqDefining,
   grossWt: ImpactClass.RfqDefining,
+  dimUnit: ImpactClass.RfqDefining,
+  weightUnit: ImpactClass.RfqDefining,
   "@create": ImpactClass.Structural,
   "@delete": ImpactClass.Structural,
 };

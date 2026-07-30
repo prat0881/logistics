@@ -29,7 +29,7 @@ export class RoutingService {
       client.leg.findMany({ where: { queryId } }),
       client.cargoItem.findMany({
         where: { queryId },
-        select: { id: true, poReference: true, isDangerous: true, msdsFileId: true, grossWt: true, volumeCbm: true },
+        select: { id: true, poReference: true, productName: true, rowIndex: true, isDangerous: true, msdsFileId: true, grossWt: true, volumeCbm: true },
       }),
       client.legCargo.findMany({ where: { leg: { queryId } }, select: { legId: true, cargoItemId: true } }),
     ]);
@@ -70,6 +70,8 @@ export class RoutingService {
         (c): RouteCargo => ({
           id: c.id,
           poReference: c.poReference,
+          productName: c.productName,
+          rowIndex: c.rowIndex,
           isDangerous: c.isDangerous,
           msdsFileId: c.msdsFileId,
           grossWt: c.grossWt == null ? null : Number(c.grossWt),
