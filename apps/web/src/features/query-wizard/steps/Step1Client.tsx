@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { querySaveSchema, PRIORITIES, Role, defaultResponseDeadline } from "@svyft/shared";
+import { querySaveSchema, PRIORITIES, Role, defaultResponseDeadline, utcToZonedInput, zonedInputToUtc } from "@svyft/shared";
 import type { QuerySaveInput, ContactDto, QueryDetail, ClientDto } from "@svyft/shared";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -53,7 +53,7 @@ interface Step1ClientProps {
  * to ZonedDateTimeField, which projects them into the appropriate IANA zone.
  */
 function fromDetail(detail: QueryDetail | undefined): Partial<QuerySaveInput> {
-  if (!detail) return { priority: "MEDIUM" };
+  if (!detail) return { priority: "MEDIUM", queryDate: new Date().toISOString() };
   return {
     priority: detail.priority ?? "MEDIUM",
     queryDate: detail.queryDate ? detail.queryDate : undefined,
@@ -149,13 +149,17 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
   }, [detail, isLoading, orgZone, form]);
 
   // Auto-default Response Deadline = queryDate + priority-hours (recompute until touched).
+  // Minutes are zeroed in the org zone so the displayed wall-clock shows :00 (not :30 in IST).
   const watchedPriority = form.watch("priority");
   const watchedQueryDate = form.watch("queryDate");
   useEffect(() => {
     if (deadlineTouchedRef.current) return;
     if (!watchedQueryDate || !watchedPriority) return;
-    form.setValue("responseDeadline", defaultResponseDeadline(watchedQueryDate, watchedPriority));
-  }, [watchedPriority, watchedQueryDate, form]);
+    if (!orgZone) return;
+    const rdUtc = defaultResponseDeadline(watchedQueryDate, watchedPriority);
+    const zeroed = zonedInputToUtc(utcToZonedInput(rdUtc, orgZone).slice(0, 14) + "00", orgZone);
+    form.setValue("responseDeadline", zeroed);
+  }, [watchedPriority, watchedQueryDate, orgZone, form]);
 
   // When the wizard opens an existing query that already has a clientId, fetch the
   // client record so the picker trigger shows "Acme Corp" rather than the raw UUID.

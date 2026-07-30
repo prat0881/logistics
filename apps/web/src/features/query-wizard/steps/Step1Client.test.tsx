@@ -337,6 +337,44 @@ describe("Step1Client", () => {
     expect(patches.length).toBe(0);
   });
 
+  it("new query (no detail) renders Query Date with today's date as default", async () => {
+    // Fix 1: for a brand-new query the Query Date field must not be empty — it should
+    // default to the real local now() so the pre-save UI shows the correct time.
+    const todayPrefix = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "A", email: "a@x", role: "ADMINISTRATOR" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/new" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/new", user: { id: "u1", name: "A", email: "a@x", role: "ADMINISTRATOR" } },
+    );
+
+    // Wait for the Step 1 form to render (no queryCode for a new query — wait for the field label)
+    await waitFor(() => expect(screen.getByText(/Query ID/i)).toBeInTheDocument());
+
+    // The Query Date input must be non-empty and start with today's date.
+    await waitFor(() => {
+      // The Query Date field is read-only for non-admins; we test as ADMINISTRATOR so it's readable.
+      const queryDateInput = screen.getByLabelText("Query Date") as HTMLInputElement;
+      expect(queryDateInput.value).not.toBe("");
+      // The displayed wall-clock (viewer zone) must correspond to today's date.
+      expect(queryDateInput.value.slice(0, 10)).toBe(todayPrefix);
+    });
+  });
+
   it("non-admin Save strips queryDate from PATCH body (existing query with queryDate)", async () => {
     const patches: unknown[] = [];
     const detailWithClient = {
@@ -487,6 +525,8 @@ describe("Step1Client", () => {
       mockFetch((url) => {
         if (url.includes("/api/auth/me"))
           return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
         if (url.includes("/api/queries/q9")) return { status: 200, body: detailNoDeadline };
         if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
         if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
@@ -503,13 +543,15 @@ describe("Step1Client", () => {
 
     await screen.findByText("YAL26-0009");
 
-    // Response Deadline should be auto-filled (MEDIUM = queryDate + 24h)
+    // Response Deadline should be auto-filled (MEDIUM = queryDate + 24h), zeroed to :00 in IST.
     // Use exact match to avoid matching "Response Deadline Remarks"
     const deadline = screen.getByLabelText("Response Deadline") as HTMLInputElement;
     await waitFor(() => expect(deadline.value).not.toBe(""));
 
     const mediumValue = deadline.value;
     expect(mediumValue).not.toBe("");
+    // Fix 2: the displayed wall-clock (IST = UTC+5:30) must show :00 minutes, not :30.
+    expect(mediumValue.endsWith(":00")).toBe(true);
 
     // Switch priority to URGENT via the Radix Select (URGENT = +12h, different from MEDIUM +24h)
     const priorityTrigger = screen.getByRole("combobox", { name: /Priority/i });
