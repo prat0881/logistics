@@ -140,7 +140,7 @@ describe("Step2Shipment", () => {
     ) as HTMLSelectElement;
     expect(nativeSelect).not.toBeNull();
     const optionValues = Array.from(nativeSelect.options).map((o) => o.value);
-    expect(optionValues).toContain("N/A");
+    expect(optionValues).toContain("NA");
   });
 
   it("on Save the PATCH body carries incoterms and shipmentDescription (no dgIndicator)", async () => {
@@ -189,6 +189,50 @@ describe("Step2Shipment", () => {
     expect(body).not.toHaveProperty("dgIndicator");
     // incoterms key must be present in the patch body (pre-seeded from draftDetailWithIncoterms)
     expect(body).toHaveProperty("incoterms");
+  });
+
+  it("defaults Incoterms to N/A and PATCHes incoterms='NA' on save", async () => {
+    const patches: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } } };
+        if (url.includes(`/api/queries/${QUERY_ID}`) && init?.method === "PATCH") {
+          patches.push(JSON.parse(init.body as string));
+          return { status: 200, body: draftDetail };
+        }
+        if (url.includes(`/api/queries/${QUERY_ID}`))
+          // draftDetail has incoterms: null — so the default "NA" should kick in
+          return { status: 200, body: draftDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=1`, user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } },
+    );
+
+    await navigateToStep2();
+
+    // Default shown — the select trigger should display "N/A"
+    expect(screen.getByLabelText("Incoterms")).toHaveTextContent("N/A");
+
+    // Hit Save
+    await userEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+
+    // Wait for PATCH to be called
+    await waitFor(
+      () => expect(patches.length).toBeGreaterThan(0),
+      { timeout: 3000 },
+    );
+
+    const body = patches[patches.length - 1] as Record<string, unknown>;
+    // The PATCH body must carry incoterms: "NA" (stored value, not display label)
+    expect(body).toHaveProperty("incoterms", "NA");
   });
 
   it("a single Step-2 Save issues exactly ONE PATCH to /api/queries/:id (no double-write)", async () => {
