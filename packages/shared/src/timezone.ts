@@ -93,3 +93,21 @@ export function formatInZone(utcIso: string, zone: string): string {
   const [y, m, day] = date.split("-");
   return `${day}-${m}-${y} ${time} ${zoneLabel(zone, utcIso)}`;
 }
+
+/**
+ * UTC ISO instant for "today at 12:00 (noon), :00 minutes" as seen in `zone`.
+ *
+ * Used to seed a new query/leg's datetime inputs so they render a clean 12:00
+ * default in the field's display zone — instead of the native datetime-local
+ * empty-state, which shows a greyed placeholder that reads as ":30" once an
+ * empty (UTC-anchored) instant is projected into a +HH:30 zone like IST.
+ * "Today" is the calendar date IN `zone` (not the UTC date), so the picker never
+ * lands on the wrong day near midnight. `now` is injectable for deterministic tests.
+ * Returns "" if the zone is unresolvable.
+ */
+export function noonTodayInZone(zone: string, now: Date = new Date()): string {
+  if (!zone) return "";
+  const today = utcToZonedInput(now.toISOString(), zone).slice(0, 10); // "YYYY-MM-DD" in zone
+  if (!today) return "";
+  return zonedInputToUtc(`${today}T12:00`, zone);
+}

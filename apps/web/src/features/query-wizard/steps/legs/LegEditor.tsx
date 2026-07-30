@@ -5,6 +5,7 @@ import {
   legSaveSchema,
   FREIGHT_MODES,
   checkModeEndpoints,
+  noonTodayInZone,
 } from "@svyft/shared";
 import type {
   LegSaveInput,
@@ -108,12 +109,18 @@ export function LegEditor({
   useEffect(() => {
     if (open) {
       setServerFindings([]);
+      // New leg: seed the dates to a clean 12:00 (:00) so the dialog opens on a sensible,
+      // editable default instead of the native datetime-local "12:30" placeholder. Both
+      // dates anchor to the origin/destination point zone once chosen; before that they fall
+      // back to the org zone (resolveLegFieldZone), so seed noon-in-org-zone here. On edit we
+      // keep the leg's stored values untouched.
+      const noon = isEdit ? undefined : noonTodayInZone(orgZone);
       form.reset({
         originPointId: leg?.originPointId ?? undefined,
         destinationPointId: leg?.destinationPointId ?? undefined,
         mode: leg?.mode ?? undefined,
-        readyDate: leg?.readyDate ?? undefined,
-        targetDelivery: leg?.targetDelivery ?? undefined,
+        readyDate: leg?.readyDate ?? noon,
+        targetDelivery: leg?.targetDelivery ?? noon,
         assignedCargoIds: leg?.assignedCargoIds ?? [],
       });
     }

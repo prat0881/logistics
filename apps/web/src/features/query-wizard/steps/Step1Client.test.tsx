@@ -375,6 +375,78 @@ describe("Step1Client", () => {
     });
   });
 
+  it("new query seeds Target Pickup / Target Delivery to today 12:00 (:00) in the org zone", async () => {
+    // The remaining datetime bug: empty date fields render the native datetime-local
+    // placeholder, which reads as "12:30" once an empty UTC instant is projected into IST.
+    // For a NEW query these must open on a clean 12:00 (:00, editable) default in the org zone.
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/new" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/new", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await waitFor(() => expect(screen.getByText(/Query ID/i)).toBeInTheDocument());
+
+    // Target Pickup and Target Delivery must both display 12:00 (minutes :00) in Asia/Kolkata.
+    await waitFor(() => {
+      const pickup = screen.getByLabelText(
+        (c) => /^Target Pickup(\s*\*)?$/i.test(c),
+      ) as HTMLInputElement;
+      expect(pickup.value.endsWith("T12:00")).toBe(true);
+    });
+    const delivery = screen.getByLabelText(
+      (c) => /^Target Delivery(\s*\*)?$/i.test(c),
+    ) as HTMLInputElement;
+    expect(delivery.value.endsWith("T12:00")).toBe(true);
+  });
+
+  it("ETA/ETB/ETD are NOT seeded (F3 ordering forbids equal defaults) — stay empty on a new query", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/new" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/new", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await waitFor(() => expect(screen.getByText(/Query ID/i)).toBeInTheDocument());
+    // Wait until Target Pickup has been seeded (proves the seed effect has run) …
+    await waitFor(() => {
+      const pickup = screen.getByLabelText((c) => /^Target Pickup(\s*\*)?$/i.test(c)) as HTMLInputElement;
+      expect(pickup.value).not.toBe("");
+    });
+    // … then ETA/ETB/ETD must still be empty (never defaulted).
+    for (const label of ["ETA", "ETB", "ETD"]) {
+      expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe("");
+    }
+  });
+
   it("non-admin Save strips queryDate from PATCH body (existing query with queryDate)", async () => {
     const patches: unknown[] = [];
     const detailWithClient = {

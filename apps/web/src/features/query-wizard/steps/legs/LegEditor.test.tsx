@@ -497,6 +497,58 @@ describe("LegEditor", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
+  it("new leg seeds Ready Date + Target Delivery to today 12:00 (:00)", async () => {
+    vi.stubGlobal("fetch", makeFetchMock());
+
+    renderWithProviders(
+      <LegEditor open detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    await screen.findByRole("dialog");
+
+    // Both datetime-local inputs (Ready Date, Target Delivery) must open on 12:00 (:00),
+    // not the native placeholder that reads as 12:30 in IST. Org zone falls back to the
+    // Asia/Kolkata default here (no /config/org-timezone mock). G10 uses <=, so equal is valid.
+    await waitFor(() => {
+      const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+      expect(dateInputs.length).toBe(2);
+      expect(dateInputs[0].value.endsWith("T12:00")).toBe(true);
+      expect(dateInputs[1].value.endsWith("T12:00")).toBe(true);
+    });
+  });
+
+  it("edit leg does NOT seed dates — a stored-null date stays empty", async () => {
+    const EDIT_LEG_ID = "0c0c0c0c-0c0c-0c0c-0c0c-0c0c0c0c0c0c";
+    const editLeg = {
+      id: EDIT_LEG_ID,
+      tenantId: null,
+      queryId: QUERY_ID,
+      legCode: "L1",
+      legName: null,
+      mode: "ROAD" as const,
+      originPointId: PICKUP_POINT_ID,
+      destinationPointId: DELIVERY_POINT_ID,
+      assignedCargoIds: [] as string[],
+      readyDate: null,
+      targetDelivery: null,
+      status: "DRAFT" as const,
+      executionStatus: "PENDING" as const,
+      createdAt: "2026-01-01T00:00:00+00:00",
+      updatedAt: "2026-01-01T00:00:00+00:00",
+      rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+    };
+    vi.stubGlobal("fetch", makeFetchMock());
+
+    renderWithProviders(
+      <LegEditor open leg={editLeg} detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
+    );
+
+    await screen.findByRole("dialog");
+    const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+    expect(dateInputs[0].value).toBe("");
+    expect(dateInputs[1].value).toBe("");
+  });
+
   it("blocks saving a NEW leg with no origin/destination (asserts no POST)", async () => {
     const user = userEvent.setup();
     const fetchMock = makeFetchMock({

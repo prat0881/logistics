@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { querySaveSchema, PRIORITIES, Role, defaultResponseDeadline, utcToZonedInput, zonedInputToUtc } from "@svyft/shared";
+import { querySaveSchema, PRIORITIES, Role, defaultResponseDeadline, utcToZonedInput, zonedInputToUtc, noonTodayInZone } from "@svyft/shared";
 import type { QuerySaveInput, ContactDto, QueryDetail, ClientDto } from "@svyft/shared";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -160,6 +160,29 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
     const zeroed = zonedInputToUtc(utcToZonedInput(rdUtc, orgZone).slice(0, 14) + "00", orgZone);
     form.setValue("responseDeadline", zeroed);
   }, [watchedPriority, watchedQueryDate, orgZone, form]);
+
+  // Seed Target Pickup + Target Delivery for a NEW query so the wizard opens on a clean
+  // 12:00 (:00) default in the org zone, instead of the native datetime-local placeholder —
+  // which reads as "12:30" once an empty (UTC-anchored) instant is projected into IST (the
+  // bug users hit). On a new query there are no points yet, so both anchor to the org zone
+  // (see resolveQueryFieldZone). Seed once, only empty fields, and never on an existing query
+  // (detail present) so an intentionally-blank date is never back-filled. G10 compares with
+  // <=, so seeding both to the same noon is valid. Minutes are :00 but stay editable.
+  //
+  // ETA/ETB/ETD are deliberately EXCLUDED: F3 requires ETA < ETB < ETD (strict), so defaulting
+  // all three to the same noon would fail validation on every query. They stay empty until the
+  // user enters real, ordered vessel times.
+  const dateSeededRef = useRef(false);
+  useEffect(() => {
+    if (detail) return;
+    if (isLoading || !orgZone) return;
+    if (dateSeededRef.current) return;
+    dateSeededRef.current = true;
+    const noon = noonTodayInZone(orgZone);
+    for (const f of ["readyDate", "targetDelivery"] as const) {
+      if (!form.getValues(f)) form.setValue(f, noon);
+    }
+  }, [detail, isLoading, orgZone, form]);
 
   // When the wizard opens an existing query that already has a clientId, fetch the
   // client record so the picker trigger shows "Acme Corp" rather than the raw UUID.
