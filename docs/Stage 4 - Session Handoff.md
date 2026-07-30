@@ -97,6 +97,18 @@ The **external** FF journey: the no-login, token-guarded portal where an invited
 - **Inherit the Stage-3 conventions** (`Stage 3 - Session Handoff.md` → "Conventions & key learnings"): shared-enum pattern (`const` obj + union + `Object.values as [X,...X[]]`, pinned by a `toEqual` test — never a TS `enum`); `PrismaExceptionFilter` (**P2003 NOT mapped** → guard FKs in services); `cookie-parser` **default** import in e2e; soft user refs (`actorId` etc. = plain uuid, no relation); web `fetchJson`/`postJson` + TanStack Query re-GET for derived fields; RHF + `zodResolver`.
 - **RBAC (Stage-4 convention, settled in SB2b):** query/leg/RFQ **workflow** write endpoints are **Executive+** — authenticated only, **no `@Roles`** (matches the `LegsController` convention + Functional Spec §5.2). Only **master-data** writes (FreightForwarder/Client/Vessel) gate to `@Roles(Role.ADMINISTRATOR, Role.MANAGER)`. *(The earlier handoff note "distribution writes = Admin/Manager" was wrong — corrected.)*
 
+## Post-testing fixes — Round 1 (branch: fix/stage-4-testing-r1)
+
+Six targeted UX/display fixes shipped after initial testing. No schema or API changes. Design and implementation plan: `docs/plans/stage-4/Stage 4 - Post-Testing Fixes R1 - Design.md` and `docs/plans/stage-4/Stage 4 - Post-Testing Fixes R1 - Implementation Plan.md`.
+
+1. **Portal link copyable over HTTP** — the distribute result exposes a selectable `PortalLinkRow` with a `copyToClipboard` helper (clipboard API + `execCommand` fallback; no secure-context assumption).
+2. **Regenerate portal link per FF** — a "Regenerate portal link" action on each distributed FF's card calls the existing reissue-token endpoint (`POST /queries/:id/rfqs/reissue-token`, PR #29), invalidates the old token, and returns a fresh copyable link.
+3. **Read-only route overview in the workspace** — a `RouteDiagram` (hover tooltips, no editing) is shown after the query header, visible only while the query is in a pre-distribution status (DRAFT / CREATED / RFQ_READY). Distinct from the FF-scoped diagram in §7.3.4.
+4. **Cargo characteristic icons in Totals** — the Query Overview Header Totals now shows `CargoTagIcons`: Heavy / Fragile / Non-stackable (from `referenceTags`) + DG (from `isDangerous`), deduped across all cargo, each shown once.
+5. **Net weight hidden when 0** — the per-leg Net Wt roll-up in the leg summary is suppressed when the value is 0; shown only for genuine positive numbers.
+6. **FF card: payment terms / lead time removed** — those fields no longer appear on the FF selection card (they remain in the FF Master and the FF Master editor).
+7. **FF card: full country names** — country is displayed as the full name via `getCountryName(code)` instead of the ISO code.
+
 ## Known issues / carried notes (Stage 4)
 - **⚠ SB3 follow-ups (carried, non-blocking — from the PR #31 opus review):** (a) make `useSetFfSelection` **optimistic** via `onMutate` on the `["rfq-state"]` cache → removes a brief FF-grid re-seed flicker (the parent recreates `legQuotes` via `.filter()` each render; SB3 guards the re-seed with `setSelection.isPending`, but a settle-before-refetch window remains) and makes the query cache the single source of truth; (b) **surface `rfqState.isError`** so a failed hydrate is visually distinct from "no selection"; (c) `rfq-state.rfqs` is fetched but **not yet consumed** client-side — wire it for per-RFQ display (deadline/incoterms/currency) when useful. Also: the §7.1 header omits the **client company name** (`QueryDetail` has no client-name join — a small backend/DTO follow-up).
 - ✅ *(resolved in SB2b)* SB2a arbitrary-UUID fixtures → real FF rows; `@@index([freightForwarderId])` added; hard FF FK (`onDelete: Restrict`) landed.
