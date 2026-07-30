@@ -109,4 +109,48 @@ describe("Create Query route gating (e2e)", () => {
     expect(res.body.legs[0].rollup.totalCbm).toBeCloseTo(3); // (1×1×1 m³)×3
     expect(res.body.legs[0].assignedCargoIds).toHaveLength(1);
   });
+
+  // Build a leg carrying two cargo rows with the given gross weights and units.
+  async function legWithTwoCargo(
+    c1: { grossWt: number; weightUnit: string },
+    c2: { grossWt: number; weightUnit: string },
+  ) {
+    const q = await prisma.query.create({
+      data: {
+        queryCode: `${PFX}${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+        shipmentDescription: `${PFX}wt-rollup`,
+        readyDate: READY,
+        targetDelivery: TARGET,
+      },
+    });
+    const pu = await prisma.point.create({
+      data: { queryId: q.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", timezone: "Asia/Kolkata" },
+    });
+    const de = await prisma.point.create({
+      data: { queryId: q.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" },
+    });
+    const cargo1 = await prisma.cargoItem.create({
+      data: { queryId: q.id, rowIndex: 1, poReference: "PO1", productName: "P1", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: c1.grossWt, weightUnit: c1.weightUnit as "KG" | "GM" },
+    });
+    const cargo2 = await prisma.cargoItem.create({
+      data: { queryId: q.id, rowIndex: 2, poReference: "PO2", productName: "P2", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: c2.grossWt, weightUnit: c2.weightUnit as "KG" | "GM" },
+    });
+    const leg = await prisma.leg.create({
+      data: { queryId: q.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: READY, targetDelivery: TARGET },
+    });
+    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo1.id } });
+    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo2.id } });
+    return { queryId: q.id, legId: leg.id };
+  }
+
+  it("leg totalGrossWt sums in kg across mixed weight units", async () => {
+    // Build a leg carrying a 5 kg row and a 5000 gm row → total 10 kg.
+    const { queryId, legId } = await legWithTwoCargo(
+      { grossWt: 5, weightUnit: "KG" },
+      { grossWt: 5000, weightUnit: "GM" },
+    );
+    const res = await api().get(`/api/queries/${queryId}`).set("Cookie", cookie()).expect(200);
+    const leg = res.body.legs.find((l: { id: string }) => l.id === legId);
+    expect(leg.rollup.totalGrossWt).toBeCloseTo(10, 3);
+  });
 });
