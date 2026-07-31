@@ -414,7 +414,10 @@ describe("Step1Client", () => {
     expect(delivery.value.endsWith("T12:00")).toBe(true);
   });
 
-  it("ETA/ETB/ETD are NOT seeded (F3 ordering forbids equal defaults) — stay empty on a new query", async () => {
+  it("ETA/ETB/ETD show a greyed 12:00 hint (display-only — not seeded, since F3 forbids equal defaults)", async () => {
+    // F3 requires ETA < ETB < ETD (strict), so the three can't be seeded to the same instant.
+    // Instead placeholderNoon renders a 12:00 hint in each empty box; the form value stays blank
+    // (proven at the ZonedDateTimeField unit level) so a query with no vessel saves them null.
     vi.stubGlobal(
       "fetch",
       mockFetch((url) => {
@@ -436,14 +439,12 @@ describe("Step1Client", () => {
     );
 
     await waitFor(() => expect(screen.getByText(/Query ID/i)).toBeInTheDocument());
-    // Wait until Target Pickup has been seeded (proves the seed effect has run) …
+    // ETA/ETB/ETD render the 12:00 hint in Asia/Kolkata rather than the browser's own default.
     await waitFor(() => {
-      const pickup = screen.getByLabelText((c) => /^Target Pickup(\s*\*)?$/i.test(c)) as HTMLInputElement;
-      expect(pickup.value).not.toBe("");
+      expect((screen.getByLabelText("ETA") as HTMLInputElement).value.endsWith("T12:00")).toBe(true);
     });
-    // … then ETA/ETB/ETD must still be empty (never defaulted).
     for (const label of ["ETA", "ETB", "ETD"]) {
-      expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe("");
+      expect((screen.getByLabelText(label) as HTMLInputElement).value.endsWith("T12:00")).toBe(true);
     }
   });
 

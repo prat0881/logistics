@@ -580,12 +580,17 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
               )}
             />
 
+            {/* ETA/ETB/ETD are optional and must stay unset unless the user enters real,
+                ordered vessel times (F3: ETA < ETB < ETD, strict — so they can't all default
+                to the same instant). placeholderNoon shows a greyed 12:00 hint in each empty
+                box (display-only; submits blank) instead of the browser's own "12:30" default. */}
             {/* ETA */}
             <ZonedDateTimeField
               control={form.control}
               name="eta"
               label="ETA"
               zone={zoneFor("eta")}
+              placeholderNoon
             />
 
             {/* ETB */}
@@ -594,6 +599,7 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
               name="etb"
               label="ETB"
               zone={zoneFor("etb")}
+              placeholderNoon
             />
 
             {/* ETD */}
@@ -602,6 +608,7 @@ export function Step1Client({ registerSave }: Step1ClientProps) {
               name="etd"
               label="ETD"
               zone={zoneFor("etd")}
+              placeholderNoon
             />
 
             {/* Port of Call */}
