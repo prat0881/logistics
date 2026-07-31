@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -14,6 +14,9 @@ const ff = (id: string, name: string): FreightForwarderDto => ({
   handleDg: false, vatTrnEori: null, whLocation: null, defaultCurrency: null,
   paymentTerms: "NET 30", typicalLeadTime: "2d", status: "ACTIVE",
 });
+
+const manyFfs = (n: number) =>
+  Array.from({ length: n }, (_, i) => ff(`ff${i}`, `Forwarder ${String(i).padStart(2, "0")}`));
 
 function wrap(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -114,5 +117,65 @@ describe("FfSelectionGrid", () => {
     );
     expect(await screen.findByText("Select FF")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /regenerate portal link/i })).toBeNull();
+  });
+
+  it("defaults to Cards and toggles to Table (with column headers)", async () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [ff("a", "Alpha FF"), ff("b", "Beta FF")] };
+      return { status: 404 };
+    }));
+    wrap(<FfSelectionGrid queryId="q1" legId="l1" legQuotes={[]} referencedFfs={[]} />);
+    expect(await screen.findByText("Alpha FF")).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /forwarder/i })).toBeNull(); // cards first
+    await userEvent.click(screen.getByRole("button", { name: /^table$/i }));
+    expect(screen.getByRole("columnheader", { name: /forwarder/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /country/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /modes/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /status/i })).toBeInTheDocument();
+    // no Terms / Lead columns (D1)
+    expect(screen.queryByRole("columnheader", { name: /terms|lead/i })).toBeNull();
+  });
+
+  it("filters by search text", async () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [ff("a", "Alpha FF"), ff("b", "Beta FF")] };
+      return { status: 404 };
+    }));
+    wrap(<FfSelectionGrid queryId="q1" legId="l1" legQuotes={[]} referencedFfs={[]} />);
+    await screen.findByText("Alpha FF");
+    await userEvent.type(screen.getByRole("textbox", { name: /search forwarders/i }), "beta");
+    expect(screen.queryByText("Alpha FF")).toBeNull();
+    expect(screen.getByText("Beta FF")).toBeInTheDocument();
+  });
+
+  it("pages the table with Load 10 more", async () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: manyFfs(12) };
+      return { status: 404 };
+    }));
+    wrap(<FfSelectionGrid queryId="q1" legId="l1" legQuotes={[]} referencedFfs={[]} />);
+    await screen.findByText("Forwarder 00");
+    await userEvent.click(screen.getByRole("button", { name: /^table$/i }));
+    // first 10 rows: 00..09 visible, 10/11 not yet
+    expect(screen.getByText("Forwarder 09")).toBeInTheDocument();
+    expect(screen.queryByText("Forwarder 11")).toBeNull();
+    expect(screen.getByText(/showing 10 of 12/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /load 10 more/i }));
+    expect(screen.getByText("Forwarder 11")).toBeInTheDocument();
+  });
+
+  it("sorts the table by Forwarder when the header is clicked", async () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [ff("a", "Alpha FF"), ff("z", "Zulu FF")] };
+      return { status: 404 };
+    }));
+    wrap(<FfSelectionGrid queryId="q1" legId="l1" legQuotes={[]} referencedFfs={[]} />);
+    await screen.findByText("Alpha FF");
+    await userEvent.click(screen.getByRole("button", { name: /^table$/i }));
+    let rows = screen.getAllByRole("row").slice(1); // skip header row
+    expect(within(rows[0]).getByText("Alpha FF")).toBeInTheDocument(); // ascending default
+    await userEvent.click(screen.getByRole("button", { name: /forwarder/i }));
+    rows = screen.getAllByRole("row").slice(1);
+    expect(within(rows[0]).getByText("Zulu FF")).toBeInTheDocument(); // descending
   });
 });

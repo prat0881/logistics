@@ -40,16 +40,19 @@ const query = {
 } as unknown as QueryDetail;
 
 describe("QueryOverviewHeader", () => {
-  it("shows the query code, modes, rolled-up totals and status", () => {
+  it("shows the query code, totals and status; omits modes/origin/destination", () => {
     render(<QueryOverviewHeader query={query} />);
     expect(screen.getByText("YAL26-0001")).toBeInTheDocument();
-    expect(screen.getByText("AIR")).toBeInTheDocument();
     expect(screen.getByText("RFQ Sent")).toBeInTheDocument();
-    expect(screen.getByText(/5 pkg/i)).toBeInTheDocument();   // 3 + 2 packages
-    expect(screen.getByText(/20 CBM/i)).toBeInTheDocument();  // 12 + 8 CBM
-    expect(screen.getByText(/800 kg/i)).toBeInTheDocument();  // 500 + 300 kg
-    expect(screen.getByText(/Shanghai Port/)).toBeInTheDocument();
-    expect(screen.getByText(/Dubai/)).toBeInTheDocument();
+    expect(screen.getByText(/5 pkg/i)).toBeInTheDocument();
+    expect(screen.getByText(/20 CBM/i)).toBeInTheDocument();
+    expect(screen.getByText(/800 kg/i)).toBeInTheDocument();
+    // Modes / Origin / Destination now live in the route diagram, not the header
+    expect(screen.queryByText("AIR")).toBeNull();
+    expect(screen.queryByText(/Shanghai Port/)).toBeNull();
+    expect(screen.queryByText(/Dubai/)).toBeNull();
+    expect(screen.queryByText("Origin")).toBeNull();
+    expect(screen.queryByText("Destination")).toBeNull();
   });
 
   it("renders the Dangerous goods icon when a cargo row has isDangerous=true", () => {

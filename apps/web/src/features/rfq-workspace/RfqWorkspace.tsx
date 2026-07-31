@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DistributeResult } from "@svyft/shared";
 import { ApiError } from "@/lib/api";
 import { useQueryDetail } from "@/features/query-wizard/useQueryDetail";
@@ -22,6 +22,17 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
   const distributeAll = useDistributeAll(queryId);
   const [allResult, setAllResult] = useState<DistributeResult | null>(null);
   const [allError, setAllError] = useState<string | null>(null);
+  const [openLegId, setOpenLegId] = useState<string | null>(null);
+
+  // Default the first leg open, once. A ref-guard so "Collapse All" (openLegId=null) sticks.
+  const inited = useRef(false);
+  const legs = query.data?.legs;
+  useEffect(() => {
+    if (!inited.current && legs && legs.length > 0) {
+      setOpenLegId(legs[0].id);
+      inited.current = true;
+    }
+  }, [legs]);
 
   if (query.isLoading || rfqState.isLoading) return <p className="text-sm text-muted-foreground">Loading workspace…</p>;
   if (query.isError || !query.data) return <p className="text-sm text-destructive">Failed to load the query.</p>;
@@ -30,6 +41,13 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
   const quotes = rfqState.data?.quotes ?? [];
   const referencedFfs = rfqState.data?.freightForwarders ?? [];
   const legCodeById = new Map(q.legs.map((l) => [l.id, l.legCode]));
+
+  function jumpToLeg(legId: string) {
+    setOpenLegId(legId);
+    requestAnimationFrame(() =>
+      document.getElementById(`legcard-${legId}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" }),
+    );
+  }
 
   async function runDistributeAll() {
     setAllError(null);
@@ -46,14 +64,17 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
 
       <section aria-label="Route overview" className="rounded-lg border border-border bg-card p-4 sm:p-6">
         <h2 className="mb-3 font-display text-sm font-semibold text-muted-foreground">Route overview</h2>
-        <RouteDiagram detail={q} findings={[]} />
+        <RouteDiagram detail={q} findings={[]} onEditLeg={jumpToLeg} />
       </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-lg font-semibold">RFQ distribution</h2>
-        <Button variant="secondary" onClick={runDistributeAll} disabled={distributeAll.isPending}>
-          {distributeAll.isPending ? "Distributing…" : "Distribute All"}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={() => setOpenLegId(null)}>Collapse All</Button>
+          <Button variant="secondary" onClick={runDistributeAll} disabled={distributeAll.isPending}>
+            {distributeAll.isPending ? "Distributing…" : "Distribute All"}
+          </Button>
+        </div>
       </div>
 
       {allError && <p role="alert" className="text-sm text-destructive">{allError}</p>}
@@ -80,6 +101,8 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
             cargo={q.cargo}
             legQuotes={quotes.filter((qt) => qt.legId === leg.id)}
             referencedFfs={referencedFfs}
+            open={openLegId === leg.id}
+            onToggle={() => setOpenLegId((cur) => (cur === leg.id ? null : leg.id))}
           />
         ))}
         {q.legs.length === 0 && (

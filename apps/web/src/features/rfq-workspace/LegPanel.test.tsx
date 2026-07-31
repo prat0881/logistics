@@ -32,19 +32,28 @@ describe("LegPanel", () => {
     expect(s).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
   });
 
-  it("shows leg summary + status, and collapses the grid on toggle", async () => {
+  it("shows leg code + route + status (no leg name); toggles via onToggle", async () => {
     vi.stubGlobal("fetch", mockFetch((url) => {
       if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
       return { status: 404 };
     }));
-    wrap(<LegPanel queryId="q1" leg={leg} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} />);
-    // defaults open → header + summary + grid all visible
-    expect(screen.getByText("Main air leg")).toBeInTheDocument();
+    const onToggle = vi.fn();
+    wrap(<LegPanel queryId="q1" leg={leg} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} open onToggle={onToggle} />);
+    expect(screen.getByText("L1")).toBeInTheDocument();
+    expect(screen.getByText(/Shanghai PVG → Dubai DXB/)).toBeInTheDocument();
     expect(screen.getByText("Ready for RFQ")).toBeInTheDocument();
-    expect(screen.getByText(/Shanghai PVG/)).toBeInTheDocument();
+    expect(screen.queryByText("Main air leg")).toBeNull(); // leg name removed
     expect(await screen.findByText(/Eligible 0/i)).toBeInTheDocument();
-    // clicking the header collapses the panel → grid hidden
-    await userEvent.click(screen.getByRole("button", { name: /main air leg/i }));
+    await userEvent.click(screen.getByRole("button", { name: /L1/ }));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the body when open is false", () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+      return { status: 404 };
+    }));
+    wrap(<LegPanel queryId="q1" leg={leg} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} open={false} onToggle={() => {}} />);
     expect(screen.queryByText(/Eligible 0/i)).not.toBeInTheDocument();
   });
 
@@ -57,7 +66,7 @@ describe("LegPanel", () => {
       ...leg,
       rollup: { ...leg.rollup, totalNetWt: 120 },
     } as unknown as QueryLegDto;
-    wrap(<LegPanel queryId="q1" leg={legWithNet} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} />);
+    wrap(<LegPanel queryId="q1" leg={legWithNet} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} open onToggle={() => {}} />);
     expect(screen.getByText(/120 kg net/)).toBeInTheDocument();
     expect(screen.getByText(/kg gross/)).toBeInTheDocument();
   });
@@ -71,7 +80,7 @@ describe("LegPanel", () => {
       ...leg,
       rollup: { ...leg.rollup, totalNetWt: 0 },
     } as unknown as QueryLegDto;
-    wrap(<LegPanel queryId="q1" leg={legZeroNet} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} />);
+    wrap(<LegPanel queryId="q1" leg={legZeroNet} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} open onToggle={() => {}} />);
     expect(screen.queryByText(/kg net/)).not.toBeInTheDocument();
     expect(screen.getByText(/kg gross/)).toBeInTheDocument();
   });

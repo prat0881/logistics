@@ -18,6 +18,8 @@ interface LegPanelProps {
   legQuotes: QuoteDto[];
   referencedFfs: FreightForwarderDto[];
   cargo: CargoDto[];
+  open: boolean;
+  onToggle: () => void;
 }
 
 /** "YYYY-MM-DDTHH:mm" (local) for <input type="datetime-local">, defaulted +48h. */
@@ -37,37 +39,30 @@ function fmtDate(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString() : "—";
 }
 
-export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo }: LegPanelProps) {
-  const [open, setOpen] = useState(true);
+export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo, open, onToggle }: LegPanelProps) {
   const [deadline, setDeadline] = useState(defaultDeadlineLocal());
   const [previewOpen, setPreviewOpen] = useState(false);
   const hasSent = legQuotes.some((q) => q.status !== "SELECT");
+  const route = `${pointName(points, leg.originPointId)} → ${pointName(points, leg.destinationPointId)}`;
 
   return (
-    <Card className="overflow-hidden">
+    <Card id={`legcard-${leg.id}`} className="scroll-mt-4 overflow-hidden">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={onToggle}
+        aria-expanded={open}
         className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
       >
         {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        <span className="font-mono text-xs text-muted-foreground">{leg.legCode}</span>
-        <span className="font-medium">{leg.legName ?? "Unnamed leg"}</span>
+        <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold text-primary">{leg.legCode}</span>
+        <span className="font-medium">{route}</span>
         {leg.mode && <Badge variant="secondary">{leg.mode}</Badge>}
         <span className="ml-auto"><LegStatusBadge status={leg.status} /></span>
       </button>
 
       {open && (
         <div className="space-y-5 border-t border-border p-4">
-          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-            <div>
-              <dt className="text-xs text-muted-foreground">Origin</dt>
-              <dd>{pointName(points, leg.originPointId)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Destination</dt>
-              <dd>{pointName(points, leg.destinationPointId)}</dd>
-            </div>
+          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
             <div>
               <dt className="text-xs text-muted-foreground">Ready</dt>
               <dd>{fmtDate(leg.readyDate)}</dd>
@@ -76,11 +71,10 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo
               <dt className="text-xs text-muted-foreground">Target delivery</dt>
               <dd>{fmtDate(leg.targetDelivery)}</dd>
             </div>
-            <div className="col-span-2 sm:col-span-4">
-              <dt className="text-xs text-muted-foreground">Manifest totals</dt>
+            <div className="col-span-2 sm:col-span-1">
+              <dt className="text-xs text-muted-foreground">Manifest</dt>
               <dd>
-                {leg.rollup.totalPackages} pkg · {leg.rollup.totalCbm} CBM ·{" "}
-                {leg.rollup.totalGrossWt} kg gross
+                {leg.rollup.totalPackages} pkg · {leg.rollup.totalCbm} CBM · {leg.rollup.totalGrossWt} kg gross
                 {leg.rollup.totalNetWt > 0 && <> · {leg.rollup.totalNetWt} kg net</>}
               </dd>
             </div>
@@ -104,9 +98,7 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo
                 className="w-56"
               />
             </div>
-            {!hasSent && (
-              <Button variant="outline" onClick={() => setPreviewOpen(true)}>Preview RFQ</Button>
-            )}
+            {!hasSent && <Button variant="outline" onClick={() => setPreviewOpen(true)}>Preview RFQ</Button>}
             <DistributeLegAction
               queryId={queryId}
               legId={leg.id}

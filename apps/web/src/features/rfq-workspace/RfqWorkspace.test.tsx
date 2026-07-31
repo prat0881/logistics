@@ -23,6 +23,13 @@ const baseLeg = {
   originPointId: "p1", destinationPointId: "p2", readyDate: null, targetDelivery: null,
   assignedCargoIds: [], rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
 };
+const secondLeg = {
+  ...baseLeg, id: "l2", legCode: "L2", legName: "Sea leg", originPointId: "p2", destinationPointId: "p1",
+};
+function twoLegDetail(status: string) {
+  const d = makeQueryDetail(status);
+  return { ...d, legs: [baseLeg, secondLeg] };
+}
 
 function makeQueryDetail(status: string) {
   return {
@@ -71,13 +78,13 @@ describe("RfqWorkspace", () => {
 
     wrap(<RfqWorkspace queryId="q1" />);
     expect(await screen.findByText("YAL26-0001")).toBeInTheDocument();
-    expect(screen.getByText("Air leg")).toBeInTheDocument();
+    expect(screen.getByText(/PVG → DXB/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /distribute all/i }));
     // the skipped-summary line rendered (single text node — robust)
     expect(await screen.findByText(/nothing selected/i)).toBeInTheDocument();
     // 1) "L1" appears in the leg panel toggle button (leg code chip)
-    const legToggleBtn = screen.getByRole("button", { name: /Air leg/i });
+    const legToggleBtn = screen.getByRole("button", { name: /^L1/ });
     expect(within(legToggleBtn).getByText("L1")).toBeInTheDocument();
     // 2) "L1" appears in the skipped-distribution result paragraph
     const skippedLine = screen.getByText(/skipped/i);
@@ -96,5 +103,43 @@ describe("RfqWorkspace", () => {
     wrap(<RfqWorkspace queryId="q1" />);
     await screen.findByText("YAL26-0001");
     expect(screen.getByRole("region", { name: /route overview/i })).toBeInTheDocument();
+  });
+
+  it("single-expands legs (first open by default) and Collapse All closes them", async () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.endsWith("/api/queries/q1")) return { status: 200, body: twoLegDetail("RFQ_READY") };
+      if (url.includes("/rfq-state")) return { status: 200, body: { quotes: [], rfqs: [], freightForwarders: [] } };
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+      return { status: 404 };
+    }));
+    wrap(<RfqWorkspace queryId="q1" />);
+    await screen.findByText("YAL26-0001");
+    // first leg (L1) open by default → its deadline field is present; L2's is not
+    expect(await screen.findByLabelText(/submission deadline/i)).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/submission deadline/i)).toHaveLength(1);
+    // open L2 → L1 collapses (still exactly one deadline field, now L2's)
+    await userEvent.click(screen.getByRole("button", { name: /^L2/ }));
+    expect(screen.getAllByLabelText(/submission deadline/i)).toHaveLength(1);
+    // Collapse All → no open leg bodies
+    await userEvent.click(screen.getByRole("button", { name: /collapse all/i }));
+    expect(screen.queryByLabelText(/submission deadline/i)).not.toBeInTheDocument();
+  });
+
+  it("opens a leg when its edge is clicked in the route diagram", async () => {
+    (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = vi.fn();
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.endsWith("/api/queries/q1")) return { status: 200, body: twoLegDetail("RFQ_READY") };
+      if (url.includes("/rfq-state")) return { status: 200, body: { quotes: [], rfqs: [], freightForwarders: [] } };
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+      return { status: 404 };
+    }));
+    wrap(<RfqWorkspace queryId="q1" />);
+    await screen.findByText("YAL26-0001");
+    // L1 open by default → deadline-l1 in DOM, deadline-l2 not
+    expect(document.getElementById("deadline-l1")).toBeTruthy();
+    expect(document.getElementById("deadline-l2")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^Leg L2/ }));
+    expect(document.getElementById("deadline-l2")).toBeTruthy();
+    expect(document.getElementById("deadline-l1")).toBeNull();
   });
 });
