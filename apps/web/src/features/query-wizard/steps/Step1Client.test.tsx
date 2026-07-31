@@ -375,6 +375,81 @@ describe("Step1Client", () => {
     });
   });
 
+  it("Target Pickup / Target Delivery show a greyed 12:00 hint on a new query (display-only)", async () => {
+    // Empty date fields render the native datetime-local placeholder, which reads as "12:30"
+    // once an empty UTC instant is projected into IST. placeholderNoon replaces that with a clean
+    // 12:00 hint in the org zone — display-only, so the form value stays blank (C1/F1 still require
+    // a real pick at Create). The unit test proves the form value stays empty; here we assert the
+    // hint is displayed.
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/new" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/new", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await waitFor(() => expect(screen.getByText(/Query ID/i)).toBeInTheDocument());
+
+    // Target Pickup and Target Delivery must both display 12:00 (minutes :00) in Asia/Kolkata.
+    await waitFor(() => {
+      const pickup = screen.getByLabelText(
+        (c) => /^Target Pickup(\s*\*)?$/i.test(c),
+      ) as HTMLInputElement;
+      expect(pickup.value.endsWith("T12:00")).toBe(true);
+    });
+    const delivery = screen.getByLabelText(
+      (c) => /^Target Delivery(\s*\*)?$/i.test(c),
+    ) as HTMLInputElement;
+    expect(delivery.value.endsWith("T12:00")).toBe(true);
+  });
+
+  it("ETA/ETB/ETD show a greyed 12:00 hint (display-only — not seeded, since F3 forbids equal defaults)", async () => {
+    // F3 requires ETA < ETB < ETD (strict), so the three can't be seeded to the same instant.
+    // Instead placeholderNoon renders a 12:00 hint in each empty box; the form value stays blank
+    // (proven at the ZonedDateTimeField unit level) so a query with no vessel saves them null.
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/config/org-timezone"))
+          return { status: 200, body: { timezone: "Asia/Kolkata" } };
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/new" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/new", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    await waitFor(() => expect(screen.getByText(/Query ID/i)).toBeInTheDocument());
+    // ETA/ETB/ETD render the 12:00 hint in Asia/Kolkata rather than the browser's own default.
+    await waitFor(() => {
+      expect((screen.getByLabelText("ETA") as HTMLInputElement).value.endsWith("T12:00")).toBe(true);
+    });
+    for (const label of ["ETA", "ETB", "ETD"]) {
+      expect((screen.getByLabelText(label) as HTMLInputElement).value.endsWith("T12:00")).toBe(true);
+    }
+  });
+
   it("non-admin Save strips queryDate from PATCH body (existing query with queryDate)", async () => {
     const patches: unknown[] = [];
     const detailWithClient = {

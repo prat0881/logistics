@@ -6,6 +6,7 @@ import {
   utcToZonedInput,
   zoneLabel,
   formatInZone,
+  noonTodayInZone,
 } from "./timezone";
 
 describe("isValidIanaZone", () => {
@@ -72,6 +73,38 @@ describe("zoneLabel / formatInZone", () => {
   });
   it("returns empty string for a null/empty instant", () => {
     expect(formatInZone("", "Asia/Kolkata")).toBe("");
+  });
+});
+
+describe("noonTodayInZone", () => {
+  it("returns the UTC instant of 12:00 local (IST noon = 06:30 UTC)", () => {
+    const now = new Date("2026-07-30T09:15:00.000Z"); // 14:45 on 2026-07-30 IST
+    expect(noonTodayInZone("Asia/Kolkata", now)).toBe("2026-07-30T06:30:00.000Z");
+  });
+
+  it("projects back to exactly 12:00 in the display zone (the point of the helper)", () => {
+    const now = new Date("2026-07-30T09:15:00.000Z");
+    for (const z of ["Asia/Kolkata", "Asia/Singapore", "America/New_York", "UTC"]) {
+      // wall-clock time portion is always noon, minutes always :00
+      expect(utcToZonedInput(noonTodayInZone(z, now), z).slice(11)).toBe("12:00");
+    }
+  });
+
+  it("uses the zone-local calendar date, not the UTC date (late-evening UTC → next IST day)", () => {
+    const now = new Date("2026-07-30T19:00:00.000Z"); // 00:30 on 2026-07-31 in IST
+    expect(noonTodayInZone("Asia/Kolkata", now)).toBe("2026-07-31T06:30:00.000Z");
+    expect(utcToZonedInput(noonTodayInZone("Asia/Kolkata", now), "Asia/Kolkata")).toBe(
+      "2026-07-31T12:00",
+    );
+  });
+
+  it("noon in UTC is 12:00Z", () => {
+    const now = new Date("2026-07-30T08:00:00.000Z");
+    expect(noonTodayInZone("UTC", now)).toBe("2026-07-30T12:00:00.000Z");
+  });
+
+  it("returns empty string for an empty/invalid zone", () => {
+    expect(noonTodayInZone("", new Date("2026-07-30T08:00:00.000Z"))).toBe("");
   });
 });
 

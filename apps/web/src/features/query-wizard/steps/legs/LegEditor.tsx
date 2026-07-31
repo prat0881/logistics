@@ -364,12 +364,15 @@ export function LegEditor({
                 )}
               </div>
 
-              {/* Ready Date — anchored to origin point's timezone */}
+              {/* Ready Date — anchored to origin point's timezone. placeholderNoon shows a
+                  greyed 12:00 hint while empty (display-only; C1 still requires a real value
+                  at Create), matching ETA/ETB/ETD and the query dates. */}
               <ZonedDateTimeField
                 control={form.control}
                 name="readyDate"
                 label="Ready Date"
                 zone={resolveLegFieldZone("readyDate", legLike, detail.points, orgZone)}
+                placeholderNoon
               />
 
               {/* Target Delivery — anchored to destination point's timezone */}
@@ -378,6 +381,7 @@ export function LegEditor({
                 name="targetDelivery"
                 label="Target Delivery"
                 zone={resolveLegFieldZone("targetDelivery", legLike, detail.points, orgZone)}
+                placeholderNoon
               />
 
               {/* Server-side findings (V-M1 422) */}
