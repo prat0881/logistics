@@ -375,10 +375,12 @@ describe("Step1Client", () => {
     });
   });
 
-  it("new query seeds Target Pickup / Target Delivery to today 12:00 (:00) in the org zone", async () => {
-    // The remaining datetime bug: empty date fields render the native datetime-local
-    // placeholder, which reads as "12:30" once an empty UTC instant is projected into IST.
-    // For a NEW query these must open on a clean 12:00 (:00, editable) default in the org zone.
+  it("Target Pickup / Target Delivery show a greyed 12:00 hint on a new query (display-only)", async () => {
+    // Empty date fields render the native datetime-local placeholder, which reads as "12:30"
+    // once an empty UTC instant is projected into IST. placeholderNoon replaces that with a clean
+    // 12:00 hint in the org zone — display-only, so the form value stays blank (C1/F1 still require
+    // a real pick at Create). The unit test proves the form value stays empty; here we assert the
+    // hint is displayed.
     vi.stubGlobal(
       "fetch",
       mockFetch((url) => {

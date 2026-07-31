@@ -497,7 +497,7 @@ describe("LegEditor", () => {
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
   });
 
-  it("new leg seeds Ready Date + Target Delivery to today 12:00 (:00)", async () => {
+  it("new leg shows a greyed 12:00 hint on Ready Date + Target Delivery (display-only)", async () => {
     vi.stubGlobal("fetch", makeFetchMock());
 
     renderWithProviders(
@@ -506,9 +506,10 @@ describe("LegEditor", () => {
 
     await screen.findByRole("dialog");
 
-    // Both datetime-local inputs (Ready Date, Target Delivery) must open on 12:00 (:00),
-    // not the native placeholder that reads as 12:30 in IST. Org zone falls back to the
-    // Asia/Kolkata default here (no /config/org-timezone mock). G10 uses <=, so equal is valid.
+    // Both datetime-local inputs (Ready Date, Target Delivery) open on a 12:00 hint (Asia/Kolkata
+    // org-zone fallback here) instead of the native placeholder that reads as 12:30 in IST. The
+    // hint is display-only — the form value stays blank (proven at the ZonedDateTimeField level),
+    // and C1 still requires a real value at Create.
     await waitFor(() => {
       const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
       expect(dateInputs.length).toBe(2);
@@ -517,7 +518,7 @@ describe("LegEditor", () => {
     });
   });
 
-  it("edit leg does NOT seed dates — a stored-null date stays empty", async () => {
+  it("edit leg with stored-null dates shows the same greyed 12:00 hint (uniform, display-only)", async () => {
     const EDIT_LEG_ID = "0c0c0c0c-0c0c-0c0c-0c0c-0c0c0c0c0c0c";
     const editLeg = {
       id: EDIT_LEG_ID,
@@ -544,9 +545,12 @@ describe("LegEditor", () => {
     );
 
     await screen.findByRole("dialog");
+    // The hint is uniform: an existing leg with no dates shows the same greyed 12:00 as a new leg.
+    // It is display-only (form value stays null — see the ZonedDateTimeField unit test), so leaving
+    // it saves the leg's stored null unchanged.
     const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
-    expect(dateInputs[0].value).toBe("");
-    expect(dateInputs[1].value).toBe("");
+    expect(dateInputs[0].value.endsWith("T12:00")).toBe(true);
+    expect(dateInputs[1].value.endsWith("T12:00")).toBe(true);
   });
 
   it("blocks saving a NEW leg with no origin/destination (asserts no POST)", async () => {
