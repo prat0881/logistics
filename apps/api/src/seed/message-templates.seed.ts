@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
 // Seed rows are create-only (Design §7): defaults on first deploy, never overwriting an edit.
-// Stage-3 templates (migrated). RFQ/quote templates are appended in Task 8.
+// Stage-3 templates (migrated) followed by the RFQ/quote templates (Task 8).
 export const MESSAGE_TEMPLATES: {
   key: string; eventKey: string; channel: "IN_APP" | "EMAIL"; subject: string | null; body: string;
 }[] = [
@@ -24,6 +24,41 @@ export const MESSAGE_TEMPLATES: {
     key: "query.escalation.inapp", eventKey: "query.escalation", channel: "IN_APP",
     subject: null,
     body: "Query {{Query_ID}} awaiting action — {{Tier_Label}} escalation",
+  },
+  {
+    key: "rfq.invitation.email", eventKey: "rfq.invitation", channel: "EMAIL",
+    subject: "Request for Quotation — RFQ {{RFQ_Number}}",
+    body: "You have been invited to quote RFQ {{RFQ_Number}} ({{Leg_Names}}).\nSubmission deadline: {{Deadline}}.\nOpen your secure portal: {{Access_Link}}",
+  },
+  {
+    key: "rfq.updated.email", eventKey: "rfq.updated", channel: "EMAIL",
+    subject: "RFQ {{RFQ_Number}} updated — a leg was added",
+    body: "RFQ {{RFQ_Number}} has been updated with additional legs ({{Leg_Names}}). Please review it via your existing secure portal link.",
+  },
+  {
+    key: "rfq.reminder.email", eventKey: "rfq.reminder", channel: "EMAIL",
+    subject: "Reminder: RFQ {{RFQ_Number}} closes {{Deadline}}",
+    body: "This is a reminder that RFQ {{RFQ_Number}} closes at {{Deadline}}. Please submit your quote before the deadline via your secure portal link.",
+  },
+  {
+    key: "rfq.expiry.email", eventKey: "rfq.expiry", channel: "EMAIL",
+    subject: "RFQ {{RFQ_Number}} — submission window closed",
+    body: "Your RFQ {{RFQ_Number}} submission window has expired. No further quotes can be accepted for this RFQ.",
+  },
+  {
+    key: "rfq.expiry.inapp", eventKey: "rfq.expiry", channel: "IN_APP",
+    subject: null,
+    body: "{{FF_Name}} did not submit {{Leg_Name}} — RFQ {{RFQ_Number}} has expired.",
+  },
+  {
+    key: "rfq.submission_ack.email", eventKey: "rfq.submission_ack", channel: "EMAIL",
+    subject: "Quote received — RFQ {{RFQ_Number}}",
+    body: "Thank you — your quote for RFQ {{RFQ_Number}} has been received.",
+  },
+  {
+    key: "quote.received.inapp", eventKey: "quote.received", channel: "IN_APP",
+    subject: null,
+    body: "{{FF_Name}} submitted a quote for {{Leg_Name}} (RFQ {{RFQ_Number}}).",
   },
 ];
 

@@ -15,6 +15,7 @@ import {
 import { PrismaService } from "../../prisma/prisma.service";
 import type { RequestUser } from "../auth/types";
 import { StatusService } from "../status/status.service";
+import { CommsSettingsService } from "../comms/comms-settings.service";
 import { RfqNumberService } from "./rfq-number.service";
 import { RfqTokenService } from "./rfq-token.service";
 import { loadLegForRfq, type LegRfqContext } from "./leg-context";
@@ -22,13 +23,12 @@ import { buildManifestSnapshot } from "./manifest";
 
 @Injectable()
 export class RfqService {
-  private readonly DEFAULT_DEADLINE_MS = 48 * 60 * 60 * 1000;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly status: StatusService,
     private readonly rfqNumber: RfqNumberService,
     private readonly token: RfqTokenService,
+    private readonly commsSettings: CommsSettingsService,
   ) {}
 
   async setFfSelection(
@@ -99,7 +99,7 @@ export class RfqService {
     if (!query) throw new NotFoundException("Query not found");
 
     const legs = await this.prisma.leg.findMany({ where: { queryId }, select: { id: true }, orderBy: { legCode: "asc" } });
-    const deadline = this.resolveDeadline(input.submissionDeadline);
+    const deadline = await this.resolveDeadline(input.submissionDeadline);
 
     const ready: LegRfqContext[] = [];
     const skipped: { legId: string; reason: string }[] = [];
@@ -241,7 +241,7 @@ export class RfqService {
       throw new BadRequestException({ message: "Leg is not ready for distribution", codes: errors });
     }
 
-    const deadline = this.resolveDeadline(input.submissionDeadline);
+    const deadline = await this.resolveDeadline(input.submissionDeadline);
     return this.performDistribution(query, [ctx], deadline, user);
   }
 
@@ -272,7 +272,7 @@ export class RfqService {
     return errors;
   }
 
-  private resolveDeadline(override?: string): Date {
+  private async resolveDeadline(override?: string): Promise<Date> {
     if (override) {
       const d = new Date(override);
       if (Number.isNaN(d.getTime()) || d.getTime() <= Date.now()) {
@@ -280,7 +280,8 @@ export class RfqService {
       }
       return d;
     }
-    return new Date(Date.now() + this.DEFAULT_DEADLINE_MS);
+    const hours = await this.commsSettings.rfqDeadlineHours();
+    return new Date(Date.now() + hours * 60 * 60 * 1000);
   }
 
   private async performDistribution(
