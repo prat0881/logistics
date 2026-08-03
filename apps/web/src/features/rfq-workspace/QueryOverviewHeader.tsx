@@ -21,6 +21,7 @@ function queryStatusVariant(s: string) {
   if (s === "RFQ_READY") return "default" as const;
   if (s === "RFQ_SENT") return "accent" as const;
   if (s === "QUOTED" || s === "WON") return "success" as const;
+  if (s === "NO_RESPONSE") return "warning" as const;
   return "outline" as const;
 }
 

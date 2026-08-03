@@ -1,15 +1,14 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
-import type { Role } from "@svyft/shared";
+import { Role } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
-import { NotificationsService } from "../notifications/notifications.service";
 import { ScheduledEventService } from "../comms/scheduled-event.service";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
 
 const TIERS = ["T30M", "T2H", "T6H"] as const;
 type Tier = (typeof TIERS)[number];
 const TIER_OFFSET_MS: Record<Tier, number> = { T30M: 30 * 60_000, T2H: 120 * 60_000, T6H: 360 * 60_000 };
-const TIER_ROLE: Record<Tier, Role> = { T30M: "EXECUTIVE", T2H: "MANAGER", T6H: "ADMINISTRATOR" };
+const TIER_ROLE: Record<Tier, Role> = { T30M: Role.EXECUTIVE, T2H: Role.MANAGER, T6H: Role.ADMINISTRATOR };
 const TIER_LABEL: Record<Tier, string> = { T30M: "30-minute", T2H: "2-hour", T6H: "6-hour" };
 
 @Injectable()
@@ -17,7 +16,6 @@ export class EscalationsService {
   private readonly logger = new Logger(EscalationsService.name);
   constructor(
     private readonly prisma: PrismaService,
-    private readonly notifications: NotificationsService,
     private readonly dispatcher: NotificationDispatcher,
     private readonly scheduled: ScheduledEventService,
   ) {}
@@ -61,16 +59,14 @@ export class EscalationsService {
         select: { id: true, email: true },
       });
       const tokens = { Query_ID: query.queryCode, Tier_Label: TIER_LABEL[tier] };
-      // in-app to tier-role staff (kept) + email to the SAME staff (recipient corrected — Design §11)
-      await this.notifications.createMany(users.map((u) => u.id), {
-        type: "query.escalation", queryId: payload.entityId, entityType: "QUERY", entityId: payload.entityId,
-        message: `Query ${query.queryCode} awaiting action — ${TIER_LABEL[tier]} escalation`,
-        tenantId: query.tenantId,
-      });
+      // one dispatch: in-app (renders query.escalation.inapp) + email to the SAME tier-role staff
       await this.dispatcher.dispatch("query.escalation", {
         scope: { entityType: "QUERY", entityId: payload.entityId },
         tokens,
-        recipients: { EMAIL: users.map((u) => u.email).filter((e): e is string => !!e) },
+        recipients: {
+          IN_APP: users.map((u) => u.id),
+          EMAIL: users.map((u) => u.email).filter((e): e is string => !!e),
+        },
         tenantId: query.tenantId,
       });
     } catch (err) {

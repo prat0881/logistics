@@ -7,6 +7,7 @@ import {
   computeQuoteTotals,
   computeChargeableWeight,
   QuoteEvent,
+  Role,
 } from "@svyft/shared";
 import type { FfPortalRfqDto, FfPortalLegDto, ManifestSnapshot, QuoteDraft, Finding } from "@svyft/shared";
 import { Prisma } from "@prisma/client";
@@ -316,7 +317,7 @@ export class FfPortalService {
       let execIds: string[] = query?.assignedUserId ? [query.assignedUserId] : [];
       if (execIds.length === 0) {
         const execs = await this.prisma.user.findMany({
-          where: { role: "EXECUTIVE", isActive: true },
+          where: { role: Role.EXECUTIVE, isActive: true },
           select: { id: true },
         });
         execIds = execs.map((u) => u.id);
@@ -326,6 +327,8 @@ export class FfPortalService {
         FF_Name: rfq?.freightForwarder?.companyName ?? "",
         Leg_Name: q.leg.legCode ?? "",
       };
+      // Cancel the RFQ's remaining reminders FIRST — a dispatch throw below must not skip it.
+      await this.scheduled.cancel("RFQ", scope.rfq.id, "rfq.reminder");
       await this.dispatcher.dispatch("rfq.submission_ack", {
         scope: { entityType: "QUERY", entityId: scope.rfq.queryId },
         tokens,
@@ -338,7 +341,6 @@ export class FfPortalService {
         recipients: { IN_APP: execIds },
         tenantId: rfq?.tenantId ?? null,
       });
-      await this.scheduled.cancel("RFQ", scope.rfq.id, "rfq.reminder");
     } catch (err) {
       this.logger.error(`post-submit comms failed for quote ${q.id}`, err as Error);
     }

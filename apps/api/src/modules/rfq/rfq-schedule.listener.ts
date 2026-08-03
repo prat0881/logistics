@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
 import { Prisma } from "@prisma/client";
-import { QuoteEvent, QuoteStatus } from "@svyft/shared";
+import { QuoteEvent, QuoteStatus, Role } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { StatusService } from "../status/status.service";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
@@ -51,9 +51,10 @@ export class RfqScheduleListener {
 
   @OnEvent("rfq.expiry")
   async onExpiry(p: TimerPayload): Promise<void> {
+    const rfqId = p.entityId;
     try {
       const rfq = await this.prisma.rfq.findUnique({
-        where: { id: p.entityId },
+        where: { id: rfqId },
         select: {
           rfqNumber: true,
           queryId: true,
@@ -64,10 +65,15 @@ export class RfqScheduleListener {
       if (!rfq) return;
 
       const openQuotes = await this.prisma.quote.findMany({
-        where: { rfqId: p.entityId, status: QuoteStatus.RFQ_SENT },
+        where: { rfqId, status: QuoteStatus.RFQ_SENT },
         select: { id: true, legId: true, leg: { select: { legCode: true } } },
       });
-      if (openQuotes.length === 0) return;
+
+      // Nothing still open → still clear any remaining reminders, then done.
+      if (openQuotes.length === 0) {
+        await this.scheduled.cancel("RFQ", rfqId, "rfq.reminder");
+        return;
+      }
 
       const query = await this.prisma.query.findUnique({
         where: { id: rfq.queryId },
@@ -76,36 +82,49 @@ export class RfqScheduleListener {
       let execIds: string[] = query?.assignedUserId ? [query.assignedUserId] : [];
       if (execIds.length === 0) {
         const execs = await this.prisma.user.findMany({
-          where: { role: "EXECUTIVE", isActive: true },
+          where: { role: Role.EXECUTIVE, isActive: true },
           select: { id: true },
         });
         execIds = execs.map((u) => u.id);
       }
 
-      for (const q of openQuotes) {
-        // discard the unsubmitted draft (permanent, spec S8/E3), then fire EXPIRE (the one door, after the write)
-        await this.prisma.quote.update({ where: { id: q.id }, data: { draftJson: Prisma.DbNull } });
-        await this.status.fire("quote", q.id, QuoteEvent.EXPIRE, { queryId: rfq.queryId });
+      // Cancel reminders EARLY — before any dispatch — so a comms throw can't skip it.
+      await this.scheduled.cancel("RFQ", rfqId, "rfq.reminder");
 
+      const FF_Name = rfq.freightForwarder?.companyName ?? "";
+
+      // FF expiry email ONCE per RFQ (EMAIL-only ⇒ only the email template fires), isolated.
+      try {
         await this.dispatcher.dispatch("rfq.expiry", {
           scope: { entityType: "QUERY", entityId: rfq.queryId },
-          tokens: {
-            RFQ_Number: rfq.rfqNumber,
-            FF_Name: rfq.freightForwarder?.companyName ?? "",
-            Leg_Name: q.leg.legCode,
-          },
-          recipients: {
-            EMAIL: rfq.freightForwarder?.email ? [rfq.freightForwarder.email] : [],
-            IN_APP: execIds,
-          },
+          tokens: { RFQ_Number: rfq.rfqNumber, FF_Name },
+          recipients: { EMAIL: rfq.freightForwarder?.email ? [rfq.freightForwarder.email] : [] },
           tenantId: rfq.tenantId,
         });
+      } catch (err) {
+        this.logger.error(`onExpiry FF email failed for rfq ${rfqId}`, err as Error);
       }
 
-      // no more reminders once the window closed
-      await this.scheduled.cancel("RFQ", p.entityId, "rfq.reminder");
+      // Each expired quote is processed independently — one leg's failure won't skip the rest.
+      for (const q of openQuotes) {
+        try {
+          // discard the unsubmitted draft (permanent, spec S8/E3), then fire EXPIRE (the one door, after the write)
+          await this.prisma.quote.update({ where: { id: q.id }, data: { draftJson: Prisma.DbNull } });
+          await this.status.fire("quote", q.id, QuoteEvent.EXPIRE, { queryId: rfq.queryId });
+
+          // Exec IN_APP notification per leg (IN_APP-only ⇒ only the in-app template fires).
+          await this.dispatcher.dispatch("rfq.expiry", {
+            scope: { entityType: "QUERY", entityId: rfq.queryId },
+            tokens: { RFQ_Number: rfq.rfqNumber, FF_Name, Leg_Name: q.leg.legCode },
+            recipients: { IN_APP: execIds },
+            tenantId: rfq.tenantId,
+          });
+        } catch (err) {
+          this.logger.error(`onExpiry quote ${q.id} failed for rfq ${rfqId}`, err as Error);
+        }
+      }
     } catch (err) {
-      this.logger.error(`onExpiry failed for rfq ${p.entityId}`, err as Error);
+      this.logger.error(`onExpiry failed for rfq ${rfqId}`, err as Error);
     }
   }
 }
