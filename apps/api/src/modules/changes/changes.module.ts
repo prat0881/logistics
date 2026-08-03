@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { RoutingModule } from "../routing/routing.module";
+import { StatusModule } from "../status/status.module";
 import { ImpactRegistry } from "./impact.registry";
 import { ImpactClassifier } from "./impact.classifier";
 import { ScopeResolver } from "./scope.resolver";
@@ -11,7 +12,9 @@ import { PrismaChangeLog } from "./prisma-change-log";
 import { ChangeLogPolicy } from "./change-log-policy";
 
 @Module({
-  imports: [RoutingModule],
+  // StatusModule exports StatusService (the "one door" for status changes) for the change-order
+  // saga's INVALIDATE/REOPEN fires. StatusModule imports nothing back, so no cycle.
+  imports: [RoutingModule, StatusModule],
   providers: [
     ImpactRegistry,
     ImpactClassifier,

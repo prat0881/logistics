@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { OnEvent } from "@nestjs/event-emitter";
 import { PrismaService } from "../../prisma/prisma.service";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
 
@@ -36,6 +37,21 @@ export class RfqNotificationsService {
     private readonly prisma: PrismaService,
     private readonly dispatcher: NotificationDispatcher,
   ) {}
+
+  // SB6 change-order cascade: ChangeOrderStrategy.apply (in ChangesModule) emits this AFTER it
+  // has invalidated the submitted FF(s) and reopened the leg(s). It reaches us as an EVENT, not
+  // a direct method call, to break a DI cycle — RfqModule already imports ChangesModule (for
+  // ImpactRegistry), so injecting this service into that strategy would be circular. The emit is
+  // awaited (emitAsync), so this compose-&-log completes before the saga's apply() returns. The
+  // payload is structurally ChangeOrderReopenedEvent; typed inline to avoid a rfq→changes import.
+  @OnEvent("changeorder.leg.reopened")
+  async onLegReopened(payload: {
+    queryId: string;
+    reason: string;
+    perFf: LegReopenedFfGroup[];
+  }): Promise<void> {
+    await this.legReopened(payload.queryId, payload.reason, payload.perFf);
+  }
 
   async legReopened(queryId: string, reason: string, perFf: LegReopenedFfGroup[]): Promise<void> {
     if (perFf.length === 0) return;
