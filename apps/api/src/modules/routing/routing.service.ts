@@ -92,4 +92,25 @@ export class RoutingService {
     const rows = await client.legCargo.findMany({ where: { cargoItemId: cargoId }, select: { legId: true } });
     return rows.map((r) => r.legId);
   }
+
+  // The legs using a point as either endpoint — ImpactClassifier's point→leg fan-out (Task 2).
+  async legsUsingPoint(pointId: string, client: Db = this.prisma): Promise<string[]> {
+    const rows = await client.leg.findMany({
+      where: { OR: [{ originPointId: pointId }, { destinationPointId: pointId }] },
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
+  }
+
+  // All legs of a query — ImpactClassifier's query→legs fan-out for query-wide fields (Task 2).
+  async legsOfQuery(queryId: string, client: Db = this.prisma): Promise<string[]> {
+    const rows = await client.leg.findMany({ where: { queryId }, select: { id: true } });
+    return rows.map((r) => r.id);
+  }
+
+  // The leg a quote belongs to — ImpactClassifier's quote→leg fan-out (Task 2).
+  async legOfQuote(quoteId: string, client: Db = this.prisma): Promise<string | null> {
+    const q = await client.quote.findUnique({ where: { id: quoteId }, select: { legId: true } });
+    return q?.legId ?? null;
+  }
 }
