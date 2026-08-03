@@ -535,8 +535,6 @@ model Query {
   quotes    Quote[]
 
   notifications Notification[]
-  escalations   Escalation[]
-  emailLogs     EmailLog[]
 
   @@index([tenantId])
   @@index([clientId])
@@ -703,26 +701,6 @@ enum MessageStatus {
   FAILED
 }
 
-enum NotificationType {
-  ESCALATION
-}
-
-enum EscalationTier {
-  T30M
-  T2H
-  T6H
-}
-
-enum EmailTemplate {
-  FOLLOW_UP
-  ACKNOWLEDGEMENT
-  ESCALATION
-}
-
-enum EmailStatus {
-  LOGGED
-}
-
 model Notification {
   id              String    @id @default(uuid()) @db.Uuid
   tenantId        String?   @db.Uuid
@@ -738,38 +716,6 @@ model Notification {
 
   @@index([recipientUserId, readAt])
   @@index([recipientUserId, createdAt])
-}
-
-model Escalation {
-  id            String         @id @default(uuid()) @db.Uuid
-  tenantId      String?        @db.Uuid
-  queryId       String         @db.Uuid
-  query         Query          @relation(fields: [queryId], references: [id], onDelete: Cascade)
-  tier          EscalationTier
-  recipientRole Role
-  dueAt         DateTime
-  firedAt       DateTime?
-  cancelledAt   DateTime?
-  createdAt     DateTime       @default(now())
-  @@unique([queryId, tier])
-  @@index([firedAt, cancelledAt, dueAt])
-}
-
-model EmailLog {
-  id            String        @id @default(uuid()) @db.Uuid
-  tenantId      String?       @db.Uuid
-  queryId       String        @db.Uuid
-  query         Query         @relation(fields: [queryId], references: [id], onDelete: Cascade)
-  template      EmailTemplate
-  fromAddress   String
-  toAddress     String?
-  subject       String
-  bodyRendered  String
-  tokens        Json
-  composedById  String?       @db.Uuid
-  status        EmailStatus   @default(LOGGED)
-  createdAt     DateTime      @default(now())
-  @@index([queryId, createdAt])
 }
 
 model MessageTemplate {
