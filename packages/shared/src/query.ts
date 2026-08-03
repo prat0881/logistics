@@ -281,7 +281,6 @@ export const queryListQuerySchema = z.object({
         message: `freightMode must be a single or comma-separated list of: ${FREIGHT_MODES.join(", ")}`,
       },
     ),       // single value or CSV, each token validated against FREIGHT_MODES
-  country: z.string().trim().min(1).optional(),
   dateField: z.enum(["queryDate", "updatedAt"]).optional(),
   dateFrom: z.string().datetime({ offset: true }).optional(),
   dateTo: z.string().datetime({ offset: true }).optional(),

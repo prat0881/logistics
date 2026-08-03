@@ -21,6 +21,7 @@ describe("GET /queries list (e2e)", () => {
   let clientId: string;
   let authCookie: string;
   let assignedUserId: string;
+  let q2Id: string;
 
   // UUID sub — lands in @db.Uuid assignedUserId column without P2023
   const EXEC_ID = "22222222-2222-2222-2222-222222222222";
@@ -80,7 +81,7 @@ describe("GET /queries list (e2e)", () => {
         assignedUserId,
       })
       .expect(201);
-    const q2Id = resQ2.body.id as string;
+    q2Id = resQ2.body.id as string;
 
     // Create PICKUP and SEAPORT points for Q2
     const pu2 = await prisma.point.create({
@@ -150,6 +151,22 @@ describe("GET /queries list (e2e)", () => {
       .set("Cookie", authCookie)
       .expect(200);
     expect(res.body.items.some((r: { contactName: string | null }) => r.contactName === "Alice")).toBe(true);
+  });
+
+  it("S3.2: q matches PICKUP/DELIVERY point country (contains, case-insensitive)", async () => {
+    const res = await request(app.getHttpServer())
+      .get("/api/queries?q=in&pageSize=100")
+      .set("Cookie", authCookie)
+      .expect(200);
+    expect(res.body.items.some((r: { id: string }) => r.id === q2Id)).toBe(true);
+  });
+
+  it("S3.2: the standalone country param is gone (folded into q, so it no longer filters)", async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries?q=${PFX}&country=ZZ`)
+      .set("Cookie", authCookie)
+      .expect(200);
+    expect(res.body.total).toBe(3);
   });
 
   it("filters by priority and by derived freightMode", async () => {
