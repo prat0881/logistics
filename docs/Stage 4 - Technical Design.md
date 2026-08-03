@@ -46,7 +46,7 @@ RFQs distributed **per leg** (D1) · FFs interact via a **secure per-FF link →
 | S4-T2 | **FF Portal is a separate, unauthenticated route tree** (`/ff/rfq/:token`, path-based — no subdomain, O-S4-1) with its own minimal shell. | §8.1, §9.5. No app chrome, no session — data isolation by construction. |
 | S4-T3 | **Isomorphic chargeable-weight & quote-totals engine** in `packages/shared`. | §6. Mirrors the route-validation engine: one source of truth, client + server. |
 | S4-T4 | **PDF generation via `pdfkit`**, server-side streamed. | §8.4. Mirrors the `exceljs` streaming pattern (Stage 3 §8.6). |
-| S4-T5 | **RFQ reminder/expiry scheduler reuses `@nestjs/schedule` cron-poll** + `RfqReminder` rows. | §8.2. Mirrors the Escalation model (Stage 3 §8.2); no Redis/BullMQ. |
+| S4-T5 | **RFQ reminder/expiry scheduler reuses `@nestjs/schedule` cron-poll** + `RfqReminder` rows. | §8.2. Mirrors the Escalation model (Stage 3 §8.2); no Redis/BullMQ. **Delivered (SB5) generalized:** shipped as one generic `ScheduledEvent` table keyed by `(entityType, entityId, eventKey, tier)`, not an RFQ-only `RfqReminder` — Stage-3's `Escalation` was folded into the same table (`retire_legacy_comms` migration). See §4.2/§8.2. |
 | S4-T6 | **Density & chargeable weight are per-quote, not per-cargo-row.** | §4.3 — corrects the Stage 3 `CargoItem` columns, which cannot hold per-FF values. |
 
 ### 1.4 Sub-build sequence (B1)
@@ -54,7 +54,7 @@ RFQs distributed **per leg** (D1) · FFs interact via a **secure per-FF link →
 2. **RFQ engine + status/quote machines** — data model, RFQ mint/amend, token, `status`/`changes` contributions.
 3. **Internal RFQ workspace** — Query Workspace hub + stage rail, leg panels, eligibility filtering, FF selection, Distribute (leg-wise + Distribute All), manifest freeze.
 4. **FF Portal + quoting** — token access, scoped route diagram, density/chargeable weight, mode-driven quotation, transit plan, draft/preview/PDF/submit.
-5. **Notifications + deadline/reminder scheduler** — compose-&-log templates, `RfqReminder` cron, expiry sweep.
+5. **Notifications + deadline/reminder scheduler** — compose-&-log templates, `RfqReminder` cron, expiry sweep. **Delivered** — see §4.2/§8.2/§8.3 change-notes for the generalized as-built shape (a reusable Comms + Scheduler framework, not RFQ-only).
 6. **Change-order cascade** — scope resolver, impact preview, invalidate/reopen saga, re-distribute, `ChangeLog`.
 
 ---
@@ -72,8 +72,9 @@ Stage 4 arrives as **new modules that depend on Stage-3 modules through their se
 | `quotes` | **Quote** capture: density lines, charge lines, trucking, warehouse, transit, submission | `QuotesService` |
 | *(contrib)* `status` | Stage-4 **leg forward edges** + **Quote machine** + query-rollup extension | `StatusRegistry.contribute(…)` |
 | *(contrib)* `changes` | **ScopeResolver** override + **ChangeOrder** strategy + `ChangeLog` | `scope.resolver`, `ChangeOrderStrategy` |
-| *(reuse)* `emails` | FF-facing templates (compose-&-log) | `EmailsService` |
-| *(reuse)* `notifications` | quote-received / expiry / reopened in-app feed | `NotificationsService` |
+| *(new, generalized — SB5)* `comms` | **cross-stage** templates + dispatch + scheduling (see §4.2/§8.2/§8.3) | `MessageTemplateService`, `NotificationDispatcher`, `ScheduledEventService`+`ScheduledEventScheduler`, `CommsSettingsService` |
+| *(reuse)* `emails` | FF-facing templates (compose-&-log) | `EmailsService` — **SB5: now a thin facade** over `comms`' `NotificationDispatcher` for the Stage-3 query-level follow-up/ack flows; `list()` reads `MessageLog` (`EmailLog` dropped) |
+| *(reuse)* `notifications` | quote-received / expiry / reopened in-app feed | `NotificationsService` — **SB5: write path superseded** by `NotificationDispatcher` (writes `Notification` directly); the read side (list/unread-count/mark-read for the bell) is unchanged |
 | *(reuse)* `files` | MSDS read-through to the portal | `FilesService` |
 | *(reuse)* `config` | fixed density factors (seed), currency list | `ConfigService` |
 
@@ -115,9 +116,10 @@ Query ──▶ Rfq (one per FF per query) ──ffId──▶ FreightForwarder
              │       ├──▶ TruckingCharge        (Road blocks: one charge + remarks)
              │       ├──▶ WarehouseStagingLine  (per warehouse endpoint: preset + custom)
              │       └──▶ TransitPlan (1:1)
-             └──▶ RfqReminder (T-36/24/12/6/2h)
+             └──▶ ScheduledEvent × 2 (generic timer; entityType="RFQ" — rfq.reminder tiers T36H/24H/12H/6H/2H + rfq.expiry tier DEADLINE)
 ChangeLog ▶ (polymorphic: entity + id + queryId + reason + affected scope)
 ```
+> **Delivered (SB5):** `RfqReminder` was never built as its own table — reminders/expiry ship on the generic `ScheduledEvent` (§4.2), the **one** timer table shared by every stage (Stage-3's `Escalation` was folded into it too). Likewise `EmailLog` (Stage 3 §4.2) shipped as the generic `MessageLog`, and templates are DB-backed (`MessageTemplate`) rather than hardcoded strings — see the new **`comms`** block in §4.2 and the §8.2/§8.3 change-notes.
 
 ### 4.2 New entities by module
 Every table carries `id` (uuid), nullable `tenantId`, `createdAt`/`updatedAt` (Stage 3 §4.2 convention). `ᵁ`=unique, `ᶠᵏ`=foreign key.
@@ -131,7 +133,16 @@ Every table carries `id` (uuid), nullable `tenantId`, `createdAt`/`updatedAt` (S
 | Entity | Key columns | Notes |
 |---|---|---|
 | **Rfq** | queryId ᶠᵏ, freightForwarderId ᶠᵏ, **rfqNumber** ᵁ (`YAL[YY]-[NNNN]-RFQ[NNN]`), **accessTokenHash** ᵁ, submissionDeadline, incoterms (snapshot), **currency**?, **quoteValidityUntil**? | **unique(queryId, freightForwarderId)** enforces D3 (one RFQ per FF per query). `currency`+`validity` are RFQ-level (FF-entered once, shared across legs). Deadline set once at first distribute (spec S6); reset only on change-order re-distribute. |
-| **RfqReminder** | rfqId ᶠᵏ, **tier** (T36H·T24H·T12H·T6H·T2H), dueAt, firedAt?, cancelledAt? | Mirrors `Escalation`. Cron fires *due & unfired & not cancelled*; all cancelled on submit (spec S7). |
+| **RfqReminder** *(as designed — see note)* | rfqId ᶠᵏ, **tier** (T36H·T24H·T12H·T6H·T2H), dueAt, firedAt?, cancelledAt? | Mirrors `Escalation`. Cron fires *due & unfired & not cancelled*; all cancelled on submit (spec S7). **Delivered differently (SB5):** shipped as the generic **`ScheduledEvent`** (module `comms`, below) — `entityType="RFQ"`/`entityId=rfqId` in place of a dedicated FK, so the same table serves every stage's timers. The `tier` shape carried over almost unchanged (still a free-text string, still `T36H`-style default values, now config-driven via `CommsSettingsService`). |
+
+**`comms`** *(new, generalized — delivered SB5; the original design speculated the Stage-3 `emails`/`notifications` modules would just be reused as-is)*
+| Entity | Key columns | Notes |
+|---|---|---|
+| **MessageTemplate** | **key** ᵁ (PK slug), eventKey, channel (`IN_APP`\|`EMAIL`), subject?, body, active | `@@unique([eventKey, channel])`. DB-backed, not hardcoded template strings — `MessageTemplateService.lookup(eventKey, channel)` reads the active row. Seeded create-only at migration time; edited via DB until the deferred admin UI (§13/§17). |
+| **MessageLog** | entityType, entityId, eventKey, channel, templateKey, fromAddress, toAddress?, subject?, bodyRendered, tokens (JSONB), status (`LOGGED`·`SENT`·`FAILED`, default `LOGGED`) | Generalizes `EmailLog` (Stage 3 §4.2) to any entity, not just `Query` — `@@index([entityType, entityId, createdAt])`. Stays `LOGGED` until a live `MessageTransport` lands (§8.3). |
+| **ScheduledEvent** | entityType, entityId, eventKey, **tier** (free text), dueAt, firedAt?, cancelledAt?, payload? | The **one** generic timer table for every stage — generalizes both this design's speculative `RfqReminder` *and* Stage-3's `Escalation` (both retired via the `retire_legacy_comms` migration, backfilled first). `@@unique([entityType,entityId,eventKey,tier])` (idempotent re-schedule); `ScheduledEventService.runDue` claims a due row (CAS on `firedAt`) before emitting its `eventKey` via `EventEmitter2`, so a racing cron tick can't double-fire. |
+
+`Notification` (inherited from Stage 3 §4.2) was **generalized in place** (no new table): its narrow `type NotificationType` enum became a free `type String` (any `comms` event key), and it gained optional `entityType`/`entityId` alongside the existing `queryId` — so one row shape represents a notification about any entity, not just queries.
 
 **`quotes`**
 | Entity | Key columns | Notes |
@@ -188,7 +199,7 @@ Same as Stage 3 §5.1: `/api` prefix, Zod DTOs from `packages/shared`, RBAC guar
 | **RFQ (internal)** | `GET /queries/:id/rfqs` · `GET /rfqs/:id/pdf` | Executive views/downloads. |
 | **Portal** *(token-guarded, under `/ff/*`)* | `GET /ff/rfq/:token` (resolve scope) · `PATCH /ff/rfq/:token/quotes/:legId` (draft save, no validation) · `POST /ff/rfq/:token/quotes/:legId/submit` · `GET /ff/rfq/:token/pdf` | The whole `/ff/*` prefix uses the `RfqTokenGuard` only (never JWT/RBAC). Strictly scoped to the token's legs (D4). Submit runs §10.4 (spec) via the §6 engine. |
 | **Change-order** | `POST /queries/:id/changes/preview` · `POST /queries/:id/changes/apply` (body: patch + **reason**) | Preview = impact without applying; apply = the cascade saga (§7.2). Ordinary edits still flow through `PATCH /queries/:id/...` (Change Mediator decides free vs change-order). |
-| **Notifications** | *(reuse Stage 3)* | + quote-received / expiry / reopened event types. |
+| **Notifications** | *(reuse Stage 3)* | + quote-received / expiry / reopened event types. **Delivered (SB5):** the new event types dispatch via `NotificationDispatcher.dispatch(eventKey,…)`, not a bespoke per-event write path; `reopened` (change-order) is still SB6. |
 
 ### 5.3 Error / validation envelope
 Unchanged — `Finding[]` (`{ rule, severity, scope, message }`). The §6 quote engine emits the **same shape** as the route engine, so the portal and workspace render findings through one code path.
@@ -286,8 +297,12 @@ The resolver names **only the touched leg's** quotes; `reopen` fires only for th
 ### 8.2 Reminder & expiry scheduler
 Reuse `@nestjs/schedule` cron-poll (every minute, single replica — Stage 3 §8.2). On distribute → create `RfqReminder` rows (dueAt = deadline − 36/24/12/6/2h). Cron picks *due & unfired & not cancelled* → composes-&-logs the reminder + writes a `Notification`. On submit → cancel remaining. A separate **expiry sweep**: at `submissionDeadline`, disable submit, **discard the unsubmitted draft** (permanent, spec S8/E3), fire `quote → EXPIRED`, notify FF + Executive. All timing is **UTC-instant offset math — timezone-agnostic**, so no DST/zone edge cases in firing (O-S4-5).
 
+> **Delivered (SB5) — generalized, same behavior:** `ScheduledEventScheduler` runs the identical `@nestjs/schedule` `EVERY_MINUTE` cron (single replica, unchanged) → `ScheduledEventService.runDue()`, which claims each due row (a CAS `updateMany` on `firedAt` — a racing tick can't double-fire) before `EventEmitter2.emitAsync(eventKey, {entityType, entityId, tier})`. On distribute, `RfqService` calls `scheduled.schedule("RFQ", rfqId, "rfq.reminder", …)` once per configured offset hour (default **36/24/12/6/2**, tier `T{h}H` — now `CommsSettingsService.rfqReminderOffsets()`, an `AppSetting`, not a hardcoded constant) plus one `rfq.expiry` event (tier `DEADLINE`) at the deadline — both anchored to the **`Rfq`**, not the query. `RfqScheduleListener` holds the actual reminder/expiry logic: `@OnEvent("rfq.reminder")` composes the FF email via the dispatcher; `@OnEvent("rfq.expiry")` discards every still-open quote's draft, fires `QuoteEvent.EXPIRE` per leg (leg/query rollup follow for free — query rolls up **`NO_RESPONSE`** when every quote on every leg has expired), notifies the FF once (email) + Executive per leg (in-app), and cancels any remaining reminders (cancelled *before* the notify dispatch, so a comms failure can't leave a stale reminder behind). **The one structural difference from the original design:** there is no RFQ-only `RfqReminder` table — reminders/expiry are just the first tenant of the generic `ScheduledEvent` (§4.2), so a later stage's timers need no new migration. Stage-3's `escalations` module was refactored onto the same `ScheduledEventService`/`NotificationDispatcher` pair (tiers **T30M/T2H/T6H**, unchanged fan-out to Executive/Manager/Administrator) rather than kept on its own bespoke cron.
+
 ### 8.3 Emails — compose-&-log (B2)
 Reuse `EmailsService`/`EmailLog`. New templates (spec §12): RFQ Invitation, RFQ Updated, Reminder ×5, Expiry, Submission Acknowledgement. Rendered with dynamic tokens, `status = LOGGED`, **not transmitted**. The secure link is read from the logged row for testing. **Live send is a transport swap later**, not a redesign (the token/link model is already final). Timestamps in templates (esp. the T-2h "exact cutoff") render in the **org timezone + explicit IANA label** *and* as a duration, via Stage-3 `timezone.ts` helpers (O-S4-5, Option A); the FF's personalised local view lives in the portal countdown.
+
+> **Delivered (SB5) — generalized, same compose-&-log behavior:** templates are now **DB-backed rows** (`MessageTemplate`, keyed `(eventKey, channel)`) instead of hardcoded template strings — seeded create-only (`rfq.invitation`/`rfq.updated`/`rfq.reminder`/`rfq.expiry`/`rfq.submission_ack`/`quote.received`, plus the Stage-3 `query.follow_up`/`query.acknowledgement`/`query.escalation` migrated onto the same catalog), rendered by a pure `renderTemplate(tpl, tokens)` (`{{Token}}` substitution, `packages/shared/src/comms.ts`). `NotificationDispatcher.dispatch(eventKey, {scope, tokens, recipients})` is the **one** fan-out call for both channels — for `EMAIL` recipients it writes a `MessageLog` row (`status: LOGGED`) per recipient, then calls a pluggable `MessageTransport.send(messageLogId)`; the shipped `LogTransport` is a **no-op** — compose-&-log, nothing transmitted, exactly as designed. `EmailsService` survives as a thin facade over the dispatcher for the Stage-3 query-level follow-up/acknowledgement flows; its `list()` now reads `MessageLog` (`EmailLog` was backfilled then dropped, `retire_legacy_comms` migration). **Live send is still a pure transport swap** — implement `MessageTransport` with a real `SmtpTransport` and bind it in place of `LogTransport`; no redesign needed, matching the original plan. **Not yet built (deferred, Design §13/§17):** the admin UI for editing templates + SMTP settings — template edits are DB-only for now.
 
 ### 8.4 PDF generation
 `RfqPdfService` streams via `pdfkit` (mirrors `exceljs`, Stage 3 §8.6): the full RFQ document (leg details + cargo manifest + any entered pricing), available throughout the RFQ's life to both the Executive (`/rfqs/:id/pdf`) and the FF (`/ff/rfq/:token/pdf`).
@@ -362,7 +377,7 @@ The §6 quote engine runs live in the portal (chargeable weight, Grand Total, su
 | Change handling | **change-order cascade** realized (RfqDefining + Structural) | further-stage scopes (margin, award, PO) |
 | Quote comparison / award / requote | out | **Stage 5** |
 | Currency | stored as entered (FF's currency) | USD conversion at Stage 5 |
-| Emails | FF-facing **compose-&-log** | **live send** |
+| Emails | FF-facing **compose-&-log** (SB5: DB-backed templates + generic dispatcher, §8.3) | **live send** (`SmtpTransport`) + the **template/SMTP admin UI** |
 | Logging | `StatusTransition` + `ChangeLog` | full audit trail |
 | Deadline | 48h default + reminders + expiry | extension / post-expiry FF add |
 | FF Master | lookup + eligibility (this build) | onboarding/maintenance workflow (Admin) |
@@ -373,7 +388,7 @@ The §6 quote engine runs live in the portal (chargeable weight, Grand Total, su
 - **New public surface (O-S4-1 — resolved):** the portal is **path-based on the same origin** — `/ff/rfq/:token` (SPA) + `/ff/rfq/:token/*` (API, token-guarded, §8.1). **No subdomain, served over HTTP for now** (no domain yet). One SPA build with a code-split `/ff/rfq/*` route tree + distinct shell (promotable to a separate bundle or a `rfq.<domain>` subdomain later with **zero API change** — the `/ff/*` guard boundary is stable). Rate-limit `/ff/*` in-app.
 - **Go-live gate (carried from §8.1):** **TLS is mandatory before live email + real external FFs.** Whenever a domain/edge is introduced, front `/ff/*` with HTTPS; this lands together with the B2 live-send swap. Until then, no real token leaves the system (compose-&-log).
 - **Migrations:** new tables + **drop** the four superseded null columns (O-S4-3, non-destructive); `prisma migrate deploy` before cutover (Stage 3 §11.6) is unchanged.
-- **Scheduler:** single-replica assumption holds (reminders fire once); multi-replica later needs a leader-lock (Stage 3 §11.8).
+- **Scheduler:** single-replica assumption holds (reminders fire once); multi-replica later needs a leader-lock (Stage 3 §11.8). **Delivered (SB5):** the generic `ScheduledEventScheduler` — same single-replica assumption, same deferred leader-lock, now shared by every stage's timers instead of an RFQ-only cron.
 
 ---
 
@@ -398,6 +413,8 @@ The §6 quote engine runs live in the portal (chargeable weight, Grand Total, su
 - **Manifest freeze** — the leg's cargo captured onto a `Quote` at distribute so the FF never quotes stale cargo; re-frozen on change-order re-distribute.
 - **Change-order** — the cascade that reopens a leg (RfqDefining/Structural edit post-RFQ): impact preview → reason → invalidate/refresh → `reopen` → re-distribute (spec §11).
 - **RFQ access token** — the opaque, hashed, scoped credential behind the FF's no-login link (§8.1).
+- **`ScheduledEvent`** *(delivered SB5)* — the one generic timer table shared by every stage (`entityType`/`entityId`/`eventKey`/`tier`/`dueAt`); RFQ reminders/expiry are its first tenant, alongside the migrated Stage-3 `Escalation` (§4.2, §8.2).
+- **`NotificationDispatcher`** *(delivered SB5)* — the one fan-out call (`dispatch(eventKey, {scope, tokens, recipients})`) that writes `Notification` (`IN_APP`) and/or `MessageLog` (`EMAIL`, via a pluggable `MessageTransport`) from a DB-backed `MessageTemplate`; the shipped `LogTransport` is compose-&-log only (§8.2, §8.3).
 
 ---
 
