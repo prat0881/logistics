@@ -23,6 +23,7 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 const PFX = "chg-order-apply-";
 const CODE = `${PFX}query`; // single-leg cargo scenario
 const CODE2 = `${PFX}query2`; // query-wide (incoterms) multi-leg scenario
+const CODE3 = `${PFX}query3`; // minimal-blast-radius: 1 distributed + 1 DRAFT leg
 const FF_PREFIX = `FF-${PFX}`;
 const FF_A_CODE = `${FF_PREFIX}A-QUOTED`;
 const FF_B_CODE = `${FF_PREFIX}B-SENT`;
@@ -39,6 +40,7 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
   const actorId = randomUUID(); // soft reference (no FK) — same convention as Query.assignedUserId
   const execId = randomUUID();
   const execId2 = randomUUID();
+  const execId3 = randomUUID();
 
   // Self-contained cleanup, FK-safe: quotes first (cascades their pricing children incl.
   // QuoteCargoLine, and frees the CargoItem/FF from Restrict FKs) → notification/messageLog/
@@ -58,6 +60,7 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
   const cleanup = async () => {
     await cleanupQuery(CODE, execId);
     await cleanupQuery(CODE2, execId2);
+    await cleanupQuery(CODE3, execId3);
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: FF_PREFIX } } });
   };
 
@@ -407,5 +410,88 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       });
       expect(msg).toBeNull();
     }
+  });
+
+  it("reopens ONLY the distributed leg — a fanned-in DRAFT leg is left untouched (minimal blast radius)", async () => {
+    // Regression for the whole-branch-review Critical: the classifier fans a query-wide edit to
+    // EVERY leg of the query (incl. undistributed ones), but the leg machine only has a REOPEN
+    // edge from RFQ_SENT/PARTIALLY_QUOTED/FULLY_QUOTED. Reopening a DRAFT scope leg → either an
+    // IllegalTransitionError (500, AFTER tx1 committed) or a silent regression. The saga must
+    // reopen only the legs that actually carry a live quote.
+    //
+    // Mutation guard: reverting the saga to reopen the full classifier fan (`legIds`) makes this
+    // test fail — the DRAFT leg's REOPEN throws (act line rejects) AND affectedScope would list it.
+    const query = await prisma.query.create({
+      data: { queryCode: CODE3, assignedUserId: execId3, incoterms: "FOB" },
+    });
+    const cargo = await prisma.cargoItem.create({
+      data: {
+        queryId: query.id, rowIndex: 0, poReference: "PO-D", productName: "Widget",
+        packageType: "BOX", qty: 1, dimL: 10, dimW: 10, dimH: 10, grossWt: OLD_GROSS_WT, isDangerous: false,
+      },
+    });
+    // The distributed leg (has a live QUOTED quote) — the ONLY leg that should reopen.
+    const distLeg = await prisma.leg.create({
+      data: {
+        queryId: query.id, legCode: "DISTLEG", mode: "AIR", status: "FULLY_QUOTED",
+        legCargo: { create: { cargoItemId: cargo.id } },
+      },
+    });
+    // The undistributed leg — fanned into scope by the query-wide edit, but carries no quote and
+    // must NOT be reopened (it has no REOPEN edge from DRAFT).
+    const draftLeg = await prisma.leg.create({
+      data: { queryId: query.id, legCode: "DRAFTLEG", mode: "AIR", status: "DRAFT" },
+    });
+
+    const ffA = await mkFf(`${FF_PREFIX}D-A-QUOTED`);
+    const rfqA = await prisma.rfq.create({
+      data: {
+        queryId: query.id, freightForwarderId: ffA.id, rfqNumber: `${CODE3}-RFQ001`,
+        accessTokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
+        submissionDeadline: new Date(Date.now() + 86400000), currency: "USD",
+      },
+    });
+    const quoteA = await prisma.quote.create({
+      data: {
+        queryId: query.id, legId: distLeg.id, freightForwarderId: ffA.id, rfqId: rfqA.id,
+        status: QuoteStatus.QUOTED, grandTotal: 3000,
+        manifestSnapshot: { legId: distLeg.id, incoterms: "FOB" } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // --- act: query-wide incoterms edit → classifier fans to BOTH legs; only distLeg is live ---
+    const res = await mediator.apply(
+      { entity: "query", id: query.id, field: "incoterms", queryId: query.id, actorId, reason: "incoterms renegotiated" },
+      async (tx) => {
+        await tx.query.update({ where: { id: query.id }, data: { incoterms: "CIF" } });
+      },
+    );
+    expect(res.path).toBe("change-order"); // no throw — the DRAFT leg was skipped, not reopened
+
+    // --- assert: the edit applied ---
+    const queryAfter = await prisma.query.findUnique({ where: { id: query.id } });
+    expect(queryAfter?.incoterms).toBe("CIF");
+
+    // --- assert: the distributed leg reopened; its quote invalidated ---
+    const distAfter = await prisma.leg.findUnique({ where: { id: distLeg.id } });
+    expect(distAfter?.status).toBe("READY_FOR_RFQ");
+    const quoteAAfter = await prisma.quote.findUnique({ where: { id: quoteA.id } });
+    expect(quoteAAfter?.status).toBe(QuoteStatus.INVALID);
+
+    // --- assert: the DRAFT leg is UNTOUCHED (not reopened, not regressed) ---
+    const draftAfter = await prisma.leg.findUnique({ where: { id: draftLeg.id } });
+    expect(draftAfter?.status).toBe("DRAFT");
+
+    // --- assert: the ChangeLog records ONLY the distributed leg (minimal blast radius) ---
+    const logs = await prisma.changeLog.findMany({ where: { queryId: query.id, changeType: "change-order" } });
+    expect(logs).toHaveLength(1);
+    const payload = logs[0].payload as { affectedScope: { type: string; id: string }[] };
+    expect(payload.affectedScope).toEqual([{ type: "leg", id: distLeg.id }]); // NOT the draft leg
+
+    // --- assert: the invalidated FF was notified (best-effort notify ran to completion) ---
+    const msg = await prisma.messageLog.findFirst({
+      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.leg.reopened", toAddress: ffA.email },
+    });
+    expect(msg).not.toBeNull();
   });
 });

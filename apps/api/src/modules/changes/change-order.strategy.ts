@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import {
   LegEvent,
@@ -16,7 +16,7 @@ import { StatusService } from "../status/status.service";
 import { buildManifestSnapshot } from "../rfq/manifest";
 import { loadLegForRfq } from "../rfq/leg-context";
 
-// The reopen-notification event (design §15). `apply` emits it (awaited); the SB5-side
+// The reopen-notification event (design §15). `apply` emits it (best-effort); the SB5-side
 // RfqNotificationsService consumes it via @OnEvent. It is an EVENT rather than a direct call
 // on purpose: RfqModule already imports ChangesModule (for ImpactRegistry), so injecting the
 // RfqModule-owned notifier into this ChangesModule provider would form a DI cycle. EventEmitter2
@@ -38,8 +38,19 @@ export interface ChangeOrderReopenedEvent {
 // `reason` is the real cascade, delegated to `apply` (§7): apply the edit + re-freeze the
 // PENDING manifests + snapshot the invalidated pricing + record — all in one tx — then fire
 // the quote INVALIDATE + leg REOPEN transitions (each owns its own tx), then notify.
+//
+// BLAST-RADIUS NOTE (§11.3, minimal): `decision.scope` is the classifier's FANNED scope — for a
+// query-wide edit that is EVERY leg of the query, for cargo/point every carrying/using leg,
+// regardless of distribution status. `downstreamWork` (which gates the fork) is correctly true if
+// ANY of those legs has a live quote, but the cascade itself must only touch the legs that
+// ACTUALLY carry a live (RFQ_SENT/QUOTED) quote — `legsWithLiveQuotes`. Reopening a fanned-but-
+// undistributed leg (DRAFT/AWARDED/…) has no REOPEN edge (→ IllegalTransitionError, after tx1 has
+// already committed) or silently regresses a READY_FOR_RFQ leg to DRAFT — so REOPEN and the
+// ChangeLog's affectedScope are both driven from `legsWithLiveQuotes`, never the raw fan.
 @Injectable()
 export class ChangeOrderStrategy {
+  private readonly logger = new Logger(ChangeOrderStrategy.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly status: StatusService,
@@ -56,7 +67,7 @@ export class ChangeOrderStrategy {
 
     const quotes = await this.prisma.quote.findMany({
       where: { legId: { in: legIds }, status: { in: [QuoteStatus.RFQ_SENT, QuoteStatus.QUOTED] } },
-      select: { id: true, freightForwarderId: true, status: true },
+      select: { id: true, freightForwarderId: true, legId: true, status: true },
     });
     const invalidating = quotes
       .filter((q) => q.status === QuoteStatus.QUOTED)
@@ -64,6 +75,10 @@ export class ChangeOrderStrategy {
     const refreshing = quotes
       .filter((q) => q.status === QuoteStatus.RFQ_SENT)
       .map((q) => ({ quoteId: q.id, freightForwarderId: q.freightForwarderId }));
+    // The MINIMAL blast radius (§11.3): only the legs that ACTUALLY carry a live quote — NOT the
+    // full classifier fan (`legIds`, which can include DRAFT/AWARDED legs with no REOPEN edge).
+    // This is the set that reopens (below and in apply) and that the ChangeLog records.
+    const legsWithLiveQuotes = [...new Set(quotes.map((q) => q.legId))];
 
     if (!req.reason) {
       return {
@@ -73,7 +88,7 @@ export class ChangeOrderStrategy {
         findings: [],
         needsConfirmation: true,
         preview: {
-          affectedLegs: legIds,
+          affectedLegs: legsWithLiveQuotes,
           invalidatingQuotes: invalidating,
           refreshingQuotes: refreshing,
           impactClass: decision.class,
@@ -81,19 +96,19 @@ export class ChangeOrderStrategy {
       };
     }
     // apply branch → Task 8
-    return this.apply(req, decision, uow, invalidating, refreshing);
+    return this.apply(req, decision, uow, legsWithLiveQuotes, invalidating, refreshing);
   }
 
   private async apply(
     req: ChangeRequest,
     decision: ImpactDecision,
     uow: UnitOfWork,
+    // The legs that actually carry a live quote (minimal blast radius) — the ONLY legs that
+    // reopen. A subset of decision.scope; excludes fanned-but-undistributed legs (see class note).
+    affectedLegs: string[],
     invalidating: { quoteId: string; freightForwarderId: string }[],
     refreshing: { quoteId: string; freightForwarderId: string }[],
   ): Promise<ChangeResult> {
-    const legIds = decision.scope
-      .filter((s): s is FindingScope & { id: string } => s.type === "leg" && s.id !== undefined)
-      .map((s) => s.id);
     const refreshingIds = refreshing.map((q) => q.quoteId);
 
     // (1) Snapshot the to-be-invalidated (QUOTED) pricing BEFORE any write — the durable
@@ -123,7 +138,9 @@ export class ChangeOrderStrategy {
         select: { incoterms: true },
       });
       const frozenAt = new Date();
-      for (const legId of legIds) {
+      // Only the distributed legs (`affectedLegs`) re-freeze — a fanned undistributed leg has no
+      // pending quote to refresh anyway; skipping it also avoids a pointless leg load.
+      for (const legId of affectedLegs) {
         // Reload from THIS tx so the snapshot reflects the just-applied edit (loadLegForRfq
         // accepts a tx client). Only the RFQ_SENT (refreshing) quotes on the leg re-freeze;
         // the QUOTED (invalidating) ones keep their old snapshot as history.
@@ -146,7 +163,8 @@ export class ChangeOrderStrategy {
           action: req.action ?? null,
           impactClass: decision.class,
           reason: req.reason,
-          affectedScope: decision.scope,
+          // The legs actually reopened (minimal blast radius), NOT the raw classifier fan.
+          affectedScope: affectedLegs.map((id) => ({ type: "leg", id })),
           invalidatedQuotes: invalidatedSnaps.map((q) => ({
             quoteId: q.id,
             freightForwarderId: q.freightForwarderId,
@@ -160,15 +178,15 @@ export class ChangeOrderStrategy {
     });
 
     // (3) AFTER tx1 commits — the status cascade, each fire in its own tx (§7, D7). Submitted
-    // quotes are invalidated (must re-quote); the leg(s) reopen for re-distribution. The
-    // QueryStatusProjector recomputes Query.status for free off `leg.status.changed`.
+    // quotes are invalidated (must re-quote); the distributed leg(s) reopen for re-distribution.
+    // The QueryStatusProjector recomputes Query.status for free off `leg.status.changed`.
     for (const q of invalidating) {
       await this.status.fire("quote", q.quoteId, QuoteEvent.INVALIDATE, {
         queryId: req.queryId,
         actorId: req.actorId,
       });
     }
-    for (const legId of legIds) {
+    for (const legId of affectedLegs) {
       await this.status.fire("leg", legId, LegEvent.REOPEN, {
         queryId: req.queryId,
         actorId: req.actorId,
@@ -176,9 +194,10 @@ export class ChangeOrderStrategy {
     }
 
     // (4) Notify each invalidated FF about their reopened leg(s) (§15). Grouped per FF from the
-    // pre-write snapshot (which carries legId). Awaited (emitAsync) so the compose-&-log lands
-    // before apply returns; pending (RFQ_SENT) FFs are refreshed silently, re-notified only at
-    // re-distribute (§11.4).
+    // pre-write snapshot (which carries legId). Best-effort: the cascade (edit + invalidate +
+    // reopen + record) is already durably committed, so a notify-handler failure must NOT bubble
+    // up as a 500 for an applied change — log and move on. Pending (RFQ_SENT) FFs are refreshed
+    // silently, re-notified only at re-distribute (§11.4).
     const legsByFf = new Map<string, Set<string>>();
     for (const s of invalidatedSnaps) {
       const legs = legsByFf.get(s.freightForwarderId) ?? new Set<string>();
@@ -190,7 +209,13 @@ export class ChangeOrderStrategy {
       legIds: [...legs],
     }));
     const event: ChangeOrderReopenedEvent = { queryId: req.queryId!, reason: req.reason ?? "", perFf };
-    await this.events.emitAsync("changeorder.leg.reopened", event);
+    try {
+      await this.events.emitAsync("changeorder.leg.reopened", event);
+    } catch (err) {
+      this.logger.warn(
+        `change-order reopen notification failed for query ${req.queryId} (cascade already applied): ${(err as Error).message}`,
+      );
+    }
 
     return { path: "change-order", class: decision.class, scope: decision.scope, findings: [] };
   }

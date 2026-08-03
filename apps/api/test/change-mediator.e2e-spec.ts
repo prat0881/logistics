@@ -82,7 +82,10 @@ describe("Change Mediator (integration)", () => {
     const uow = jest.fn(async () => {});
     // Valid-UUID-shaped synthetic id — Quote.legId is `@db.Uuid`, and ChangeOrderStrategy
     // (Task 7) now queries Prisma for real, so a non-UUID id like the old "leg-d" would
-    // fail the cast. No Leg/Quote row exists for this id, so the preview is empty.
+    // fail the cast. No Leg/Quote row exists for this id, so the preview is empty — including
+    // `affectedLegs`, which (Task 8, minimal blast radius §11.3) is the legs that ACTUALLY carry
+    // a live quote, NOT the raw classifier fan. downstreamWork is mocked here, so the fork fires
+    // with zero real quotes → affectedLegs is empty.
     const legId = "00000000-0000-4000-8000-000000000001";
     const res = await mediator.apply(
       { entity: "leg", id: legId, field: "originPointId", actorId: null },
@@ -91,7 +94,7 @@ describe("Change Mediator (integration)", () => {
     expect(res.path).toBe("change-order");
     expect(res.needsConfirmation).toBe(true);
     expect(res.preview).toEqual({
-      affectedLegs: [legId],
+      affectedLegs: [],
       invalidatingQuotes: [],
       refreshingQuotes: [],
       impactClass: "RfqDefining",
