@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { Prisma, Incoterms } from "@prisma/client";
 import {
   QuoteStatus,
@@ -15,6 +15,9 @@ import {
 import { PrismaService } from "../../prisma/prisma.service";
 import type { RequestUser } from "../auth/types";
 import { StatusService } from "../status/status.service";
+import { CommsSettingsService } from "../comms/comms-settings.service";
+import { ScheduledEventService } from "../comms/scheduled-event.service";
+import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
 import { RfqNumberService } from "./rfq-number.service";
 import { RfqTokenService } from "./rfq-token.service";
 import { loadLegForRfq, type LegRfqContext } from "./leg-context";
@@ -22,13 +25,16 @@ import { buildManifestSnapshot } from "./manifest";
 
 @Injectable()
 export class RfqService {
-  private readonly DEFAULT_DEADLINE_MS = 48 * 60 * 60 * 1000;
+  private readonly logger = new Logger(RfqService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly status: StatusService,
     private readonly rfqNumber: RfqNumberService,
     private readonly token: RfqTokenService,
+    private readonly commsSettings: CommsSettingsService,
+    private readonly scheduled: ScheduledEventService,
+    private readonly dispatcher: NotificationDispatcher,
   ) {}
 
   async setFfSelection(
@@ -99,7 +105,7 @@ export class RfqService {
     if (!query) throw new NotFoundException("Query not found");
 
     const legs = await this.prisma.leg.findMany({ where: { queryId }, select: { id: true }, orderBy: { legCode: "asc" } });
-    const deadline = this.resolveDeadline(input.submissionDeadline);
+    const deadline = await this.resolveDeadline(input.submissionDeadline);
 
     const ready: LegRfqContext[] = [];
     const skipped: { legId: string; reason: string }[] = [];
@@ -241,7 +247,7 @@ export class RfqService {
       throw new BadRequestException({ message: "Leg is not ready for distribution", codes: errors });
     }
 
-    const deadline = this.resolveDeadline(input.submissionDeadline);
+    const deadline = await this.resolveDeadline(input.submissionDeadline);
     return this.performDistribution(query, [ctx], deadline, user);
   }
 
@@ -272,7 +278,7 @@ export class RfqService {
     return errors;
   }
 
-  private resolveDeadline(override?: string): Date {
+  private async resolveDeadline(override?: string): Promise<Date> {
     if (override) {
       const d = new Date(override);
       if (Number.isNaN(d.getTime()) || d.getTime() <= Date.now()) {
@@ -280,7 +286,8 @@ export class RfqService {
       }
       return d;
     }
-    return new Date(Date.now() + this.DEFAULT_DEADLINE_MS);
+    const hours = await this.commsSettings.rfqDeadlineHours();
+    return new Date(Date.now() + hours * 60 * 60 * 1000);
   }
 
   private async performDistribution(
@@ -355,6 +362,61 @@ export class RfqService {
     }
     for (const legId of legFires) {
       await this.status.fire("leg", legId, LegEvent.SEND_RFQ, { queryId: query.id });
+    }
+
+    // ── comms fan-out (post-commit; compose-&-log) ──
+    const offsets = await this.commsSettings.rfqReminderOffsets();
+    const base = process.env.PORTAL_BASE_URL ?? "";
+    const deadlineIso = deadline.toISOString();
+    for (const entry of entries) {
+      try {
+        const ff = await this.prisma.freightForwarder.findUnique({
+          where: { id: entry.freightForwarderId },
+          select: { email: true },
+        });
+        const legCodes = await this.prisma.leg.findMany({
+          where: { id: { in: entry.legIds } },
+          select: { legCode: true },
+          orderBy: { legCode: "asc" },
+        });
+        const legNames = legCodes.map((l) => l.legCode).join(", ");
+
+        // reminders (future tiers only) + one expiry, anchored to the RFQ
+        await this.scheduled.schedule(
+          "RFQ", entry.rfqId, "rfq.reminder",
+          offsets.map((h) => ({ tier: `T${h}H`, dueAt: new Date(deadline.getTime() - h * 60 * 60 * 1000) })),
+          { tenantId: user.tenantId },
+        );
+        await this.scheduled.schedule(
+          "RFQ", entry.rfqId, "rfq.expiry",
+          [{ tier: "DEADLINE", dueAt: deadline }],
+          { tenantId: user.tenantId },
+        );
+
+        // invitation (fresh mint has the raw token) / updated (amend — no fresh link)
+        if (entry.minted && entry.accessToken) {
+          await this.dispatcher.dispatch("rfq.invitation", {
+            scope: { entityType: "QUERY", entityId: query.id },
+            tokens: {
+              RFQ_Number: entry.rfqNumber,
+              Leg_Names: legNames,
+              Deadline: deadlineIso,
+              Access_Link: `${base}/ff/rfq/${entry.accessToken}`,
+            },
+            recipients: { EMAIL: ff?.email ? [ff.email] : [] },
+            tenantId: user.tenantId,
+          });
+        } else {
+          await this.dispatcher.dispatch("rfq.updated", {
+            scope: { entityType: "QUERY", entityId: query.id },
+            tokens: { RFQ_Number: entry.rfqNumber, Leg_Names: legNames },
+            recipients: { EMAIL: ff?.email ? [ff.email] : [] },
+            tenantId: user.tenantId,
+          });
+        }
+      } catch (err) {
+        this.logger.error(`post-distribute comms failed for rfq ${entry.rfqId}`, err as Error);
+      }
     }
 
     return {

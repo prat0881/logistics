@@ -15,6 +15,7 @@ export * from "./legs";
 export * from "./route";
 export * from "./timezone";
 export * from "./notifications";
+export * from "./comms";
 export * from "./quote";
 export * from "./quote-engine";
 export * from "./ff-portal";

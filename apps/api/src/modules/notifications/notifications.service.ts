@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { NotificationType, type NotificationDto } from "@svyft/shared";
+import type { NotificationDto } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 
 @Injectable()
@@ -8,13 +8,18 @@ export class NotificationsService {
 
   async createMany(
     userIds: string[],
-    data: { type: NotificationType; queryId?: string; message: string; tenantId?: string | null },
+    data: { type: string; queryId?: string | null; entityType?: string | null; entityId?: string | null; message: string; tenantId?: string | null },
   ): Promise<void> {
     if (!userIds.length) return;
     await this.prisma.notification.createMany({
       data: userIds.map((recipientUserId) => ({
-        recipientUserId, type: data.type, queryId: data.queryId ?? null,
-        message: data.message, tenantId: data.tenantId ?? null,
+        recipientUserId,
+        type: data.type,
+        queryId: data.queryId ?? null,
+        entityType: data.entityType ?? null,
+        entityId: data.entityId ?? null,
+        message: data.message,
+        tenantId: data.tenantId ?? null,
       })),
     });
   }

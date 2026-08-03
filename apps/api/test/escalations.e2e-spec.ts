@@ -5,6 +5,8 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { EscalationsService } from "../src/modules/escalations/escalations.service";
+import { ScheduledEventService } from "../src/modules/comms/scheduled-event.service";
+import { seedReferenceData } from "../src/seed/reference-seed";
 
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? "test-access-secret";
 const PFX = "p7-esc-";
@@ -12,7 +14,8 @@ const PFX = "p7-esc-";
 describe("Escalations (e2e)", () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  let svc: EscalationsService;
+  let esc: EscalationsService;
+  let scheduled: ScheduledEventService;
   let queryId: string;
   let q2: string;
 
@@ -24,13 +27,17 @@ describe("Escalations (e2e)", () => {
     app.setGlobalPrefix("api");
     await app.init();
     prisma = moduleRef.get(PrismaService);
-    svc = app.get(EscalationsService);
+    esc = app.get(EscalationsService);
+    scheduled = app.get(ScheduledEventService);
+
+    // Escalation templates (query.escalation.email / .inapp) must exist for the dispatcher.
+    await seedReferenceData(prisma);
 
     // Clean up any leftover rows from previous runs
     await prisma.query.deleteMany({ where: { queryCode: { startsWith: PFX } } });
     await prisma.user.deleteMany({ where: { email: { startsWith: PFX } } });
 
-    // Seed a Manager user so the T2H tier fan-out produces a notification
+    // Seed a Manager user so the T2H tier fan-out produces a notification + email
     await prisma.user.create({
       data: {
         name: "Mgr",
@@ -53,43 +60,63 @@ describe("Escalations (e2e)", () => {
   });
 
   afterAll(async () => {
+    await prisma.scheduledEvent.deleteMany({
+      where: { entityType: "QUERY", entityId: { in: [queryId, q2] } },
+    });
+    await prisma.messageLog.deleteMany({
+      where: { entityType: "QUERY", entityId: { in: [queryId, q2] } },
+    });
     await prisma.query.deleteMany({ where: { queryCode: { startsWith: PFX } } });
     await prisma.user.deleteMany({ where: { email: { startsWith: PFX } } });
     await app.close();
   });
 
-  it("creates 3 fixed timers on createForQuery", async () => {
-    await svc.createForQuery(queryId, new Date("2026-01-01T00:00:00Z"));
-    const rows = await prisma.escalation.findMany({ where: { queryId }, orderBy: { dueAt: "asc" } });
+  it("createForQuery schedules 3 escalation timers", async () => {
+    await esc.createForQuery(queryId, new Date("2026-01-01T00:00:00Z"));
+    const rows = await prisma.scheduledEvent.findMany({
+      where: { entityType: "QUERY", entityId: queryId, eventKey: "query.escalation" },
+      orderBy: { dueAt: "asc" },
+    });
     expect(rows.map((r) => r.tier)).toEqual(["T30M", "T2H", "T6H"]);
     expect(rows[0].dueAt.toISOString()).toBe("2026-01-01T00:30:00.000Z");
   });
 
-  it("runDue fires due+unfired: notifications to role-holders + one escalation email + firedAt", async () => {
+  it("runDue fires escalation timers → in-app notifications + escalation emails + firedAt", async () => {
     // T30M dueAt 00:30, T2H dueAt 02:00, T6H dueAt 06:00 — all due at 07:00
-    await svc.runDue(new Date("2026-01-01T07:00:00Z"));
-    const fired = await prisma.escalation.count({ where: { queryId, firedAt: { not: null } } });
+    await scheduled.runDue(new Date("2026-01-01T07:00:00Z"));
+
+    const fired = await prisma.scheduledEvent.count({
+      where: { entityType: "QUERY", entityId: queryId, eventKey: "query.escalation", firedAt: { not: null } },
+    });
     expect(fired).toBe(3);
-    const emails = await prisma.emailLog.count({ where: { queryId, template: "ESCALATION" } });
-    expect(emails).toBe(3); // one per firing
-    const notifs = await prisma.notification.count({ where: { queryId } });
-    expect(notifs).toBeGreaterThanOrEqual(1); // >= 1 Manager got the T2H notif
+
+    // >= 1 Manager got the T2H notification
+    const notifs = await prisma.notification.count({ where: { queryId, type: "query.escalation" } });
+    expect(notifs).toBeGreaterThanOrEqual(1);
+
+    // >= 1 escalation email logged (to the tier-role staff)
+    const emails = await prisma.messageLog.count({ where: { entityId: queryId, eventKey: "query.escalation" } });
+    expect(emails).toBeGreaterThanOrEqual(1);
   });
 
   it("runDue is idempotent (no re-fire)", async () => {
-    const before = await prisma.emailLog.count({ where: { queryId, template: "ESCALATION" } });
-    await svc.runDue(new Date("2026-01-01T07:00:00Z"));
-    expect(await prisma.emailLog.count({ where: { queryId, template: "ESCALATION" } })).toBe(before);
+    const before = await prisma.messageLog.count({ where: { entityId: queryId, eventKey: "query.escalation" } });
+    await scheduled.runDue(new Date("2026-01-01T07:00:00Z"));
+    expect(await prisma.messageLog.count({ where: { entityId: queryId, eventKey: "query.escalation" } })).toBe(before);
   });
 
   it("cancelForQuery stops unfired timers", async () => {
-    await svc.createForQuery(q2, new Date()); // fresh query, dueAt in the future
-    await svc.cancelForQuery(q2);
-    await svc.runDue(new Date(Date.now() + 7 * 3600_000));
-    expect(await prisma.escalation.count({ where: { queryId: q2, firedAt: { not: null } } })).toBe(0);
+    await esc.createForQuery(q2, new Date()); // fresh query, dueAt in the future
+    await esc.cancelForQuery(q2);
+    await scheduled.runDue(new Date(Date.now() + 7 * 3600_000));
+    expect(
+      await prisma.scheduledEvent.count({
+        where: { entityType: "QUERY", entityId: q2, eventKey: "query.escalation", firedAt: { not: null } },
+      }),
+    ).toBe(0);
   });
 
-  it("inactive users are NOT notified by runDue fan-out", async () => {
+  it("inactive users are NOT notified by the escalation fan-out", async () => {
     // Seed an inactive Manager alongside the existing active Manager
     const inactiveUser = await prisma.user.create({
       data: {
@@ -107,9 +134,9 @@ describe("Escalations (e2e)", () => {
     });
     const q3 = q3row.id;
 
-    await svc.createForQuery(q3, new Date("2026-02-01T00:00:00Z"));
+    await esc.createForQuery(q3, new Date("2026-02-01T00:00:00Z"));
     // Run past T2H due time so the T2H tier fires (notifies MANAGER role)
-    await svc.runDue(new Date("2026-02-01T03:00:00Z"));
+    await scheduled.runDue(new Date("2026-02-01T03:00:00Z"));
 
     // Inactive user must have received NO notifications for this query
     expect(
@@ -127,6 +154,8 @@ describe("Escalations (e2e)", () => {
     ).toBeGreaterThanOrEqual(1);
 
     // Cleanup extra data created by this test
+    await prisma.scheduledEvent.deleteMany({ where: { entityType: "QUERY", entityId: q3 } });
+    await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: q3 } });
     await prisma.query.delete({ where: { id: q3 } });
     await prisma.user.delete({ where: { id: inactiveUser.id } });
   });

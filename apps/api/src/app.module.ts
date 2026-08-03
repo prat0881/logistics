@@ -24,6 +24,7 @@ import { EmailsModule } from "./modules/emails/emails.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { EscalationsModule } from "./modules/escalations/escalations.module";
 import { FfPortalModule } from "./modules/ff-portal/ff-portal.module";
+import { CommsModule } from "./modules/comms/comms.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -60,6 +61,7 @@ const staticImports =
     NotificationsModule,
     EscalationsModule,
     FfPortalModule,
+    CommsModule,
     HealthModule,
   ],
 })

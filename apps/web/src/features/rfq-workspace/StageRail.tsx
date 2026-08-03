@@ -3,7 +3,7 @@ import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const RANK: Record<string, number> = {
-  DRAFT: 0, CREATED: 1, RFQ_READY: 2, RFQ_SENT: 3, QUOTED: 4,
+  DRAFT: 0, CREATED: 1, RFQ_READY: 2, RFQ_SENT: 3, QUOTED: 4, NO_RESPONSE: 4,
   AWAITING_CLIENT_DECISION: 5, WON: 6, LOST: 6, CLOSED: 7,
 };
 

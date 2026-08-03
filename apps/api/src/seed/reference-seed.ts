@@ -1,5 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { ORG_TIMEZONE_KEY, DEFAULT_ORG_TIMEZONE } from "@svyft/shared";
+import { RFQ_DEADLINE_HOURS_KEY, RFQ_REMINDER_OFFSETS_KEY, DEFAULT_RFQ_DEADLINE_HOURS, DEFAULT_RFQ_REMINDER_OFFSETS } from "@svyft/shared";
+import { seedMessageTemplates } from "./message-templates.seed";
 
 const DENSITY: { mode: "ROAD" | "AIR" | "SEA"; kgPerCbm: number }[] = [
   { mode: "ROAD", kgPerCbm: 333 },
@@ -43,4 +45,15 @@ export async function seedReferenceData(prisma: PrismaClient): Promise<void> {
     create: { key: ORG_TIMEZONE_KEY, value: DEFAULT_ORG_TIMEZONE },
     update: {},
   });
+  await prisma.appSetting.upsert({
+    where: { key: RFQ_DEADLINE_HOURS_KEY },
+    create: { key: RFQ_DEADLINE_HOURS_KEY, value: String(DEFAULT_RFQ_DEADLINE_HOURS) },
+    update: {},
+  });
+  await prisma.appSetting.upsert({
+    where: { key: RFQ_REMINDER_OFFSETS_KEY },
+    create: { key: RFQ_REMINDER_OFFSETS_KEY, value: DEFAULT_RFQ_REMINDER_OFFSETS.join(",") },
+    update: {},
+  });
+  await seedMessageTemplates(prisma);
 }

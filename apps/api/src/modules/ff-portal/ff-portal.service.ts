@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, UnprocessableEntityException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Injectable, Logger, UnprocessableEntityException } from "@nestjs/common";
 import {
   AIR_CHARGE_PRESETS,
   SEA_CHARGE_PRESETS,
@@ -7,20 +7,27 @@ import {
   computeQuoteTotals,
   computeChargeableWeight,
   QuoteEvent,
+  Role,
 } from "@svyft/shared";
 import type { FfPortalRfqDto, FfPortalLegDto, ManifestSnapshot, QuoteDraft, Finding } from "@svyft/shared";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ConfigDataService } from "../config/config-data.service";
 import { StatusService } from "../status/status.service";
+import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
+import { ScheduledEventService } from "../comms/scheduled-event.service";
 import type { FfScope } from "../rfq/rfq-token.service";
 
 @Injectable()
 export class FfPortalService {
+  private readonly logger = new Logger(FfPortalService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigDataService,
     private readonly status: StatusService,
+    private readonly dispatcher: NotificationDispatcher,
+    private readonly scheduled: ScheduledEventService,
   ) {}
 
   async resolveScope(scope: FfScope): Promise<FfPortalRfqDto> {
@@ -294,6 +301,50 @@ export class FfPortalService {
 
     // ── fire AFTER the tx (the one door) → RFQ_SENT→QUOTED → leg/query rollups ──
     await this.status.fire("quote", q.id, QuoteEvent.SUBMIT, { queryId: scope.rfq.queryId });
+
+    // ── comms (post-commit; compose-&-log) — the submit is already committed (quote is
+    // QUOTED); a comms failure here must NOT turn a successful submit into a 500
+    // (mirrors the Task-9 post-commit hardening in RfqService.distribute). ──
+    try {
+      const rfq = await this.prisma.rfq.findUnique({
+        where: { id: scope.rfq.id },
+        select: { rfqNumber: true, tenantId: true, freightForwarder: { select: { companyName: true, email: true } } },
+      });
+      const query = await this.prisma.query.findUnique({
+        where: { id: scope.rfq.queryId },
+        select: { assignedUserId: true },
+      });
+      let execIds: string[] = query?.assignedUserId ? [query.assignedUserId] : [];
+      if (execIds.length === 0) {
+        const execs = await this.prisma.user.findMany({
+          where: { role: Role.EXECUTIVE, isActive: true },
+          select: { id: true },
+        });
+        execIds = execs.map((u) => u.id);
+      }
+      const tokens = {
+        RFQ_Number: rfq?.rfqNumber ?? "",
+        FF_Name: rfq?.freightForwarder?.companyName ?? "",
+        Leg_Name: q.leg.legCode ?? "",
+      };
+      // Cancel the RFQ's remaining reminders FIRST — a dispatch throw below must not skip it.
+      await this.scheduled.cancel("RFQ", scope.rfq.id, "rfq.reminder");
+      await this.dispatcher.dispatch("rfq.submission_ack", {
+        scope: { entityType: "QUERY", entityId: scope.rfq.queryId },
+        tokens,
+        recipients: { EMAIL: rfq?.freightForwarder?.email ? [rfq.freightForwarder.email] : [] },
+        tenantId: rfq?.tenantId ?? null,
+      });
+      await this.dispatcher.dispatch("quote.received", {
+        scope: { entityType: "QUERY", entityId: scope.rfq.queryId },
+        tokens,
+        recipients: { IN_APP: execIds },
+        tenantId: rfq?.tenantId ?? null,
+      });
+    } catch (err) {
+      this.logger.error(`post-submit comms failed for quote ${q.id}`, err as Error);
+    }
+
     return { quoteId: q.id, status: "QUOTED" };
   }
 }

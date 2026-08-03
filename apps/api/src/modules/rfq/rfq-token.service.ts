@@ -14,6 +14,7 @@ export interface ScopedQuote {
   draftJson: unknown;
   leg: {
     id: string;
+    legCode: string;
     mode: string | null;
     originPoint: PointLite | null;
     destinationPoint: PointLite | null;
@@ -59,6 +60,7 @@ export class RfqTokenService {
             leg: {
               select: {
                 id: true,
+                legCode: true,
                 mode: true,
                 originPoint: { select: { id: true, type: true, name: true, country: true } },
                 destinationPoint: { select: { id: true, type: true, name: true, country: true } },
@@ -89,6 +91,7 @@ export class RfqTokenService {
         draftJson: q.draftJson,
         leg: {
           id: q.leg.id,
+          legCode: q.leg.legCode,
           mode: q.leg.mode,
           originPoint: q.leg.originPoint,
           destinationPoint: q.leg.destinationPoint,

@@ -113,6 +113,15 @@ describe("deriveQueryStatus (least-advanced gate + milestones, §9.1)", () => {
     );
   });
 
+  it("returns NO_RESPONSE when all legs resolved but every quote expired", () => {
+    expect(deriveQueryStatus(["FULLY_QUOTED"], { rfqReady: true, noResponse: true })).toBe(
+      "NO_RESPONSE",
+    );
+  });
+  it("returns QUOTED when all legs FULLY_QUOTED and noResponse is false", () => {
+    expect(deriveQueryStatus(["FULLY_QUOTED"], { rfqReady: true })).toBe("QUOTED");
+  });
+
   it("lets query-level milestones override the leg rollup", () => {
     expect(deriveQueryStatus([LegStatus.READY_FOR_RFQ], { closed: true })).toBe(QueryStatus.CLOSED);
     expect(deriveQueryStatus([LegStatus.FULLY_QUOTED], { won: true })).toBe(QueryStatus.WON);
@@ -143,6 +152,7 @@ describe("status vocabularies", () => {
       "RFQ_READY",
       "RFQ_SENT",
       "QUOTED",
+      "NO_RESPONSE",
       "AWAITING_CLIENT_DECISION",
       "WON",
       "LOST",

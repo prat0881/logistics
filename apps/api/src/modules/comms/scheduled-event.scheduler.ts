@@ -1,14 +1,14 @@
 import { Injectable } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
-import { EscalationsService } from "./escalations.service";
+import { ScheduledEventService } from "./scheduled-event.service";
 
 @Injectable()
-export class EscalationsScheduler {
-  constructor(private readonly escalations: EscalationsService) {}
+export class ScheduledEventScheduler {
+  constructor(private readonly scheduled: ScheduledEventService) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
   async poll(): Promise<void> {
     if (process.env.NODE_ENV === "test") return;
-    await this.escalations.runDue();
+    await this.scheduled.runDue();
   }
 }

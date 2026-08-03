@@ -1,5 +1,4 @@
 import { Controller, Get, HttpCode, Param, Post } from "@nestjs/common";
-import { EmailTemplate } from "@svyft/shared";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { RequestUser } from "../auth/types";
 import { EmailsService } from "./emails.service";
@@ -11,13 +10,13 @@ export class EmailsController {
   @Post("follow-up")
   @HttpCode(201)
   followUp(@Param("id") id: string, @CurrentUser() user: RequestUser) {
-    return this.emails.compose(EmailTemplate.FOLLOW_UP, id, user.userId);
+    return this.emails.compose("query.follow_up", id, user.userId);
   }
 
   @Post("acknowledgement")
   @HttpCode(201)
   acknowledgement(@Param("id") id: string, @CurrentUser() user: RequestUser) {
-    return this.emails.compose(EmailTemplate.ACKNOWLEDGEMENT, id, user.userId);
+    return this.emails.compose("query.acknowledgement", id, user.userId);
   }
 
   @Get()

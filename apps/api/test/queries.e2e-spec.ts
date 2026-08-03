@@ -260,8 +260,9 @@ describe("Queries (e2e)", () => {
     const created = await request(app.getHttpServer()).post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
       .send({ shipmentDescription: `${PFX}esc` }).expect(201);
     const id = created.body.id;
-    expect(await prisma.escalation.count({ where: { queryId: id, cancelledAt: null } })).toBe(3);
+    const where = { entityType: "QUERY", entityId: id, eventKey: "query.escalation" };
+    expect(await prisma.scheduledEvent.count({ where: { ...where, cancelledAt: null } })).toBe(3);
     await app.get(EventEmitter2).emitAsync("query.rfq_ready", { queryId: id });
-    expect(await prisma.escalation.count({ where: { queryId: id, cancelledAt: { not: null } } })).toBe(3);
+    expect(await prisma.scheduledEvent.count({ where: { ...where, cancelledAt: { not: null } } })).toBe(3);
   });
 });
