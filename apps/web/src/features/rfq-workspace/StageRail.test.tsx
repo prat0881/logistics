@@ -10,6 +10,9 @@ describe("StageRail", () => {
     expect(isRfqStageEnabled("RFQ_READY")).toBe(true);
     expect(isRfqStageEnabled("RFQ_SENT")).toBe(true);
     expect(isRfqStageEnabled("QUOTED")).toBe(true);
+    // NO_RESPONSE (Task 12) is a sibling outcome of the same FULLY_QUOTED leg-rollup gate as
+    // QUOTED — the RFQ was still fully sent/resolved, just with no live quote at the end.
+    expect(isRfqStageEnabled("NO_RESPONSE")).toBe(true);
   });
 
   it("renders all four steps; links Create + RFQ when enabled", () => {
