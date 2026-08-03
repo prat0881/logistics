@@ -10,7 +10,7 @@ import { quoteImpactMap } from "./quote.impact";
 import { LegQuoteProjector } from "./leg-quote.projector";
 import { RfqScheduleListener } from "./rfq-schedule.listener";
 import type { StatusMachine } from "../status/status.types";
-import { LegStatus, LegEvent } from "@svyft/shared";
+import { LegStatus, LegEvent, QuoteStatus, QuoteEvent } from "@svyft/shared";
 import { FreightForwardersModule } from "../freight-forwarders/freight-forwarders.module";
 import { CommsModule } from "../comms/comms.module";
 import { RfqController } from "./rfq.controller";
@@ -35,6 +35,14 @@ export class RfqModule implements OnModuleInit {
       { from: LegStatus.RFQ_SENT, on: LegEvent.QUOTE_PARTIAL, to: LegStatus.PARTIALLY_QUOTED, kind: "forward" },
       { from: LegStatus.RFQ_SENT, on: LegEvent.QUOTE_FULL, to: LegStatus.FULLY_QUOTED, kind: "forward" },
       { from: LegStatus.PARTIALLY_QUOTED, on: LegEvent.QUOTE_FULL, to: LegStatus.FULLY_QUOTED, kind: "forward" },
+      // Sub-build 6 (change-order cascade): reopening a distributed leg for re-RFQ.
+      { from: LegStatus.RFQ_SENT, on: LegEvent.REOPEN, to: LegStatus.READY_FOR_RFQ, kind: "reopen" },
+      { from: LegStatus.PARTIALLY_QUOTED, on: LegEvent.REOPEN, to: LegStatus.READY_FOR_RFQ, kind: "reopen" },
+      { from: LegStatus.FULLY_QUOTED, on: LegEvent.REOPEN, to: LegStatus.READY_FOR_RFQ, kind: "reopen" },
+    ]);
+    this.registry.contribute("quote", [
+      // Sub-build 6: reactivating an invalidated quote on re-distribute.
+      { from: QuoteStatus.INVALID, on: QuoteEvent.SEND, to: QuoteStatus.RFQ_SENT, kind: "forward" },
     ]);
     this.impacts.declare("quotes", quoteImpactMap);
   }
