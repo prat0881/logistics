@@ -196,6 +196,7 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
                   <th scope="col" className="px-4 py-2 font-medium">Country</th>
                   <th scope="col" className="px-4 py-2 font-medium">Modes</th>
                   <th scope="col" className="px-4 py-2 font-medium">Status</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -214,13 +215,17 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
                       </td>
                       <td className="px-4 py-2">
                         <span className="font-medium">{f.companyName}</span>
-                        {isFrozen && (
-                          <div className="mt-1"><RegeneratePortalLink queryId={queryId} freightForwarderId={f.id} /></div>
-                        )}
                       </td>
                       <td className="px-4 py-2 text-muted-foreground">{countryText(f)}</td>
                       <td className="px-4 py-2 text-muted-foreground">{f.modes.join(", ")}</td>
                       <td className="px-4 py-2">{status ? <ForwarderStatusBadge status={status} /> : "—"}</td>
+                      <td className="px-4 py-2 text-right">
+                        {isFrozen ? (
+                          <RegeneratePortalLink queryId={queryId} freightForwarderId={f.id} />
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}

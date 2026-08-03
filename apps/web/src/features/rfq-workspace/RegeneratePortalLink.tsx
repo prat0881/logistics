@@ -1,24 +1,39 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useReissueToken } from "./useRfq";
-import { PortalLinkRow } from "./PortalLinkRow";
 
+/**
+ * Compact "Regenerate" control for a frozen (distributed) FF. On success it rotates
+ * the RFQ access token, copies the new portal link to the clipboard, and shows a
+ * transient ~2s confirmation (plus an aria-live status). NOTE (S4.3 tradeoff,
+ * user-accepted): the regenerated link is NOT rendered as selectable text here —
+ * only copied. The full link is still shown at distribution time in
+ * DistributeLegAction (PortalLinkRow), so discoverability is preserved there.
+ */
 export function RegeneratePortalLink({ queryId, freightForwarderId }: { queryId: string; freightForwarderId: string }) {
   const reissue = useReissueToken(queryId);
-  const token = reissue.data?.accessToken;
+  const [copied, setCopied] = useState(false);
+
+  function regenerate() {
+    reissue.mutate(freightForwarderId, {
+      onSuccess: async (res) => {
+        await copyToClipboard(`${window.location.origin}/ff/rfq/${res.accessToken}`);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+      },
+    });
+  }
+
   return (
-    <div className="space-y-1">
-      <Button type="button" variant="outline" size="sm"
-        disabled={reissue.isPending}
-        onClick={() => reissue.mutate(freightForwarderId)}>
-        {reissue.isPending ? "Regenerating…" : "Regenerate portal link"}
+    <div className="flex items-center gap-2">
+      <Button type="button" variant="outline" size="sm" disabled={reissue.isPending} onClick={regenerate}>
+        {reissue.isPending ? "Regenerating…" : copied ? "Link copied ✓" : "Regenerate"}
       </Button>
-      {token && (
-        <>
-          <PortalLinkRow url={`${window.location.origin}/ff/rfq/${token}`} />
-          <p className="text-xs text-muted-foreground">This invalidates the previous link.</p>
-        </>
-      )}
-      {reissue.isError && <p className="text-xs text-destructive">Couldn't regenerate the link. Try again.</p>}
+      <span aria-live="polite" className="sr-only">
+        {copied ? "Copied the new portal link to your clipboard. The previous link is now invalid." : ""}
+      </span>
+      {reissue.isError && <span className="text-xs text-destructive">Couldn't regenerate. Try again.</span>}
     </div>
   );
 }
