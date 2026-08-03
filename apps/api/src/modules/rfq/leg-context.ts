@@ -17,6 +17,12 @@ export interface LegRfqContext {
   endpointCountries: string[];
   hasDg: boolean;
   freshQuotes: { id: string; freightForwarderId: string }[];
+  // SB6 Task 11 — quotes a change-order invalidated (QUOTED→INVALID, Task 8) on a since-
+  // reopened leg. Distinct from `freshQuotes`: these were already sent once, so re-sending
+  // them REACTIVATES the same row (INVALID→RFQ_SENT, the Task 5 edge) instead of minting.
+  // A subset of `sentQuotes` below (kept there too — additive, not a behavior change for any
+  // existing consumer of `sentQuotes`).
+  invalidQuotes: { id: string; freightForwarderId: string }[];
   sentQuotes: { id: string; freightForwarderId: string; status: string }[];
 }
 
@@ -38,8 +44,11 @@ export async function loadLegForRfq(
   const freshQuotes = leg.quotes
     .filter((q) => q.status === QuoteStatus.SELECT)
     .map((q) => ({ id: q.id, freightForwarderId: q.freightForwarderId }));
+  const invalidQuotes = leg.quotes
+    .filter((q) => q.status === QuoteStatus.INVALID)
+    .map((q) => ({ id: q.id, freightForwarderId: q.freightForwarderId }));
   const sentQuotes = leg.quotes
     .filter((q) => q.status !== QuoteStatus.SELECT)
     .map((q) => ({ id: q.id, freightForwarderId: q.freightForwarderId, status: q.status }));
-  return { leg, endpointCountries, hasDg, freshQuotes, sentQuotes };
+  return { leg, endpointCountries, hasDg, freshQuotes, invalidQuotes, sentQuotes };
 }
