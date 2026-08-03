@@ -133,3 +133,33 @@ Net: the first **Next** creates the query but the URL forces it back to step 0; 
 - **S3.7 (nav-rail validation states).** Deferred. Sketch for a future round: lift the Create-gate rule set (`collectCreateFindings` + `validateRoute` + `collectChecklistFindings`, bucketed by `findingTabKey`) into a memoized value off `detail` to drive three rail states (complete / attention / upcoming) reflecting **saved** state, with a hover popover for the unmet rules. Note the two-channel split: format/ordering rules (email, E.164, IMO, ETA<ETB<ETD, deadline-not-past, Target Pickup ≤ Target Delivery) are enforced at save time by `querySaveSchema` and can't be persisted invalid, so the rail need only cover completeness/business/route/checklist.
 - **S4.2 city-level filtering.** Needs FF **city coverage** data that doesn't exist today — a new `FreightForwarder` coverage attribute (e.g. `availableCities` or origin→destination lanes): Prisma migration, DTO/zod, master-data UI, and `findEligible` logic. Its own sub-build when prioritized.
 - **No `readyDate → targetPickup` data/DB rename** — S3.5 is label/message only.
+
+## Delivery status (implemented)
+
+Delivered on branch `feat/stage-3-4-uiux-improvements` (worktree off `main` `343d14d`), TDD, subagent-driven with a per-task spec+quality review gate. Implementation plan: [`docs/plans/stage-3/2026-08-03-stage-3-4-uiux-improvements.md`](plans/stage-3/2026-08-03-stage-3-4-uiux-improvements.md).
+
+| Item | Status | Commit(s) |
+|------|--------|-----------|
+| Shared `ReferenceTagIcons` (Task 1, incl. `OUT_OF_GAUGE`) | ✅ | `905c326` |
+| S3.5 message "Ready Date" → "Target Pickup" | ✅ | `e91cfa8` |
+| S3.3 Create Query saves current step first | ✅ | `00b8483` |
+| S3.4 first Next advances a new query in one click | ✅ | `bb18464` |
+| S3.6/S3.8 legs-page banners + pre-Create live validation removed | ✅ | `1fc120f` |
+| S3.1 cargo DG column → Reference Tags icons | ✅ | `62840a0` |
+| S3.2 country folded into `q` search (API + shared) | ✅ | `e91c976` |
+| S3.2 Country input removed (web) | ✅ | `efc3a41` |
+| S4.4 default view = table | ✅ | `28f9d3c` |
+| S4.1 Reference Tags own header field | ✅ | `0a94d4b` |
+| S4.2 origin/dest country-scope chip (country-only) | ✅ | `ebfe4c6` |
+| S4.3 Regenerate last column + auto-copy + transient confirm | ✅ | `b1268b1`, `73e6c16`, `e93d21b` |
+
+**Notes on delivered behaviour vs this design:**
+- **S3.4** was implemented as **`localStep`-authoritative** (mint navigates to `/queries/:id` with no `?step`; Next advances via `goNext`, Save stays put) rather than the design's literal `?step=1` — the literal form would have made Save also advance. Same net UX (one-click Next, non-blocking navigation).
+- **S4.3** uses a **transient in-button "Link copied ✓" confirmation + `aria-live`** (no toast library exists in the app); on a *failed* clipboard write it falls back to the existing `PortalLinkRow` so the reissued link is still retrievable. The full link also remains visible at distribution time in `DistributeLegAction`.
+
+**Verification:** shared 239/239, api `queries-list` e2e 7/7 (both S3.2 cases), web 385/386 — the one failure is a **pre-existing, unrelated** date-boundary flake in `Step1Client.test.tsx` (unchanged vs `main`; trips only across a midnight rollover). All typechecks + web lint clean.
+
+**Fast-follow backlog (plan-mandated review findings, deferred for a decision — see the plan's Risks & the SDD ledger):**
+- Wizard Create/Save error-handling hardening (`QueryWizardPage`): the best-effort `handleSave()` catch and `await refresh()` are unguarded, and the `?? detail` cache-miss fallback is silent (S3.3).
+- `WizardContext` `localStep` can leak the step across a client-side route change to a *different* query id (existing→existing = 1-frame flash; existing→new = wrong initial step, manual Back recovers) — reset `localStep` on `queryId` identity change (S3.4).
+- Pre-existing `Step1Client.test.tsx` date-boundary flake — make the "today" assertion timezone/rollover-safe.
