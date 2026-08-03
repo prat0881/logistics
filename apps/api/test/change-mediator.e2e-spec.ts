@@ -7,7 +7,6 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { ChangeMediator } from "../src/modules/changes/change-mediator";
 import { ScopeResolver } from "../src/modules/changes/scope.resolver";
 import { ImpactRegistry } from "../src/modules/changes/impact.registry";
-import { ChangeOrderNotAvailableError } from "../src/modules/changes/errors";
 
 const PFX = "p8-change-mediator-";
 
@@ -78,13 +77,26 @@ describe("Change Mediator (integration)", () => {
     expect(res.path).toBe("free");
   });
 
-  it("forks to CHANGE-ORDER when downstream work exists, and the stub throws without applying", async () => {
+  it("forks to CHANGE-ORDER when downstream work exists, returning a preview without applying (Task 7)", async () => {
     jest.spyOn(resolver, "downstreamWork").mockResolvedValueOnce(true);
     const uow = jest.fn(async () => {});
-    await expect(
-      mediator.apply({ entity: "leg", id: "leg-d", field: "originPointId", actorId: null }, uow),
-    ).rejects.toBeInstanceOf(ChangeOrderNotAvailableError);
-    expect(uow).not.toHaveBeenCalled(); // nothing applied on the change-order path in Stage 3
+    // Valid-UUID-shaped synthetic id — Quote.legId is `@db.Uuid`, and ChangeOrderStrategy
+    // (Task 7) now queries Prisma for real, so a non-UUID id like the old "leg-d" would
+    // fail the cast. No Leg/Quote row exists for this id, so the preview is empty.
+    const legId = "00000000-0000-4000-8000-000000000001";
+    const res = await mediator.apply(
+      { entity: "leg", id: legId, field: "originPointId", actorId: null },
+      uow,
+    );
+    expect(res.path).toBe("change-order");
+    expect(res.needsConfirmation).toBe(true);
+    expect(res.preview).toEqual({
+      affectedLegs: [legId],
+      invalidatingQuotes: [],
+      refreshingQuotes: [],
+      impactClass: "RfqDefining",
+    });
+    expect(uow).not.toHaveBeenCalled(); // no reason ⇒ preview only, nothing applied (Task 7)
   });
 
   // Real Query + CargoItem, self-cleaned via shipmentDescription's PFX (see afterAll).

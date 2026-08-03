@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import type {
+  ChangeOrderPreview,
   ChangeRequest,
   Finding,
   FindingScope,
@@ -22,6 +23,10 @@ export interface ChangeResult {
   class: ImpactClass;
   scope: FindingScope[];
   findings: Finding[];
+  // Change-order preview phase (Task 7): set instead of applying when a change-order-path
+  // request arrives without a `reason`. Absent (undefined) on every free-path result.
+  needsConfirmation?: boolean;
+  preview?: ChangeOrderPreview;
 }
 
 // FreePath (§7.3): apply in a tx → re-run route validation → changeLog.record. Guarded by
