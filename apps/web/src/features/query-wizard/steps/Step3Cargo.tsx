@@ -9,6 +9,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { ReferenceTagIcons } from "@/components/ReferenceTagIcons";
 import { useWizard } from "../WizardContext";
 import { useCargo } from "./cargo/useCargo";
 import { CargoRowForm } from "./cargo/CargoRowForm";
@@ -147,7 +148,7 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
                 <TableHead className="font-mono tabular-nums">Vol (CBM)</TableHead>
                 <TableHead className="text-muted-foreground font-mono tabular-nums">Freight Density</TableHead>
                 <TableHead className="text-muted-foreground font-mono tabular-nums">Chargeable Wt</TableHead>
-                <TableHead>DG</TableHead>
+                <TableHead>Reference Tags</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -176,7 +177,9 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
                     className="font-mono tabular-nums text-muted-foreground"
                     title="Available in Stage 4"
                   />
-                  <TableCell>{row.isDangerous ? "Yes" : "No"}</TableCell>
+                  <TableCell>
+                    <ReferenceTagIcons tags={row.referenceTags} isDangerous={row.isDangerous} />
+                  </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
                       <Button
