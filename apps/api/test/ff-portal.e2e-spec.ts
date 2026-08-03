@@ -22,19 +22,35 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   const cookie = (role: Role) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: `u-${role}`, role, tenantId: null })}`;
 
+  // Self-clean the comms rows too (Task 11): ScheduledEvent/MessageLog reference entityId
+  // as a plain string, not a Prisma relation, so they survive a Query/Rfq delete.
+  // Notification.queryId IS a real relation (onDelete: Cascade), so those cascade for free.
   const cleanup = async () => {
     const qs = await prisma.query.findMany({
       where: { queryCode: { startsWith: CODE } },
       select: { id: true },
     });
+    const queryIds = qs.map((q) => q.id);
+    const rfqs = queryIds.length
+      ? await prisma.rfq.findMany({ where: { queryId: { in: queryIds } }, select: { id: true } })
+      : [];
+    const rfqIds = rfqs.map((r) => r.id);
+
+    if (rfqIds.length) {
+      await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+    }
+    if (queryIds.length) {
+      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: { in: queryIds } } });
+    }
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo/notifications
     }
     await prisma.freightForwarder.deleteMany({
       where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
     });
+    await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX.toLowerCase()}-exec-` } } });
   };
 
   beforeAll(async () => {
@@ -62,12 +78,14 @@ describe("GET /ff/rfq/:token (e2e)", () => {
    * The distribute response carries rfqs[0].accessToken.
    */
   let fixtureSeq = 0;
-  async function distributeFixture(): Promise<{ token: string; legId: string }> {
+  async function distributeFixture(
+    execUserId?: string,
+  ): Promise<{ token: string; legId: string; queryId: string; rfqId: string }> {
     const admin = cookie(Role.ADMINISTRATOR);
     const seq = ++fixtureSeq;
 
     const query = await prisma.query.create({
-      data: { queryCode: `${CODE}-FIXTURE-${seq}`, incoterms: "FOB" },
+      data: { queryCode: `${CODE}-FIXTURE-${seq}`, incoterms: "FOB", assignedUserId: execUserId },
     });
 
     const origin = await prisma.point.create({
@@ -137,7 +155,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
     const entry = res.body.rfqs[0];
     expect(entry.accessToken).toBeDefined();
-    return { token: entry.accessToken as string, legId: leg.id };
+    return { token: entry.accessToken as string, legId: leg.id, queryId: query.id, rfqId: entry.rfqId as string };
   }
 
   /**
@@ -352,6 +370,54 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
       .expect(409);
+  });
+
+  it("submit logs an acknowledgement + notifies the Executive + cancels reminders", async () => {
+    const seq = ++fixtureSeq;
+    const exec = await prisma.user.create({
+      data: {
+        name: "FF Portal Exec",
+        email: `${PREFIX.toLowerCase()}-exec-${seq}@e2e.test`,
+        passwordHash: "x",
+        role: "EXECUTIVE",
+      },
+    });
+
+    const { token, legId, queryId, rfqId } = await distributeFixture(exec.id);
+
+    // sanity: distribute already seeded live future-tier reminders anchored to this RFQ —
+    // proves the later "0 live reminders" assertion actually exercises the cancel(), not
+    // vacuously true because none were ever scheduled.
+    const remindersBefore = await prisma.scheduledEvent.count({
+      where: { entityType: "RFQ", entityId: rfqId, eventKey: "rfq.reminder", firedAt: null, cancelledAt: null },
+    });
+    expect(remindersBefore).toBeGreaterThan(0);
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(fullValidDraft(legId, got.body))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .expect(201);
+
+    const ack = await prisma.messageLog.count({
+      where: { entityId: queryId, eventKey: "rfq.submission_ack" },
+    });
+    expect(ack).toBeGreaterThanOrEqual(1);
+
+    const notif = await prisma.notification.count({
+      where: { recipientUserId: exec.id, type: "quote.received" },
+    });
+    expect(notif).toBeGreaterThanOrEqual(1);
+
+    const liveReminders = await prisma.scheduledEvent.count({
+      where: { entityType: "RFQ", entityId: rfqId, eventKey: "rfq.reminder", firedAt: null, cancelledAt: null },
+    });
+    expect(liveReminders).toBe(0);
   });
 
   // ── Opus whole-branch review: security / immutability tests ──
