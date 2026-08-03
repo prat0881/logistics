@@ -50,8 +50,13 @@ describe("CargoTagIcons", () => {
     expect(screen.getByLabelText(/fragile/i)).toBeInTheDocument();
   });
 
-  it("renders Non-stackable icon when cargo has NON_STACKABLE tag", () => {
+  it("renders Non stackable icon when cargo has NON_STACKABLE tag", () => {
     render(<CargoTagIcons cargo={[cargo({ referenceTags: ["NON_STACKABLE"] })]} />);
-    expect(screen.getByLabelText(/non-stackable/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/non stackable/i)).toBeInTheDocument(); // "Non Stackable"
+  });
+
+  it("renders the Out of Gauge icon when cargo has OUT_OF_GAUGE tag", () => {
+    render(<CargoTagIcons cargo={[cargo({ referenceTags: ["OUT_OF_GAUGE"] })]} />);
+    expect(screen.getByLabelText(/out of gauge/i)).toBeInTheDocument();
   });
 });
