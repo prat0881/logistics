@@ -30,7 +30,6 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
   const [priority, setPriority] = useState(EMPTY);
   const [freightMode, setFreightMode] = useState(EMPTY);
   const [assignedToMe, setAssignedToMe] = useState(false);
-  const [country, setCountry] = useState("");
   const [dateField, setDateField] = useState<"queryDate" | "updatedAt">("queryDate");
   const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -61,7 +60,6 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
       priority: string;
       freightMode: string;
       assignedToMe: boolean;
-      country: string;
       dateField: "queryDate" | "updatedAt";
       dateRange: DateRange | undefined;
     }>) => {
@@ -69,7 +67,6 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
       const p = overrides.priority !== undefined ? overrides.priority : priority;
       const fm = overrides.freightMode !== undefined ? overrides.freightMode : freightMode;
       const atm = overrides.assignedToMe !== undefined ? overrides.assignedToMe : assignedToMe;
-      const c = overrides.country !== undefined ? overrides.country : country;
       const df = overrides.dateField ?? dateField;
       // Use `in` check (not `!== undefined`) so that an explicit `dateRange: undefined`
       // override (from clearDateRange) is honoured rather than falling back to state.
@@ -80,7 +77,6 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
         priority: (p || undefined) as QueryListParams["priority"],
         freightMode: fm || undefined,
         assignedUserId: atm && user?.id ? user.id : undefined,
-        country: c || undefined,
         dateField: undefined,
         dateFrom: undefined,
         dateTo: undefined,
@@ -92,7 +88,7 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
       }
       onChange(params);
     },
-    [status, priority, freightMode, assignedToMe, country, dateField, dateRange, user, onChange],
+    [status, priority, freightMode, assignedToMe, dateField, dateRange, user, onChange],
   );
 
   function handleStatus(val: string) {
@@ -111,10 +107,6 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
     const next = !assignedToMe;
     setAssignedToMe(next);
     emitFilters({ assignedToMe: next });
-  }
-  function handleCountry(e: React.ChangeEvent<HTMLInputElement>) {
-    setCountry(e.target.value);
-    emitFilters({ country: e.target.value });
   }
   function handleDateFieldToggle() {
     const next = dateField === "queryDate" ? "updatedAt" : "queryDate";
@@ -157,14 +149,13 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
     setPriority(EMPTY);
     setFreightMode(EMPTY);
     setAssignedToMe(false);
-    setCountry("");
     setDateField("queryDate");
     setDateRange(undefined);
     onChange({});
   }
 
   const hasFilters =
-    search || status || priority || freightMode || assignedToMe || country || dateRange;
+    search || status || priority || freightMode || assignedToMe || dateRange;
 
   const dateLabel = dateRange?.from
     ? dateRange.to
@@ -175,7 +166,7 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Input
-        placeholder="Search query code, customer…"
+        placeholder="Search query code, customer, country…"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="w-56"
@@ -232,14 +223,6 @@ export function QueriesToolbar({ onChange }: QueriesToolbarProps) {
       >
         {assignedToMe ? "Assigned to me" : "All assignees"}
       </Button>
-
-      <Input
-        placeholder="Country"
-        value={country}
-        onChange={handleCountry}
-        className="w-24"
-        aria-label="Country filter"
-      />
 
       <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
         <PopoverTrigger asChild>
