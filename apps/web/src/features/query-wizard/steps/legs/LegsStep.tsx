@@ -7,48 +7,21 @@ import type { StepSaveFn } from "../Step1Client";
 import { LegEditor } from "./LegEditor";
 import { PointEditor } from "./PointEditor";
 import { RouteDiagram } from "./RouteDiagram";
-import { useRouteFindings, type GroupedFindings } from "./useRouteFindings";
 import type { QueryDetail, QueryLegDto, QueryPointDto } from "@svyft/shared";
 
 // Legs step index (0-based) matching STEPS array: client=0, shipment=1, cargo=2, legs=3, notes=4
 const LEGS_STEP_INDEX = 3;
 
 /**
- * RouteNoticesStrip — the top summary strip (replaces the old FindingsPanel list).
- * Shows a one-line count + the query-scoped findings that don't map to a single box
- * (e.g. "A route needs at least one leg"). Per-box detail lives on hover.
- */
-function RouteNoticesStrip({ grouped }: { grouped: GroupedFindings }) {
-  if (grouped.blocking.length === 0) return null;
-  const n = grouped.blocking.length;
-  return (
-    <div
-      role="alert"
-      className="space-y-1 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-    >
-      <p className="font-medium">
-        ⚠ {n} issue{n === 1 ? "" : "s"} to resolve — hover the highlighted boxes for details.
-      </p>
-      {grouped.queryScoped.length > 0 && (
-        <ul className="list-disc space-y-0.5 pl-5">
-          {grouped.queryScoped.map((f, i) => (
-            <li key={i}>
-              <span className="mr-1 font-mono text-xs">{f.rule}</span>
-              {f.message}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/**
  * LegsStepBody — Step 4 content once the query exists (detail is guaranteed).
  *
- * Layout (top→bottom): notices strip · toolbar (+ Add point · + Add leg) ·
- * RouteDiagram (the primary surface — click a point box or leg edge to edit) ·
- * LegEditor + PointEditor dialogs.
+ * Layout (top→bottom): toolbar (+ Add point · + Add leg) · RouteDiagram (the
+ * primary surface — click a point box or leg edge to edit) · LegEditor +
+ * PointEditor dialogs. Route/leg validation is Create-only (S3.6/S3.8): no
+ * page banners, no pre-Create live checks here. The Create Query gate runs
+ * `validateRoute`, and its findings render in the shell-level
+ * ValidationSummary at the top of every step (WizardShell) — that behaviour
+ * is untouched.
  *
  * The `?add=point|leg` search param minted by the pre-mint wrapper is consumed
  * here on mount: opens the corresponding editor, then clears the param so a
@@ -64,7 +37,6 @@ function LegsStepBody({
   registerSave: (fn: StepSaveFn) => void;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { all, grouped } = useRouteFindings(detail);
 
   // Legs/points persist eagerly; nothing to save here, and validation is Create-only now.
   useEffect(() => {
@@ -115,21 +87,9 @@ function LegsStepBody({
     }
   }, []); // intentional: mount-only
 
-  // Legs the RouteDiagram cannot draw (missing/dangling endpoints) — the escape
-  // strip below is the only place to reach them. Pure derivation of `detail`.
-  const incompleteLegs = detail.legs.filter(
-    (l) =>
-      !l.originPointId ||
-      !l.destinationPointId ||
-      !detail.points.some((p) => p.id === l.originPointId) ||
-      !detail.points.some((p) => p.id === l.destinationPointId),
-  );
-
   return (
     <div className="space-y-4 p-4">
       <h2 className="text-base font-semibold">Leg & Route</h2>
-      {/* Notices strip (top) */}
-      <RouteNoticesStrip grouped={grouped} />
 
       {/* Toolbar */}
       <div className="flex items-center gap-2">
@@ -141,45 +101,11 @@ function LegsStepBody({
         </Button>
       </div>
 
-      {/* Incomplete-legs escape strip — only when there are un-drawable legs.
-          The RouteDiagram skips an endpoint-less edge, so without this strip
-          those legs are invisible yet still fail Create validation (C1). */}
-      {incompleteLegs.length > 0 && (
-        <div
-          role="group"
-          aria-label="Incomplete legs"
-          className="space-y-1 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
-        >
-          <p className="font-medium text-warning">
-            {incompleteLegs.length} incomplete leg
-            {incompleteLegs.length === 1 ? "" : "s"} can&apos;t be shown on the route — click to fix
-            or delete:
-          </p>
-          <ul className="space-y-1">
-            {incompleteLegs.map((l) => {
-              const finding = grouped.byLeg.get(l.id)?.[0]?.message;
-              return (
-                <li key={l.id}>
-                  <button
-                    type="button"
-                    onClick={() => handleEdit(l)}
-                    className="w-full rounded px-2 py-1 text-left hover:bg-warning/20"
-                  >
-                    <span className="mr-2 font-mono text-xs">{l.legCode}</span>
-                    <span className="text-muted-foreground">needs origin &amp; destination</span>
-                    {finding && <span className="ml-2 text-destructive">— {finding}</span>}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-
-      {/* Route diagram — the primary editing surface */}
+      {/* Route diagram — the primary editing surface. No live findings passed:
+          route validation runs only at Create Query (shell ValidationSummary). */}
       <RouteDiagram
         detail={detail}
-        findings={all}
+        findings={[]}
         onEditPoint={(id) => {
           const pt = detail.points.find((p) => p.id === id);
           if (pt) handleEditPoint(pt);
