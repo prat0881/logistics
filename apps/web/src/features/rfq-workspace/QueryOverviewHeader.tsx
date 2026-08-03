@@ -8,6 +8,7 @@ const QUERY_STATUS_LABEL: Record<QueryStatus, string> = {
   RFQ_READY: "RFQ Ready",
   RFQ_SENT: "RFQ Sent",
   QUOTED: "Quoted",
+  NO_RESPONSE: "No Response",
   AWAITING_CLIENT_DECISION: "Awaiting Client Decision",
   WON: "Won",
   LOST: "Lost",

@@ -90,6 +90,7 @@ export const QueryStatus = {
   RFQ_READY: "RFQ_READY",
   RFQ_SENT: "RFQ_SENT",
   QUOTED: "QUOTED",
+  NO_RESPONSE: "NO_RESPONSE",
   AWAITING_CLIENT_DECISION: "AWAITING_CLIENT_DECISION",
   WON: "WON",
   LOST: "LOST",
@@ -103,6 +104,7 @@ export const QUERY_STATUSES = Object.values(QueryStatus) as [QueryStatus, ...Que
 export interface QueryMilestones {
   created?: boolean;
   rfqReady?: boolean;
+  noResponse?: boolean;
   awaitingClientDecision?: boolean;
   won?: boolean;
   lost?: boolean;
@@ -156,7 +158,7 @@ export function deriveQueryStatus(
     case LegStatus.PARTIALLY_QUOTED:
       return QueryStatus.RFQ_SENT;
     case LegStatus.FULLY_QUOTED:
-      return QueryStatus.QUOTED;
+      return milestones.noResponse ? QueryStatus.NO_RESPONSE : QueryStatus.QUOTED;
     case LegStatus.DELIVERED:
       return QueryStatus.CLOSED; // all legs delivered (§9.1)
     case LegStatus.CLOSED:

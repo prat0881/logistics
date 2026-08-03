@@ -38,8 +38,23 @@ export class QueryStatusProjector {
     if (!q) return;
     const legs = await client.leg.findMany({ where: { queryId }, select: { status: true } });
     const legStatuses = legs.map((l) => l.status) as LegStatus[];
+
+    // NO_RESPONSE (§9.3): a leg whose FFs ALL expired/invalidated still rolls up to
+    // FULLY_QUOTED (leg-quote projector counts EXPIRED as "resolved") — so the query would
+    // otherwise misreport QUOTED even though nobody actually quoted. Distinguish that case by
+    // checking the query's own quotes directly: ≥1 distributed quote (not SELECT), none QUOTED,
+    // and every one of them EXPIRED/INVALID.
+    const quotes = await client.quote.findMany({
+      where: { queryId, status: { not: "SELECT" } },
+      select: { status: true },
+    });
+    const noResponse =
+      quotes.length > 0 &&
+      quotes.every((qt) => qt.status === "EXPIRED" || qt.status === "INVALID") &&
+      !quotes.some((qt) => qt.status === "QUOTED");
+
     // `created` is emergent from the leg rollup now — only the rfqReady milestone is passed.
-    const status = this.project(legStatuses, { rfqReady: !!q.rfqReadyAt });
+    const status = this.project(legStatuses, { rfqReady: !!q.rfqReadyAt, noResponse });
     await client.query.update({ where: { id: queryId }, data: { status } });
   }
 }
