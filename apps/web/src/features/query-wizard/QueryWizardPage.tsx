@@ -95,7 +95,11 @@ function WizardInner({ id }: { id?: string }) {
 
   /**
    * handleSave — called by the shell's Save (and Next).
-   * - new query: call the step's save, then POST → navigate to /queries/:id?step=0
+   * - new query: call the step's save, then POST → navigate to /queries/:id (no
+   *   ?step= — S3.4: the wizard's `localStep` is authoritative and survives this
+   *   navigate uninterrupted, so a Next that triggered the mint can advance the
+   *   step in the same click instead of being reset back to step 0. Save uses the
+   *   same branch but never calls goNext, so it still stays put on the new query.)
    * - existing query: call the step's save (step returns a QuerySaveInput patch or void)
    */
   const handleSave = useCallback(
@@ -111,7 +115,7 @@ function WizardInner({ id }: { id?: string }) {
           input = undefined;
         }
         const d = await create(input ?? {});
-        navigate(`/queries/${d.id}?step=0`, { replace: true });
+        navigate(`/queries/${d.id}`, { replace: true });
         return;
       }
       const input = stepSaveRef.current ? await stepSaveRef.current() : undefined;

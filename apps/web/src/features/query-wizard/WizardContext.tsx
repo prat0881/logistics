@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { QueryDetail } from "@svyft/shared";
@@ -45,21 +45,31 @@ export function WizardProvider({ id, children }: WizardProviderProps) {
 
   const { data: detail } = useQueryDetail(queryId);
 
-  const step = queryId !== undefined ? clampedStep : localStep;
+  // `localStep` is the single source of truth for the active step (S3.4). For an
+  // existing query we still honour an explicit ?step= (deep-link, back/forward) by
+  // syncing it in — but ONLY when the param is present, so a freshly-minted query
+  // (navigated to /queries/:id with no ?step) keeps the step goNext just advanced
+  // to instead of being forced back to 0.
+  useEffect(() => {
+    if (!queryId) return;
+    if (!searchParams.has("step")) return;
+    setLocalStep(clampedStep);
+  }, [queryId, searchParams, clampedStep]);
+
+  const step = localStep;
 
   const setStep = useCallback(
     (n: number) => {
       const clamped = Math.max(0, Math.min(n, STEPS.length - 1));
       // Jump-to only allowed when detail exists (i.e., query has been created)
       if (!detail) return;
+      setLocalStep(clamped);
       if (queryId) {
         setSearchParams((prev) => {
           const next = new URLSearchParams(prev);
           next.set("step", String(clamped));
           return next;
         });
-      } else {
-        setLocalStep(clamped);
       }
     },
     [detail, queryId, setSearchParams],
@@ -67,27 +77,25 @@ export function WizardProvider({ id, children }: WizardProviderProps) {
 
   const goNext = useCallback(() => {
     const next = Math.min(step + 1, STEPS.length - 1);
+    setLocalStep(next);
     if (queryId) {
       setSearchParams((prev) => {
         const ns = new URLSearchParams(prev);
         ns.set("step", String(next));
         return ns;
       });
-    } else {
-      setLocalStep(next);
     }
   }, [step, queryId, setSearchParams]);
 
   const goBack = useCallback(() => {
     const prev = Math.max(step - 1, 0);
+    setLocalStep(prev);
     if (queryId) {
       setSearchParams((sp) => {
         const ns = new URLSearchParams(sp);
         ns.set("step", String(prev));
         return ns;
       });
-    } else {
-      setLocalStep(prev);
     }
   }, [step, queryId, setSearchParams]);
 
