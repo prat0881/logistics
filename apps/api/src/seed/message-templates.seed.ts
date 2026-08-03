@@ -60,6 +60,18 @@ export const MESSAGE_TEMPLATES: {
     subject: null,
     body: "{{FF_Name}} submitted a quote for {{Leg_Name}} (RFQ {{RFQ_Number}}).",
   },
+  // Sub-build 6 (change-order cascade, Task 9): fired when a distributed leg is reopened —
+  // EMAIL to each invalidated FF, IN_APP to the query's Executive (rfq-notifications.service.ts).
+  {
+    key: "rfq.leg.reopened.email", eventKey: "rfq.leg.reopened", channel: "EMAIL",
+    subject: "RFQ {{rfqNumber}} — leg {{legCode}} reopened for re-quote",
+    body: "Your quote for leg {{legCode}} ({{origin}} -> {{destination}}) on RFQ {{rfqNumber}} has been invalidated because the shipment details changed.\nReason: {{reason}}\n\nThe leg has been reopened. You will be re-invited to submit a new quote once it is re-distributed.",
+  },
+  {
+    key: "rfq.leg.reopened.inapp", eventKey: "rfq.leg.reopened", channel: "IN_APP",
+    subject: null,
+    body: "Leg {{legCode}} ({{origin}} -> {{destination}}) on RFQ {{rfqNumber}} was reopened — {{reason}}",
+  },
 ];
 
 export async function seedMessageTemplates(prisma: PrismaClient): Promise<void> {
