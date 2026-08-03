@@ -252,7 +252,7 @@ SELECT ─distribute─▶ RFQ_SENT ─submit─▶ QUOTED
    (REQUOTED · CLOSED · APPROVED reserved — driven by Stage 5)
 ```
 
-> **SB6 correction (Task 13):** the leg `reopen` edges above (`RFQ_SENT | PARTIALLY_QUOTED | FULLY_QUOTED → READY_FOR_RFQ`) were **not** already declared in the Stage-3 machine, despite the "already declared, Stage 3 §7.2" note above — Stage 3 shipped only `READY_FOR_RFQ --REOPEN--> DRAFT` ([leg.machine.ts](apps/api/src/modules/status/leg.machine.ts)). **Sub-build 6 contributes all three `RFQ_SENT+ → READY_FOR_RFQ` edges** via `StatusRegistry.contribute`, alongside the quote machine's `INVALID → RFQ_SENT` reactivation edge shown above (fired on re-distribute, the saga's final step — §7.2 below) — neither edge existed in code before SB6.
+> **SB6 correction (Task 13):** the leg `reopen` edges above (`RFQ_SENT | PARTIALLY_QUOTED | FULLY_QUOTED → READY_FOR_RFQ`) were **not** already declared in the Stage-3 machine, despite the "already declared, Stage 3 §7.2" note above — Stage 3 shipped only `READY_FOR_RFQ --REOPEN--> DRAFT` ([leg.machine.ts](apps/api/src/modules/status/leg.machine.ts)). **Sub-build 6 contributes all three `RFQ_SENT+ → READY_FOR_RFQ` edges** via `StatusRegistry.contribute`, alongside the quote machine's `INVALID → RFQ_SENT` reactivation edge shown above (fired on re-distribute — the manual step the Executive takes *after* the saga, not part of it — §7.2 below) — neither edge existed in code before SB6.
 
 **Query rollup extension** — the projector (`deriveQueryStatus`, Stage 3 §7.2) gains Stage-4 outputs: any leg ≥ RFQ_SENT and not all FULLY_QUOTED ⇒ **RFQ Sent**; all legs FULLY_QUOTED ⇒ **Quoted**; every Quote on every leg EXPIRED ⇒ **No Response**. Least-advanced gate unchanged.
 

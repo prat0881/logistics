@@ -320,6 +320,7 @@ Each record answers a **different** question, so there is no fatal redundancy �
 4. **`ChangeLogPolicy` expansion** — flip config to also record free-path workflow-entity edits (a partial, mediator-scoped audit) short of the full middleware AuditLog.
 5. **Cascade concurrency hardening** — an outbox / saga-completion marker + row-lock/serializable-retry on `fire`, replacing the accepted last-write-wins window (§7), when true concurrency arrives.
 6. **Change-order analytics** — because `ChangeLog` carries `impactClass` + `reason` per query, "which fields most often force re-quotes" becomes a query.
+7. **Structural remove-FF change-order (was the SB6 build's Task 12 — deferred during implementation).** Removing an FF from a *sent* leg is already classified `Structural` (the `quotes.@delete` impact map + the `quote → its-leg` classifier fan-out ship in this build), but the **handler** is deferred: unlike a field edit — which voids **all** the leg's QUOTED quotes and reopens the leg — removing one FF must void **only that FF's** quote and recompute coverage **without** reopening (spec §11.3, FF-scoped). A correct handler needs (a) a `quotes.@delete` branch in `ChangeOrderStrategy.apply` targeting only `req.id`'s quote (no manifest re-freeze, no leg `REOPEN`); (b) a new **`RFQ_SENT → INVALID` status edge** to void a *pending* FF (only `QUOTED → INVALID` exists today); (c) a "RFQ withdrawn" notification (a new template + event/handler mirroring `rfq.leg.reopened`). It is secondary to the field-edit cascade (the primary deliverable + the Stage-5 prerequisite); the classification infrastructure is in place and tested, ready for the follow-up.
 
 ---
 
@@ -330,6 +331,7 @@ Each record answers a **different** question, so there is no fatal redundancy �
 - Full quote line-item revision history (§19.3).
 - Live email transmission + TLS (the FF-facing go-live gate — Stage-4 register).
 - Automatic re-distribution — the Executive re-distributes manually (spec §11.2).
+- Structural **remove-FF** change-order **handler** (§19.7) — deferred; the `quotes.@delete` classification ships, the handler is a documented follow-up.
 
 ---
 
