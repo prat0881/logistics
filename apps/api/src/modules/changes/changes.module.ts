@@ -6,7 +6,9 @@ import { ScopeResolver } from "./scope.resolver";
 import { ChangeMediator } from "./change-mediator";
 import { FreePathStrategy } from "./free-path.strategy";
 import { ChangeOrderStrategy } from "./change-order.strategy";
-import { CHANGE_LOG, NoopChangeLog } from "./change-log";
+import { CHANGE_LOG } from "./change-log";
+import { PrismaChangeLog } from "./prisma-change-log";
+import { ChangeLogPolicy } from "./change-log-policy";
 
 @Module({
   imports: [RoutingModule],
@@ -17,8 +19,9 @@ import { CHANGE_LOG, NoopChangeLog } from "./change-log";
     ChangeMediator,
     FreePathStrategy,
     ChangeOrderStrategy,
-    { provide: CHANGE_LOG, useClass: NoopChangeLog },
+    ChangeLogPolicy,
+    { provide: CHANGE_LOG, useClass: PrismaChangeLog },
   ],
-  exports: [ChangeMediator, ImpactRegistry],
+  exports: [ChangeMediator, ImpactRegistry, ChangeLogPolicy],
 })
 export class ChangesModule {}
