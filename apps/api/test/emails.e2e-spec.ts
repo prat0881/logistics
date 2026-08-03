@@ -7,6 +7,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { seedReferenceData } from "../src/seed/reference-seed";
 
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? "test-access-secret";
 const PFX = "p7-emails-";
@@ -37,6 +38,9 @@ describe("Emails (e2e)", () => {
     await app.init();
     prisma = moduleRef.get(PrismaService);
     jwt = moduleRef.get(JwtService);
+
+    // Templates (query.follow_up.email / query.acknowledgement.email) must exist for the dispatcher.
+    await seedReferenceData(prisma);
 
     // Clean up any leftovers from a previous run
     await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } });
@@ -73,38 +77,51 @@ describe("Emails (e2e)", () => {
   });
 
   afterAll(async () => {
+    await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: queryId } });
     await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } });
     await app.close();
   });
 
-  it("composes + logs a follow-up with the missing-items list; nothing sent", async () => {
-    const res = await request(app.getHttpServer())
+  it("follow-up composes a MessageLog row via the dispatcher (missing-items list)", async () => {
+    await request(app.getHttpServer())
       .post(`/api/queries/${queryId}/emails/follow-up`)
       .set("Cookie", cookie())
       .expect(201);
-    expect(res.body.template).toBe("FOLLOW_UP");
-    expect(res.body.status).toBe("LOGGED");
-    expect(res.body.subject).toContain(queryCode);
-    expect(res.body.bodyRendered).toMatch(/Missing information/i);
+
+    const rows = await prisma.messageLog.findMany({
+      where: { entityType: "QUERY", entityId: queryId, channel: "EMAIL" },
+    });
+    const followUp = rows.find((r) => r.eventKey === "query.follow_up");
+    expect(followUp).toBeDefined();
+    expect(followUp!.status).toBe("LOGGED");
+    expect(followUp!.subject).toContain(queryCode);
+    expect(followUp!.bodyRendered).toMatch(/Missing information/i);
     // The seeded unchecked item's label appears in the rendered body
-    expect(res.body.bodyRendered).toContain(uncheckedLabel);
+    expect(followUp!.bodyRendered).toContain(uncheckedLabel);
   });
 
-  it("composes an acknowledgement with the 24h timeline", async () => {
-    const res = await request(app.getHttpServer())
+  it("acknowledgement composes a MessageLog row with the 24h timeline", async () => {
+    await request(app.getHttpServer())
       .post(`/api/queries/${queryId}/emails/acknowledgement`)
       .set("Cookie", cookie())
       .expect(201);
-    expect(res.body.template).toBe("ACKNOWLEDGEMENT");
-    expect(res.body.bodyRendered).toMatch(/24 hours/);
+
+    const rows = await prisma.messageLog.findMany({
+      where: { entityType: "QUERY", entityId: queryId, channel: "EMAIL" },
+    });
+    const ack = rows.find((r) => r.eventKey === "query.acknowledgement");
+    expect(ack).toBeDefined();
+    expect(ack!.bodyRendered).toMatch(/24 hours/);
   });
 
-  it("lists logged emails for the query", async () => {
+  it("GET emails lists MessageLog rows for the query (newest-first)", async () => {
     const res = await request(app.getHttpServer())
       .get(`/api/queries/${queryId}/emails`)
       .set("Cookie", cookie())
       .expect(200);
+    expect(Array.isArray(res.body)).toBe(true);
     expect(res.body.length).toBeGreaterThanOrEqual(2);
+    expect(res.body[0]).toHaveProperty("bodyRendered");
     // newest-first ordering (createdAt desc)
     expect(new Date(res.body[0].createdAt).getTime()).toBeGreaterThanOrEqual(
       new Date(res.body[1].createdAt).getTime(),

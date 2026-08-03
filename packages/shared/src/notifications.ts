@@ -34,7 +34,7 @@ export type NotificationDto = {
 };
 export type UnreadCountDto = { count: number };
 export type EmailLogDto = {
-  id: string; queryId: string; template: EmailTemplate; fromAddress: string;
+  id: string; queryId: string; template: string; fromAddress: string;
   toAddress: string | null; subject: string; bodyRendered: string;
-  status: EmailStatus; createdAt: string;
+  status: string; createdAt: string;
 };
