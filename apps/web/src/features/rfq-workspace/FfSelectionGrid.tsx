@@ -29,7 +29,7 @@ function countryText(f: FreightForwarderDto): string {
 
 export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: FfSelectionGridProps) {
   const [broaden, setBroaden] = useState(false);
-  const [view, setView] = useState<"cards" | "table">("cards");
+  const [view, setView] = useState<"cards" | "table">("table");
   const [search, setSearch] = useState("");
   const [sortAsc, setSortAsc] = useState(true);
   const [page, setPage] = useState(1);

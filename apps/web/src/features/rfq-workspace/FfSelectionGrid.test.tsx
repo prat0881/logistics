@@ -95,7 +95,8 @@ describe("FfSelectionGrid", () => {
       />,
     );
     // Full country name rendered in the country/mode paragraph, not the bare code
-    expect(await screen.findByText(/India · AIR/)).toBeInTheDocument();
+    expect(await screen.findByText("India")).toBeInTheDocument();
+    expect(screen.getByText("AIR")).toBeInTheDocument();
     expect(screen.queryByText(/\bIN\b/)).toBeNull();
     // Payment terms and lead time are absent
     expect(screen.queryByText(/NET30|Lead/)).toBeNull();
@@ -119,21 +120,20 @@ describe("FfSelectionGrid", () => {
     expect(screen.queryByRole("button", { name: /regenerate portal link/i })).toBeNull();
   });
 
-  it("defaults to Cards and toggles to Table (with column headers)", async () => {
+  it("defaults to the Table view (column headers visible on mount), toggles to Cards", async () => {
     vi.stubGlobal("fetch", mockFetch((url) => {
       if (url.includes("/eligible-ffs")) return { status: 200, body: [ff("a", "Alpha FF"), ff("b", "Beta FF")] };
       return { status: 404 };
     }));
     wrap(<FfSelectionGrid queryId="q1" legId="l1" legQuotes={[]} referencedFfs={[]} />);
     expect(await screen.findByText("Alpha FF")).toBeInTheDocument();
-    expect(screen.queryByRole("columnheader", { name: /forwarder/i })).toBeNull(); // cards first
-    await userEvent.click(screen.getByRole("button", { name: /^table$/i }));
     expect(screen.getByRole("columnheader", { name: /forwarder/i })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /country/i })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /modes/i })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /status/i })).toBeInTheDocument();
-    // no Terms / Lead columns (D1)
     expect(screen.queryByRole("columnheader", { name: /terms|lead/i })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^cards$/i }));
+    expect(screen.queryByRole("columnheader", { name: /forwarder/i })).toBeNull();
   });
 
   it("filters by search text", async () => {
