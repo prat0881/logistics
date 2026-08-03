@@ -31,7 +31,7 @@ export class PointsService {
     await this.assertQueryExists(queryId);
     const id = randomUUID();
     let created: unknown;
-    await this.mediator.apply(
+    const result = await this.mediator.apply(
       { entity: "point", id, action: "@create", queryId, actorId: user.userId },
       async (tx) => {
         created = await tx.point.create({
@@ -39,30 +39,48 @@ export class PointsService {
         });
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
     return created;
   }
 
   async update(queryId: string, pointId: string, input: PointUpdateInput, user: RequestUser) {
     await this.load(queryId, pointId);
-    const fields = Object.keys(input);
+    // `reason` is ChangeRequest metadata, not a point column — strip it before it can reach
+    // `fields`/highestImpactField or the Prisma patch (Task 10, SB6 §7.2).
+    const { reason, ...pointInput } = input;
+    const fields = Object.keys(pointInput);
     if (fields.length === 0) return this.load(queryId, pointId);
     let updated: unknown;
-    await this.mediator.apply(
+    const result = await this.mediator.apply(
       {
         entity: "point",
         id: pointId,
         field: this.impacts.highestImpactField("point", fields),
-        patch: input,
+        patch: pointInput,
         queryId,
         actorId: user.userId,
+        reason,
       },
       async (tx) => {
         updated = await tx.point.update({
           where: { id: pointId },
-          data: input as Prisma.PointUncheckedUpdateInput,
+          data: pointInput as Prisma.PointUncheckedUpdateInput,
         });
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
     return updated;
   }
 
@@ -82,11 +100,18 @@ export class PointsService {
       );
     }
 
-    await this.mediator.apply(
+    const result = await this.mediator.apply(
       { entity: "point", id: pointId, action: "@delete", queryId, actorId: user.userId },
       async (tx) => {
         await tx.point.delete({ where: { id: pointId } });
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
   }
 }

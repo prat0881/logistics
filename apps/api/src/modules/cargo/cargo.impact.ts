@@ -7,8 +7,10 @@ import { ImpactClass, type CargoUpdateInput } from "@svyft/shared";
 // EntityImpactMap) so the compiler REQUIRES an entry for EVERY cargoUpdateSchema field —
 // mirrors queryImpactMap (see query.impact.ts). Still structurally assignable to
 // ImpactRegistry.declare's EntityImpactMap (= Record<string, ImpactClass>) param.
+// `reason` is excluded — it's ChangeRequest metadata (Task 10, SB6), never the classified
+// field; CargoService strips it from `fields` before highestImpactField ever sees it.
 export const cargoImpactMap: Record<
-  keyof CargoUpdateInput | "msdsFileId" | "@create" | "@delete",
+  Exclude<keyof CargoUpdateInput, "reason"> | "msdsFileId" | "@create" | "@delete",
   ImpactClass
 > = {
   poReference: ImpactClass.Corrective,

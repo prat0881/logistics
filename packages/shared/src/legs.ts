@@ -28,6 +28,10 @@ export const legSaveSchema = z
     readyDate: isoDate.optional(),
     targetDelivery: isoDate.optional(),
     assignedCargoIds: z.array(z.string().uuid()).optional(),
+    // Stage 4 (SB6 §7.2): justification for a mediated edit that lands on the change-order
+    // path. Metadata only — LegsService lifts it onto ChangeRequest.reason and strips it
+    // before it ever reaches the Prisma patch (it is not a `leg` column).
+    reason: z.string().trim().min(1).max(500).optional(),
   })
   // G10: Ready Date must be on or before Target Delivery (when both are present).
   .refine(

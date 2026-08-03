@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { CargoCreateInput, CargoUpdateInput } from "@svyft/shared";
 import ExcelJS from "exceljs";
@@ -37,7 +37,7 @@ export class CargoService {
     await this.assertQueryExists(queryId);
     const id = randomUUID();
     let created: unknown;
-    await this.mediator.apply(
+    const result = await this.mediator.apply(
       { entity: "cargo", id, action: "@create", queryId, actorId: user.userId },
       async (tx) => {
         // KNOWN RACE (deferred, not fixed): this is a read-then-write (MAX(rowIndex)+1) inside
@@ -75,43 +75,68 @@ export class CargoService {
         await this.queries.syncDgIndicator(queryId, tx);
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
     return created;
   }
 
   async update(queryId: string, cid: string, input: CargoUpdateInput, user: RequestUser) {
     await this.load(queryId, cid);
-    const fields = Object.keys(input);
+    // `reason` is ChangeRequest metadata, not a cargo column — strip it before it can reach
+    // `fields`/highestImpactField or the Prisma patch (Task 10, SB6 §7.2).
+    const { reason, ...cargoInput } = input;
+    const fields = Object.keys(cargoInput);
     if (fields.length === 0) return this.load(queryId, cid);
     let updated: unknown;
-    await this.mediator.apply(
+    const result = await this.mediator.apply(
       {
         entity: "cargo",
         id: cid,
         field: this.impacts.highestImpactField("cargo", fields),
-        patch: input,
+        patch: cargoInput,
         queryId,
         actorId: user.userId,
+        reason,
       },
       async (tx) => {
         updated = await tx.cargoItem.update({
           where: { id: cid },
-          data: input as Prisma.CargoItemUncheckedUpdateInput,
+          data: cargoInput as Prisma.CargoItemUncheckedUpdateInput,
         });
         await this.queries.syncDgIndicator(queryId, tx);
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
     return updated;
   }
 
   async remove(queryId: string, cid: string, user: RequestUser) {
     await this.load(queryId, cid);
-    await this.mediator.apply(
+    const result = await this.mediator.apply(
       { entity: "cargo", id: cid, action: "@delete", queryId, actorId: user.userId },
       async (tx) => {
         await tx.cargoItem.delete({ where: { id: cid } });
         await this.queries.syncDgIndicator(queryId, tx);
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
   }
 
   // Store the PDF + FileAsset, then link cargo.msdsFileId through the mediator (Corrective).
@@ -124,7 +149,7 @@ export class CargoService {
     await this.load(queryId, cid);
     const asset = await this.files.storeMsds(queryId, file, user.userId); // 400s a non-PDF/no-file
     let updated: unknown;
-    await this.mediator.apply(
+    const result = await this.mediator.apply(
       {
         entity: "cargo",
         id: cid,
@@ -137,6 +162,13 @@ export class CargoService {
         updated = await tx.cargoItem.update({ where: { id: cid }, data: { msdsFileId: asset.id } });
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
     return updated;
   }
 

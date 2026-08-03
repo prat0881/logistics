@@ -73,6 +73,9 @@ export const cargoCreateSchema = z
 export type CargoCreateInput = z.infer<typeof cargoCreateSchema>;
 
 // Update: all fields optional; keep the Net ≤ Gross guard when both are present.
+// `reason` (Stage 4, SB6 §7.2): justification for a mediated edit that lands on the
+// change-order path (RfqDefining-or-heavier on a leg with live quotes). Metadata only — the
+// service extracts it onto ChangeRequest.reason and MUST NOT let it reach the Prisma patch.
 export const cargoUpdateSchema = z
   .object({
     poReference: z.string().trim().max(120),
@@ -89,6 +92,7 @@ export const cargoUpdateSchema = z
     grossWt: z.number().positive().max(1000000000),
     dimUnit: z.enum(DIM_UNITS),
     weightUnit: z.enum(WEIGHT_UNITS),
+    reason: z.string().trim().min(1).max(500),
   })
   .partial()
   .refine((c) => c.netWt == null || c.grossWt == null || c.netWt <= c.grossWt, {
