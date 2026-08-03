@@ -29,7 +29,7 @@ export const TIER_LABEL: Record<EscalationTier, string> = {
 };
 
 export type NotificationDto = {
-  id: string; type: NotificationType; queryId: string | null;
+  id: string; type: string; queryId: string | null;
   message: string; readAt: string | null; createdAt: string;
 };
 export type UnreadCountDto = { count: number };

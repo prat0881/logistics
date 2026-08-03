@@ -692,6 +692,17 @@ model FileAsset {
   @@index([tenantId])
 }
 
+enum Channel {
+  IN_APP
+  EMAIL
+}
+
+enum MessageStatus {
+  LOGGED
+  SENT
+  FAILED
+}
+
 enum NotificationType {
   ESCALATION
 }
@@ -713,15 +724,18 @@ enum EmailStatus {
 }
 
 model Notification {
-  id              String           @id @default(uuid()) @db.Uuid
-  tenantId        String?          @db.Uuid
-  recipientUserId String           @db.Uuid
-  type            NotificationType
-  queryId         String?          @db.Uuid
-  query           Query?           @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String?   @db.Uuid
+  recipientUserId String    @db.Uuid
+  type            String
+  entityType      String?
+  entityId        String?   @db.Uuid
+  queryId         String?   @db.Uuid
+  query           Query?    @relation(fields: [queryId], references: [id], onDelete: Cascade)
   message         String
   readAt          DateTime?
-  createdAt       DateTime         @default(now())
+  createdAt       DateTime  @default(now())
+
   @@index([recipientUserId, readAt])
   @@index([recipientUserId, createdAt])
 }
@@ -756,4 +770,54 @@ model EmailLog {
   status        EmailStatus   @default(LOGGED)
   createdAt     DateTime      @default(now())
   @@index([queryId, createdAt])
+}
+
+model MessageTemplate {
+  key       String   @id
+  eventKey  String
+  channel   Channel
+  subject   String?
+  body      String
+  active    Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  @@unique([eventKey, channel])
+}
+
+model MessageLog {
+  id           String        @id @default(uuid()) @db.Uuid
+  tenantId     String?       @db.Uuid
+  entityType   String
+  entityId     String        @db.Uuid
+  eventKey     String
+  channel      Channel
+  templateKey  String
+  fromAddress  String
+  toAddress    String?
+  subject      String?
+  bodyRendered String
+  tokens       Json
+  composedById String?       @db.Uuid
+  status       MessageStatus @default(LOGGED)
+  error        String?
+  createdAt    DateTime      @default(now())
+
+  @@index([entityType, entityId, createdAt])
+}
+
+model ScheduledEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String?   @db.Uuid
+  entityType  String
+  entityId    String    @db.Uuid
+  eventKey    String
+  tier        String
+  dueAt       DateTime
+  firedAt     DateTime?
+  cancelledAt DateTime?
+  payload     Json?
+  createdAt   DateTime  @default(now())
+
+  @@unique([entityType, entityId, eventKey, tier])
+  @@index([dueAt, firedAt, cancelledAt])
 }
