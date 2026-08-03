@@ -1,9 +1,12 @@
 import { Module, type OnModuleInit } from "@nestjs/common";
 import { StatusModule } from "../status/status.module";
 import { StatusRegistry } from "../status/status.registry";
+import { ChangesModule } from "../changes/changes.module";
+import { ImpactRegistry } from "../changes/impact.registry";
 import { RfqNumberService } from "./rfq-number.service";
 import { RfqTokenService } from "./rfq-token.service";
 import { quoteMachine } from "./quote.machine";
+import { quoteImpactMap } from "./quote.impact";
 import { LegQuoteProjector } from "./leg-quote.projector";
 import { RfqScheduleListener } from "./rfq-schedule.listener";
 import type { StatusMachine } from "../status/status.types";
@@ -15,13 +18,16 @@ import { EligibilityService } from "./eligibility.service";
 import { RfqService } from "./rfq.service";
 
 @Module({
-  imports: [StatusModule, FreightForwardersModule, CommsModule],
+  imports: [StatusModule, ChangesModule, FreightForwardersModule, CommsModule],
   controllers: [RfqController],
   providers: [RfqNumberService, RfqTokenService, LegQuoteProjector, EligibilityService, RfqService, RfqScheduleListener],
   exports: [RfqNumberService, RfqTokenService],
 })
 export class RfqModule implements OnModuleInit {
-  constructor(private readonly registry: StatusRegistry) {}
+  constructor(
+    private readonly registry: StatusRegistry,
+    private readonly impacts: ImpactRegistry,
+  ) {}
   onModuleInit(): void {
     this.registry.register(quoteMachine as StatusMachine);
     this.registry.contribute("leg", [
@@ -30,5 +36,6 @@ export class RfqModule implements OnModuleInit {
       { from: LegStatus.RFQ_SENT, on: LegEvent.QUOTE_FULL, to: LegStatus.FULLY_QUOTED, kind: "forward" },
       { from: LegStatus.PARTIALLY_QUOTED, on: LegEvent.QUOTE_FULL, to: LegStatus.FULLY_QUOTED, kind: "forward" },
     ]);
+    this.impacts.declare("quotes", quoteImpactMap);
   }
 }

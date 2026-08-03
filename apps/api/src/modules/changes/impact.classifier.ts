@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import type { ChangeRequest, FindingScope, ImpactClass } from "@svyft/shared";
 import { ImpactRegistry } from "./impact.registry";
 import { RoutingService } from "../routing/routing.service";
@@ -12,7 +12,9 @@ export interface Classification {
 // the biddable unit, so scope is always fanned out to the affected leg(s) before the Stage-4
 // change-order cascade reopens them: cargo→legs carrying that row (LegCargo), point→legs using
 // it as an endpoint, query→all its legs, quote→its leg, leg→itself. An entity with no legs in
-// scope (unassigned/pre-RFQ, or an entity with no fan-out rule) falls back to self-scope.
+// scope (unassigned/pre-RFQ, or an entity with no fan-out rule) falls back to self-scope —
+// EXCEPT quotes: Quote.legId is non-nullable, so `legOfQuote` returning null can only mean the
+// quote id doesn't exist (never a legitimate pre-RFQ "unassigned quote" state), so that 404s.
 @Injectable()
 export class ImpactClassifier {
   constructor(
@@ -32,7 +34,12 @@ export class ImpactClassifier {
       case "cargo": legIds = await this.routing.legsCarryingCargo(req.id); break;
       case "point": legIds = await this.routing.legsUsingPoint(req.id); break;
       case "query": legIds = await this.routing.legsOfQuery(req.id); break;
-      case "quotes": { const l = await this.routing.legOfQuote(req.id); legIds = l ? [l] : []; break; }
+      case "quotes": {
+        const l = await this.routing.legOfQuote(req.id);
+        if (!l) throw new NotFoundException("Quote not found"); // no such quote — never self-scoped
+        legIds = [l];
+        break;
+      }
       case "leg": legIds = [req.id]; break;
       default: legIds = [];
     }
