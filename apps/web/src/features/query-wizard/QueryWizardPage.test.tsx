@@ -601,4 +601,54 @@ describe("QueryWizardPage", () => {
     // Server was NOT called
     expect(createCalls.length).toBe(0);
   });
+
+  it("Create Query saves the current step (checklist) before running the gate (S3.3)", async () => {
+    let checklistPersisted = false;
+    const events: string[] = [];
+    const baseChecklist = [
+      { id: "c1", itemKey: "weight-confirmed", checked: false },
+      { id: "c2", itemKey: "dimensions-confirmed", checked: false },
+    ];
+    const detailFor = () => ({
+      ...fullDraftDetail,
+      internalNotes: "Ready for RFQ",
+      checklist: baseChecklist.map((c) => ({ ...c, checked: checklistPersisted })),
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/q9/checklist") && init?.method === "PATCH") {
+          events.push("checklist");
+          checklistPersisted = true;
+          return { status: 200, body: {} };
+        }
+        if (url.includes("/api/queries/q9/create") && init?.method === "POST") {
+          events.push("create");
+          return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
+        }
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailFor() };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9?step=4", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    const weight = await screen.findByRole("checkbox", { name: /Weight confirmed/i });
+    const dims = screen.getByRole("checkbox", { name: /Dimensions confirmed/i });
+    await userEvent.click(weight);
+    await userEvent.click(dims);
+
+    await userEvent.click(screen.getByRole("button", { name: /Create Query/i }));
+
+    expect(await screen.findByText(/created successfully/i)).toBeInTheDocument();
+    expect(events).toEqual(["checklist", "create"]);
+  });
 });
