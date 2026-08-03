@@ -29,12 +29,12 @@ export const legSaveSchema = z
     targetDelivery: isoDate.optional(),
     assignedCargoIds: z.array(z.string().uuid()).optional(),
   })
-  // G10: Ready Date must be on or before Target Delivery (when both are present).
+  // G10: Target Pickup must be on or before Target Delivery (when both are present).
   .refine(
     (l) =>
       !(l.readyDate && l.targetDelivery) ||
       new Date(l.readyDate).getTime() <= new Date(l.targetDelivery).getTime(),
-    { message: "Ready Date must be on or before Target Delivery", path: ["targetDelivery"] },
+    { message: "Target Pickup must be on or before Target Delivery", path: ["targetDelivery"] },
   )
   // G12: a leg's origin and destination must be different points (no self-loop).
   .refine(
