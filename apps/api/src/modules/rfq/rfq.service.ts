@@ -16,6 +16,8 @@ import { PrismaService } from "../../prisma/prisma.service";
 import type { RequestUser } from "../auth/types";
 import { StatusService } from "../status/status.service";
 import { CommsSettingsService } from "../comms/comms-settings.service";
+import { ScheduledEventService } from "../comms/scheduled-event.service";
+import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
 import { RfqNumberService } from "./rfq-number.service";
 import { RfqTokenService } from "./rfq-token.service";
 import { loadLegForRfq, type LegRfqContext } from "./leg-context";
@@ -29,6 +31,8 @@ export class RfqService {
     private readonly rfqNumber: RfqNumberService,
     private readonly token: RfqTokenService,
     private readonly commsSettings: CommsSettingsService,
+    private readonly scheduled: ScheduledEventService,
+    private readonly dispatcher: NotificationDispatcher,
   ) {}
 
   async setFfSelection(
@@ -356,6 +360,57 @@ export class RfqService {
     }
     for (const legId of legFires) {
       await this.status.fire("leg", legId, LegEvent.SEND_RFQ, { queryId: query.id });
+    }
+
+    // ── comms fan-out (post-commit; compose-&-log) ──
+    const offsets = await this.commsSettings.rfqReminderOffsets();
+    const base = process.env.PORTAL_BASE_URL ?? "";
+    for (const entry of entries) {
+      const ff = await this.prisma.freightForwarder.findUnique({
+        where: { id: entry.freightForwarderId },
+        select: { email: true },
+      });
+      const legCodes = await this.prisma.leg.findMany({
+        where: { id: { in: entry.legIds } },
+        select: { legCode: true },
+        orderBy: { legCode: "asc" },
+      });
+      const legNames = legCodes.map((l) => l.legCode).join(", ");
+      const deadlineIso = deadline.toISOString();
+
+      // reminders (future tiers only) + one expiry, anchored to the RFQ
+      await this.scheduled.schedule(
+        "RFQ", entry.rfqId, "rfq.reminder",
+        offsets.map((h) => ({ tier: `T${h}H`, dueAt: new Date(deadline.getTime() - h * 60 * 60 * 1000) })),
+        { tenantId: user.tenantId },
+      );
+      await this.scheduled.schedule(
+        "RFQ", entry.rfqId, "rfq.expiry",
+        [{ tier: "DEADLINE", dueAt: deadline }],
+        { tenantId: user.tenantId },
+      );
+
+      // invitation (fresh mint has the raw token) / updated (amend — no fresh link)
+      if (entry.minted && entry.accessToken) {
+        await this.dispatcher.dispatch("rfq.invitation", {
+          scope: { entityType: "QUERY", entityId: query.id },
+          tokens: {
+            RFQ_Number: entry.rfqNumber,
+            Leg_Names: legNames,
+            Deadline: deadlineIso,
+            Access_Link: `${base}/ff/rfq/${entry.accessToken}`,
+          },
+          recipients: { EMAIL: ff?.email ? [ff.email] : [] },
+          tenantId: user.tenantId,
+        });
+      } else {
+        await this.dispatcher.dispatch("rfq.updated", {
+          scope: { entityType: "QUERY", entityId: query.id },
+          tokens: { RFQ_Number: entry.rfqNumber, Leg_Names: legNames },
+          recipients: { EMAIL: ff?.email ? [ff.email] : [] },
+          tenantId: user.tenantId,
+        });
+      }
     }
 
     return {
