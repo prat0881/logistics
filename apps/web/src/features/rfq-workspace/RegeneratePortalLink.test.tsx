@@ -41,8 +41,38 @@ describe("RegeneratePortalLink", () => {
     render(wrap(<RegeneratePortalLink queryId="q1" freightForwarderId="ff1" />));
     await userEvent.click(screen.getByRole("button", { name: /regenerate/i }));
     await waitFor(() => expect(copySpy).toHaveBeenCalledWith(expect.stringContaining("/ff/rfq/NEWTOK")));
-    expect(screen.queryByText(/link copied/i)).not.toBeInTheDocument();
     const fallbackInput = await screen.findByLabelText(/portal link/i);
     expect((fallbackInput as HTMLInputElement).value).toContain("/ff/rfq/NEWTOK");
+    expect(screen.queryByText(/link copied/i)).not.toBeInTheDocument();
+  });
+
+  it("clears a stale 'Link copied' confirmation when a repeat click's copy fails", async () => {
+    const copySpy = vi
+      .spyOn(clip, "copyToClipboard")
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    let token = "NEWTOK1";
+    vi.stubGlobal("fetch", mockFetch((url, init) => {
+      if (url.includes("/reissue-token") && init?.method === "POST")
+        return { status: 200, body: { rfqId: "r", rfqNumber: "Q-1-RFQ001", freightForwarderId: "ff1", accessToken: token } };
+      return { status: 404 };
+    }));
+    render(wrap(<RegeneratePortalLink queryId="q1" freightForwarderId="ff1" />));
+    const button = screen.getByRole("button", { name: /regenerate/i });
+
+    // First click: copy succeeds -> transient "Link copied" confirmation.
+    await userEvent.click(button);
+    await waitFor(() => expect(copySpy).toHaveBeenCalledWith(expect.stringContaining("/ff/rfq/NEWTOK1")));
+    expect(await screen.findByText(/link copied/i)).toBeInTheDocument();
+
+    // Second click (within the 2s confirmation window): reissue succeeds again but
+    // this copy fails. The stale "Link copied" confirmation from the first click
+    // must not survive alongside the new fallback link.
+    token = "NEWTOK2";
+    await userEvent.click(button);
+    await waitFor(() => expect(copySpy).toHaveBeenCalledWith(expect.stringContaining("/ff/rfq/NEWTOK2")));
+    const fallbackInput = await screen.findByLabelText(/portal link/i);
+    expect((fallbackInput as HTMLInputElement).value).toContain("/ff/rfq/NEWTOK2");
+    expect(screen.queryByText(/link copied/i)).not.toBeInTheDocument();
   });
 });

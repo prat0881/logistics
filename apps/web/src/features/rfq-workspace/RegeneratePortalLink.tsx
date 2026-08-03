@@ -24,11 +24,19 @@ export function RegeneratePortalLink({ queryId, freightForwarderId }: { queryId:
     reissue.mutate(freightForwarderId, {
       onSuccess: async (res) => {
         const url = `${window.location.origin}/ff/rfq/${res.accessToken}`;
+        // Clear any stale confirmation/fallback from a previous attempt before this
+        // one resolves. Without this, a repeat click within the prior 2s window
+        // whose copy fails would render the new fallback link while the old
+        // "Link copied ✓" state was still up (its clear-timer hadn't fired yet),
+        // showing a stale confirmation next to a now-invalid link.
+        setCopied(false);
+        setFallbackUrl(null);
         const ok = await copyToClipboard(url);
-        setFallbackUrl(ok ? null : url);
         if (ok) {
           setCopied(true);
           window.setTimeout(() => setCopied(false), 2000);
+        } else {
+          setFallbackUrl(url);
         }
       },
     });
@@ -52,7 +60,7 @@ export function RegeneratePortalLink({ queryId, freightForwarderId }: { queryId:
       {fallbackUrl && (
         <div className="space-y-1">
           <p className="text-xs text-warning">Couldn't copy automatically — copy the link below.</p>
-          <PortalLinkRow url={fallbackUrl} />
+          <PortalLinkRow key={fallbackUrl} url={fallbackUrl} />
         </div>
       )}
     </div>
