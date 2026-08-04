@@ -160,8 +160,8 @@ import type { ChargeLineInputType } from "./charge-config";
 // ...
 export interface FfPortalSeededCharge {
   zone: ChargeZone | null;
-  definitionKey: string;
-  inputType: ChargeLineInputType;   // PLAIN here; TRUCKING/WAREHOUSE_STAGING seed via endpoints
+  definitionKey?: string;           // optional in the TYPE only so the pre-Task-9 seeding compiles; always set from Task 9 on
+  inputType?: ChargeLineInputType;  // PLAIN here; TRUCKING/WAREHOUSE_STAGING seed via endpoints
   presetKey: string | null;         // null for catalogue lines (kept for shape compatibility)
   label: string;
   isPreset: true;
@@ -170,8 +170,9 @@ export interface FfPortalSeededCharge {
 ```
 And add to `FfPortalLegDto` (after `seededCharges`):
 ```ts
-  warehouseIncluded: boolean;   // frozen Leg warehouse decision (design §9)
+  warehouseIncluded?: boolean;   // frozen Leg warehouse decision (design §9); optional so pre-Task-9 build stays green, set from Task 9 on
 ```
+(The three new fields are typed optional purely to keep the api/web build green while Task 2's shared change lands before Task 9 populates them — Task 9's producer always sets them, and Task 14 treats a missing `warehouseIncluded` as `false`.)
 
 - [ ] **Step 3: Widen the `quoteDraftSchema.charges` shape-check** — `packages/shared/src/ff-portal.ts:49-52`:
 
