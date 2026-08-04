@@ -49,6 +49,14 @@ describe("resolveCountryCode", () => {
     expect(resolveCountryCode("gb")).toBe("GB");
     expect(resolveCountryCode("  IN  ")).toBe("IN");
   });
+  it("resolves common colloquial abbreviations/variants", () => {
+    expect(resolveCountryCode("UK")).toBe("GB");
+    expect(resolveCountryCode("uk")).toBe("GB");
+    expect(resolveCountryCode("Great Britain")).toBe("GB");
+    expect(resolveCountryCode("USA")).toBe("US");
+    expect(resolveCountryCode("UAE")).toBe("AE");
+    expect(resolveCountryCode("Czech Republic")).toBe("CZ");
+  });
   it("returns null for empty/nullish/unknown input", () => {
     expect(resolveCountryCode(null)).toBeNull();
     expect(resolveCountryCode(undefined)).toBeNull();
