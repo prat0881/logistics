@@ -15,10 +15,12 @@ describe("CountryCombobox", () => {
     expect(screen.getByRole("button")).toHaveTextContent("Select country…");
   });
 
-  it("lists country options (name + code) when opened", async () => {
+  it("lists country options by name only (no ISO code shown) when opened", async () => {
     render(<CountryCombobox value={undefined} onChange={() => {}} />);
     await userEvent.click(screen.getByRole("button"));
-    expect(await screen.findByText(/United Kingdom \(GB\)/)).toBeInTheDocument();
+    // Rows show the name only, matching the FF-master country picker (no "(GB)").
+    expect(await screen.findByRole("option", { name: "United Kingdom" })).toBeInTheDocument();
+    expect(screen.queryByText(/United Kingdom \(GB\)/)).toBeNull();
   });
 
   it("searches by name and calls onChange with the ISO CODE on select", async () => {
@@ -26,24 +28,24 @@ describe("CountryCombobox", () => {
     render(<CountryCombobox value={undefined} onChange={onChange} />);
     await userEvent.click(screen.getByRole("button"));
     await userEvent.type(screen.getByPlaceholderText(/search country/i), "United Kingdom");
-    await userEvent.click(await screen.findByText(/United Kingdom \(GB\)/));
-    expect(onChange).toHaveBeenCalledWith("GB");
+    await userEvent.click(await screen.findByRole("option", { name: "United Kingdom" }));
+    expect(onChange).toHaveBeenCalledWith("GB"); // display is name-only, but the stored value is the ISO code
   });
 
   it("is also searchable by ISO code", async () => {
     render(<CountryCombobox value={undefined} onChange={() => {}} />);
     await userEvent.click(screen.getByRole("button"));
     await userEvent.type(screen.getByPlaceholderText(/search country/i), "GB");
-    expect(await screen.findByText(/United Kingdom \(GB\)/)).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "United Kingdom" })).toBeInTheDocument();
   });
 
   it("a legacy non-code value still shows on the trigger (no crash, no blank)", async () => {
     render(<CountryCombobox value="Legacyland" onChange={() => {}} />);
     expect(screen.getByRole("button")).toHaveTextContent("Legacyland");
-    // Still present/selectable as its own row in the open list (distinct from the
+    // Still present/selectable as its own row (by option role, distinct from the
     // trigger's own "Legacyland" text) so the user can move to a proper code.
     await userEvent.click(screen.getByRole("button"));
-    expect(await screen.findByText(/Legacyland \(Legacyland\)/)).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "Legacyland" })).toBeInTheDocument();
   });
 
   it("respects a custom ariaLabel on the trigger", () => {
