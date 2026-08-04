@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useNavigate } from "react-router-dom";
 import { QueryWizardPage } from "./QueryWizardPage";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
@@ -165,6 +165,25 @@ const fullDraftDetail = {
 };
 
 const fullRfqReadyDetail = { ...fullDraftDetail, status: "RFQ_READY" };
+
+// ── Fixtures for the cross-query-navigation regression test ─────────────────
+const queryADetail = { ...draftDetail, id: "qA", queryCode: "YAL26-00QA" };
+const queryBDetail = { ...draftDetail, id: "qB", queryCode: "YAL26-00QB" };
+
+/**
+ * Test-only helper that mimics NotificationBell's in-app navigation: it calls
+ * `navigate(`/queries/${id}`)` with NO ?step= — same as clicking a notification
+ * for a different query. Rendered as a sibling of the wizard's <Routes> so it
+ * shares the same MemoryRouter/history (see NotificationBell.tsx:52).
+ */
+function GoToQuery({ id }: { id: string }) {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate(`/queries/${id}`)}>
+      go-to-{id}
+    </button>
+  );
+}
 
 describe("QueryWizardPage", () => {
   it("mints the Query ID on first Save of a new query and switches to edit", async () => {
@@ -600,5 +619,130 @@ describe("QueryWizardPage", () => {
     );
     // Server was NOT called
     expect(createCalls.length).toBe(0);
+  });
+
+  it("Create Query saves the current step (checklist) before running the gate (S3.3)", async () => {
+    let checklistPersisted = false;
+    const events: string[] = [];
+    const baseChecklist = [
+      { id: "c1", itemKey: "weight-confirmed", checked: false },
+      { id: "c2", itemKey: "dimensions-confirmed", checked: false },
+    ];
+    const detailFor = () => ({
+      ...fullDraftDetail,
+      internalNotes: "Ready for RFQ",
+      checklist: baseChecklist.map((c) => ({ ...c, checked: checklistPersisted })),
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/q9/checklist") && init?.method === "PATCH") {
+          events.push("checklist");
+          checklistPersisted = true;
+          return { status: 200, body: {} };
+        }
+        if (url.includes("/api/queries/q9/create") && init?.method === "POST") {
+          events.push("create");
+          return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
+        }
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailFor() };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9?step=4", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    const weight = await screen.findByRole("checkbox", { name: /Weight confirmed/i });
+    const dims = screen.getByRole("checkbox", { name: /Dimensions confirmed/i });
+    await userEvent.click(weight);
+    await userEvent.click(dims);
+
+    await userEvent.click(screen.getByRole("button", { name: /Create Query/i }));
+
+    expect(await screen.findByText(/created successfully/i)).toBeInTheDocument();
+    expect(events).toEqual(["checklist", "create"]);
+  });
+
+  it("first Next on a new query advances to Shipment in a single click (S3.4)", async () => {
+    const posts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.endsWith("/api/queries") && init?.method === "POST") {
+          posts.push(JSON.parse(init.body as string));
+          return { status: 201, body: draftDetail };
+        }
+        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/new" element={<QueryWizardPage />} />
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/new", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    expect(await screen.findByRole("heading", { name: /Query Details/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Next$/ }));
+    expect(await screen.findByRole("heading", { name: /Shipment Details/i })).toBeInTheDocument();
+    await waitFor(() => expect(posts.length).toBe(1));
+    expect(screen.queryByRole("heading", { name: /Query Details/i })).not.toBeInTheDocument();
+  });
+
+  it("resets to step 0 when in-app navigation lands on a DIFFERENT query with no ?step= (review fix)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/qA")) return { status: 200, body: queryADetail };
+        if (url.includes("/api/queries/qB")) return { status: 200, body: queryBDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <>
+        {/* Sibling of the wizard route, same history — mimics NotificationBell */}
+        <GoToQuery id="qB" />
+        <Routes>
+          <Route path="/queries/:id" element={<QueryWizardPage />} />
+        </Routes>
+      </>,
+      { route: "/queries/qA", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    // Query A loads on step 0 (Client & Query)
+    expect(await screen.findByText("YAL26-00QA")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Query Details/i })).toBeInTheDocument();
+
+    // Advance query A to a non-zero step via the stepper (localStep > 0)
+    await userEvent.click(await screen.findByRole("button", { name: /^Shipment$/i }));
+    expect(await screen.findByRole("heading", { name: /Shipment Details/i })).toBeInTheDocument();
+
+    // In-app navigate to a DIFFERENT existing query with NO ?step= — /queries/:id
+    // does not remount QueryWizardPage, so this must not carry the step over.
+    await userEvent.click(screen.getByRole("button", { name: "go-to-qB" }));
+
+    // Query B has loaded...
+    expect(await screen.findByText("YAL26-00QB")).toBeInTheDocument();
+    // ...and must render on step 0 (Client & Query), not the leaked Shipment step.
+    expect(await screen.findByRole("heading", { name: /Query Details/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Shipment Details/i })).not.toBeInTheDocument();
   });
 });

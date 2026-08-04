@@ -160,6 +160,16 @@ describe("querySaveSchema (draft — lenient, format-validated)", () => {
         querySaveSchema.safeParse({ targetDelivery: "2026-08-01T00:00:00.000Z" }).success,
       ).toBe(true);
     });
+    it("pins the G10 message to the 'Target Pickup' label (S3.5)", () => {
+      const res = querySaveSchema.safeParse({
+        readyDate: "2026-08-10T00:00:00.000Z",
+        targetDelivery: "2026-08-01T00:00:00.000Z",
+      });
+      expect(res.success).toBe(false);
+      if (!res.success) {
+        expect(res.error.issues[0].message).toBe("Target Pickup must be on or before Target Delivery");
+      }
+    });
   });
 
   describe("trims required text + rejects whitespace-only (G8)", () => {
@@ -289,6 +299,11 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
     );
     const inco = findings.find((f) => f.message === "Incoterms is required");
     expect(inco?.scope).toEqual({ type: "field", id: "incoterms" });
+  });
+  it("labels the missing readyDate finding 'Target Pickup is required' (S3.5)", () => {
+    const f = collectCreateFindings({ ...ready, readyDate: null }, []);
+    expect(f.map((x) => x.message)).toContain("Target Pickup is required");
+    expect(f.map((x) => x.message)).not.toContain("Ready Date is required");
   });
 });
 

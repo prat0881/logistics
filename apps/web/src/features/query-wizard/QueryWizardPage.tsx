@@ -1,7 +1,14 @@
 import { useCallback, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { StageRail, isRfqStageEnabled } from "@/features/rfq-workspace/StageRail";
-import type { Finding, QueryForValidation, CargoForValidation, QuerySaveInput } from "@svyft/shared";
+import type {
+  Finding,
+  QueryForValidation,
+  CargoForValidation,
+  QuerySaveInput,
+  QueryDetail,
+} from "@svyft/shared";
 import {
   collectCreateFindings,
   collectChecklistFindings,
@@ -75,6 +82,7 @@ function WizardInner({ id }: { id?: string }) {
   const { isNew, step, detail, refresh } = useWizard();
   const { create, patch } = useSaveQuery();
   const createQuery = useCreateQuery();
+  const qc = useQueryClient();
   const [findings, setFindings] = useState<Finding[]>([]);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
@@ -87,7 +95,11 @@ function WizardInner({ id }: { id?: string }) {
 
   /**
    * handleSave — called by the shell's Save (and Next).
-   * - new query: call the step's save, then POST → navigate to /queries/:id?step=0
+   * - new query: call the step's save, then POST → navigate to /queries/:id (no
+   *   ?step= — S3.4: the wizard's `localStep` is authoritative and survives this
+   *   navigate uninterrupted, so a Next that triggered the mint can advance the
+   *   step in the same click instead of being reset back to step 0. Save uses the
+   *   same branch but never calls goNext, so it still stays put on the new query.)
    * - existing query: call the step's save (step returns a QuerySaveInput patch or void)
    */
   const handleSave = useCallback(
@@ -103,7 +115,7 @@ function WizardInner({ id }: { id?: string }) {
           input = undefined;
         }
         const d = await create(input ?? {});
-        navigate(`/queries/${d.id}?step=0`, { replace: true });
+        navigate(`/queries/${d.id}`, { replace: true });
         return;
       }
       const input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
@@ -119,9 +131,15 @@ function WizardInner({ id }: { id?: string }) {
    * handleCreateQuery — fired on the final step's "Create Query" button.
    *
    * Flow:
-   *   1. Client-side preview: compute blocking findings from collectCreateFindings +
-   *      validateRoute + collectChecklistFindings. If any blocking → render them
-   *      inline and abort (Create is the single gate).
+   *   0. S3.3 — save the current step first (same as the Save button), then
+   *      refresh, so the gate reads freshly-persisted state. Checklist ticks
+   *      live in Step5Notes' local state and only reach the server via the
+   *      step's save (PATCH /checklist); without this the gate reads a stale
+   *      `detail` and blocks Create even though the boxes are ticked.
+   *   1. Client-side preview (against the FRESH detail): compute blocking
+   *      findings from collectCreateFindings + validateRoute +
+   *      collectChecklistFindings. If any blocking → render them inline and
+   *      abort (Create is the single gate).
    *   2. POST /api/queries/:id/create. On 422 → store server findings.
    *      On 201 → re-GET (refresh) → banner.
    */
@@ -130,20 +148,29 @@ function WizardInner({ id }: { id?: string }) {
     setFindings([]);
     setSuccessBanner(null);
 
-    // ── 1. Client-side preview ───────────────────────────────────────────────
-    const graph = toRouteGraph(detail);
-    const checklistItems = detail.checklist.map((c) => ({
+    // ── 0. Save the current step, then re-fetch so the gate is fresh ─────────
+    try {
+      await handleSave();
+    } catch {
+      /* best-effort: inline field errors already surface any format issue */
+    }
+    await refresh();
+    const fresh = qc.getQueryData<QueryDetail>(["query", id]) ?? detail;
+
+    // ── 1. Client-side preview (against the FRESH detail) ────────────────────
+    const graph = toRouteGraph(fresh);
+    const checklistItems = fresh.checklist.map((c) => ({
       key: c.itemKey,
       checked: c.checked,
       label: CHECKLIST_LABELS[c.itemKey] ?? c.itemKey,
     }));
     const preview = dedupeFindings([
       ...collectCreateFindings(
-        toQueryForValidation(detail),
-        detail.cargo.map(toCargoForValidation),
+        toQueryForValidation(fresh),
+        fresh.cargo.map(toCargoForValidation),
       ),
       ...validateRoute(graph, "create"),
-      ...collectChecklistFindings(checklistItems, detail.internalNotes),
+      ...collectChecklistFindings(checklistItems, fresh.internalNotes),
     ]);
     const blocking = preview.filter((f) => f.severity === "blocking");
     if (blocking.length) {
@@ -157,7 +184,7 @@ function WizardInner({ id }: { id?: string }) {
       // On success, re-GET to refresh status (POST only returns { id, status })
       await refresh();
       // detail may not have updated yet after refresh; use whatever code is available
-      const code = detail?.queryCode ?? id;
+      const code = fresh.queryCode ?? id;
       setSuccessBanner(`Query ${code} created successfully.`);
     } catch (err) {
       if (err instanceof ApiError && err.findings) {
@@ -166,7 +193,7 @@ function WizardInner({ id }: { id?: string }) {
         throw err;
       }
     }
-  }, [id, detail, createQuery, refresh]);
+  }, [id, detail, createQuery, refresh, handleSave, qc]);
 
   const currentStepKey = STEPS[step]?.key ?? STEPS[0].key;
   const StepComponent = stepComponents[currentStepKey];

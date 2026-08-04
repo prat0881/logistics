@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import type { QueryDetail, CargoDto } from "@svyft/shared";
 import { QueryOverviewHeader } from "./QueryOverviewHeader";
 
@@ -62,5 +62,15 @@ describe("QueryOverviewHeader", () => {
     } as unknown as QueryDetail;
     render(<QueryOverviewHeader query={queryWithDg} />);
     expect(screen.getByLabelText(/dangerous goods/i)).toBeInTheDocument();
+  });
+
+  it("renders reference-tag icons under their own 'Reference Tags' field, not under Totals", () => {
+    const queryWithTag = { ...query, cargo: [makeCargo({ referenceTags: ["OUT_OF_GAUGE"] })] } as unknown as QueryDetail;
+    render(<QueryOverviewHeader query={queryWithTag} />);
+    const label = screen.getByText("Reference Tags");
+    const field = label.closest("div")!;
+    expect(within(field).getByLabelText(/out of gauge/i)).toBeInTheDocument();
+    const totals = screen.getByText("Totals").closest("div")!;
+    expect(within(totals).queryByLabelText(/out of gauge/i)).toBeNull();
   });
 });

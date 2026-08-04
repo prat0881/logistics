@@ -545,6 +545,42 @@ describe("Step3Cargo", () => {
       expect(deleteCall).toBeTruthy();
     });
   });
+
+  it("S3.1: renders a Reference Tags icon column (tags + DG) and drops the DG Yes/No text", async () => {
+    const heavyRow = { ...cargoRowDto, id: "aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa", rowIndex: 0, poReference: "PO-HEAVY", referenceTags: ["HEAVY"], isDangerous: false };
+    const dgRow = { ...cargoRowDto, id: "bbbb2222-bbbb-bbbb-bbbb-bbbbbbbbbbbb", rowIndex: 1, poReference: "PO-DG", referenceTags: [], isDangerous: true };
+    const detailWithTagged = { ...baseDetail, cargo: [heavyRow, dgRow] };
+
+    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
+      if (url.includes("/api/auth/me"))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }), text: () => Promise.resolve(""), blob: () => Promise.resolve(new Blob()) } as Response);
+      if (url === `/api/queries/${QUERY_ID}`)
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(detailWithTagged), text: () => Promise.resolve(JSON.stringify(detailWithTagged)), blob: () => Promise.resolve(new Blob()) } as Response);
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve(""), blob: () => Promise.resolve(new Blob()) } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: `/queries/${QUERY_ID}?step=2` },
+    );
+
+    await navigateToStep3();
+    await screen.findByText("PO-HEAVY");
+
+    expect(screen.getByRole("columnheader", { name: /reference tags/i })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "DG" })).toBeNull();
+
+    const heavyRowEl = screen.getByText("PO-HEAVY").closest("tr")!;
+    expect(within(heavyRowEl).getByLabelText("Heavy")).toBeInTheDocument();
+    expect(within(heavyRowEl).queryByText("No")).toBeNull();
+
+    const dgRowEl = screen.getByText("PO-DG").closest("tr")!;
+    expect(within(dgRowEl).getByLabelText("Dangerous goods")).toBeInTheDocument();
+    expect(within(dgRowEl).queryByText("Yes")).toBeNull();
+  });
 });
 
   it("I1: cargo review table shows dim and weight units alongside raw values", async () => {

@@ -159,3 +159,18 @@ describe("QueriesToolbar — All clears the facet", () => {
     expect(statusEmits.at(-1)?.status).toBeUndefined();
   });
 });
+
+describe("QueriesToolbar — country folded into search (S3.2)", () => {
+  it("has no separate Country input and routes a country term through the single search box", async () => {
+    vi.stubGlobal("fetch", authMockFetch());
+    const onChange = vi.fn();
+    renderWithProviders(<QueriesToolbar onChange={onChange} />);
+    const user = userEvent.setup();
+
+    expect(screen.queryByLabelText("Country filter")).toBeNull();
+    expect(screen.getByLabelText("Search").getAttribute("placeholder")).toMatch(/country/i);
+
+    await user.type(screen.getByLabelText("Search"), "IN");
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ q: "IN" })));
+  });
+});

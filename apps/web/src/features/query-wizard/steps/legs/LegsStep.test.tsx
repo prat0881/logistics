@@ -331,17 +331,16 @@ describe("LegsStep", () => {
     });
   });
 
-  it("shows route findings notices strip and canvas (Legs rework)", async () => {
+  it("shows no legs-page validation banners and fires no /validate request while editing (S3.6/S3.8)", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
         if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
         if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-          return { status: 200, body: baseDetail };
+          return { status: 200, body: detailWithDangling };
         return { status: 200, body: {} };
       }),
     );
-
     renderWithProviders(
       <Routes>
         <Route path="/queries/:id" element={<QueryWizardPage />} />
@@ -349,21 +348,16 @@ describe("LegsStep", () => {
       { route: `/queries/${QUERY_ID}?step=3` },
     );
     await navigateToStep4();
-
-    // (1) the "Validate route" button is gone (validation runs on Save/Next now)
-    await waitFor(() =>
-      expect(document.querySelector('[data-slot="route-diagram"]')).toBeInTheDocument(),
-    );
-    expect(screen.queryByRole("button", { name: /validate route/i })).not.toBeInTheDocument();
-
-    // (2) baseDetail has unused points + unassigned cargo → create-phase errors →
-    // the notices strip prompts hovering the boxes
-    await waitFor(() =>
-      expect(screen.getByText(/hover the highlighted boxes/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(document.querySelector('[data-slot="route-diagram"]')).toBeInTheDocument());
+    expect(screen.queryByText(/hover the highlighted boxes/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/issues? to resolve/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /incomplete legs/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/can't be shown on the route/i)).not.toBeInTheDocument();
+    const calls: unknown[][] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.some((args) => String(args[0]).includes("/validate"))).toBe(false);
   });
 
-  it("shows route findings as a hover tooltip on the diagram edge (Legs rework step 4)", async () => {
+  it("does not paint live inline route-validation highlights on the diagram (S3.6)", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
@@ -373,7 +367,6 @@ describe("LegsStep", () => {
         return { status: 200, body: {} };
       }),
     );
-
     renderWithProviders(
       <Routes>
         <Route path="/queries/:id" element={<QueryWizardPage />} />
@@ -381,16 +374,8 @@ describe("LegsStep", () => {
       { route: `/queries/${QUERY_ID}?step=3` },
     );
     await navigateToStep4();
-
-    // legDto has null ready/target dates → create-phase C1 finding on leg L1.
-    await waitFor(() => {
-      expect(document.querySelector(`[data-leg-id="${LEG_ID}"]`)).toBeInTheDocument();
-    });
-
-    const edge = document.querySelector(`[data-leg-id="${LEG_ID}"]`);
-    expect(edge).not.toBeNull();
-    const title = edge?.querySelector("title");
-    expect(title?.textContent ?? "").toMatch(/missing|ready date|target delivery/i);
+    await waitFor(() => expect(document.querySelector(`[data-leg-id="${LEG_ID}"]`)).toBeInTheDocument());
+    expect(document.querySelector("[data-leg-id][data-finding]")).toBeNull();
   });
 
   it("Next advances from Step 4 even when the route has errors (Round-1 Common #5)", async () => {
@@ -450,37 +435,6 @@ describe("LegsStep", () => {
       ).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Leg & Route" })).toBeInTheDocument();
     });
-  });
-
-  it("lists an incomplete (dangling-endpoint) leg in the escape strip and opens the editor on click", async () => {
-    const user = userEvent.setup();
-    vi.stubGlobal(
-      "fetch",
-      mockFetch((url, init) => {
-        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
-        if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
-          return { status: 200, body: detailWithDangling };
-        return { status: 200, body: {} };
-      }),
-    );
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=3` },
-    );
-    await navigateToStep4();
-
-    // The strip names the incomplete leg + the "needs origin & destination" hint.
-    const stripRow = await screen.findByRole("button", {
-      name: /L2.*needs origin & destination/i,
-    });
-    expect(stripRow).toBeInTheDocument();
-
-    // Clicking the row opens the LegEditor dialog (edit mode) so it can be completed/deleted.
-    await user.click(stripRow);
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
   // ?add= mint-intent round-trip tests

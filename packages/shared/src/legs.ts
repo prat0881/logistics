@@ -30,6 +30,8 @@ export const legSaveSchema = z
     assignedCargoIds: z.array(z.string().uuid()).optional(),
   })
   // G10: Ready Date must be on or before Target Delivery (when both are present).
+  // NOTE: leg-level field, labelled "Ready Date" in the Leg editor — kept as "Ready Date"
+  // (S3.5 renamed only the QUERY-screen field/message, which is labelled "Target Pickup").
   .refine(
     (l) =>
       !(l.readyDate && l.targetDelivery) ||

@@ -54,10 +54,10 @@ export function QueryOverviewHeader({ query }: { query: QueryDetail }) {
         <dl className="flex flex-1 flex-wrap items-start gap-x-8 gap-y-4">
           <Field label="Incoterms">{query.incoterms ?? "—"}</Field>
           <Field label="Totals">
-            <div className="space-y-1">
-              <div>{totals.pkg} pkg · {totals.cbm} CBM · {totals.gross} kg</div>
-              <CargoTagIcons cargo={query.cargo} />
-            </div>
+            <div>{totals.pkg} pkg · {totals.cbm} CBM · {totals.gross} kg</div>
+          </Field>
+          <Field label="Reference Tags">
+            <CargoTagIcons cargo={query.cargo} />
           </Field>
         </dl>
         <Badge variant={queryStatusVariant(query.status)}>{statusLabel}</Badge>

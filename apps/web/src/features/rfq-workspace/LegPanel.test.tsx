@@ -84,4 +84,15 @@ describe("LegPanel", () => {
     expect(screen.queryByText(/kg net/)).not.toBeInTheDocument();
     expect(screen.getByText(/kg gross/)).toBeInTheDocument();
   });
+
+  it("shows the FF country-scope chip derived from the leg's origin/destination points", async () => {
+    vi.stubGlobal("fetch", mockFetch((url) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+      return { status: 404 };
+    }));
+    wrap(<LegPanel queryId="q1" leg={leg} points={points} legQuotes={[]} referencedFfs={[]} cargo={[]} open onToggle={() => {}} />);
+    const scope = await screen.findByText(/forwarders covering/i);
+    expect(scope).toHaveTextContent("China");                // getCountryName("CN")
+    expect(scope).toHaveTextContent("United Arab Emirates");  // getCountryName("AE")
+  });
 });

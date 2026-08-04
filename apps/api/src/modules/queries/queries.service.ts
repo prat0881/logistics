@@ -72,7 +72,7 @@ export class QueriesService {
   // via a batched user.findMany over the page's rows.
   async list(params: QueryListParams): Promise<Paginated<QueryListRow>> {
     const {
-      q, status, priority, assignedUserId, freightMode, country,
+      q, status, priority, assignedUserId, freightMode,
       dateField, dateFrom, dateTo, sort, page, pageSize,
     } = params;
 
@@ -91,6 +91,14 @@ export class QueriesService {
               { contactName: { contains: q, mode: "insensitive" } },
               { shipmentDescription: { contains: q, mode: "insensitive" } },
               { client: { companyName: { contains: q, mode: "insensitive" } } },
+              {
+                points: {
+                  some: {
+                    country: { contains: q, mode: "insensitive" },
+                    type: { in: ["PICKUP", "DELIVERY"] as Prisma.EnumPointTypeFilter["in"] },
+                  },
+                },
+              },
             ],
           }
         : {}),
@@ -104,16 +112,6 @@ export class QueriesService {
         : {}),
       ...(modes && modes.length
         ? { legs: { some: { mode: { in: modes as Prisma.EnumFreightModeFilter["in"] } } } }
-        : {}),
-      ...(country
-        ? {
-            points: {
-              some: {
-                country: { equals: country, mode: "insensitive" },
-                type: { in: ["PICKUP", "DELIVERY"] as Prisma.EnumPointTypeFilter["in"] },
-              },
-            },
-          }
         : {}),
     };
 

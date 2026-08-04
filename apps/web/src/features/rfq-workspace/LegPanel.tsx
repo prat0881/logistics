@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { QueryLegDto, QueryPointDto, QuoteDto, FreightForwarderDto, CargoDto } from "@svyft/shared";
+import { getCountryName } from "@svyft/shared";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,6 +36,11 @@ function pointName(points: QueryPointDto[], id: string | null): string {
   return p?.name ?? ([p?.city, p?.country].filter(Boolean).join(", ") || "—");
 }
 
+function pointCountryName(points: QueryPointDto[], id: string | null): string {
+  const code = id ? (points.find((x) => x.id === id)?.country ?? null) : null;
+  return code ? getCountryName(code) : "—";
+}
+
 function fmtDate(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString() : "—";
 }
@@ -44,6 +50,8 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo
   const [previewOpen, setPreviewOpen] = useState(false);
   const hasSent = legQuotes.some((q) => q.status !== "SELECT");
   const route = `${pointName(points, leg.originPointId)} → ${pointName(points, leg.destinationPointId)}`;
+  const originCountry = pointCountryName(points, leg.originPointId);
+  const destCountry = pointCountryName(points, leg.destinationPointId);
 
   return (
     <Card id={`legcard-${leg.id}`} className="scroll-mt-4 overflow-hidden">
@@ -80,12 +88,17 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo
             </div>
           </dl>
 
-          <FfSelectionGrid
-            queryId={queryId}
-            legId={leg.id}
-            legQuotes={legQuotes.map((q) => ({ freightForwarderId: q.freightForwarderId, status: q.status }))}
-            referencedFfs={referencedFfs}
-          />
+          <div className="space-y-2">
+            <div className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
+              Forwarders covering {originCountry} → {destCountry}
+            </div>
+            <FfSelectionGrid
+              queryId={queryId}
+              legId={leg.id}
+              legQuotes={legQuotes.map((q) => ({ freightForwarderId: q.freightForwarderId, status: q.status }))}
+              referencedFfs={referencedFfs}
+            />
+          </div>
 
           <div className="flex flex-wrap items-end justify-between gap-3 border-t border-border pt-4">
             <div className="space-y-1">

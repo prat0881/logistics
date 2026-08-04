@@ -122,12 +122,12 @@ export const querySaveSchema = z
     },
     { message: "Response Deadline cannot be in the past", path: ["responseDeadline"] },
   )
-  // G10: Ready Date must be on or before Target Delivery (when both are present).
+  // G10: Target Pickup must be on or before Target Delivery (when both are present).
   .refine(
     (q) =>
       !(q.readyDate && q.targetDelivery) ||
       new Date(q.readyDate).getTime() <= new Date(q.targetDelivery).getTime(),
-    { message: "Ready Date must be on or before Target Delivery", path: ["targetDelivery"] },
+    { message: "Target Pickup must be on or before Target Delivery", path: ["targetDelivery"] },
   );
 export type QuerySaveInput = z.infer<typeof querySaveSchema>;
 
@@ -184,7 +184,7 @@ export function collectCreateFindings(
   need(q.contactName, "Contact person is required");
   need(q.contactEmail, "Contact email is required");
   need(q.contactPhone, "Contact phone is required");
-  need(q.readyDate, "Ready Date is required");
+  need(q.readyDate, "Target Pickup is required");
   need(q.targetDelivery, "Target Delivery is required");
   // Incoterms buckets to the Shipment tab → field-scoped (not the generic query-scoped `need`).
   {
@@ -281,7 +281,6 @@ export const queryListQuerySchema = z.object({
         message: `freightMode must be a single or comma-separated list of: ${FREIGHT_MODES.join(", ")}`,
       },
     ),       // single value or CSV, each token validated against FREIGHT_MODES
-  country: z.string().trim().min(1).optional(),
   dateField: z.enum(["queryDate", "updatedAt"]).optional(),
   dateFrom: z.string().datetime({ offset: true }).optional(),
   dateTo: z.string().datetime({ offset: true }).optional(),

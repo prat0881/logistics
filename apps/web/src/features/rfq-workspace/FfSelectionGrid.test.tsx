@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { FreightForwarderDto } from "@svyft/shared";
 import { mockFetch } from "@/test/mock-fetch";
+import * as clip from "@/lib/clipboard";
 import { FfSelectionGrid } from "./FfSelectionGrid";
 
 const ff = (id: string, name: string): FreightForwarderDto => ({
@@ -22,7 +23,10 @@ function wrap(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("FfSelectionGrid", () => {
   it("lists eligible FFs, toggles selection via PUT, shows counts", async () => {
@@ -95,12 +99,13 @@ describe("FfSelectionGrid", () => {
       />,
     );
     // Full country name rendered in the country/mode paragraph, not the bare code
-    expect(await screen.findByText(/India · AIR/)).toBeInTheDocument();
+    expect(await screen.findByText("India")).toBeInTheDocument();
+    expect(screen.getByText("AIR")).toBeInTheDocument();
     expect(screen.queryByText(/\bIN\b/)).toBeNull();
     // Payment terms and lead time are absent
     expect(screen.queryByText(/NET30|Lead/)).toBeNull();
     // Distributed FF shows Regenerate button
-    expect(screen.getByRole("button", { name: /regenerate portal link/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /regenerate/i })).toBeInTheDocument();
   });
 
   it("does NOT show regenerate button for a SELECT (not-yet-distributed) FF", async () => {
@@ -116,24 +121,23 @@ describe("FfSelectionGrid", () => {
       />,
     );
     expect(await screen.findByText("Select FF")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /regenerate portal link/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /regenerate/i })).toBeNull();
   });
 
-  it("defaults to Cards and toggles to Table (with column headers)", async () => {
+  it("defaults to the Table view (column headers visible on mount), toggles to Cards", async () => {
     vi.stubGlobal("fetch", mockFetch((url) => {
       if (url.includes("/eligible-ffs")) return { status: 200, body: [ff("a", "Alpha FF"), ff("b", "Beta FF")] };
       return { status: 404 };
     }));
     wrap(<FfSelectionGrid queryId="q1" legId="l1" legQuotes={[]} referencedFfs={[]} />);
     expect(await screen.findByText("Alpha FF")).toBeInTheDocument();
-    expect(screen.queryByRole("columnheader", { name: /forwarder/i })).toBeNull(); // cards first
-    await userEvent.click(screen.getByRole("button", { name: /^table$/i }));
     expect(screen.getByRole("columnheader", { name: /forwarder/i })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /country/i })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /modes/i })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /status/i })).toBeInTheDocument();
-    // no Terms / Lead columns (D1)
     expect(screen.queryByRole("columnheader", { name: /terms|lead/i })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^cards$/i }));
+    expect(screen.queryByRole("columnheader", { name: /forwarder/i })).toBeNull();
   });
 
   it("filters by search text", async () => {
@@ -177,5 +181,26 @@ describe("FfSelectionGrid", () => {
     await userEvent.click(screen.getByRole("button", { name: /forwarder/i }));
     rows = screen.getAllByRole("row").slice(1);
     expect(within(rows[0]).getByText("Zulu FF")).toBeInTheDocument(); // descending
+  });
+
+  it("puts Regenerate in the last table column and auto-copies the new link on click", async () => {
+    const copySpy = vi.spyOn(clip, "copyToClipboard").mockResolvedValue(true);
+    const frozenFf = ff("ff1", "Frozen FF");
+    vi.stubGlobal("fetch", mockFetch((url, init) => {
+      if (url.includes("/eligible-ffs")) return { status: 200, body: [frozenFf] };
+      if (url.includes("/reissue-token") && init?.method === "POST")
+        return { status: 200, body: { rfqId: "r", rfqNumber: "Q-1-RFQ001", freightForwarderId: "ff1", accessToken: "NEWTOK" } };
+      return { status: 404 };
+    }));
+    wrap(<FfSelectionGrid queryId="q1" legId="l1" legQuotes={[{ freightForwarderId: "ff1", status: "RFQ_SENT" }]} referencedFfs={[frozenFf]} />);
+    const headers = await screen.findAllByRole("columnheader");
+    expect(headers[headers.length - 1]).toHaveTextContent(/actions/i);
+    const row = screen.getByText("Frozen FF").closest("tr")!;
+    const cells = within(row).getAllByRole("cell");
+    const regenBtn = within(cells[cells.length - 1]).getByRole("button", { name: /regenerate/i });
+    await userEvent.click(regenBtn);
+    await waitFor(() => expect(copySpy).toHaveBeenCalledWith(expect.stringContaining("/ff/rfq/NEWTOK")));
+    expect(await within(cells[cells.length - 1]).findByText(/link copied/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/portal link/i)).toBeNull();
   });
 });

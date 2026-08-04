@@ -37,6 +37,16 @@ describe("legSaveSchema", () => {
       }).success,
     ).toBe(true);
   });
+  it("keeps the leg G10 message on the 'Ready Date' label (leg field stays 'Ready Date')", () => {
+    const res = legSaveSchema.safeParse({
+      readyDate: "2026-08-10T00:00:00.000Z",
+      targetDelivery: "2026-08-01T00:00:00.000Z",
+    });
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error.issues[0].message).toBe("Ready Date must be on or before Target Delivery");
+    }
+  });
   it("rejects a self-loop leg (origin === destination) (G12)", () => {
     const id = "11111111-1111-1111-1111-111111111111";
     expect(legSaveSchema.safeParse({ originPointId: id, destinationPointId: id }).success).toBe(
