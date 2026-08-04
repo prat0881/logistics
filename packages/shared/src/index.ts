@@ -17,5 +17,6 @@ export * from "./timezone";
 export * from "./notifications";
 export * from "./comms";
 export * from "./quote";
+export * from "./charge-config";
 export * from "./quote-engine";
 export * from "./ff-portal";
