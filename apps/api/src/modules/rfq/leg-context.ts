@@ -4,10 +4,11 @@ import { QuoteStatus, resolveCountryCode } from "@svyft/shared";
 import type { PrismaService } from "../../prisma/prisma.service";
 
 export const LEG_RFQ_INCLUDE = {
-  originPoint: { select: { country: true, name: true, city: true } },
-  destinationPoint: { select: { country: true, name: true, city: true } },
+  originPoint: { select: { id: true, type: true, country: true, name: true, city: true } },
+  destinationPoint: { select: { id: true, type: true, country: true, name: true, city: true } },
   legCargo: { include: { cargoItem: true } },
   quotes: { select: { id: true, freightForwarderId: true, status: true } },
+  chargeSelections: { select: { definition: { select: { key: true } } } },
 } satisfies Prisma.LegInclude;
 
 export type LegRfqRow = Prisma.LegGetPayload<{ include: typeof LEG_RFQ_INCLUDE }>;

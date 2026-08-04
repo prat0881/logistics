@@ -22,6 +22,7 @@ import { RfqNumberService } from "./rfq-number.service";
 import { RfqTokenService } from "./rfq-token.service";
 import { loadLegForRfq, type LegRfqContext } from "./leg-context";
 import { buildManifestSnapshot } from "./manifest";
+import { buildChargeConfigSnapshot } from "./charge-config.snapshot";
 
 @Injectable()
 export class RfqService {
@@ -358,9 +359,14 @@ export class RfqService {
         const legIds = new Set<string>();
         for (const { quoteId, legCtx } of items) {
           const snapshot = buildManifestSnapshot(legCtx, query, frozenAt);
+          const chargeConfig = await buildChargeConfigSnapshot(this.prisma, legCtx.leg);
           await tx.quote.update({
             where: { id: quoteId },
-            data: { rfqId: rfq.id, manifestSnapshot: snapshot as unknown as Prisma.InputJsonValue },
+            data: {
+              rfqId: rfq.id,
+              manifestSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+              chargeConfigSnapshot: chargeConfig as unknown as Prisma.InputJsonValue,
+            },
           });
           quoteFires.push(quoteId);
           legIds.add(legCtx.leg.id);
