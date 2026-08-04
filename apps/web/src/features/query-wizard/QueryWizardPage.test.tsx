@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useNavigate } from "react-router-dom";
 import { QueryWizardPage } from "./QueryWizardPage";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
@@ -165,6 +165,25 @@ const fullDraftDetail = {
 };
 
 const fullRfqReadyDetail = { ...fullDraftDetail, status: "RFQ_READY" };
+
+// ── Fixtures for the cross-query-navigation regression test ─────────────────
+const queryADetail = { ...draftDetail, id: "qA", queryCode: "YAL26-00QA" };
+const queryBDetail = { ...draftDetail, id: "qB", queryCode: "YAL26-00QB" };
+
+/**
+ * Test-only helper that mimics NotificationBell's in-app navigation: it calls
+ * `navigate(`/queries/${id}`)` with NO ?step= — same as clicking a notification
+ * for a different query. Rendered as a sibling of the wizard's <Routes> so it
+ * shares the same MemoryRouter/history (see NotificationBell.tsx:52).
+ */
+function GoToQuery({ id }: { id: string }) {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate(`/queries/${id}`)}>
+      go-to-{id}
+    </button>
+  );
+}
 
 describe("QueryWizardPage", () => {
   it("mints the Query ID on first Save of a new query and switches to edit", async () => {
@@ -683,5 +702,47 @@ describe("QueryWizardPage", () => {
     expect(await screen.findByRole("heading", { name: /Shipment Details/i })).toBeInTheDocument();
     await waitFor(() => expect(posts.length).toBe(1));
     expect(screen.queryByRole("heading", { name: /Query Details/i })).not.toBeInTheDocument();
+  });
+
+  it("resets to step 0 when in-app navigation lands on a DIFFERENT query with no ?step= (review fix)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+        if (url.includes("/api/queries/qA")) return { status: 200, body: queryADetail };
+        if (url.includes("/api/queries/qB")) return { status: 200, body: queryBDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <>
+        {/* Sibling of the wizard route, same history — mimics NotificationBell */}
+        <GoToQuery id="qB" />
+        <Routes>
+          <Route path="/queries/:id" element={<QueryWizardPage />} />
+        </Routes>
+      </>,
+      { route: "/queries/qA", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    // Query A loads on step 0 (Client & Query)
+    expect(await screen.findByText("YAL26-00QA")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Query Details/i })).toBeInTheDocument();
+
+    // Advance query A to a non-zero step via the stepper (localStep > 0)
+    await userEvent.click(await screen.findByRole("button", { name: /^Shipment$/i }));
+    expect(await screen.findByRole("heading", { name: /Shipment Details/i })).toBeInTheDocument();
+
+    // In-app navigate to a DIFFERENT existing query with NO ?step= — /queries/:id
+    // does not remount QueryWizardPage, so this must not carry the step over.
+    await userEvent.click(screen.getByRole("button", { name: "go-to-qB" }));
+
+    // Query B has loaded...
+    expect(await screen.findByText("YAL26-00QB")).toBeInTheDocument();
+    // ...and must render on step 0 (Client & Query), not the leaked Shipment step.
+    expect(await screen.findByRole("heading", { name: /Query Details/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Shipment Details/i })).not.toBeInTheDocument();
   });
 });

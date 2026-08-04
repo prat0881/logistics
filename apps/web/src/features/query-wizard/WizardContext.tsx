@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { QueryDetail } from "@svyft/shared";
@@ -42,6 +42,11 @@ export function WizardProvider({ id, children }: WizardProviderProps) {
   const stepParam = parseInt(searchParams.get("step") ?? "0", 10);
   const clampedStep = Number.isNaN(stepParam) ? 0 : Math.max(0, Math.min(stepParam, STEPS.length - 1));
   const [localStep, setLocalStep] = useState<number>(clampedStep);
+  // Tracks the previous `queryId` across renders so the effect below can tell a
+  // cross-query navigation (defined id -> a DIFFERENT id/undefined) apart from the
+  // S3.4 mint transition (undefined -> defined, same instance). Initialized to the
+  // current `queryId` so the first mount never trips the reset.
+  const prevQueryIdRef = useRef<string | undefined>(queryId);
 
   const { data: detail } = useQueryDetail(queryId);
 
@@ -55,6 +60,28 @@ export function WizardProvider({ id, children }: WizardProviderProps) {
     if (!searchParams.has("step")) return;
     setLocalStep(clampedStep);
   }, [queryId, searchParams, clampedStep]);
+
+  // Review fix: `/queries/:id` does not remount this provider when only the :id
+  // param changes (e.g. NotificationBell navigating in-app from query A to query
+  // B via `navigate(`/queries/${id}`)`, no ?step=) — so `localStep` from query A
+  // otherwise leaks into query B's initial render. Reset to 0 whenever the query
+  // IDENTITY changes to a different query (a different defined id, or to
+  // `undefined` for a fresh new query) AND there's no explicit ?step= to honour
+  // (the effect above already owns that case).
+  //
+  // Must NOT fire on the S3.4 mint transition (undefined -> defined, same
+  // instance) — that's what lets a first Next/Save on a brand-new query survive
+  // the POST -> navigate(`/queries/${id}`, { replace: true }) and land on the
+  // step goNext already advanced to, in one click. Since `prevQueryIdRef` starts
+  // at `undefined` for a new query, `prevId !== undefined` is false on that
+  // transition, so no reset fires.
+  useEffect(() => {
+    const prevId = prevQueryIdRef.current;
+    prevQueryIdRef.current = queryId;
+    if (prevId !== undefined && prevId !== queryId && !searchParams.has("step")) {
+      setLocalStep(0);
+    }
+  }, [queryId, searchParams]);
 
   const step = localStep;
 
