@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { computeChargeableWeight, computeQuoteTotals, validateQuote, classifyWarehousePositions } from "./quote-engine";
 import type { QuoteDraft } from "./quote";
 import { AIR_CHARGE_PRESETS } from "./quote";
+import type { ResolvedChargeLine } from "./charge-config";
 
 const base: QuoteDraft = {
   legId: "l1", mode: "AIR", currency: "USD", quoteValidityUntil: null,
@@ -34,6 +35,18 @@ describe("computeQuoteTotals", () => {
   });
 });
 
+describe("configured (zone=null) charges", () => {
+  it("sums null-zone Road charges into configuredSubtotal + grandTotal", () => {
+    const road: QuoteDraft = { ...base, mode: "ROAD",
+      charges: [{ zone: null, definitionKey: "ROAD_STD_INSURANCE", presetKey: null, label: "Insurance", amount: 120 }],
+      cargo: [{ cargoItemId: "c1", grossWtT: 1, cbm: 1, isDangerous: false, freightDensity: 333 }],
+      trucking: [{ legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: 300 }] };
+    const t = computeQuoteTotals(road);
+    expect(t.configuredSubtotal).toBe(120);
+    expect(t.grandTotal).toBe(420);
+  });
+});
+
 describe("computeChargeableWeight", () => {
   it("returns the gross weight when it exceeds the volumetric weight", () => {
     // 2 T gross, 1 m³ × 167 kg/CBM = 0.167 T volumetric ⇒ gross wins
@@ -54,20 +67,27 @@ function validAir(): QuoteDraft {
   return {
     legId: "l1", mode: "AIR", currency: "USD", quoteValidityUntil: "2026-08-20T00:00:00.000Z",
     cargo: [{ cargoItemId: "c1", grossWtT: 1, cbm: 2, isDangerous: false, freightDensity: 167 }],
-    charges: AIR_CHARGE_PRESETS.map((p) => ({ zone: p.zone, presetKey: p.presetKey, label: p.label, amount: 10 })),
+    // definitionKey mirrors presetKey here so this fixture doubles as a frozen mandatory-set draft (Task 2/4).
+    charges: AIR_CHARGE_PRESETS.map((p) => ({ zone: p.zone, definitionKey: p.presetKey, presetKey: p.presetKey, label: p.label, amount: 10 })),
     trucking: [], warehouse: [],
     transit: { departureDate: "2026-08-12T00:00:00.000Z", arrivalDate: "2026-08-14T00:00:00.000Z" },
     dgSurchargeNote: null, termsConditions: null,
   };
 }
 
+// The frozen mandatory set standing in for validAir()'s Air presets (post-Task-4, Q1 is driven by this, not by
+// AIR_CHARGE_PRESETS directly).
+const mandatoryAirLines: ResolvedChargeLine[] = AIR_CHARGE_PRESETS.map(
+  (p): ResolvedChargeLine => ({ definitionKey: p.presetKey, role: "CORE", inputType: "PLAIN", zone: p.zone, label: p.label }),
+);
+
 describe("validateQuote (§10.4 Q1–Q8)", () => {
   it("passes a complete Air quote", () => {
-    expect(validateQuote(validAir(), deadline, now)).toEqual([]);
+    expect(validateQuote(validAir(), deadline, now, mandatoryAirLines)).toEqual([]);
   });
   it("Q1: flags an unpriced mandatory Air line", () => {
     const d = validAir(); d.charges = d.charges.filter((c) => c.presetKey !== "AIR_MAIN_FREIGHT");
-    expect(validateQuote(d, deadline, now).some((f) => f.rule === "Q1")).toBe(true);
+    expect(validateQuote(d, deadline, now, mandatoryAirLines).some((f) => f.rule === "Q1")).toBe(true);
   });
   it("Q2: flags a cargo row missing density", () => {
     const d = validAir(); d.cargo[0].freightDensity = null;
@@ -112,6 +132,29 @@ describe("validateQuote (§10.4 Q1–Q8)", () => {
   });
   it("Q7: past the deadline fires alone", () => {
     expect(validateQuote(validAir(), deadline, "2026-08-11T00:00:00.000Z").map((f) => f.rule)).toEqual(["Q7"]);
+  });
+});
+
+describe("Q1 from the frozen mandatory set", () => {
+  const mandatory: ResolvedChargeLine[] = [
+    { definitionKey: "AIR_ORIGIN_THC", role: "CORE", inputType: "PLAIN", zone: "ORIGIN", label: "Origin THC" },
+    { definitionKey: "AIR_DEST_THC", role: "STANDARD", inputType: "PLAIN", zone: "DESTINATION", label: "Dest THC" },
+  ];
+  const deadline = "2099-01-01T00:00:00.000Z";
+  it("blocks when a mandatory configured line is unpriced", () => {
+    const draft: QuoteDraft = { ...base,
+      charges: [{ zone: "ORIGIN", definitionKey: "AIR_ORIGIN_THC", presetKey: null, label: "Origin THC", amount: 100 }] };
+    const f = validateQuote(draft, deadline, "2020-01-01T00:00:00.000Z", mandatory);
+    expect(f.some((x) => x.rule === "Q1" && x.message.includes("Dest THC"))).toBe(true);
+  });
+  it("passes when all mandatory lines are priced (0 allowed)", () => {
+    const draft: QuoteDraft = { ...base,
+      charges: [
+        { zone: "ORIGIN", definitionKey: "AIR_ORIGIN_THC", presetKey: null, label: "Origin THC", amount: 0 },
+        { zone: "DESTINATION", definitionKey: "AIR_DEST_THC", presetKey: null, label: "Dest THC", amount: 250 },
+      ] };
+    const f = validateQuote(draft, deadline, "2020-01-01T00:00:00.000Z", mandatory);
+    expect(f.some((x) => x.rule === "Q1")).toBe(false);
   });
 });
 
