@@ -41,6 +41,7 @@ import {
 import { usePoints } from "./usePoints";
 import { useOrgTimezone } from "@/features/config/useOrgTimezone";
 import { TimezoneCombobox } from "@/components/TimezoneCombobox";
+import { CountryCombobox } from "@/components/CountryCombobox";
 
 /** Existing point row shape (from API / query detail). */
 interface PointRow {
@@ -479,8 +480,6 @@ export function PointEditor({
               />
             </div>
 
-            {/* Country — plain Input; a full dropdown would need country data out of scope */}
-            {/* TODO country dropdown */}
             <FormField
               control={form.control}
               name="country"
@@ -491,11 +490,7 @@ export function PointEditor({
                     <RequiredMark field="country" type={activeType} />
                   </FormLabel>
                   <FormControl>
-                    <Input
-                      {...field}
-                      value={field.value ?? ""}
-                      placeholder="United Kingdom"
-                    />
+                    <CountryCombobox value={field.value ?? undefined} onChange={field.onChange} ariaLabel="Country" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

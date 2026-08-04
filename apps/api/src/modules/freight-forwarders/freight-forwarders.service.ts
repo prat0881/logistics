@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from "@nestjs/common
 import { Prisma } from "@prisma/client";
 import type { FreightForwarder, FreightMode } from "@prisma/client";
 import type { FreightForwarderCreateInput, FreightForwarderUpdateInput, Paginated } from "@svyft/shared";
+import { resolveCountryCode } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 
 @Injectable()
@@ -67,6 +68,7 @@ export class FreightForwardersService {
 
   async findEligible(criteria: {
     countries: string[];
+    countriesComplete: boolean;
     mode: FreightMode | null;
     requireDg: boolean;
     broaden: boolean;
@@ -78,9 +80,18 @@ export class FreightForwardersService {
     if (criteria.broaden) return active;
     return active.filter((ff) => {
       const modeOk = criteria.mode === null || ff.modes.includes(criteria.mode);
+      // Country: an FF must cover EVERY endpoint country, and BOTH endpoints must
+      // have a resolvable country (`countriesComplete`) — a leg missing/unresolvable
+      // endpoint country matches no FF (show none). `criteria.countries` are already
+      // ISO codes (resolved in leg-context); resolve the FF's availableCountries too
+      // so any legacy/case difference can't cause a false miss.
+      const ffCodes = new Set<string>(
+        ff.availableCountries
+          .map((c): string | null => resolveCountryCode(c))
+          .filter((c): c is string => !!c),
+      );
       const countryOk =
-        criteria.countries.length === 0 ||
-        criteria.countries.every((c) => ff.availableCountries.includes(c));
+        criteria.countriesComplete && criteria.countries.every((c) => ffCodes.has(c));
       return modeOk && countryOk;
     });
   }

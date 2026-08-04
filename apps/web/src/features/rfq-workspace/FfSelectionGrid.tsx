@@ -145,6 +145,10 @@ export function FfSelectionGrid({ queryId, legId, legQuotes, referencedFfs }: Ff
           <p className="text-muted-foreground">
             No eligible Freight Forwarders were found for this route and transport mode.
           </p>
+          <p className="mt-1 text-muted-foreground">
+            Check that the leg's origin and destination points each have a country set — forwarders
+            are matched to those countries.
+          </p>
           {!broaden && (
             <Button variant="outline" size="sm" className="mt-2" onClick={() => setBroaden(true)}>
               View all active forwarders

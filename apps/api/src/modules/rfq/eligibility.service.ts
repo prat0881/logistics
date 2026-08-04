@@ -15,6 +15,7 @@ export class EligibilityService {
     const ctx = await loadLegForRfq(this.prisma, queryId, legId);
     return this.ffs.findEligible({
       countries: ctx.endpointCountries,
+      countriesComplete: ctx.endpointCountriesComplete,
       mode: ctx.leg.mode,
       requireDg: ctx.hasDg,
       broaden,

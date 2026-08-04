@@ -75,6 +75,9 @@ describe("FfSelectionGrid", () => {
     }));
     wrap(<FfSelectionGrid queryId="q1" legId="l1" legQuotes={[]} referencedFfs={[]} />);
     expect(await screen.findByText(/No eligible Freight Forwarders/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/leg's origin and destination points each have a country set/i),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /view all active/i }));
     expect(await screen.findByText("Gamma FF")).toBeInTheDocument();
   });
