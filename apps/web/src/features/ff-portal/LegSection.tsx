@@ -9,6 +9,7 @@ import { PortalError } from "./portalClient";
 import { CargoManifestTable } from "./CargoManifestTable";
 import { DensityChargeableGrid } from "./DensityChargeableGrid";
 import { ChargeZonePanel } from "./ChargeZonePanel";
+import { RoadChargesPanel } from "./RoadChargesPanel";
 import { TruckingBlocks } from "./TruckingBlocks";
 import { WarehouseStaging } from "./WarehouseStaging";
 import { TransitPlanForm } from "./TransitPlanForm";
@@ -175,7 +176,10 @@ function LegSectionForm({
             {leg.mode === "ROAD" ? "Trucking" : "Charges"}
           </h3>
           {leg.mode === "ROAD" ? (
-            <TruckingBlocks endpoints={leg.endpoints} />
+            <>
+              <TruckingBlocks endpoints={leg.endpoints} />
+              <RoadChargesPanel />
+            </>
           ) : (
             <ChargeZonePanel />
           )}
