@@ -252,6 +252,8 @@ SELECT ─distribute─▶ RFQ_SENT ─submit─▶ QUOTED
    (REQUOTED · CLOSED · APPROVED reserved — driven by Stage 5)
 ```
 
+> **SB6 correction (Task 13):** the leg `reopen` edges above (`RFQ_SENT | PARTIALLY_QUOTED | FULLY_QUOTED → READY_FOR_RFQ`) were **not** already declared in the Stage-3 machine, despite the "already declared, Stage 3 §7.2" note above — Stage 3 shipped only `READY_FOR_RFQ --REOPEN--> DRAFT` ([leg.machine.ts](apps/api/src/modules/status/leg.machine.ts)). **Sub-build 6 contributes all three `RFQ_SENT+ → READY_FOR_RFQ` edges** via `StatusRegistry.contribute`, alongside the quote machine's `INVALID → RFQ_SENT` reactivation edge shown above (fired on re-distribute — the manual step the Executive takes *after* the saga, not part of it — §7.2 below) — neither edge existed in code before SB6.
+
 **Query rollup extension** — the projector (`deriveQueryStatus`, Stage 3 §7.2) gains Stage-4 outputs: any leg ≥ RFQ_SENT and not all FULLY_QUOTED ⇒ **RFQ Sent**; all legs FULLY_QUOTED ⇒ **Quoted**; every Quote on every leg EXPIRED ⇒ **No Response**. Least-advanced gate unchanged.
 
 > **Status ≠ distribution granularity.** `distribute-all` (B7) still fires `distribute` per leg — each leg's status moves individually; the query status is always the rollup. The leg stays the atomic unit.
@@ -260,6 +262,7 @@ SELECT ─distribute─▶ RFQ_SENT ─submit─▶ QUOTED
 The one mediator (`ChangeMediator.apply`) is unchanged; Stage 4 supplies the two pieces Stage 3 stubbed:
 
 1. **ScopeResolver override** — `downstreamWork(scope)` now answers *"do any non-INVALID Quotes reference these legs at RFQ_SENT+?"* (was hardcoded `false`).
+   > **Classifier fan-out (Task 2, feeds `downstreamWork` above):** the `ImpactClassifier` ([impact.classifier.ts](apps/api/src/modules/changes/impact.classifier.ts)) fans **every** entity out to leg-typed scope before `downstreamWork` ever sees it — Stage 3 only had the cargo→legs (`LegCargo`) fan-out; SB6 adds `point → endpoint-legs`, `query → all-legs`, `quote → its-leg` (a nonexistent quote id 404s rather than self-scoping). So `downstreamWork(scope)` always receives a uniform list of affected legs, whatever entity was edited.
 2. **Impact declarations** — new fields registered via `ImpactRegistry.declare`:
    - `quotes` module: `@delete` (remove an FF from a sent leg) = **Structural** (change-order — voids that FF's quote, recomputes coverage); `@create` (add an FF) = **free path** — a new distribution that invalidates nothing. FF's own price/density/transit = **PricingAwardDefining** (always free path — Stage 5's concern).
    - Existing `cargo`/`legs`/`queries` declarations (weight/dims/DG, origin/dest/mode/dates, incoterms) already = **RfqDefining** — no change needed; they simply start hitting the change-order path now that downstream work exists.

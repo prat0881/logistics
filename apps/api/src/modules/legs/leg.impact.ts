@@ -4,7 +4,9 @@ import { ImpactClass, type LegSaveInput } from "@svyft/shared";
 // Leg field impact classes (§11.1). Keys match the leg SAVE schema field names (originPointId,
 // destinationPointId, …), not the abstract "origin"/"destination" of the old provisional map.
 // Reassigning cargo recomputes coverage → Structural.
-export const legImpactMap: Record<keyof LegSaveInput | "@create" | "@delete", ImpactClass> = {
+// `reason` is excluded — it's ChangeRequest metadata (Task 10, SB6), never the classified
+// field; LegsService strips it from `fields` before highestImpactField ever sees it.
+export const legImpactMap: Record<Exclude<keyof LegSaveInput, "reason"> | "@create" | "@delete", ImpactClass> = {
   legName: ImpactClass.Corrective,
   originPointId: ImpactClass.RfqDefining,
   destinationPointId: ImpactClass.RfqDefining,

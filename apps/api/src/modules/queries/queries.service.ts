@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -218,6 +219,10 @@ export class QueriesService {
   // Convert ISO-string date fields in the validated payload to Date for Prisma. Returns a
   // loose record (caller casts to the Prisma create/update input; if `tsc` rejects the
   // direct `as`, use `as unknown as Prisma.Query…Input`).
+  // `reason` (Task 10, SB6 §7.2) is ChangeRequest metadata, not a `query` column — dropped
+  // here so it can never reach a Prisma create/update payload (create() doesn't otherwise
+  // strip it; patch() also strips it earlier for `fields`/highestImpactField, so this is a
+  // no-op there).
   private toData(input: Partial<QuerySaveInput>): Record<string, unknown> {
     const dateKeys = [
       "responseDeadline",
@@ -229,6 +234,7 @@ export class QueriesService {
       "queryDate",
     ] as const;
     const data: Record<string, unknown> = { ...input };
+    delete data.reason;
     for (const k of dateKeys) if (data[k] != null) data[k] = new Date(data[k] as string);
     return data;
   }
@@ -335,7 +341,10 @@ export class QueriesService {
     }
     await this.assertRefsExist(input);
 
-    const fields = Object.keys(input);
+    // `reason` is ChangeRequest metadata, not a query column — strip it before it can reach
+    // `fields`/highestImpactField (toData() strips it again before the Prisma patch).
+    const { reason, ...queryInput } = input;
+    const fields = Object.keys(queryInput);
     if (fields.length === 0) return this.get(id);
     const data = this.toData(input);
 
@@ -343,14 +352,22 @@ export class QueriesService {
       entity: "query",
       id,
       field: this.impacts.highestImpactField("query", fields),
-      patch: input,
+      patch: queryInput,
       queryId: id,
       actorId: user.userId,
+      reason,
     };
-    await this.mediator.apply(req, async (tx) => {
+    const result = await this.mediator.apply(req, async (tx) => {
       await tx.query.update({ where: { id }, data: data as Prisma.QueryUncheckedUpdateInput });
       await this.syncDgIndicator(id, tx);
     });
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
     return this.get(id);
   }
 

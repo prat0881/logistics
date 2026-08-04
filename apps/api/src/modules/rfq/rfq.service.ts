@@ -111,7 +111,9 @@ export class RfqService {
     const skipped: { legId: string; reason: string }[] = [];
     for (const { id: legId } of legs) {
       const ctx = await loadLegForRfq(this.prisma, queryId, legId);
-      if (ctx.freshQuotes.length === 0) {
+      // SB6 Task 11: a reopened leg with only INVALID (reactivatable) quotes is real work for
+      // bulk "Distribute All" too, not a no-op skip — mirrors the same gate in distributeLeg.
+      if (ctx.freshQuotes.length === 0 && ctx.invalidQuotes.length === 0) {
         skipped.push({
           legId,
           reason: ctx.sentQuotes.length ? "already-distributed" : "nothing-selected",
@@ -228,8 +230,9 @@ export class RfqService {
     });
     if (!query) throw new NotFoundException("Query not found");
 
-    // F2 / F6 — nothing fresh to send
-    if (ctx.freshQuotes.length === 0) {
+    // F2 / F6 — nothing fresh AND nothing reactivatable (SB6 Task 11: a reopened leg's
+    // INVALID quotes are re-sendable, same as a fresh SELECT — see `invalidQuotes` below)
+    if (ctx.freshQuotes.length === 0 && ctx.invalidQuotes.length === 0) {
       if (ctx.sentQuotes.length > 0) {
         if (!input.confirm) {
           throw new ConflictException(
@@ -298,11 +301,22 @@ export class RfqService {
   ): Promise<DistributeResult> {
     const frozenAt = new Date();
     const byFf = new Map<string, { quoteId: string; legCtx: LegRfqContext }[]>();
+    // SB6 Task 11 — FFs with an INVALID quote being reactivated in this call. Tracked
+    // separately from `byFf` membership because the DEADLINE-reset decision below needs to
+    // distinguish "amending an existing Rfq with a fresh leg" (leave the deadline alone, D3)
+    // from "reactivating an existing Rfq's invalidated quote" (reset it, SB6 design §7).
+    const reactivatingFfIds = new Set<string>();
     for (const legCtx of legCtxs) {
       for (const q of legCtx.freshQuotes) {
         const arr = byFf.get(q.freightForwarderId) ?? [];
         arr.push({ quoteId: q.id, legCtx });
         byFf.set(q.freightForwarderId, arr);
+      }
+      for (const q of legCtx.invalidQuotes) {
+        const arr = byFf.get(q.freightForwarderId) ?? [];
+        arr.push({ quoteId: q.id, legCtx });
+        byFf.set(q.freightForwarderId, arr);
+        reactivatingFfIds.add(q.freightForwarderId);
       }
     }
 
@@ -333,6 +347,13 @@ export class RfqService {
             },
           });
           minted = true;
+        } else if (reactivatingFfIds.has(ffId)) {
+          // SB6 §7 Phase 3 — reactivating an INVALID quote on an already-existing Rfq: give
+          // the FF a fresh submission window (the same Rfq row, `rfqNumber` unchanged; SB5's
+          // reminder/expiry ScheduledEvents re-arm below off this same `deadline`). A
+          // fresh-quote-only amend (no reactivation) deliberately does NOT hit this branch —
+          // it leaves an existing Rfq's deadline untouched (D3, rfq-distribute.e2e-spec.ts).
+          rfq = await tx.rfq.update({ where: { id: rfq.id }, data: { submissionDeadline: deadline } });
         }
         const legIds = new Set<string>();
         for (const { quoteId, legCtx } of items) {
@@ -380,6 +401,29 @@ export class RfqService {
           orderBy: { legCode: "asc" },
         });
         const legNames = legCodes.map((l) => l.legCode).join(", ");
+
+        // SB6 Task 11 — a reactivating FF's rfq.reminder/rfq.expiry ScheduledEvents from the
+        // ORIGINAL distribution are still keyed to the OLD deadline. `schedule()`'s upsert
+        // matches on (entityType, entityId, eventKey, tier) and does `update: {}` when a row
+        // already exists — it never revises `dueAt`, `firedAt`, or `cancelledAt`. So a plain
+        // `ScheduledEventService.cancel()` (soft: sets `cancelledAt`, row still exists) is NOT
+        // enough — the very next `schedule()` call below would still match that (now-cancelled)
+        // row by its unique key and no-op over it, leaving `dueAt` stale forever (empirically
+        // verified: a cancel()-then-schedule() version of this fix left `rfq.expiry.dueAt`
+        // pinned to the pre-reactivation deadline in this file's own e2e test). Delete the
+        // stale rows outright instead, so `schedule()`'s upsert falls into its CREATE branch
+        // and mints a genuinely fresh row (`firedAt`/`cancelledAt` null, `dueAt` = the new
+        // deadline) — the only way to also cover the case where the old expiry already FIRED
+        // (`cancel()`'s own WHERE clause requires `firedAt: null`, so it can never touch an
+        // already-fired row at all, meaning `runDue()` — which only reads `firedAt: null` rows
+        // — would otherwise never revisit this RFQ again). `ScheduledEventService` itself is
+        // untouched; this uses the same injected `PrismaService` the rest of this method
+        // already writes through.
+        if (reactivatingFfIds.has(entry.freightForwarderId)) {
+          await this.prisma.scheduledEvent.deleteMany({
+            where: { entityType: "RFQ", entityId: entry.rfqId, eventKey: { in: ["rfq.reminder", "rfq.expiry"] } },
+          });
+        }
 
         // reminders (future tiers only) + one expiry, anchored to the RFQ
         await this.scheduled.schedule(

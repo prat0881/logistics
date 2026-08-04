@@ -1,15 +1,20 @@
 import { Module } from "@nestjs/common";
 import { RoutingModule } from "../routing/routing.module";
+import { StatusModule } from "../status/status.module";
 import { ImpactRegistry } from "./impact.registry";
 import { ImpactClassifier } from "./impact.classifier";
 import { ScopeResolver } from "./scope.resolver";
 import { ChangeMediator } from "./change-mediator";
 import { FreePathStrategy } from "./free-path.strategy";
 import { ChangeOrderStrategy } from "./change-order.strategy";
-import { CHANGE_LOG, NoopChangeLog } from "./change-log";
+import { CHANGE_LOG } from "./change-log";
+import { PrismaChangeLog } from "./prisma-change-log";
+import { ChangeLogPolicy } from "./change-log-policy";
 
 @Module({
-  imports: [RoutingModule],
+  // StatusModule exports StatusService (the "one door" for status changes) for the change-order
+  // saga's INVALIDATE/REOPEN fires. StatusModule imports nothing back, so no cycle.
+  imports: [RoutingModule, StatusModule],
   providers: [
     ImpactRegistry,
     ImpactClassifier,
@@ -17,8 +22,9 @@ import { CHANGE_LOG, NoopChangeLog } from "./change-log";
     ChangeMediator,
     FreePathStrategy,
     ChangeOrderStrategy,
-    { provide: CHANGE_LOG, useClass: NoopChangeLog },
+    ChangeLogPolicy,
+    { provide: CHANGE_LOG, useClass: PrismaChangeLog },
   ],
-  exports: [ChangeMediator, ImpactRegistry],
+  exports: [ChangeMediator, ImpactRegistry, ChangeLogPolicy],
 })
 export class ChangesModule {}

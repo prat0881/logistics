@@ -95,6 +95,10 @@ export const querySaveSchema = z
     targetDeliveryTimezone: z.string().refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
     internalNotes: z.string().max(500),
     assignedUserId: z.string().uuid(),
+    // Stage 4 (SB6 §7.2): justification for a mediated PATCH that lands on the change-order
+    // path. Metadata only — QueriesService.patch lifts it onto ChangeRequest.reason and
+    // `toData` strips it before it ever reaches the Prisma patch (not a `query` column).
+    reason: z.string().trim().min(1).max(500),
   })
   .partial()
   // F3: ETA < ETB < ETD when present (real-instant compare, offset-aware).

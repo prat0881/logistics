@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import type { ChangeRequest, FindingScope, ImpactClass } from "@svyft/shared";
 import { ImpactRegistry } from "./impact.registry";
 import { RoutingService } from "../routing/routing.service";
@@ -8,9 +8,13 @@ export interface Classification {
   scope: FindingScope[];
 }
 
-// Maps (entity, field|action) → impact class + the minimal touched scope (§11.3). A cargo edit
-// fans out to the legs carrying that row (via LegCargo) — that is the scope the Stage-4
-// change-order cascade will reopen. Every other entity is self-scope.
+// Maps (entity, field|action) → impact class + the minimal touched scope (§11.3). The leg is
+// the biddable unit, so scope is always fanned out to the affected leg(s) before the Stage-4
+// change-order cascade reopens them: cargo→legs carrying that row (LegCargo), point→legs using
+// it as an endpoint, query→all its legs, quote→its leg, leg→itself. An entity with no legs in
+// scope (unassigned/pre-RFQ, or an entity with no fan-out rule) falls back to self-scope —
+// EXCEPT quotes: Quote.legId is non-nullable, so `legOfQuote` returning null can only mean the
+// quote id doesn't exist (never a legitimate pre-RFQ "unassigned quote" state), so that 404s.
 @Injectable()
 export class ImpactClassifier {
   constructor(
@@ -25,16 +29,24 @@ export class ImpactClassifier {
     const impactClass = this.registry.classOf(req.entity, key);
     if (!impactClass) throw new Error(`No impact class declared for ${req.entity}.${key}`);
 
-    let scope: FindingScope[];
-    if (req.entity === "cargo") {
-      const legIds = await this.routing.legsCarryingCargo(req.id);
-      scope =
-        legIds.length > 0
-          ? legIds.map((id) => ({ type: "leg", id }))
-          : [{ type: "cargo", id: req.id }]; // unassigned cargo → self-scope
-    } else {
-      scope = [{ type: req.entity as FindingScope["type"], id: req.id }];
+    let legIds: string[];
+    switch (req.entity) {
+      case "cargo": legIds = await this.routing.legsCarryingCargo(req.id); break;
+      case "point": legIds = await this.routing.legsUsingPoint(req.id); break;
+      case "query": legIds = await this.routing.legsOfQuery(req.id); break;
+      case "quotes": {
+        const l = await this.routing.legOfQuote(req.id);
+        if (!l) throw new NotFoundException("Quote not found"); // no such quote — never self-scoped
+        legIds = [l];
+        break;
+      }
+      case "leg": legIds = [req.id]; break;
+      default: legIds = [];
     }
+    const scope: FindingScope[] =
+      legIds.length > 0
+        ? legIds.map((id) => ({ type: "leg", id }))
+        : [{ type: req.entity as FindingScope["type"], id: req.id }]; // self-scope fallback (pre-RFQ / unassigned)
     return { class: impactClass, scope };
   }
 }

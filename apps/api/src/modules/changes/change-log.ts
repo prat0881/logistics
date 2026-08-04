@@ -1,14 +1,12 @@
 import { Injectable } from "@nestjs/common";
-import type { FindingScope } from "@svyft/shared";
 
 export interface ChangeLogEntry {
+  queryId: string;
   entity: string;
-  id: string;
-  field?: string;
-  action?: string;
-  reason?: string;
-  affected: FindingScope[];
+  entityId: string;
+  changeType: string; // "change-order"
   actorId?: string | null;
+  payload: Record<string, unknown>;
 }
 
 export const CHANGE_LOG = Symbol("CHANGE_LOG");
@@ -17,10 +15,11 @@ export interface ChangeLog {
   record(entry: ChangeLogEntry): Promise<void>;
 }
 
-// No-op sink now; the durable change-log lands with the Stage-4 cascade (§7.7).
+// Superseded by PrismaChangeLog (SB6, Task 6) as the CHANGE_LOG binding — kept as a reusable
+// no-op ChangeLog for tests/contexts that don't want to touch the DB.
 @Injectable()
 export class NoopChangeLog implements ChangeLog {
   async record(_entry: ChangeLogEntry): Promise<void> {
-    /* reserved seam — no-op in Stage 3 */
+    /* no-op */
   }
 }

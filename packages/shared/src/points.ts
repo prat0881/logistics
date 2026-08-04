@@ -54,8 +54,14 @@ export const pointSaveSchema = z.object({
 });
 export type PointSaveInput = z.infer<typeof pointSaveSchema>;
 
-// PATCH reuses the same shape, fully optional (type need not be resent on an edit).
-export const pointUpdateSchema = pointSaveSchema.partial();
+// PATCH reuses the same shape, fully optional (type need not be resent on an edit), plus
+// `reason` (Stage 4, SB6 §7.2): justification for a mediated edit that lands on the
+// change-order path. update-only — a freshly-created point can't yet have live downstream
+// work, so `pointSaveSchema` (create) is deliberately left untouched; PointsService lifts
+// `reason` onto ChangeRequest.reason and strips it before the Prisma patch (not a column).
+export const pointUpdateSchema = pointSaveSchema.partial().extend({
+  reason: z.string().trim().min(1).max(500).optional(),
+});
 export type PointUpdateInput = z.infer<typeof pointUpdateSchema>;
 
 // Per-type mandatory fields (functional spec §7.4.1 A–E). The engine's R8 uses this at

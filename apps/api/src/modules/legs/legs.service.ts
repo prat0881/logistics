@@ -1,5 +1,12 @@
 // apps/api/src/modules/legs/legs.service.ts
-import { BadRequestException, HttpException, HttpStatus, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { checkModeEndpoints, formatLegCode, LegEvent, type Finding, type FreightMode, type LegSaveInput } from "@svyft/shared";
@@ -79,7 +86,7 @@ export class LegsService {
     await this.assertModeEndpoints(queryId, input.mode, input.originPointId, input.destinationPointId);
 
     const id = randomUUID();
-    await this.mediator.apply(
+    const result = await this.mediator.apply(
       { entity: "leg", id, action: "@create", queryId, actorId: user.userId },
       async (tx) => {
         const seq = await tx.codeSequence.upsert({
@@ -107,6 +114,13 @@ export class LegsService {
           });
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
     return this.load(queryId, id);
   }
 
@@ -121,18 +135,22 @@ export class LegsService {
     const effDest = input.destinationPointId !== undefined ? input.destinationPointId : existing.destinationPointId;
     await this.assertModeEndpoints(queryId, effMode, effOrigin, effDest, legId);
 
-    const fields = Object.keys(input);
+    // `reason` is ChangeRequest metadata, not a leg column — strip it before it can reach
+    // `fields`/highestImpactField or the Prisma patch (Task 10, SB6 §7.2).
+    const { reason, ...fieldsInput } = input;
+    const fields = Object.keys(fieldsInput);
     if (fields.length === 0) return this.load(queryId, legId);
 
-    const { assignedCargoIds, readyDate, targetDelivery, ...rest } = input;
-    await this.mediator.apply(
+    const { assignedCargoIds, readyDate, targetDelivery, ...rest } = fieldsInput;
+    const result = await this.mediator.apply(
       {
         entity: "leg",
         id: legId,
         field: this.impacts.highestImpactField("leg", fields),
-        patch: input,
+        patch: fieldsInput,
         queryId,
         actorId: user.userId,
+        reason,
       },
       async (tx) => {
         await tx.leg.update({
@@ -152,17 +170,31 @@ export class LegsService {
         }
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
     return this.load(queryId, legId);
   }
 
   async remove(queryId: string, legId: string, user: RequestUser) {
     await this.load(queryId, legId);
-    await this.mediator.apply(
+    const result = await this.mediator.apply(
       { entity: "leg", id: legId, action: "@delete", queryId, actorId: user.userId },
       async (tx) => {
         await tx.leg.delete({ where: { id: legId } }); // legCargo cascades
       },
     );
+    if (result.needsConfirmation) {
+      throw new ConflictException({
+        message: "Change requires confirmation",
+        needsChangeOrder: true,
+        preview: result.preview,
+      });
+    }
   }
 
   // Fire the leg machine forward. THE caller (Create Query) must have validated the whole route

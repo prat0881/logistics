@@ -8,7 +8,9 @@ import { ImpactClass, type QuerySaveInput } from "@svyft/shared";
 // ImpactRegistry.declare's EntityImpactMap (= Record<string, ImpactClass>) param, so
 // `declare("query", queryImpactMap)` still type-checks. All Free-path in Stage 3 (no
 // downstream work); classes gate the fork once Stage 4 RFQs exist.
-export const queryImpactMap: Record<keyof QuerySaveInput, ImpactClass> = {
+// `reason` is excluded — it's ChangeRequest metadata (Task 10, SB6), never the classified
+// field; QueriesService strips it from `fields` before highestImpactField ever sees it.
+export const queryImpactMap: Record<Exclude<keyof QuerySaveInput, "reason">, ImpactClass> = {
   // Internal — no downstream cost (§11.1)
   priority: ImpactClass.Internal,
   responseDeadline: ImpactClass.Internal,
