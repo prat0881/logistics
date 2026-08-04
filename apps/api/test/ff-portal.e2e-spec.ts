@@ -80,6 +80,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   let fixtureSeq = 0;
   async function distributeFixture(
     execUserId?: string,
+    opts?: { warehouseIncluded?: boolean },
   ): Promise<{ token: string; legId: string; queryId: string; rfqId: string }> {
     const admin = cookie(Role.ADMINISTRATOR);
     const seq = ++fixtureSeq;
@@ -122,6 +123,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
         legCargo: { create: { cargoItemId: cargo.id } },
+        warehouseHandlingIncluded: opts?.warehouseIncluded ?? false,
       },
     });
 
@@ -170,7 +172,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
    */
   function fullValidDraft(
     legId: string,
-    getBody: { legs: Array<{ seededDensity: Array<{ cargoItemId: string; freightDensity: number }>; seededCharges: Array<{ zone: string; presetKey: string; label: string }> }> },
+    getBody: { legs: Array<{ seededDensity: Array<{ cargoItemId: string; freightDensity: number }>; seededCharges: Array<{ zone: string; definitionKey?: string; presetKey: string | null; label: string }> }> },
   ) {
     const leg = getBody.legs[0];
     return {
@@ -185,8 +187,11 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         isDangerous: false,
         freightDensity: d.freightDensity,
       })),
+      // Task 9: seededCharges are now keyed by definitionKey (frozen from chargeConfigSnapshot);
+      // presetKey is always null post-Task-9 but is still threaded through for shape compatibility.
       charges: leg.seededCharges.map((c) => ({
         zone: c.zone,
+        definitionKey: c.definitionKey,
         presetKey: c.presetKey,
         label: c.label,
         amount: 10,
@@ -216,9 +221,9 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     const leg = res.body.legs[0];
     expect(leg.legId).toBe(legId);
     expect(leg.manifest.cargo.length).toBeGreaterThan(0); // from the frozen snapshot
-    expect(leg.seededCharges.map((c: { presetKey: string }) => c.presetKey)).toContain(
+    expect(leg.seededCharges.map((c: { definitionKey: string }) => c.definitionKey)).toContain(
       "AIR_MAIN_FREIGHT",
-    ); // Air presets
+    ); // Air cores (Task 9: seededCharges now keyed by definitionKey, frozen from chargeConfigSnapshot)
     const air = (await prisma.freightDensityFactor.findUnique({ where: { mode: "AIR" } }))!.kgPerCbm;
     expect(leg.seededDensity).toHaveLength(1);
     expect(leg.seededDensity[0].freightDensity).toBe(Number(air)); // Air density (seeded from FreightDensityFactor)
@@ -423,7 +428,10 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   // ── Opus whole-branch review: security / immutability tests ──
 
   it("submit: foreign point in warehouse → 422 SCOPE, Quote stays RFQ_SENT", async () => {
-    const { token, legId } = await distributeFixture();
+    // Task 9: warehouse draft rows are gated on the leg's frozen warehouseIncluded — must be
+    // true here, else the tampered warehouse array is discarded (as unauthorized) BEFORE the
+    // SCOPE check ever sees it, which would make this test vacuous.
+    const { token, legId } = await distributeFixture(undefined, { warehouseIncluded: true });
 
     const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
 

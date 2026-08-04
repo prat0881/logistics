@@ -11,6 +11,7 @@ export interface ScopedQuote {
   status: string;
   rfqId: string | null;
   manifestSnapshot: unknown;
+  chargeConfigSnapshot: unknown;
   draftJson: unknown;
   leg: {
     id: string;
@@ -88,6 +89,7 @@ export class RfqTokenService {
         status: q.status,
         rfqId: q.rfqId,
         manifestSnapshot: q.manifestSnapshot,
+        chargeConfigSnapshot: q.chargeConfigSnapshot,
         draftJson: q.draftJson,
         leg: {
           id: q.leg.id,
