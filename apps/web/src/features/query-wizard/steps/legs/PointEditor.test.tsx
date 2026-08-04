@@ -255,9 +255,11 @@ describe("PointEditor", () => {
     await user.clear(cityInput);
     await user.type(cityInput, "London");
 
-    const countryInput = screen.getByLabelText(/country/i);
-    await user.clear(countryInput);
-    await user.type(countryInput, "UK");
+    // Country is a CountryCombobox — open it, search by name, select the option.
+    // Selecting "United Kingdom" emits its ISO code ("GB"), not the raw name.
+    await user.click(screen.getByRole("button", { name: /^country$/i }));
+    await user.type(screen.getByPlaceholderText(/search country/i), "United Kingdom");
+    await user.click(await screen.findByText(/United Kingdom \(GB\)/));
 
     // Postal Code (mandatory for AIRPORT per #4)
     const postalInput = screen.getByLabelText(/postal code/i);
@@ -281,7 +283,7 @@ describe("PointEditor", () => {
       expect(body.name).toBe("Heathrow");
       expect(body.iataCode).toBe("LHR");
       expect(body.city).toBe("London");
-      expect(body.country).toBe("UK");
+      expect(body.country).toBe("GB");
     });
 
     // onSaved should have been called with the returned point
