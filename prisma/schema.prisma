@@ -194,6 +194,7 @@ model Quote {
   rfq                Rfq?             @relation(fields: [rfqId], references: [id], onDelete: Cascade)
   status             QuoteStatus      @default(SELECT)
   manifestSnapshot   Json?
+  chargeConfigSnapshot Json?
   submittedAt        DateTime?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
@@ -245,13 +246,14 @@ model ChargeLine {
   tenantId  String?    @db.Uuid
   quoteId   String     @db.Uuid
   quote     Quote      @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  zone      ChargeZone
+  zone      ChargeZone?
   label     String
   isPreset  Boolean    @default(false)
   presetKey String?
   amount    Decimal    @db.Decimal(14, 2)
   note      String?
   sortOrder Int        @default(0)
+  definitionKey String?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
@@ -270,6 +272,7 @@ model TruckingCharge {
   basis              TruckingBasis
   amount             Decimal       @db.Decimal(14, 2)
   remarks            String?
+  definitionKey      String?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
@@ -290,11 +293,44 @@ model WarehouseStagingLine {
   amount                Decimal           @db.Decimal(14, 2)
   note                  String?
   cargoAcceptanceWindow String?
+  definitionKey         String?
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
 
   @@index([quoteId])
   @@index([tenantId])
+}
+
+model ChargeLineDefinition {
+  id         String              @id @default(uuid()) @db.Uuid
+  key        String              @unique
+  mode       FreightMode
+  role       ChargeLineRole
+  inputType  ChargeLineInputType @default(PLAIN)
+  zone       ChargeZone?
+  tagKey     String?
+  label      String
+  sortOrder  Int                 @default(0)
+  isActive   Boolean             @default(true)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+
+  selections LegChargeLineSelection[]
+
+  @@index([mode, role, isActive])
+}
+
+model LegChargeLineSelection {
+  id           String               @id @default(uuid()) @db.Uuid
+  tenantId     String?              @db.Uuid
+  legId        String               @db.Uuid
+  leg          Leg                  @relation(fields: [legId], references: [id], onDelete: Cascade)
+  definitionId String               @db.Uuid
+  definition   ChargeLineDefinition @relation(fields: [definitionId], references: [id], onDelete: Restrict)
+  createdAt    DateTime             @default(now())
+
+  @@unique([legId, definitionId])
+  @@index([legId])
 }
 
 model TransitPlan {
@@ -472,6 +508,19 @@ enum ChargeZone {
   DESTINATION
 }
 
+enum ChargeLineRole {
+  CORE
+  STANDARD
+  TAG_DRIVEN
+  WAREHOUSE
+}
+
+enum ChargeLineInputType {
+  PLAIN
+  TRUCKING
+  WAREHOUSE_STAGING
+}
+
 enum TruckingType {
   DEDICATED
   GROUPAGE
@@ -645,6 +694,7 @@ model Leg {
   mode               FreightMode?
   readyDate          DateTime?
   targetDelivery     DateTime?
+  warehouseHandlingIncluded Boolean?
   status             LegStatus          @default(DRAFT)
   executionStatus    LegExecutionStatus @default(PENDING)
   createdAt          DateTime           @default(now())
@@ -652,6 +702,7 @@ model Leg {
 
   legCargo LegCargo[]
   quotes   Quote[]
+  chargeSelections LegChargeLineSelection[]
 
   @@unique([queryId, legCode])
   @@index([queryId])
