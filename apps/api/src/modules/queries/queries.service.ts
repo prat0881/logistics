@@ -50,7 +50,14 @@ const QUERY_GRAPH_ARGS = Prisma.validator<Prisma.QueryDefaultArgs>()({
       },
     },
     points: { orderBy: { createdAt: "asc" } },
-    legs: { include: { legCargo: { select: { cargoItemId: true } } }, orderBy: { createdAt: "asc" } },
+    legs: {
+      include: {
+        legCargo: { select: { cargoItemId: true } },
+        // Task 11: current charge-line selection set, shaped into QueryLegDto.chargeLineDefinitionIds.
+        chargeSelections: { select: { definitionId: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    },
   },
 });
 type QueryWithGraph = Prisma.QueryGetPayload<typeof QUERY_GRAPH_ARGS>;
@@ -312,11 +319,15 @@ export class QueriesService {
     const pick = (t: string) =>
       row.points.filter((p) => p.type === t).map((p) => ({ id: p.id, name: p.name, city: p.city, country: p.country }));
     const legs = row.legs.map((l) => {
-      const { legCargo, ...rest } = l;
+      const { legCargo, chargeSelections, ...rest } = l;
       const attached = legCargo.map((lc) => cargoById.get(lc.cargoItemId)).filter((c): c is NonNullable<typeof c> => !!c);
       return {
         ...rest,
         assignedCargoIds: legCargo.map((lc) => lc.cargoItemId),
+        // Task 11: current warehouse toggle + charge-line selection set, so the web UI
+        // (Phase F/G) can render state.
+        warehouseHandlingIncluded: l.warehouseHandlingIncluded ?? null,
+        chargeLineDefinitionIds: chargeSelections.map((s) => s.definitionId),
         rollup: {
           totalPackages: attached.reduce((s, c) => s + c.qty, 0),
           totalCbm: attached.reduce((s, c) => s + num(c.volumeCbm), 0),

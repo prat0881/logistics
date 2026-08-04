@@ -351,6 +351,10 @@ export type QueryLegDto = {
   // Derived fields added by shapeQuery
   assignedCargoIds: string[];
   rollup: LegRollup;
+  // Task 11 (Charge Configuration & Warehouse Attribution, Phase E): current warehouse toggle
+  // + charge-line selection set, so the web UI (Phase F/G) can render state.
+  warehouseHandlingIncluded: boolean | null;
+  chargeLineDefinitionIds: string[];
 };
 
 export type QueryPointDto = {

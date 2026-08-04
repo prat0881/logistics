@@ -14,6 +14,10 @@ export const legImpactMap: Record<Exclude<keyof LegSaveInput, "reason"> | "@crea
   readyDate: ImpactClass.RfqDefining,
   targetDelivery: ImpactClass.RfqDefining,
   assignedCargoIds: ImpactClass.Structural,
+  // Task 11: charge selection + warehouse toggle are both RfqDefining — free pre-distribute,
+  // change-order-gated post-distribute (same class as mode/dates/endpoints).
+  warehouseHandlingIncluded: ImpactClass.RfqDefining,
+  chargeLineDefinitionIds: ImpactClass.RfqDefining,
   "@create": ImpactClass.Structural,
   "@delete": ImpactClass.Structural,
 };
