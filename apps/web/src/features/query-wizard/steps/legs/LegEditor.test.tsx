@@ -448,6 +448,8 @@ describe("LegEditor", () => {
       createdAt: "2026-01-01T00:00:00+00:00",
       updatedAt: "2026-01-01T00:00:00+00:00",
       rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+      warehouseHandlingIncluded: null,
+      chargeLineDefinitionIds: [],
     };
 
     const fetchMock = makeFetchMock();
@@ -537,6 +539,8 @@ describe("LegEditor", () => {
       createdAt: "2026-01-01T00:00:00+00:00",
       updatedAt: "2026-01-01T00:00:00+00:00",
       rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+      warehouseHandlingIncluded: null,
+      chargeLineDefinitionIds: [],
     };
     vi.stubGlobal("fetch", makeFetchMock());
 
@@ -607,6 +611,8 @@ describe("LegEditor", () => {
       createdAt: "2026-01-01T00:00:00+00:00",
       updatedAt: "2026-01-01T00:00:00+00:00",
       rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+      warehouseHandlingIncluded: null,
+      chargeLineDefinitionIds: [],
     };
     const fetchMock = makeFetchMock();
     vi.stubGlobal("fetch", fetchMock);

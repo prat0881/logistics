@@ -451,6 +451,8 @@ describe("PointEditor", () => {
         updatedAt: "2026-01-01T00:00:00+00:00",
         assignedCargoIds: [],
         rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+        warehouseHandlingIncluded: null,
+        chargeLineDefinitionIds: [],
       },
     ];
 
@@ -523,6 +525,8 @@ describe("PointEditor", () => {
         updatedAt: "2026-01-01T00:00:00+00:00",
         assignedCargoIds: [],
         rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+        warehouseHandlingIncluded: null,
+        chargeLineDefinitionIds: [],
       },
     ];
 
