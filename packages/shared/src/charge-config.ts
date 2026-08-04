@@ -51,3 +51,24 @@ export interface ChargeConfigSnapshot {
   lines: ResolvedChargeLine[];   // all PLAIN, all mandatory-to-price
   warehouseIncluded: boolean;
 }
+
+/**
+ * Resolve the effective mandatory-to-price PLAIN charge set for a leg at distribute (design §7).
+ * CORE lines are always included; STANDARD/TAG_DRIVEN only when their key is selected.
+ * TRUCKING/WAREHOUSE_STAGING lines are excluded here — they are priced via the draft's
+ * `trucking`/`warehouse` arrays; warehouse presence is governed by `warehouseIncluded`.
+ * No tag filtering (design §13: tag-driven activation is deferred).
+ */
+export function resolveChargeConfig(
+  definitions: ChargeLineDefinitionDto[],
+  selectedKeys: string[],
+  warehouseIncluded: boolean,
+): ChargeConfigSnapshot {
+  const selected = new Set(selectedKeys);
+  const lines: ResolvedChargeLine[] = definitions
+    .filter((d) => d.isActive && d.inputType === "PLAIN")
+    .filter((d) => d.role === "CORE" || ((d.role === "STANDARD" || d.role === "TAG_DRIVEN") && selected.has(d.key)))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((d) => ({ definitionKey: d.key, role: d.role, inputType: d.inputType, zone: d.zone, label: d.label }));
+  return { lines, warehouseIncluded };
+}
