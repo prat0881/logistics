@@ -1,5 +1,6 @@
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? "test-access-secret";
 
+import { randomUUID } from "node:crypto";
 import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
@@ -151,5 +152,111 @@ describe(`${PREFIX} (e2e)`, () => {
     const afterReject = await request(server).get(`/api/queries/${query.id}`).set("Cookie", admin).expect(200);
     const legDtoAfter = afterReject.body.legs.find((l: { id: string }) => l.id === leg.id);
     expect(legDtoAfter.chargeLineDefinitionIds).toEqual([roadInsurance.id]);
+  });
+
+  // SB6 change-order RE-FREEZE (design §5.5): editing chargeLineDefinitionIds on a DISTRIBUTED
+  // leg routes through ChangeOrderStrategy.apply. Its tx1 loop must rewrite chargeConfigSnapshot
+  // (not only manifestSnapshot) on the still-pending RFQ_SENT quotes — otherwise a refreshed FF
+  // keeps a STALE charge set and the portal (seeding + Q1) mis-prices. This exercises the exact
+  // HTTP path (PATCH + reason → APPLY) that carries the fix.
+  //
+  // Mutation guard: without the chargeConfigSnapshot re-freeze in the tx1 updateMany, `keysAfter`
+  // would still be the pre-edit set ([...TAIL_LIFT]) and BOTH post-edit assertions fail.
+  it("charge re-selection on a distributed leg (with reason) APPLIES the change-order and RE-FREEZES chargeConfigSnapshot on the pending RFQ_SENT quote", async () => {
+    // A UUID `sub`: the applied change-order writes the actor onto ChangeLog.actorId
+    // (String? @db.Uuid), so the shared cookie()'s "u-ADMINISTRATOR" sub would fail P2023. (The
+    // preview-only lock test above never reaches the apply/ChangeLog write, so it uses the helper.)
+    const admin = `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: randomUUID(), role: Role.ADMINISTRATOR, tenantId: null })}`;
+    const server = app.getHttpServer();
+
+    // --- a non-warehouse ROAD leg so F7/F8 never engage (same rationale as the lock test) ---
+    const query = await prisma.query.create({ data: { queryCode: `${CODE}-REFREEZE`, incoterms: "FOB" } });
+    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
+    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const cargo = await prisma.cargoItem.create({
+      data: {
+        queryId: query.id,
+        rowIndex: 0,
+        poReference: "PO-CHG-RF-1",
+        productName: "Widget",
+        packageType: "BOX",
+        qty: 1,
+        dimL: 10,
+        dimW: 10,
+        dimH: 10,
+        grossWt: 5,
+        isDangerous: false,
+      },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L-CHG-RF-1",
+        mode: "ROAD",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+        legCargo: { create: { cargoItemId: cargo.id } },
+      },
+    });
+    // Two ROAD STANDARD (PLAIN) lines to swap between; ROAD_CORE_TRUCKING is always a core.
+    const tailLift = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "ROAD_STD_TAIL_LIFT" } });
+    const insurance = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "ROAD_STD_INSURANCE" } });
+
+    // --- initial selection (pre-distribute, free): TAIL_LIFT ---
+    await request(server)
+      .patch(`/api/queries/${query.id}/legs/${leg.id}`)
+      .set("Cookie", admin)
+      .send({ chargeLineDefinitionIds: [tailLift.id] })
+      .expect(200);
+
+    // --- distribute to 1 FF → the single quote goes RFQ_SENT with a frozen chargeConfigSnapshot ---
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PREFIX}-RF`,
+        companyName: `FF-${PREFIX}-RF Co`,
+        pic: "P",
+        contactNumber: "+1000000000",
+        email: `FF-${PREFIX}-RF@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["ROAD"],
+        status: "ACTIVE",
+      },
+    });
+    await request(server)
+      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [ff.id] })
+      .expect(200);
+    await request(server)
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+
+    type Snap = { lines: { definitionKey: string }[]; warehouseIncluded: boolean };
+    const quoteBefore = await prisma.quote.findFirstOrThrow({ where: { legId: leg.id } });
+    expect(quoteBefore.status).toBe("RFQ_SENT");
+    const keysBefore = (quoteBefore.chargeConfigSnapshot as Snap).lines.map((l) => l.definitionKey);
+    expect(keysBefore).toContain("ROAD_STD_TAIL_LIFT"); // the initial selection was frozen at distribute
+    expect(keysBefore).not.toContain("ROAD_STD_INSURANCE");
+
+    // --- re-select on the DISTRIBUTED leg WITH a reason → the SB6 change-order APPLIES (200,
+    //     returns the updated leg); it is NOT the 409 preview (that needs no reason). ---
+    await request(server)
+      .patch(`/api/queries/${query.id}/legs/${leg.id}`)
+      .set("Cookie", admin)
+      .send({ chargeLineDefinitionIds: [insurance.id], reason: "client re-scoped the charges" })
+      .expect(200);
+
+    // --- THE RE-FREEZE: the still-pending quote's chargeConfigSnapshot now reflects the NEW
+    //     selection (INSURANCE in, TAIL_LIFT out) — the exact stale-snapshot defect this fix closes. ---
+    const quoteAfter = await prisma.quote.findFirstOrThrow({ where: { legId: leg.id } });
+    expect(quoteAfter.status).toBe("RFQ_SENT"); // refreshed in place, not invalidated
+    const keysAfter = (quoteAfter.chargeConfigSnapshot as Snap).lines.map((l) => l.definitionKey);
+    expect(keysAfter).toContain("ROAD_STD_INSURANCE"); // the NEW selection is now frozen
+    expect(keysAfter).not.toContain("ROAD_STD_TAIL_LIFT"); // the OLD selection is gone
   });
 });

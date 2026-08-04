@@ -256,7 +256,7 @@ Per decision, post-distribute edits to charge selection or the warehouse toggle 
 
 - **New:** `ChargeLineDefinition`, `LegChargeLineSelection` tables; `ChargeLineRole` / `ChargeLineInputType` enums; `Leg.warehouseHandlingIncluded`; `Quote.chargeConfigSnapshot`; additive `definitionKey` on the three instance models; `ChargeLine.zone` → nullable.
 - **Seed** `ChargeLineDefinition` (all modes; the three retired lines inactive). Retire `AIR_CHARGE_PRESETS` / `SEA_CHARGE_PRESETS`.
-- **Backfill:** Stage 4 is **not yet live**, so there are no in-flight distributed quotes to migrate. Safety net: if `chargeConfigSnapshot` is null on an already-sent quote, the portal falls back to legacy full-preset seeding.
+- **Backfill:** Stage 4 is **not yet live**, so there are no in-flight distributed quotes to migrate. If `chargeConfigSnapshot` is null on an already-sent quote, the portal yields **empty seeding** (`{ lines: [], warehouseIncluded: false }`) — there is no legacy-preset fallback (the `AIR_CHARGE_PRESETS` / `SEA_CHARGE_PRESETS` are retired). This is safe precisely because Stage 4 has no pre-feature distributed quotes and the go-live runbook applies this migration **before** any distribution.
 
 ---
 

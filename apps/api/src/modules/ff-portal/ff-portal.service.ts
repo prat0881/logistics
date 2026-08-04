@@ -233,6 +233,7 @@ export class FfPortalService {
           data: draft.charges.map((c, i) => ({
             quoteId: q.id,
             zone: c.zone,
+            definitionKey: c.definitionKey ?? null,
             label: c.label,
             isPreset: c.presetKey != null,
             presetKey: c.presetKey,
