@@ -259,7 +259,7 @@ describe("PointEditor", () => {
     // Selecting "United Kingdom" emits its ISO code ("GB"), not the raw name.
     await user.click(screen.getByRole("button", { name: /^country$/i }));
     await user.type(screen.getByPlaceholderText(/search country/i), "United Kingdom");
-    await user.click(await screen.findByText(/United Kingdom \(GB\)/));
+    await user.click(await screen.findByRole("option", { name: "United Kingdom" }));
 
     // Postal Code (mandatory for AIRPORT per #4)
     const postalInput = screen.getByLabelText(/postal code/i);

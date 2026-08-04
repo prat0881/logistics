@@ -67,7 +67,7 @@ export function CountryCombobox({ value, onChange, ariaLabel }: Props) {
                     setOpen(false);
                   }}
                 >
-                  {c.name} ({c.code})
+                  {c.name}
                 </CommandItem>
               ))}
             </CommandGroup>
