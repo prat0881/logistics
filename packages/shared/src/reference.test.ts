@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { COUNTRIES, COUNTRY_CODES, CURRENCIES, CURRENCY_CODES, getCountryName } from "./reference";
+import {
+  COUNTRIES,
+  COUNTRY_CODES,
+  CURRENCIES,
+  CURRENCY_CODES,
+  getCountryName,
+  resolveCountryCode,
+} from "./reference";
 
 describe("reference data", () => {
   it("exposes country codes with unique 2-letter ISO codes", () => {
@@ -27,5 +34,25 @@ describe("getCountryName", () => {
   });
   it("falls back to the raw code when unknown", () => {
     expect(getCountryName("ZZ")).toBe("ZZ");
+  });
+});
+
+describe("resolveCountryCode", () => {
+  it("resolves a free-text country NAME to its ISO code (case-insensitive)", () => {
+    expect(resolveCountryCode("United Kingdom")).toBe("GB");
+    expect(resolveCountryCode("united kingdom")).toBe("GB");
+    expect(resolveCountryCode("India")).toBe("IN");
+    expect(resolveCountryCode("United Arab Emirates")).toBe("AE");
+  });
+  it("passes an ISO code through (case-insensitive) and trims", () => {
+    expect(resolveCountryCode("GB")).toBe("GB");
+    expect(resolveCountryCode("gb")).toBe("GB");
+    expect(resolveCountryCode("  IN  ")).toBe("IN");
+  });
+  it("returns null for empty/nullish/unknown input", () => {
+    expect(resolveCountryCode(null)).toBeNull();
+    expect(resolveCountryCode(undefined)).toBeNull();
+    expect(resolveCountryCode("")).toBeNull();
+    expect(resolveCountryCode("Atlantis")).toBeNull();
   });
 });

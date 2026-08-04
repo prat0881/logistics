@@ -1,6 +1,6 @@
 import { NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import { QuoteStatus } from "@svyft/shared";
+import { QuoteStatus, resolveCountryCode } from "@svyft/shared";
 import type { PrismaService } from "../../prisma/prisma.service";
 
 export const LEG_RFQ_INCLUDE = {
@@ -15,6 +15,10 @@ export type LegRfqRow = Prisma.LegGetPayload<{ include: typeof LEG_RFQ_INCLUDE }
 export interface LegRfqContext {
   leg: LegRfqRow;
   endpointCountries: string[];
+  // True only when BOTH the origin and destination endpoints have a resolvable
+  // country. When false, RFQ eligibility shows no FFs — the leg's endpoints must
+  // be given valid countries before forwarders can be matched.
+  endpointCountriesComplete: boolean;
   hasDg: boolean;
   freshQuotes: { id: string; freightForwarderId: string }[];
   // SB6 Task 11 — quotes a change-order invalidated (QUOTED→INVALID, Task 8) on a since-
@@ -36,10 +40,16 @@ export async function loadLegForRfq(
 ): Promise<LegRfqContext> {
   const leg = await prisma.leg.findFirst({ where: { id: legId, queryId }, include: LEG_RFQ_INCLUDE });
   if (!leg) throw new NotFoundException("Leg not found");
-  const countries = [leg.originPoint?.country, leg.destinationPoint?.country].filter(
-    (c): c is string => !!c,
-  );
-  const endpointCountries = [...new Set(countries)];
+  // Resolve each endpoint's free-text country (a name OR code, any case) to its ISO
+  // code, so it can be compared against FF `availableCountries` (which are ISO codes).
+  // A leg is only "complete" for matching when BOTH endpoints resolve; otherwise
+  // eligibility shows none (the endpoints need valid countries first).
+  const originCountry: string | null = resolveCountryCode(leg.originPoint?.country);
+  const destinationCountry: string | null = resolveCountryCode(leg.destinationPoint?.country);
+  const endpointCountriesComplete = originCountry !== null && destinationCountry !== null;
+  const endpointCountries = [
+    ...new Set([originCountry, destinationCountry].filter((c): c is string => !!c)),
+  ];
   const hasDg = leg.legCargo.some((lc) => lc.cargoItem.isDangerous);
   const freshQuotes = leg.quotes
     .filter((q) => q.status === QuoteStatus.SELECT)
@@ -50,5 +60,13 @@ export async function loadLegForRfq(
   const sentQuotes = leg.quotes
     .filter((q) => q.status !== QuoteStatus.SELECT)
     .map((q) => ({ id: q.id, freightForwarderId: q.freightForwarderId, status: q.status }));
-  return { leg, endpointCountries, hasDg, freshQuotes, invalidQuotes, sentQuotes };
+  return {
+    leg,
+    endpointCountries,
+    endpointCountriesComplete,
+    hasDg,
+    freshQuotes,
+    invalidQuotes,
+    sentQuotes,
+  };
 }

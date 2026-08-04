@@ -61,3 +61,26 @@ const COUNTRY_NAME_BY_CODE: Map<string, string> = new Map(COUNTRIES.map((c) => [
 export function getCountryName(code: string): string {
   return COUNTRY_NAME_BY_CODE.get(code) ?? code;
 }
+
+// Keyed by BOTH the uppercased ISO code and the uppercased full name, so a
+// free-text country (code or name, any case) resolves to its canonical code.
+const COUNTRY_CODE_BY_KEY: Map<string, CountryCode> = new Map(
+  COUNTRIES.flatMap((c) => [
+    [c.code.toUpperCase(), c.code] as [string, CountryCode],
+    [c.name.toUpperCase(), c.code] as [string, CountryCode],
+  ]),
+);
+
+/**
+ * Resolve a free-text country value — an ISO 2-letter code OR a full country
+ * name, in any case — to its canonical ISO code. Returns null for empty or
+ * unknown input.
+ *
+ * Bridges legacy free-text `Point.country` values (e.g. "United Kingdom",
+ * entered via the point editor's plain-text field) to the ISO codes used by
+ * `FreightForwarder.availableCountries`, so RFQ eligibility can compare them.
+ */
+export function resolveCountryCode(input: string | null | undefined): CountryCode | null {
+  if (!input) return null;
+  return COUNTRY_CODE_BY_KEY.get(input.trim().toUpperCase()) ?? null;
+}

@@ -43,6 +43,10 @@ describe(`${PREFIX} (e2e)`, () => {
       await prisma.query.delete({ where: { id: dq.id } }); // cascades
     }
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${DG_PREFIX}-` } } });
+
+    // Country-vocabulary fixtures (name-vs-code fix)
+    await prisma.query.deleteMany({ where: { queryCode: { startsWith: `YAL00-RFQ-ELIG-CTY` } } });
+    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-ELIG-CTY-` } } });
   };
 
   beforeAll(async () => {
@@ -146,5 +150,68 @@ describe(`${PREFIX} (e2e)`, () => {
     // verify by checking no non-DG FF is returned
     const allHandleDg = res.body.every((f: { handleDg: boolean }) => f.handleDg === true);
     expect(allHandleDg).toBe(true);
+  });
+
+  it("matches FFs by ISO code when the point country is a free-text NAME ('United Kingdom' → GB)", async () => {
+    const admin = cookie(Role.ADMINISTRATOR);
+    const query = await prisma.query.create({ data: { queryCode: `YAL00-RFQ-ELIG-CTY1` } });
+    // Endpoint countries entered as NAMES via the point editor's free-text field.
+    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "United Kingdom" } });
+    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "Germany" } });
+    const cargo = await prisma.cargoItem.create({
+      data: { queryId: query.id, rowIndex: 0, poReference: "PO", productName: "W",
+              packageType: "BOX", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1, isDangerous: false },
+    });
+    const leg = await prisma.leg.create({
+      data: { queryId: query.id, legCode: "L1", mode: "AIR", status: "READY_FOR_RFQ",
+              originPointId: origin.id, destinationPointId: dest.id,
+              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000),
+              legCargo: { create: { cargoItemId: cargo.id } } },
+    });
+    const mk = (code: string, countries: string[]) =>
+      prisma.freightForwarder.create({ data: {
+        freightForwarderCode: code, companyName: `${code} Co`, pic: "P", contactNumber: "+1000000000",
+        email: `${code}@e2e.test`, availableCountries: countries, modes: ["AIR"], status: "ACTIVE", handleDg: false } });
+    const match = await mk("FF-ELIG-CTY-MATCH", ["GB", "DE"]);   // covers both endpoints
+    const partial = await mk("FF-ELIG-CTY-PARTIAL", ["GB"]);     // missing DE
+    const other = await mk("FF-ELIG-CTY-OTHER", ["US", "FR"]);   // serves neither
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/legs/${leg.id}/eligible-ffs`)
+      .set("Cookie", admin).expect(200);
+    const ids = res.body.map((f: { id: string }) => f.id);
+    expect(ids).toContain(match.id);       // name→code resolution lets a GB+DE forwarder match a UK→Germany leg
+    expect(ids).not.toContain(partial.id); // covers only GB, not DE
+    expect(ids).not.toContain(other.id);   // serves neither endpoint
+  });
+
+  it("shows NO ffs when an endpoint has no country — both endpoints must resolve (broaden still shows all)", async () => {
+    const admin = cookie(Role.ADMINISTRATOR);
+    const query = await prisma.query.create({ data: { queryCode: `YAL00-RFQ-ELIG-CTY2` } });
+    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "GB" } });
+    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY" } }); // no country
+    const cargo = await prisma.cargoItem.create({
+      data: { queryId: query.id, rowIndex: 0, poReference: "PO", productName: "W",
+              packageType: "BOX", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1, isDangerous: false },
+    });
+    const leg = await prisma.leg.create({
+      data: { queryId: query.id, legCode: "L1", mode: "AIR", status: "READY_FOR_RFQ",
+              originPointId: origin.id, destinationPointId: dest.id,
+              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000),
+              legCargo: { create: { cargoItemId: cargo.id } } },
+    });
+    const gb = await prisma.freightForwarder.create({ data: {
+      freightForwarderCode: "FF-ELIG-CTY-GB", companyName: "FF-ELIG-CTY-GB Co", pic: "P", contactNumber: "+1000000000",
+      email: "ff-elig-cty-gb@e2e.test", availableCountries: ["GB"], modes: ["AIR"], status: "ACTIVE", handleDg: false } });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/legs/${leg.id}/eligible-ffs`)
+      .set("Cookie", admin).expect(200);
+    expect(res.body.map((f: { id: string }) => f.id)).not.toContain(gb.id); // incomplete endpoints → show none
+
+    const broad = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/legs/${leg.id}/eligible-ffs?broaden=true`)
+      .set("Cookie", admin).expect(200);
+    expect(broad.body.map((f: { id: string }) => f.id)).toContain(gb.id); // broaden still shows all active
   });
 });
