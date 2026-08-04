@@ -66,6 +66,7 @@ function stubFetch(detail: ReturnType<typeof makeQueryDetail>) {
     if (url.endsWith("/api/queries/q1")) return { status: 200, body: detail };
     if (url.includes("/rfq-state")) return { status: 200, body: { quotes: [], rfqs: [], freightForwarders: [] } };
     if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+    if (url.includes("/charge-line-definitions")) return { status: 200, body: [] };
     if (url.includes("/distribute-all") && init?.method === "POST")
       return { status: 201, body: { rfqs: [], distributedLegIds: [], skipped: [{ legId: "l1", reason: "nothing-selected" }] } };
     return { status: 404 };
@@ -110,6 +111,7 @@ describe("RfqWorkspace", () => {
       if (url.endsWith("/api/queries/q1")) return { status: 200, body: twoLegDetail("RFQ_READY") };
       if (url.includes("/rfq-state")) return { status: 200, body: { quotes: [], rfqs: [], freightForwarders: [] } };
       if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+      if (url.includes("/charge-line-definitions")) return { status: 200, body: [] };
       return { status: 404 };
     }));
     wrap(<RfqWorkspace queryId="q1" />);
@@ -131,6 +133,7 @@ describe("RfqWorkspace", () => {
       if (url.endsWith("/api/queries/q1")) return { status: 200, body: twoLegDetail("RFQ_READY") };
       if (url.includes("/rfq-state")) return { status: 200, body: { quotes: [], rfqs: [], freightForwarders: [] } };
       if (url.includes("/eligible-ffs")) return { status: 200, body: [] };
+      if (url.includes("/charge-line-definitions")) return { status: 200, body: [] };
       return { status: 404 };
     }));
     wrap(<RfqWorkspace queryId="q1" />);

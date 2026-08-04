@@ -11,6 +11,9 @@ import { LegStatusBadge } from "./statusBadges";
 import { FfSelectionGrid } from "./FfSelectionGrid";
 import { DistributeLegAction } from "./DistributeLegAction";
 import { PreviewRfqDialog } from "./PreviewRfqDialog";
+import { useChargeCatalogue } from "./useChargeConfig";
+import { ConfigureChargesPopover } from "./ConfigureChargesPopover";
+import { WarehouseHandlingToggle, legTouchesWarehouse } from "./WarehouseHandlingToggle";
 
 interface LegPanelProps {
   queryId: string;
@@ -48,6 +51,7 @@ function fmtDate(iso: string | null): string {
 export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo, open, onToggle }: LegPanelProps) {
   const [deadline, setDeadline] = useState(defaultDeadlineLocal());
   const [previewOpen, setPreviewOpen] = useState(false);
+  const catalogue = useChargeCatalogue();
   const hasSent = legQuotes.some((q) => q.status !== "SELECT");
   const route = `${pointName(points, leg.originPointId)} → ${pointName(points, leg.destinationPointId)}`;
   const originCountry = pointCountryName(points, leg.originPointId);
@@ -87,6 +91,15 @@ export function LegPanel({ queryId, leg, points, legQuotes, referencedFfs, cargo
               </dd>
             </div>
           </dl>
+
+          <div className="space-y-3 border-b border-border pb-4">
+            {catalogue.data && (
+              <ConfigureChargesPopover queryId={queryId} leg={leg} catalogue={catalogue.data} disabled={hasSent} />
+            )}
+            {legTouchesWarehouse(leg, points) && (
+              <WarehouseHandlingToggle queryId={queryId} leg={leg} disabled={hasSent} />
+            )}
+          </div>
 
           <div className="space-y-2">
             <div className="inline-flex items-center rounded-md border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
