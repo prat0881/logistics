@@ -3,6 +3,7 @@ import type { FreightMode } from "./config";
 import type { QuoteStatus } from "./status";
 import type { ManifestSnapshot } from "./rfq";
 import type { ChargeZone, WarehousePosition, QuoteDraft } from "./quote";
+import type { ChargeLineInputType } from "./charge-config";
 import { CHARGE_ZONES, TRUCKING_TYPES, TRUCKING_BASES, WAREHOUSE_POSITIONS } from "./quote";
 
 // ── GET /ff/rfq/:token response ──
@@ -13,7 +14,15 @@ export interface FfPortalEndpoint {
   country: string | null;
   warehousePosition: WarehousePosition | null; // set for WAREHOUSE endpoints, else null
 }
-export interface FfPortalSeededCharge { zone: ChargeZone; presetKey: string; label: string; isPreset: true; amount: null; }
+export interface FfPortalSeededCharge {
+  zone: ChargeZone | null;
+  definitionKey?: string;           // optional in the TYPE only so the pre-Task-9 seeding compiles; always set from Task 9 on
+  inputType?: ChargeLineInputType;  // PLAIN here; TRUCKING/WAREHOUSE_STAGING seed via endpoints
+  presetKey: string | null;         // null for catalogue lines (kept for shape compatibility)
+  label: string;
+  isPreset: true;
+  amount: null;
+}
 export interface FfPortalSeededDensity { cargoItemId: string; freightDensity: number; }
 export interface FfPortalLegDto {
   legId: string;
@@ -24,6 +33,7 @@ export interface FfPortalLegDto {
   endpoints: FfPortalEndpoint[];
   seededCharges: FfPortalSeededCharge[];
   seededDensity: FfPortalSeededDensity[];
+  warehouseIncluded?: boolean;   // frozen Leg warehouse decision (design §9); optional so pre-Task-9 build stays green, set from Task 9 on
   draft: QuoteDraft | null;
 }
 export interface FfPortalRfqDto {
@@ -47,7 +57,8 @@ export const quoteDraftSchema: z.ZodType<QuoteDraft> = z.object({
     isDangerous: z.boolean(), freightDensity: z.number().nullable(),
   })),
   charges: z.array(z.object({
-    zone: z.enum(CHARGE_ZONES), presetKey: z.string().nullable(), label: z.string(),
+    zone: z.enum(CHARGE_ZONES).nullable(), definitionKey: z.string().nullable().optional(),
+    presetKey: z.string().nullable(), label: z.string(),
     amount: z.number().nullable(), note: z.string().optional(),
   })),
   trucking: z.array(z.object({

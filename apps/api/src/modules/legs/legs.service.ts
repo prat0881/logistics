@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
@@ -15,6 +16,7 @@ import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
 import { StatusService } from "../status/status.service";
 import type { RequestUser } from "../auth/types";
+import { warehousePointIds, findWarehouseYesConflict } from "../rfq/warehouse.util";
 
 @Injectable()
 export class LegsService {
@@ -75,6 +77,33 @@ export class LegsService {
       };
       throw new HttpException({ findings: [finding] }, HttpStatus.UNPROCESSABLE_ENTITY);
     }
+  }
+
+  // F8 (Task 10, design §10): a leg being turned to warehouseHandlingIncluded=true must not
+  // share a warehouse point with a sibling leg that already carries Yes for it. Distribute-time
+  // already enforces this (rfq.service.ts validateLegForDistribution); this is the write-time
+  // mirror so the conflict surfaces immediately on the PATCH instead of only at distribute.
+  private async assertWarehouseExclusivity(queryId: string, legId: string): Promise<void> {
+    const leg = await this.prisma.leg.findUnique({
+      where: { id: legId },
+      select: {
+        originPoint: { select: { id: true, type: true } },
+        destinationPoint: { select: { id: true, type: true } },
+      },
+    });
+    const whIds = warehousePointIds([leg?.originPoint, leg?.destinationPoint]);
+    const conflict = await findWarehouseYesConflict(this.prisma, { queryId, legId, warehousePointIds: whIds });
+    if (conflict)
+      throw new UnprocessableEntityException({
+        findings: [
+          {
+            rule: "F8",
+            severity: "blocking",
+            scope: { type: "leg", id: legId },
+            message: "Another leg already carries warehouse handling for this warehouse.",
+          },
+        ],
+      });
   }
 
   async create(queryId: string, input: LegSaveInput, user: RequestUser) {
@@ -141,7 +170,12 @@ export class LegsService {
     const fields = Object.keys(fieldsInput);
     if (fields.length === 0) return this.load(queryId, legId);
 
-    const { assignedCargoIds, readyDate, targetDelivery, ...rest } = fieldsInput;
+    // Task 11: turning the warehouse toggle ON must not collide with a sibling leg that
+    // already carries Yes for the same warehouse point (F8) — checked eagerly, before the
+    // mediator runs, so a conflict never even reaches the free/change-order fork.
+    if (input.warehouseHandlingIncluded === true) await this.assertWarehouseExclusivity(queryId, legId);
+
+    const { assignedCargoIds, chargeLineDefinitionIds, readyDate, targetDelivery, ...rest } = fieldsInput;
     const result = await this.mediator.apply(
       {
         entity: "leg",
@@ -166,6 +200,15 @@ export class LegsService {
           if (assignedCargoIds.length)
             await tx.legCargo.createMany({
               data: assignedCargoIds.map((cid) => ({ legId, cargoItemId: cid, tenantId: user.tenantId })),
+            });
+        }
+        // chargeLineDefinitionIds is not a Leg column (LegChargeLineSelection is its own
+        // table) — replace-set semantics, same shape as the assignedCargoIds block above.
+        if (chargeLineDefinitionIds !== undefined) {
+          await tx.legChargeLineSelection.deleteMany({ where: { legId } });
+          if (chargeLineDefinitionIds.length)
+            await tx.legChargeLineSelection.createMany({
+              data: chargeLineDefinitionIds.map((definitionId) => ({ legId, definitionId, tenantId: user.tenantId })),
             });
         }
       },

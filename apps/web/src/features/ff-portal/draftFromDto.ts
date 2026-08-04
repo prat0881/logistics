@@ -19,13 +19,14 @@ export function draftFromDto(leg: FfPortalLegDto, rfq: FfPortalRfqDto): QuoteDra
       freightDensity: seed?.freightDensity ?? null,
     };
   });
-  const charges = leg.seededCharges.map((s) => ({ zone: s.zone, presetKey: s.presetKey, label: s.label, amount: null }));
+  const charges = leg.seededCharges.map((s) => ({
+    zone: s.zone, definitionKey: s.definitionKey, presetKey: s.presetKey, label: s.label, amount: null,
+  }));
   const trucking =
     leg.mode === "ROAD"
       ? leg.endpoints.map((e) => ({ legEndpointPointId: e.pointId, truckingType: "DEDICATED" as const, basis: "PER_TRUCK" as const, amount: null }))
       : [];
-  const warehouse = leg.endpoints
-    .filter((e) => e.warehousePosition != null)
+  const warehouse = (leg.warehouseIncluded ? leg.endpoints.filter((e) => e.warehousePosition != null) : [])
     .map((e) => ({ warehousePointId: e.pointId, position: e.warehousePosition!, label: warehouseLabel(e.warehousePosition!), amount: null }));
   return {
     legId: leg.legId,

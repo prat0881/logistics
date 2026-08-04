@@ -25,7 +25,7 @@ export interface QuoteDraftCargo {
   freightDensity: number | null; // kg/CBM (seeded from FreightDensityFactor, editable)
 }
 export interface QuoteDraftCharge {
-  zone: ChargeZone; presetKey: string | null; label: string; amount: number | null; note?: string;
+  zone: ChargeZone | null; definitionKey?: string | null; presetKey: string | null; label: string; amount: number | null; note?: string;
 }
 export interface QuoteDraftTrucking {
   legEndpointPointId: string; truckingType: TruckingType; basis: TruckingBasis; amount: number | null; remarks?: string;

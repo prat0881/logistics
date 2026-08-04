@@ -1,7 +1,5 @@
 import { ConflictException, ForbiddenException, Injectable, Logger, UnprocessableEntityException } from "@nestjs/common";
 import {
-  AIR_CHARGE_PRESETS,
-  SEA_CHARGE_PRESETS,
   classifyWarehousePositions,
   validateQuote,
   computeQuoteTotals,
@@ -9,7 +7,14 @@ import {
   QuoteEvent,
   Role,
 } from "@svyft/shared";
-import type { FfPortalRfqDto, FfPortalLegDto, ManifestSnapshot, QuoteDraft, Finding } from "@svyft/shared";
+import type {
+  FfPortalRfqDto,
+  FfPortalLegDto,
+  ManifestSnapshot,
+  QuoteDraft,
+  Finding,
+  ChargeConfigSnapshot,
+} from "@svyft/shared";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ConfigDataService } from "../config/config-data.service";
@@ -54,7 +59,7 @@ export class FfPortalService {
     const legs: FfPortalLegDto[] = scope.quotes.map((q) => {
       const manifest = q.manifestSnapshot as ManifestSnapshot;
       const mode = q.leg.mode;
-      const presets = mode === "AIR" ? AIR_CHARGE_PRESETS : mode === "SEA" ? SEA_CHARGE_PRESETS : [];
+      const snap = (q.chargeConfigSnapshot as ChargeConfigSnapshot | null) ?? { lines: [], warehouseIncluded: false };
       const density = densityOf(mode);
       const endpoints = [q.leg.originPoint, q.leg.destinationPoint]
         .filter((p): p is NonNullable<typeof p> => !!p)
@@ -72,13 +77,18 @@ export class FfPortalService {
         mode: mode as FfPortalLegDto["mode"],
         manifest,
         endpoints,
-        seededCharges: presets.map((p) => ({
-          zone: p.zone,
-          presetKey: p.presetKey,
-          label: p.label,
-          isPreset: true as const,
-          amount: null,
-        })),
+        seededCharges: snap.lines
+          .filter((l) => l.inputType === "PLAIN")
+          .map((l) => ({
+            zone: l.zone,
+            definitionKey: l.definitionKey,
+            inputType: l.inputType,
+            presetKey: null,
+            label: l.label,
+            isPreset: true as const,
+            amount: null,
+          })),
+        warehouseIncluded: snap.warehouseIncluded,
         seededDensity:
           density == null
             ? []
@@ -127,6 +137,7 @@ export class FfPortalService {
     }
 
     const manifest = q.manifestSnapshot as ManifestSnapshot;
+    const snap = (q.chargeConfigSnapshot as ChargeConfigSnapshot | null) ?? { lines: [], warehouseIncluded: false };
     const stored = (
       (await this.prisma.quote.findUnique({ where: { id: q.id }, select: { draftJson: true } }))?.draftJson ?? {}
     ) as Partial<QuoteDraft>;
@@ -158,7 +169,7 @@ export class FfPortalService {
       })),
       charges: (stored.charges ?? []).map((c) => ({ ...c })),
       trucking: (stored.trucking ?? []).map((t) => ({ ...t })),
-      warehouse: (stored.warehouse ?? []).map((w) => ({
+      warehouse: (snap.warehouseIncluded ? (stored.warehouse ?? []) : []).map((w) => ({
         ...w,
         position: whPos[w.warehousePointId] ?? w.position,
       })),
@@ -193,6 +204,7 @@ export class FfPortalService {
       draft,
       scope.rfq.submissionDeadline.toISOString(),
       new Date().toISOString(),
+      snap.lines,
     );
     if (findings.length) throw new UnprocessableEntityException({ findings });
 
@@ -221,6 +233,7 @@ export class FfPortalService {
           data: draft.charges.map((c, i) => ({
             quoteId: q.id,
             zone: c.zone,
+            definitionKey: c.definitionKey ?? null,
             label: c.label,
             isPreset: c.presetKey != null,
             presetKey: c.presetKey,

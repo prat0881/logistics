@@ -15,6 +15,7 @@ import { CHANGE_LOG, type ChangeLog } from "./change-log";
 import { StatusService } from "../status/status.service";
 import { buildManifestSnapshot } from "../rfq/manifest";
 import { loadLegForRfq } from "../rfq/leg-context";
+import { buildChargeConfigSnapshot } from "../rfq/charge-config.snapshot";
 
 // The reopen-notification event (design §15). `apply` emits it (best-effort); the SB5-side
 // RfqNotificationsService consumes it via @OnEvent. It is an EVENT rather than a direct call
@@ -146,9 +147,18 @@ export class ChangeOrderStrategy {
         // the QUOTED (invalidating) ones keep their old snapshot as history.
         const ctx = await loadLegForRfq(tx, req.queryId!, legId);
         const snap = buildManifestSnapshot(ctx, query ?? { incoterms: null }, frozenAt);
+        // Re-freeze the charge-config snapshot too (§5.5). A charge-selection / warehouse-toggle
+        // change-order must rewrite chargeConfigSnapshot on the pending quotes — the manifest
+        // carries NO charge/warehouse data, so without this a refreshed FF keeps a STALE charge
+        // set and the portal (seeding + Q1) mis-prices. Built from the SAME tx-reloaded leg
+        // (ctx.leg carries chargeSelections/mode/warehouseHandlingIncluded via LEG_RFQ_INCLUDE).
+        const chargeConfig = await buildChargeConfigSnapshot(tx, ctx.leg);
         await tx.quote.updateMany({
           where: { legId, id: { in: refreshingIds } },
-          data: { manifestSnapshot: snap as unknown as Prisma.InputJsonValue },
+          data: {
+            manifestSnapshot: snap as unknown as Prisma.InputJsonValue,
+            chargeConfigSnapshot: chargeConfig as unknown as Prisma.InputJsonValue,
+          },
         });
       }
 

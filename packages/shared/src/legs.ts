@@ -28,6 +28,11 @@ export const legSaveSchema = z
     readyDate: isoDate.optional(),
     targetDelivery: isoDate.optional(),
     assignedCargoIds: z.array(z.string().uuid()).optional(),
+    // Task 11 (Charge Configuration & Warehouse Attribution, Phase E): per-leg warehouse
+    // toggle + charge-line selection set, both routed through the mediated update below as
+    // RfqDefining (leg.impact.ts) — free pre-distribute, change-order-gated post-distribute.
+    warehouseHandlingIncluded: z.boolean().nullable().optional(),
+    chargeLineDefinitionIds: z.array(z.string().uuid()).optional(),
     // Stage 4 (SB6 §7.2): justification for a mediated edit that lands on the change-order
     // path. Metadata only — LegsService lifts it onto ChangeRequest.reason and strips it
     // before it ever reaches the Prisma patch (it is not a `leg` column).

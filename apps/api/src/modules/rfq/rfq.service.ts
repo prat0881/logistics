@@ -22,6 +22,8 @@ import { RfqNumberService } from "./rfq-number.service";
 import { RfqTokenService } from "./rfq-token.service";
 import { loadLegForRfq, type LegRfqContext } from "./leg-context";
 import { buildManifestSnapshot } from "./manifest";
+import { buildChargeConfigSnapshot } from "./charge-config.snapshot";
+import { warehousePointIds, findWarehouseYesConflict } from "./warehouse.util";
 
 @Injectable()
 export class RfqService {
@@ -278,6 +280,17 @@ export class RfqService {
       });
       if (ffs.some((f) => !f.handleDg)) errors.push("F5_DG_FF_CANNOT_HANDLE");
     }
+    // F7 — warehouse completeness; F8 — no duplicate Yes for the same warehouse (design §10)
+    const whIds = warehousePointIds([leg.originPoint, leg.destinationPoint]);
+    if (whIds.length > 0) {
+      if (leg.warehouseHandlingIncluded == null) errors.push("F7_WAREHOUSE_UNDECIDED");
+      else if (leg.warehouseHandlingIncluded === true) {
+        const conflict = await findWarehouseYesConflict(this.prisma, {
+          queryId: leg.queryId, legId: leg.id, warehousePointIds: whIds,
+        });
+        if (conflict) errors.push("F8_WAREHOUSE_DOUBLE_YES");
+      }
+    }
     return errors;
   }
 
@@ -358,9 +371,14 @@ export class RfqService {
         const legIds = new Set<string>();
         for (const { quoteId, legCtx } of items) {
           const snapshot = buildManifestSnapshot(legCtx, query, frozenAt);
+          const chargeConfig = await buildChargeConfigSnapshot(this.prisma, legCtx.leg);
           await tx.quote.update({
             where: { id: quoteId },
-            data: { rfqId: rfq.id, manifestSnapshot: snapshot as unknown as Prisma.InputJsonValue },
+            data: {
+              rfqId: rfq.id,
+              manifestSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+              chargeConfigSnapshot: chargeConfig as unknown as Prisma.InputJsonValue,
+            },
           });
           quoteFires.push(quoteId);
           legIds.add(legCtx.leg.id);
