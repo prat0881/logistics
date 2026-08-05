@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import type { Prisma } from "@prisma/client";
+import type { Item, Prisma } from "@prisma/client";
 import {
   toCanonicalDim,
   toCanonicalWeight,
@@ -57,13 +57,16 @@ export class PackageService {
     return shapePackage(row);
   }
 
-  // V-5: packageNo unique per QUERY, case-insensitive + trimmed. Belt-and-suspenders over the DB
-  // @@unique([queryId, packageNo]) index, which is case-SENSITIVE (so "P-1" and "p-1" would
-  // otherwise both persist). `packageNo` is always trimmed on the way in (packageCreateSchema/
-  // packageUpdateSchema both `.trim()`), so DB-stored values are already trimmed — only the
-  // caller-supplied needle is re-trimmed here defensively. `excludeId` lets update() skip a
-  // package's own row when the caller "renames" it to a value that only differs by case/space.
-  private async assertPackageNoFree(queryId: string, packageNo: string, excludeId?: string): Promise<void> {
+  // V-5 predicate: TRUE iff `packageNo` (trimmed) is already used by another package in this
+  // query, case-insensitively. Belt-and-suspenders over the DB @@unique([queryId, packageNo])
+  // index, which is case-SENSITIVE (so "P-1" and "p-1" would otherwise both persist). `packageNo`
+  // is always trimmed on the way in (packageCreateSchema/packageUpdateSchema both `.trim()`), so
+  // DB-stored values are already trimmed — only the caller-supplied needle is re-trimmed here
+  // defensively. `excludeId` lets update() skip a package's own row when the caller "renames" it
+  // to a value that only differs by case/space. Extracted from assertPackageNoFree (was inline
+  // until Task 6) so copy()'s next-free-suffix search can probe candidates as a boolean check
+  // instead of relying on exception-driven control flow — same query, same semantics.
+  private async packageNoTaken(queryId: string, packageNo: string, excludeId?: string): Promise<boolean> {
     const needle = packageNo.trim();
     const dupe = await this.prisma.package.findFirst({
       where: {
@@ -73,7 +76,13 @@ export class PackageService {
       },
       select: { id: true },
     });
-    if (dupe) throw new ConflictException(`packageNo "${needle}" is already in use within this query`);
+    return dupe !== null;
+  }
+
+  private async assertPackageNoFree(queryId: string, packageNo: string, excludeId?: string): Promise<void> {
+    if (await this.packageNoTaken(queryId, packageNo, excludeId)) {
+      throw new ConflictException(`packageNo "${packageNo.trim()}" is already in use within this query`);
+    }
   }
 
   // Mediated @create: verify the parent cargo, enforce V-5, mint the next rowIndex (scoped to
@@ -128,6 +137,120 @@ export class PackageService {
       });
     }
     return shaped!;
+  }
+
+  // Task 6 "add N copies": clone a saved package `count` times (2..50), each a full deep copy
+  // (own row + own copied items). Looked up by (id, queryId) ONLY — no cargoId param, matching
+  // the brief's `copy(queryId, pid, count, user)` signature; Package.cargoId lives on the row
+  // itself, so once the row is found under this query there is nothing further to scope against.
+  // Bad ref (no such package in this query) -> 404 "Package not found", the same contract as
+  // load()/getOne() above (NOT create()'s 400 CargoRef path — that validates a caller-SUPPLIED
+  // cargoId against the query, and copy() never receives one).
+  //
+  // TRANSACTION BOUNDARY: each clone is mediated as its own @create — mirrors create() above
+  // exactly, including letting ChangeMediator.apply open its OWN prisma.$transaction per call.
+  // This is NOT one atomic DB transaction spanning the whole batch: FreePathStrategy always calls
+  // `this.prisma.$transaction` itself (free-path.strategy.ts), and Prisma's TransactionClient type
+  // deliberately excludes `$transaction` (no supported nesting) — composing N mediator.apply calls
+  // into one atomic transaction would require either threading an external tx through the mediator
+  // (shared-infra surgery, out of this task's "copy endpoint only" scope) or bypassing the mediator
+  // and re-implementing FreePathStrategy's revalidate/changeLog logic inline here (which would
+  // contradict "mediate each clone via ChangeMediator.apply"). This is the same accepted tradeoff
+  // already standing at queries.service.ts's createQuery(), which fires each DRAFT leg forward in
+  // its own tx ("own tx per fire ... last-write-wins", §8.5) rather than one all-or-nothing tx.
+  // In practice `package` `@create` is unconditionally free-path in Stage 3 — Structural class,
+  // but ImpactClassifier has no leg fan-out rule for entity "package" (falls to the self-scope
+  // default), so ScopeResolver.downstreamWork always sees zero leg-typed scope entries and returns
+  // false without a DB call — so every clone commits immediately, one at a time, never
+  // concurrently, each one fully committed before the next clone's packageNo/rowIndex are
+  // computed. Clones therefore cannot collide with each other or with pre-existing rows; a
+  // mid-batch failure (rare — e.g. a genuine DB error) can leave a partial prefix of clones
+  // committed, exactly like the leg-fire loop's accepted last-write-wins tradeoff.
+  async copy(queryId: string, pid: string, count: number, user: RequestUser): Promise<PackageDto[]> {
+    const source = await this.prisma.package.findFirst({
+      where: { id: pid, queryId },
+      include: { items: { orderBy: ITEM_ORDER } },
+    });
+    if (!source) throw new NotFoundException("Package not found");
+
+    // Monotonically increasing across the WHOLE batch (not reset per clone) so the Nth clone's
+    // search resumes where the (N-1)th left off instead of re-probing already-known-taken
+    // suffixes from scratch — O(count + collisions) DB round-trips, not O(count²).
+    let suffix = 2;
+    const nextPackageNo = async (): Promise<string> => {
+      for (let tries = 0; tries < 10_000; tries++) {
+        const candidate = `${source.packageNo}-${suffix++}`;
+        if (!(await this.packageNoTaken(queryId, candidate))) return candidate;
+      }
+      throw new ConflictException(`Could not find a free packageNo for "${source.packageNo}"`);
+    };
+
+    const clones: PackageDto[] = [];
+    for (let i = 0; i < count; i++) {
+      const packageNo = await nextPackageNo();
+      const id = randomUUID();
+      let shaped: PackageDto | undefined;
+      const result = await this.mediator.apply(
+        { entity: "package", id, action: "@create", queryId, actorId: user.userId },
+        async (tx) => {
+          // Same KNOWN RACE as create() above (§8.5, last-write-wins) — accepted, not fixed here.
+          const max = await tx.package.aggregate({
+            where: { cargoId: source.cargoId },
+            _max: { rowIndex: true },
+          });
+          const created = await tx.package.create({
+            data: {
+              id,
+              queryId,
+              cargoId: source.cargoId,
+              tenantId: user.tenantId,
+              rowIndex: (max._max.rowIndex ?? 0) + 1,
+              packageNo,
+              // Stored canonical values, copied as-is — already cm/kg, never re-converted.
+              packageType: source.packageType,
+              dimL: source.dimL,
+              dimW: source.dimW,
+              dimH: source.dimH,
+              grossWt: source.grossWt,
+              netWt: source.netWt,
+              tags: source.tags,
+              msdsFileId: source.msdsFileId,
+              packageCount: source.packageCount,
+              // dgIndicator (T8) intentionally untouched — Package has no such column; Query's
+              // sync lives entirely in QueriesService and is out of this task's scope.
+            },
+          });
+          const items: Item[] = [];
+          for (const [idx, item] of source.items.entries()) {
+            items.push(
+              await tx.item.create({
+                data: {
+                  id: randomUUID(),
+                  packageId: created.id,
+                  tenantId: user.tenantId,
+                  rowIndex: idx + 1,
+                  product: item.product,
+                  qty: item.qty,
+                  uom: item.uom,
+                  hsCode: item.hsCode,
+                  tags: item.tags,
+                },
+              }),
+            );
+          }
+          shaped = shapePackage({ ...created, items });
+        },
+      );
+      if (result.needsConfirmation) {
+        throw new ConflictException({
+          message: "Change requires confirmation",
+          needsChangeOrder: true,
+          preview: result.preview,
+        });
+      }
+      clones.push(shaped!);
+    }
+    return clones;
   }
 
   // Mediated field edit. `reason` is ChangeRequest metadata, not a Package column — stripped

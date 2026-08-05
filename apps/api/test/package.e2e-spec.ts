@@ -65,6 +65,21 @@ describe("Package CRUD (e2e)", () => {
       .send(body);
   }
 
+  // Item CRUD (Task 7) doesn't exist yet — fixture items for the copy (Task 6) tests below are
+  // seeded directly via Prisma rather than through an HTTP endpoint. queryId/cargoId are accepted
+  // (not used — Item has no such columns) purely so call sites read symmetrically with addPackage.
+  function addItem(_queryId: string, _cargoId: string, packageId: string, body: Record<string, unknown>) {
+    return prisma.item.create({ data: { packageId, rowIndex: 1, ...body } });
+  }
+
+  // Thin POST wrapper for the Task 6 "add N copies" endpoint.
+  function copyPackage(queryId: string, cargoId: string, pid: string, count: number) {
+    return api()
+      .post(`/api/queries/${queryId}/cargo/${cargoId}/packages/${pid}/copies`)
+      .set("Cookie", cookie())
+      .send({ count });
+  }
+
   it("stores dims/weights canonically (mm/tonne entry → cm/kg) and computes volumeCbm", async () => {
     const { queryId } = await freshQuery();
     const cargo = await addCargo(queryId, { dimUnit: "MM", weightUnit: "TONNE" }).expect(201);
@@ -231,5 +246,140 @@ describe("Package CRUD (e2e)", () => {
       .set("Cookie", cookie())
       .attach("file", Buffer.from("PNG"), "x.png")
       .expect(400);
+  });
+
+  // Task 6: "add N copies" — PackageService.copy, mounted at POST …/packages/:pid/copies.
+  describe("copy — add N copies (Task 6)", () => {
+    it("clones a package N times with unique packageNos and copied items", async () => {
+      const { queryId } = await freshQuery();
+      const cargo = await addCargo(queryId, {}).expect(201);
+      const p = await addPackage(queryId, cargo.body.id, {
+        packageNo: "PLT",
+        packageType: "PALLET",
+        dimL: 120,
+        dimW: 100,
+        dimH: 140,
+        grossWt: 420,
+      }).expect(201);
+      await addItem(queryId, cargo.body.id, p.body.id, { product: "Paint", qty: 8, uom: "PC" });
+
+      const res = await copyPackage(queryId, cargo.body.id, p.body.id, 2).expect(201);
+
+      expect(res.body).toHaveLength(2);
+      const nos = res.body.map((x: { packageNo: string }) => x.packageNo);
+      expect(new Set(nos).size).toBe(2);
+      expect(res.body[0].items).toHaveLength(1);
+      expect(res.body[0].items[0]).toMatchObject({ product: "Paint", qty: "8", uom: "PC" });
+      expect(res.body[1].items).toHaveLength(1);
+    });
+
+    it("copies canonical dims/weights/type/tags unchanged onto every clone, with fresh ids", async () => {
+      const { queryId } = await freshQuery();
+      const cargo = await addCargo(queryId, { dimUnit: "MM", weightUnit: "KG" }).expect(201);
+      const p = await addPackage(queryId, cargo.body.id, {
+        packageNo: "P-1",
+        packageType: "DRUM",
+        dimL: 100,
+        dimW: 200,
+        dimH: 300,
+        grossWt: 55,
+        netWt: 50,
+        tags: ["FRAGILE"],
+      }).expect(201);
+
+      const res = await copyPackage(queryId, cargo.body.id, p.body.id, 2).expect(201);
+      for (const clone of res.body) {
+        expect(clone.id).not.toBe(p.body.id);
+        expect(clone.packageType).toBe("DRUM");
+        expect(Number(clone.dimL)).toBe(10); // 100mm -> 10cm, same canonical conversion as source
+        expect(Number(clone.dimW)).toBe(20);
+        expect(Number(clone.dimH)).toBe(30);
+        expect(Number(clone.grossWt)).toBe(55);
+        expect(Number(clone.netWt)).toBe(50);
+        expect(clone.tags).toEqual(["FRAGILE"]);
+      }
+    });
+
+    it("skips a packageNo already taken (existing '-2') and picks the next free suffix", async () => {
+      const { queryId } = await freshQuery();
+      const cargo = await addCargo(queryId, {}).expect(201);
+      const p = await addPackage(queryId, cargo.body.id, {
+        packageNo: "BASE",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      }).expect(201);
+      // Pre-occupy "BASE-2" with an unrelated package before copying.
+      await addPackage(queryId, cargo.body.id, {
+        packageNo: "BASE-2",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      }).expect(201);
+
+      const res = await copyPackage(queryId, cargo.body.id, p.body.id, 2).expect(201);
+      const nos = res.body.map((x: { packageNo: string }) => x.packageNo);
+      expect(nos).toEqual(["BASE-3", "BASE-4"]);
+    });
+
+    it("assigns fresh, incrementing rowIndex to clones within the cargo", async () => {
+      const { queryId } = await freshQuery();
+      const cargo = await addCargo(queryId, {}).expect(201);
+      const p1 = await addPackage(queryId, cargo.body.id, {
+        packageNo: "P-1",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      }).expect(201);
+      expect(p1.body.rowIndex).toBe(1);
+
+      const res = await copyPackage(queryId, cargo.body.id, p1.body.id, 2).expect(201);
+      const rowIndexes = res.body
+        .map((x: { rowIndex: number }) => x.rowIndex)
+        .sort((a: number, b: number) => a - b);
+      expect(rowIndexes).toEqual([2, 3]);
+    });
+
+    it("404s copying a package that doesn't belong to the query, or doesn't exist", async () => {
+      const { queryId: ownerQuery } = await freshQuery();
+      const { queryId: otherQuery } = await freshQuery();
+      const cargo = await addCargo(ownerQuery, {}).expect(201);
+      const p = await addPackage(ownerQuery, cargo.body.id, {
+        packageNo: "P-1",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      }).expect(201);
+      await copyPackage(otherQuery, cargo.body.id, p.body.id, 2).expect(404);
+      await copyPackage(
+        ownerQuery,
+        cargo.body.id,
+        "00000000-0000-0000-0000-000000000000",
+        2,
+      ).expect(404);
+    });
+
+    it("rejects an out-of-range count (bounds are 2..50)", async () => {
+      const { queryId } = await freshQuery();
+      const cargo = await addCargo(queryId, {}).expect(201);
+      const p = await addPackage(queryId, cargo.body.id, {
+        packageNo: "P-1",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      }).expect(201);
+      await copyPackage(queryId, cargo.body.id, p.body.id, 1).expect(400);
+      await copyPackage(queryId, cargo.body.id, p.body.id, 51).expect(400);
+    });
   });
 });
