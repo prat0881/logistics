@@ -18,9 +18,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { ReferenceTagIcons } from "@/components/ReferenceTagIcons";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useWizard } from "../WizardContext";
 import { useCargo } from "./cargo/useCargo";
+import { CargoPopup } from "./cargo/CargoPopup";
 import type { StepSaveFn } from "./Step1Client";
 
 interface Step3CargoProps {
@@ -54,8 +54,8 @@ function contentsOf(packages: PackageDto[]): string {
  * package/item hooks POST/PATCH/DELETE + invalidate), so registerSave is a no-op —
  * the shell's Save/Next doesn't need to persist anything for this step.
  *
- * Add/Edit are stubbed behind a placeholder dialog pending Task 13 (CargoPopup) —
- * see TODO(T13) below. The retired flat CargoRowForm is intentionally not used here.
+ * Add/Edit open CargoPopup (Task 13), the nested cargo -> package -> item entry dialog.
+ * The retired flat CargoRowForm is no longer used anywhere in this step.
  */
 export function Step3Cargo({ registerSave }: Step3CargoProps) {
   const { detail, queryId } = useWizard();
@@ -63,8 +63,8 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
 
   const [expandedCargo, setExpandedCargo] = useState<Set<string>>(new Set());
   const [expandedPackage, setExpandedPackage] = useState<Set<string>>(new Set());
-  const [placeholderOpen, setPlaceholderOpen] = useState(false);
-  const [placeholderTitle, setPlaceholderTitle] = useState("");
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [popupCargo, setPopupCargo] = useState<CargoDto | undefined>(undefined);
 
   // Cargo/package/item rows are already saved on the server — registerSave is a no-op
   useEffect(() => {
@@ -89,18 +89,14 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
       return next;
     });
 
-  // TODO(T13): replace with the real CargoPopup add flow (creates a Cargo, then lets
-  // the user add packages/items). This stub only proves the table compiles + renders;
-  // it deliberately does not re-import the retired flat CargoRowForm.
-  const openAddPlaceholder = () => {
-    setPlaceholderTitle("Add Cargo");
-    setPlaceholderOpen(true);
+  const openAddCargo = () => {
+    setPopupCargo(undefined);
+    setPopupOpen(true);
   };
 
-  // TODO(T13): replace with the real CargoPopup edit flow, seeded from `row`.
-  const openEditPlaceholder = (row: CargoDto) => {
-    setPlaceholderTitle(`Edit ${row.poReference || cargoLabel(row)}`);
-    setPlaceholderOpen(true);
+  const openEditCargo = (row: CargoDto) => {
+    setPopupCargo(row);
+    setPopupOpen(true);
   };
 
   const handleRemove = async (cargoId: string) => {
@@ -129,23 +125,24 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
           <Button variant="outline" size="sm" onClick={handleExport}>
             Export to Excel
           </Button>
-          <Button size="sm" onClick={openAddPlaceholder}>
+          <Button size="sm" onClick={openAddCargo}>
             + Add Cargo
           </Button>
         </div>
       </div>
 
-      {/* Add / Edit placeholder — real editor lands in Task 13 (CargoPopup) */}
-      <Dialog open={placeholderOpen} onOpenChange={setPlaceholderOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{placeholderTitle}</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            The cargo editor is coming in Task 13.
-          </p>
-        </DialogContent>
-      </Dialog>
+      {/* Keyed so every open gets a fresh CargoPopup instance — its cargoRow/addingPackage
+          state is seeded from `cargo` at mount and never re-syncs from prop changes while
+          mounted (Dialog keeps this component alive even when visually closed). Remounting
+          on each open (key flips through "closed" in between) avoids stale state leaking
+          from a previous Add/Edit session into the next. */}
+      <CargoPopup
+        key={popupOpen ? (popupCargo?.id ?? "add") : "closed"}
+        open={popupOpen}
+        onOpenChange={setPopupOpen}
+        queryId={queryId}
+        cargo={popupCargo}
+      />
 
       {/* Cargo table */}
       {cargoRows.length > 0 ? (
@@ -161,7 +158,9 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
                 <TableHead className="font-mono tabular-nums">Σ Gross</TableHead>
                 <TableHead className="font-mono tabular-nums">Σ Volume</TableHead>
                 <TableHead>Tags</TableHead>
-                <TableHead className="text-muted-foreground font-mono tabular-nums">Chargeable</TableHead>
+                <TableHead className="text-muted-foreground font-mono tabular-nums">
+                  Chargeable
+                </TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -181,7 +180,11 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
                           aria-expanded={isOpen}
                           onClick={() => toggleCargo(row.id)}
                         >
-                          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          {isOpen ? (
+                            <ChevronDown className="h-4 w-4" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4" />
+                          )}
                         </Button>
                       </TableCell>
                       <TableCell className="font-mono tabular-nums text-muted-foreground">
@@ -196,7 +199,9 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
                         {fmtNum(fromCanonicalWeight(Number(row.grossWeightKg), row.weightUnit))}{" "}
                         <span className="text-muted-foreground text-xs">{row.weightUnit}</span>
                       </TableCell>
-                      <TableCell className="font-mono tabular-nums">{fmtNum(Number(row.volumeCbm), 4)}</TableCell>
+                      <TableCell className="font-mono tabular-nums">
+                        {fmtNum(Number(row.volumeCbm), 4)}
+                      </TableCell>
                       <TableCell>
                         <ReferenceTagIcons tags={row.tags} />
                       </TableCell>
@@ -207,10 +212,14 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
                       />
                       <TableCell>
                         <div className="flex gap-1">
-                          <Button variant="outline" size="sm" onClick={() => openEditPlaceholder(row)}>
+                          <Button variant="outline" size="sm" onClick={() => openEditCargo(row)}>
                             Edit
                           </Button>
-                          <Button variant="destructive" size="sm" onClick={() => handleRemove(row.id)}>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleRemove(row.id)}
+                          >
                             Remove
                           </Button>
                         </div>
@@ -287,7 +296,11 @@ function PackagesTable({
                       aria-expanded={isOpen}
                       onClick={() => onTogglePackage(pkg.id)}
                     >
-                      {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      {isOpen ? (
+                        <ChevronDown className="h-4 w-4" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" />
+                      )}
                     </Button>
                   </TableCell>
                   <TableCell>{pkg.packageNo}</TableCell>

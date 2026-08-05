@@ -282,7 +282,10 @@ describe("Step3Cargo", () => {
 
   it("removes a cargo row: DELETEs /cargo/:cid after confirmation", async () => {
     const user = userEvent.setup();
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
 
     const { fetchMock } = await renderStep3({
       cargos: [oneCargoWithTwoPackages()],
@@ -305,14 +308,64 @@ describe("Step3Cargo", () => {
     });
   });
 
-  it("stubs Add/Edit behind a T13 placeholder dialog (no CargoRowForm)", async () => {
+  it("opens CargoPopup from + Add Cargo with unit selectors defaulting CM/KG, and Save POSTs dimUnit/weightUnit (Task 13)", async () => {
+    const user = userEvent.setup();
+    const posted: Record<string, unknown>[] = [];
+    const createdCargo: CargoDto = {
+      id: "new-cargo-id",
+      rowIndex: 0,
+      poReference: "PO-9",
+      label: null,
+      dimUnit: "CM",
+      weightUnit: "KG",
+      packages: [],
+      packageCount: 0,
+      grossWeightKg: "0",
+      volumeCbm: "0",
+      tags: [],
+      chargeableWeight: null,
+    };
+
+    await renderStep3({
+      cargos: [],
+      extra: (url, init) => {
+        if (url === `/api/queries/${QUERY_ID}/cargo` && init?.method === "POST") {
+          posted.push(JSON.parse(init.body as string));
+          return jsonResponse(createdCargo, 201);
+        }
+        return undefined;
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: /\+ add cargo/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    // Radix Select renders a hidden native <select> for accessibility/form purposes —
+    // drive/read those directly (jsdom can't do real pointer-driven popups). DOM order:
+    // Dimension Unit, then Weight Unit.
+    const hiddenSelects = dialog.querySelectorAll<HTMLSelectElement>('select[aria-hidden="true"]');
+    expect(hiddenSelects).toHaveLength(2);
+    expect(hiddenSelects[0].value).toBe("CM");
+    expect(hiddenSelects[1].value).toBe("KG");
+
+    await user.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toMatchObject({ dimUnit: "CM", weightUnit: "KG" });
+  });
+
+  it("Edit opens CargoPopup pre-filled with the cargo's own PO/label/units (Task 13)", async () => {
     const user = userEvent.setup();
     await renderStep3({ cargos: [oneCargoWithTwoPackages()] });
 
     await screen.findByText("PO-1");
-    await user.click(screen.getByRole("button", { name: /\+ add cargo/i }));
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText(/task 13/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect(within(dialog).getByDisplayValue("PO-1")).toBeInTheDocument();
+    const hiddenSelects = dialog.querySelectorAll<HTMLSelectElement>('select[aria-hidden="true"]');
+    expect(hiddenSelects[0].value).toBe("CM");
+    expect(hiddenSelects[1].value).toBe("KG");
   });
 
   it("clicking Export triggers the blob download flow (POST + createObjectURL + <a>.click)", async () => {
@@ -360,7 +413,8 @@ describe("Step3Cargo", () => {
     await waitFor(() => {
       const exportCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          url === `/api/queries/${QUERY_ID}/cargo/export` && (init as RequestInit)?.method === "POST",
+          url === `/api/queries/${QUERY_ID}/cargo/export` &&
+          (init as RequestInit)?.method === "POST",
       );
       expect(exportCall).toBeTruthy();
     });
