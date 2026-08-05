@@ -134,13 +134,14 @@ An item with **neither product nor qty is discarded on save** (V‑4).
 - `ReferenceTag` — add `DG` (currently `HEAVY·FRAGILE·NON_STACKABLE·OUT_OF_GAUGE`). Final: `HEAVY·FRAGILE·NON_STACKABLE·OUT_OF_GAUGE·DG`.
 - `DimUnit` — unchanged (`CM·MM`).
 
-### 3.6 Naming / FK strategy (least-churn)
+### 3.6 Naming / FK strategy (DROP + CREATE, data disposable)
 
-Because it is pre-go-live (C14) we can rename cleanly:
+Because it is pre-go-live with only test data (C14), the cargo cluster is **dropped and recreated**, not renamed in place — simpler and far more robust under `migrate deploy` (the mandated path; `migrate dev` errors PG 42601 on the generated column and may propose a destructive reset of the shared dev DB):
 
-- Rename table/model `CargoItem → Package`; rename FK columns `LegCargo.cargoItemId → packageId`, `QuoteCargoLine.cargoItemId → packageId` (Prisma `@relation` + a `RENAME COLUMN` migration). Update the handful of Stage‑4 references.
-- **Fallback (even less code touched):** keep `@@map("CargoItem")` and the `cargoItemId` column names, only rename the Prisma model. Chosen approach: **clean rename** (clarity worth it pre-go-live); fallback documented if churn proves larger than expected.
-- Rename join model `LegCargo → LegPackage` (same fields, `packageId`).
+- **DROP** `LegCargo`; **DROP** `CargoItem` (after its inbound FKs are cleared).
+- **CREATE** `Cargo`, `Package`, `Item`, `LegPackage` fresh (Prisma models + hand-authored SQL). The FK target `Package.id` is a new table, so `LegPackage`/`QuoteCargoLine` reference `packageId` cleanly.
+- `QuoteCargoLine`: clear its rows, then repoint `cargoItemId → packageId` (FK → `Package`).
+- A **one-time truncate of the transactional tables** (queries + downstream; masters/config kept) is run alongside the migration so fixtures start clean and no orphaned cargo refs linger — see §11.
 
 ---
 
@@ -259,18 +260,19 @@ Cargo mutations already flow through `ChangeMediator` with `cargoImpactMap`. Re-
 
 ---
 
-## 11. Migration (pre-go-live / test data — C14)
+## 11. Migration (pre-go-live / test data — C14; DROP + CREATE, `migrate deploy`)
 
-One migration, no production preservation:
+Test data only, no production preservation. Applied as **hand-authored SQL + `prisma migrate deploy`** — never `migrate dev` (it errors PG 42601 on the generated column and may propose a destructive reset of the shared dev DB). **No backfill** — legacy cargo is discarded.
 
-1. `CREATE TYPE` `PackageType`, `UnitOfMeasure`; `ALTER TYPE ReferenceTag ADD VALUE 'DG'`; `ALTER TYPE WeightUnit ADD VALUE 'TONNE'`.
-2. `CREATE TABLE Cargo`, `CREATE TABLE Item`.
-3. Rename `CargoItem → Package`; add `cargoId`, `packageNo`, `packageType`(enum), `packageCount`; **keep `msdsFileId`**; drop `poReference`/`productName`/`qty`/`hsCode`/`isDangerous`/`dimUnit`/`weightUnit`/`freightDensity`/`chargeableWeight`; rebuild `volumeCbm` as `dimL*dimW*dimH/1e6`.
-4. Rename `LegCargo → LegPackage` (`cargoItemId → packageId`); `QuoteCargoLine.cargoItemId → packageId`.
-5. **Backfill** each legacy `CargoItem` → one `Cargo` (grouped by `queryId, poReference`), one `Package` (dims/weights/tags; convert raw→canonical cm/kg; `packageNo` auto; legacy `isDangerous` → DG tag; **`msdsFileId` stays on the package**), one `Item` (`product`, legacy **`qty`→item qty**, `hsCode`). `packageCount=1`.
-6. Move `dimUnit`/`weightUnit` onto the Cargo (default CM/KG; or the most common among grouped rows).
+**One-time data wipe (run + confirmed before applying):** truncate the transactional tables — queries, the cargo cluster, points, legs, rfqs, quotes, charge lines, escalations, emails, notifications, change logs, status transitions. **Keep** masters + config/catalogue (users, clients, vessels, reference). This clears orphaned cargo refs and gives fresh fixtures.
 
-Since it is test data, a **reset-and-reseed** of cargo is an acceptable alternative to the backfill if simpler.
+**Migration SQL (DDL only):**
+1. `CREATE TYPE "PackageType"`, `"UnitOfMeasure"`; `ALTER TYPE "ReferenceTag" ADD VALUE 'DG'`; `ALTER TYPE "WeightUnit" ADD VALUE 'TONNE' AFTER 'KG'`. (An `ADD VALUE` must not be used in the same transaction that references the new value.)
+2. `DROP TABLE "LegCargo"`; clear + repoint `QuoteCargoLine` (`DELETE FROM "QuoteCargoLine"`, drop its cargo FK, rename `cargoItemId → packageId`); then `DROP TABLE "CargoItem"`.
+3. `CREATE TABLE "Cargo"`, `"Package"` (with `volumeCbm` `GENERATED ALWAYS AS ("dimL"*"dimW"*"dimH"/1000000) STORED`, `@@unique(queryId, packageNo)`), `"Item"`, `"LegPackage"`.
+4. Add `QuoteCargoLine.packageId` FK → `Package`.
+
+Masters/config are untouched, so the app reseeds test queries via the new UI.
 
 ---
 
