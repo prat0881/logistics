@@ -25,6 +25,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const FUTURE_DATE = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 const CARGO_ID = "aaaa0001-0000-0000-0000-000000000000";
+const PACKAGE_ID = "aaaa0005-0000-0000-0000-000000000000";
 const PICKUP_ID = "aaaa0002-0000-0000-0000-000000000000";
 const DELIVERY_ID = "aaaa0003-0000-0000-0000-000000000000";
 const LEG_ID = "aaaa0004-0000-0000-0000-000000000000";
@@ -70,24 +71,37 @@ const detailWithClientAndNotesFindings = {
   assignedUserId: null,
   createdAt: "2026-01-01T00:00:00+00:00",
   updatedAt: "2026-01-01T00:00:00+00:00",
-  cargo: [
+  cargos: [
     {
       id: CARGO_ID,
       rowIndex: 0,
       poReference: "PO-001",
-      productName: "Widget",
-      referenceTags: [],
-      hsCode: null,
-      packageType: "Carton",
-      isDangerous: false,
-      msdsFileId: null,
-      qty: 2,
-      dimL: "30",
-      dimW: "20",
-      dimH: "10",
-      netWt: null,
-      grossWt: "5",
+      label: null,
+      dimUnit: "CM" as const,
+      weightUnit: "KG" as const,
+      packages: [
+        {
+          id: PACKAGE_ID,
+          rowIndex: 0,
+          packageNo: "PKG-001",
+          packageType: "CARTON" as const,
+          dimL: "30",
+          dimW: "20",
+          dimH: "10",
+          grossWt: "5",
+          netWt: null,
+          volumeCbm: "0.006",
+          tags: [],
+          effectiveTags: [],
+          msdsFileId: null,
+          items: [],
+        },
+      ],
+      packageCount: 1,
+      grossWeightKg: "5",
       volumeCbm: "0.006",
+      tags: [],
+      chargeableWeight: null,
     },
   ],
   // Checklist empty → collectChecklistFindings emits blocking for notes tab
@@ -153,7 +167,7 @@ const detailWithClientAndNotesFindings = {
       executionStatus: "NOT_STARTED",
       createdAt: "2026-01-01T00:00:00+00:00",
       updatedAt: "2026-01-01T00:00:00+00:00",
-      assignedPackageIds: [CARGO_ID],
+      assignedPackageIds: [PACKAGE_ID],
       rollup: { totalPackages: 2, totalCbm: 0.006, totalGrossWt: 5, totalNetWt: 0 },
     },
   ],

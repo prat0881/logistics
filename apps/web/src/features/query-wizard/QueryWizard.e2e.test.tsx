@@ -28,6 +28,8 @@ const CARGO_ID = "33333333-3333-3333-3333-333333333333";
 const PICKUP_ID = "44444444-4444-4444-4444-444444444444";
 const DELIVERY_ID = "55555555-5555-5555-5555-555555555555";
 const LEG_ID = "66666666-6666-6666-6666-666666666666";
+const PACKAGE_ID = "77777777-7777-7777-7777-777777777777";
+const ITEM_ID = "88888888-8888-8888-8888-888888888888";
 
 // ── Shared response fixtures ─────────────────────────────────────────────────
 const READY_DATE = "2026-09-01T00:00:00+00:00";
@@ -67,24 +69,47 @@ const fullDraftDetail = {
   assignedUserId: null,
   createdAt: "2026-07-01T00:00:00+00:00",
   updatedAt: "2026-07-01T00:00:00+00:00",
-  cargo: [
+  cargos: [
     {
       id: CARGO_ID,
       rowIndex: 0,
       poReference: "PO-E2E-001",
-      productName: "Test Widget",
-      referenceTags: [],
-      hsCode: null,
-      packageType: "Carton",
-      isDangerous: false,
-      msdsFileId: null,
-      qty: 10,
-      dimL: "50",
-      dimW: "40",
-      dimH: "30",
-      netWt: "45",
-      grossWt: "50",
+      label: null,
+      dimUnit: "CM" as const,
+      weightUnit: "KG" as const,
+      packages: [
+        {
+          id: PACKAGE_ID,
+          rowIndex: 0,
+          packageNo: "PKG-E2E-001",
+          packageType: "CARTON" as const,
+          dimL: "50",
+          dimW: "40",
+          dimH: "30",
+          grossWt: "50",
+          netWt: "45",
+          volumeCbm: "0.06",
+          tags: [],
+          effectiveTags: [],
+          msdsFileId: null,
+          items: [
+            {
+              id: ITEM_ID,
+              rowIndex: 0,
+              product: "Test Widget",
+              qty: "10",
+              uom: null,
+              hsCode: null,
+              tags: [],
+            },
+          ],
+        },
+      ],
+      packageCount: 1,
+      grossWeightKg: "50",
       volumeCbm: "0.06",
+      tags: [],
+      chargeableWeight: null,
     },
   ],
   checklist: [],
@@ -151,7 +176,7 @@ const fullDraftDetail = {
       executionStatus: "NOT_STARTED",
       createdAt: "2026-07-01T00:00:00+00:00",
       updatedAt: "2026-07-01T00:00:00+00:00",
-      assignedCargoIds: [CARGO_ID],
+      assignedPackageIds: [PACKAGE_ID],
       rollup: { totalPackages: 10, totalCbm: 0.06, totalGrossWt: 50, totalNetWt: 45 },
     },
   ],
@@ -194,7 +219,7 @@ const mintedDraft = {
   assignedUserId: null,
   createdAt: "2026-07-01T00:00:00+00:00",
   updatedAt: "2026-07-01T00:00:00+00:00",
-  cargo: [],
+  cargos: [],
   checklist: [],
   files: [],
   points: [],
