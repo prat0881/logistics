@@ -437,8 +437,10 @@ export type QueryDetail = {
   assignedUserId: string | null;
   createdAt: string;
   updatedAt: string;
-  // Derived-on-read graph
-  cargo: CargoDto[];
+  // Derived-on-read graph. Named `cargos` (not `cargo`) to match the API's actual
+  // shapeQuery() output (queries.service.ts) — the old flat `cargo` relation/key is
+  // gone from both the schema and the response since the Cargo->Package->Item re-model.
+  cargos: CargoDto[];
   checklist: QueryChecklistItemDto[];
   files: QueryFileDto[];
   points: QueryPointDto[];
