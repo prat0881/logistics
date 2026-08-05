@@ -11,15 +11,16 @@ import { EventEmitter2 } from "@nestjs/event-emitter";
 import { Prisma } from "@prisma/client";
 import {
   collectCreateFindings,
+  effectiveTags,
   formatQueryCode,
   LegStatus,
   Role,
-  toKg,
   type ChangeRequest,
   type ChecklistPatchInput,
   type QueryListParams,
   type QueryListRow,
   type QuerySaveInput,
+  type ReferenceTag,
 } from "@svyft/shared";
 import type { Paginated } from "@svyft/shared";
 import type { RequestUser } from "../auth/types";
@@ -29,14 +30,28 @@ import { ImpactRegistry } from "../changes/impact.registry";
 import { QueryStatusProjector } from "../status/query-status.projector";
 import { LegsService } from "../legs/legs.service";
 import { RoutingService } from "../routing/routing.service";
+import { shapeCargo } from "../cargo/cargo-shape";
 
-// Reusable derived-on-read graph shape (§4.5): cargo/checklist/files (Plan 4) + points/legs
-// (Plan 5, incl. each leg's legCargo join so `shapeQuery` can compute per-leg roll-ups).
-// A `Prisma.validator` (not a plain `satisfies`) is required here — a plain object literal
-// widens `"asc"` to `string`, which breaks `Prisma.QueryGetPayload`'s literal SortOrder typing.
+// Reusable derived-on-read graph shape (§4.5): cargos/checklist/files (Plan 4) + points/legs
+// (Plan 5, incl. each leg's legPackages join so `shapeQuery` can compute per-leg roll-ups).
+// Re-modelled (Unit 1 / Task 8) onto Query -> Cargo -> Package -> Item: `cargo` (old flat
+// CargoItem[] relation) -> `cargos` with a nested `packages`/`items` include; `legCargo` ->
+// `legPackages`. A `Prisma.validator` (not a plain `satisfies`) is required here — a plain
+// object literal widens `"asc"` to `string`, which breaks `Prisma.QueryGetPayload`'s literal
+// SortOrder typing.
 const QUERY_GRAPH_ARGS = Prisma.validator<Prisma.QueryDefaultArgs>()({
   include: {
-    cargo: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] },
+    cargos: {
+      orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      include: {
+        packages: {
+          orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+          include: {
+            items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] },
+          },
+        },
+      },
+    },
     checklist: { orderBy: { itemKey: "asc" } },
     files: {
       select: {
@@ -52,7 +67,7 @@ const QUERY_GRAPH_ARGS = Prisma.validator<Prisma.QueryDefaultArgs>()({
     points: { orderBy: { createdAt: "asc" } },
     legs: {
       include: {
-        legCargo: { select: { cargoItemId: true } },
+        legPackages: { select: { packageId: true } },
         // Task 11: current charge-line selection set, shaped into QueryLegDto.chargeLineDefinitionIds.
         chargeSelections: { select: { definitionId: true } },
       },
@@ -80,12 +95,24 @@ export class QueriesService {
   // via a batched user.findMany over the page's rows.
   async list(params: QueryListParams): Promise<Paginated<QueryListRow>> {
     const {
-      q, status, priority, assignedUserId, freightMode,
-      dateField, dateFrom, dateTo, sort, page, pageSize,
+      q,
+      status,
+      priority,
+      assignedUserId,
+      freightMode,
+      dateField,
+      dateFrom,
+      dateTo,
+      sort,
+      page,
+      pageSize,
     } = params;
 
     const modes = freightMode
-      ? freightMode.split(",").map((m) => m.trim()).filter(Boolean)
+      ? freightMode
+          .split(",")
+          .map((m) => m.trim())
+          .filter(Boolean)
       : undefined;
 
     const where: Prisma.QueryWhereInput = {
@@ -141,7 +168,9 @@ export class QueriesService {
     ]);
 
     // Batch-resolve assignedUserName (soft ref — no Prisma relation)
-    const assignedUserIds = [...new Set(rows.map((r) => r.assignedUserId).filter((id): id is string => !!id))];
+    const assignedUserIds = [
+      ...new Set(rows.map((r) => r.assignedUserId).filter((id): id is string => !!id)),
+    ];
     const userMap = new Map<string, string>();
     if (assignedUserIds.length) {
       const users = await this.prisma.user.findMany({
@@ -160,7 +189,14 @@ export class QueriesService {
   }
 
   private parseSort(sort?: string): Prisma.QueryOrderByWithRelationInput {
-    const allowed = new Set(["queryCode", "queryDate", "responseDeadline", "priority", "status", "updatedAt"]);
+    const allowed = new Set([
+      "queryCode",
+      "queryDate",
+      "responseDeadline",
+      "priority",
+      "status",
+      "updatedAt",
+    ]);
     if (!sort) return { updatedAt: "desc" };
     const [col, dir] = sort.split(":");
     if (!col || !allowed.has(col)) return { updatedAt: "desc" };
@@ -185,12 +221,12 @@ export class QueriesService {
     },
     userMap: Map<string, string>,
   ): QueryListRow {
-    const modes = [
-      ...new Set(row.legs.map((l) => l.mode).filter((m): m is string => !!m)),
-    ].sort((a, b) => {
-      const ORDER: Record<string, number> = { ROAD: 0, AIR: 1, SEA: 2 };
-      return (ORDER[a] ?? 99) - (ORDER[b] ?? 99);
-    }) as QueryListRow["freightMode"];
+    const modes = [...new Set(row.legs.map((l) => l.mode).filter((m): m is string => !!m))].sort(
+      (a, b) => {
+        const ORDER: Record<string, number> = { ROAD: 0, AIR: 1, SEA: 2 };
+        return (ORDER[a] ?? 99) - (ORDER[b] ?? 99);
+      },
+    ) as QueryListRow["freightMode"];
 
     const label = (p: { name: string | null; city: string | null; country: string | null }) =>
       [p.city, p.country].filter(Boolean).join(", ") || p.name || "";
@@ -289,7 +325,10 @@ export class QueriesService {
       await this.syncDgIndicator(query.id, tx);
       return this.getWithin(tx, query.id);
     });
-    await this.events.emitAsync("query.created", { queryId: created.id, createdAt: new Date(created.createdAt) });
+    await this.events.emitAsync("query.created", {
+      queryId: created.id,
+      createdAt: new Date(created.createdAt),
+    });
     return created;
   }
 
@@ -307,36 +346,54 @@ export class QueriesService {
     return this.shapeQuery(row);
   }
 
-  // Derived-on-read (§4.5), never stored: freightMode (distinct leg modes), origin/destination
-  // (pickup/delivery points), and per-leg roll-ups (packages/CBM/gross/net). Zero drift.
+  // Derived-on-read (§4.5), never stored: shaped cargo tree (Cargo -> Package -> Item, incl. the
+  // H4-H8 derived cargo header), freightMode (distinct leg modes), origin/destination
+  // (pickup/delivery points), and per-leg roll-ups (packages/CBM/gross/net — Package IS the
+  // freight unit now, so these are a direct canonical Σ, not toKg-converted per-row). Zero drift.
   private shapeQuery(row: QueryWithGraph) {
     const num = (d: Prisma.Decimal | null): number => (d == null ? 0 : Number(d));
-    const cargoById = new Map(row.cargo.map((c) => [c.id, c] as const));
-    const MODE_ORDER: Record<string, number> = { ROAD: 0, AIR: 1, SEA: 2 };
-    const freightMode = [...new Set(row.legs.map((l) => l.mode).filter((m): m is NonNullable<typeof m> => !!m))].sort(
-      (a, b) => MODE_ORDER[a] - MODE_ORDER[b],
+    const packageById = new Map(
+      row.cargos.flatMap((c) => c.packages).map((p) => [p.id, p] as const),
     );
+    const cargos = row.cargos.map(shapeCargo);
+    const MODE_ORDER: Record<string, number> = { ROAD: 0, AIR: 1, SEA: 2 };
+    const freightMode = [
+      ...new Set(row.legs.map((l) => l.mode).filter((m): m is NonNullable<typeof m> => !!m)),
+    ].sort((a, b) => MODE_ORDER[a] - MODE_ORDER[b]);
     const pick = (t: string) =>
-      row.points.filter((p) => p.type === t).map((p) => ({ id: p.id, name: p.name, city: p.city, country: p.country }));
+      row.points
+        .filter((p) => p.type === t)
+        .map((p) => ({ id: p.id, name: p.name, city: p.city, country: p.country }));
     const legs = row.legs.map((l) => {
-      const { legCargo, chargeSelections, ...rest } = l;
-      const attached = legCargo.map((lc) => cargoById.get(lc.cargoItemId)).filter((c): c is NonNullable<typeof c> => !!c);
+      const { legPackages, chargeSelections, ...rest } = l;
+      const assigned = legPackages
+        .map((lp) => packageById.get(lp.packageId))
+        .filter((p): p is NonNullable<typeof p> => !!p);
       return {
         ...rest,
-        assignedCargoIds: legCargo.map((lc) => lc.cargoItemId),
+        assignedPackageIds: legPackages.map((lp) => lp.packageId),
         // Task 11: current warehouse toggle + charge-line selection set, so the web UI
         // (Phase F/G) can render state.
         warehouseHandlingIncluded: l.warehouseHandlingIncluded ?? null,
         chargeLineDefinitionIds: chargeSelections.map((s) => s.definitionId),
         rollup: {
-          totalPackages: attached.reduce((s, c) => s + c.qty, 0),
-          totalCbm: attached.reduce((s, c) => s + num(c.volumeCbm), 0),
-          totalGrossWt: attached.reduce((s, c) => s + toKg(num(c.grossWt), c.weightUnit), 0),
-          totalNetWt: attached.reduce((s, c) => s + (c.netWt == null ? 0 : toKg(num(c.netWt), c.weightUnit)), 0),
+          totalPackages: assigned.length, // count — no qty at package grain
+          totalCbm: assigned.reduce((s, p) => s + num(p.volumeCbm), 0),
+          totalGrossWt: assigned.reduce((s, p) => s + num(p.grossWt), 0), // canonical kg, direct Σ
+          totalNetWt: assigned.reduce((s, p) => s + num(p.netWt), 0), // canonical kg
         },
       };
     });
-    return { ...row, freightMode, origin: pick("PICKUP"), destination: pick("DELIVERY"), legs };
+    // The shaped `cargos` overrides the raw one spread in from `...row` — the response has no
+    // `cargo` key (the old flat relation is gone from the schema entirely).
+    return {
+      ...row,
+      cargos,
+      freightMode,
+      origin: pick("PICKUP"),
+      destination: pick("DELIVERY"),
+      legs,
+    };
   }
 
   // PATCH /queries/:id (§5.2): one mediator call per PATCH (= per wizard step). Missing
@@ -382,11 +439,16 @@ export class QueriesService {
     return this.get(id);
   }
 
-  // dgIndicator is auto-TRUE when any cargo is DG; manual true stands; never auto-cleared
-  // (§4.5 / §7.2). Called after any cargo mutation and at create.
+  // dgIndicator is auto-TRUE when any Package or Item under the query carries the DG tag; manual
+  // true stands; never auto-cleared (§4.5 / §7.2 / Task 8). Called after any cargo mutation and
+  // at create. Short-circuits the Item scan once a Package-level DG tag is already found.
   async syncDgIndicator(queryId: string, tx: Prisma.TransactionClient): Promise<void> {
-    const dgCount = await tx.cargoItem.count({ where: { queryId, isDangerous: true } });
-    if (dgCount > 0) await tx.query.update({ where: { id: queryId }, data: { dgIndicator: true } });
+    const pkgDg = await tx.package.count({ where: { queryId, tags: { has: "DG" } } });
+    const itemDg =
+      pkgDg > 0 ? 0 : await tx.item.count({ where: { package: { queryId }, tags: { has: "DG" } } });
+    if (pkgDg > 0 || itemDg > 0) {
+      await tx.query.update({ where: { id: queryId }, data: { dgIndicator: true } });
+    }
   }
 
   // Create Query (§13): field catalogue (F1/F6) + the full route catalogue (R1–R9, V-M1, T1–T3,
@@ -394,12 +456,43 @@ export class QueriesService {
   // rfqReadyAt milestone and let the projector roll the query up to RFQ_READY (never hand-write
   // status). Idempotent: a re-submit finds zero DRAFT legs, fires nothing, and just re-projects.
   async createQuery(id: string, user: RequestUser) {
+    // F6 (dangerous-goods -> MSDS) is a per-PACKAGE finding now (Task 2 moved
+    // collectCreateFindings's 2nd arg to PackageForValidation[]) — load the query's packages
+    // (+ each package's item tags, to compute the package's *effective* tag set) instead of the
+    // old flat cargo rows.
     const q = await this.prisma.query.findUnique({
       where: { id },
-      include: { cargo: { select: { id: true, isDangerous: true, msdsFileId: true, poReference: true } } },
+      include: {
+        packages: {
+          select: {
+            id: true,
+            packageNo: true,
+            dimL: true,
+            dimW: true,
+            dimH: true,
+            grossWt: true,
+            tags: true,
+            items: { select: { tags: true } },
+            msdsFileId: true,
+          },
+        },
+      },
     });
     if (!q) throw new NotFoundException("Query not found");
 
+    const packages = q.packages.map((p) => ({
+      id: p.id,
+      packageNo: p.packageNo,
+      effectiveTags: effectiveTags({
+        tags: p.tags as ReferenceTag[],
+        items: p.items.map((i) => ({ tags: i.tags as ReferenceTag[] })),
+      }),
+      msdsFileId: p.msdsFileId,
+      dimL: Number(p.dimL),
+      dimW: Number(p.dimW),
+      dimH: Number(p.dimH),
+      grossWt: Number(p.grossWt),
+    }));
     const fieldFindings = collectCreateFindings(
       {
         id: q.id,
@@ -411,7 +504,7 @@ export class QueriesService {
         targetDelivery: q.targetDelivery,
         incoterms: q.incoterms,
       },
-      q.cargo,
+      packages,
     );
     const routeFindings = await this.routing.validate(id, "create");
     const findings = [...fieldFindings, ...routeFindings];
@@ -426,7 +519,11 @@ export class QueriesService {
     });
     // Fire each leg forward (own tx per fire — the route already validated, §8.5 last-write-wins).
     for (const leg of legs) {
-      await this.legs.markReadyForRfq(leg.id, { queryId: id, actorId: user.userId, tenantId: user.tenantId });
+      await this.legs.markReadyForRfq(leg.id, {
+        queryId: id,
+        actorId: user.userId,
+        tenantId: user.tenantId,
+      });
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -436,7 +533,10 @@ export class QueriesService {
 
     await this.events.emitAsync("query.rfq_ready", { queryId: id });
 
-    const updated = await this.prisma.query.findUnique({ where: { id }, select: { id: true, status: true } });
+    const updated = await this.prisma.query.findUnique({
+      where: { id },
+      select: { id: true, status: true },
+    });
     return updated!;
   }
 

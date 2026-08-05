@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import type { Item, Prisma } from "@prisma/client";
 import {
   toCanonicalDim,
@@ -13,6 +18,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
 import { FilesService, type MsdsUpload } from "../files/files.service";
+import { QueriesService } from "../queries/queries.service";
 import { shapePackage } from "./cargo-shape";
 
 const ITEM_ORDER: Prisma.ItemOrderByWithRelationInput[] = [
@@ -28,6 +34,7 @@ export class PackageService {
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
     private readonly files: FilesService,
+    private readonly queries: QueriesService,
   ) {}
 
   // Verifies the parent cargo exists *and* belongs to this query. Bad ref -> BadRequestException
@@ -66,7 +73,11 @@ export class PackageService {
   // to a value that only differs by case/space. Extracted from assertPackageNoFree (was inline
   // until Task 6) so copy()'s next-free-suffix search can probe candidates as a boolean check
   // instead of relying on exception-driven control flow — same query, same semantics.
-  private async packageNoTaken(queryId: string, packageNo: string, excludeId?: string): Promise<boolean> {
+  private async packageNoTaken(
+    queryId: string,
+    packageNo: string,
+    excludeId?: string,
+  ): Promise<boolean> {
     const needle = packageNo.trim();
     const dupe = await this.prisma.package.findFirst({
       where: {
@@ -79,9 +90,15 @@ export class PackageService {
     return dupe !== null;
   }
 
-  private async assertPackageNoFree(queryId: string, packageNo: string, excludeId?: string): Promise<void> {
+  private async assertPackageNoFree(
+    queryId: string,
+    packageNo: string,
+    excludeId?: string,
+  ): Promise<void> {
     if (await this.packageNoTaken(queryId, packageNo, excludeId)) {
-      throw new ConflictException(`packageNo "${packageNo.trim()}" is already in use within this query`);
+      throw new ConflictException(
+        `packageNo "${packageNo.trim()}" is already in use within this query`,
+      );
     }
   }
 
@@ -122,11 +139,15 @@ export class PackageService {
             dimW: toCanonicalDim(input.dimW, cargo.dimUnit),
             dimH: toCanonicalDim(input.dimH, cargo.dimUnit),
             grossWt: toCanonicalWeight(input.grossWt, cargo.weightUnit),
-            netWt: input.netWt === undefined ? null : toCanonicalWeight(input.netWt, cargo.weightUnit),
+            netWt:
+              input.netWt === undefined ? null : toCanonicalWeight(input.netWt, cargo.weightUnit),
             tags: input.tags ?? [],
           },
         });
         shaped = shapePackage({ ...created, items: [] });
+        // A brand-new package can carry a DG tag straight from @create — re-sync inside this
+        // same tx (Task 8).
+        await this.queries.syncDgIndicator(queryId, tx);
       },
     );
     if (result.needsConfirmation) {
@@ -166,7 +187,12 @@ export class PackageService {
   // computed. Clones therefore cannot collide with each other or with pre-existing rows; a
   // mid-batch failure (rare — e.g. a genuine DB error) can leave a partial prefix of clones
   // committed, exactly like the leg-fire loop's accepted last-write-wins tradeoff.
-  async copy(queryId: string, pid: string, count: number, user: RequestUser): Promise<PackageDto[]> {
+  async copy(
+    queryId: string,
+    pid: string,
+    count: number,
+    user: RequestUser,
+  ): Promise<PackageDto[]> {
     const source = await this.prisma.package.findFirst({
       where: { id: pid, queryId },
       include: { items: { orderBy: ITEM_ORDER } },
@@ -250,6 +276,9 @@ export class PackageService {
               );
             }
             shaped = shapePackage({ ...created, items });
+            // A clone carries the source's tags forward — including DG — so re-sync per clone
+            // (Task 8), same as create().
+            await this.queries.syncDgIndicator(queryId, tx);
           },
         );
         if (result.needsConfirmation) {
@@ -294,7 +323,8 @@ export class PackageService {
     const fields = Object.keys(patch);
     if (fields.length === 0) return this.getOne(queryId, cargoId, pid);
 
-    if (patch.packageNo !== undefined) await this.assertPackageNoFree(queryId, patch.packageNo, pid);
+    if (patch.packageNo !== undefined)
+      await this.assertPackageNoFree(queryId, patch.packageNo, pid);
 
     const needsUnitConversion =
       patch.dimL !== undefined ||
@@ -313,7 +343,8 @@ export class PackageService {
       if (patch.dimL !== undefined) data.dimL = toCanonicalDim(patch.dimL, cargo.dimUnit);
       if (patch.dimW !== undefined) data.dimW = toCanonicalDim(patch.dimW, cargo.dimUnit);
       if (patch.dimH !== undefined) data.dimH = toCanonicalDim(patch.dimH, cargo.dimUnit);
-      if (patch.grossWt !== undefined) data.grossWt = toCanonicalWeight(patch.grossWt, cargo.weightUnit);
+      if (patch.grossWt !== undefined)
+        data.grossWt = toCanonicalWeight(patch.grossWt, cargo.weightUnit);
       if (patch.netWt !== undefined)
         data.netWt = patch.netWt === null ? null : toCanonicalWeight(patch.netWt, cargo.weightUnit);
     }
@@ -360,6 +391,9 @@ export class PackageService {
         });
         const items = await tx.item.findMany({ where: { packageId: pid }, orderBy: ITEM_ORDER });
         shaped = shapePackage({ ...updated, items });
+        // A field edit can add (or already carry) a DG tag — re-sync (Task 8). attachMsds below
+        // deliberately does NOT call this: it only ever writes msdsFileId, never tags.
+        await this.queries.syncDgIndicator(queryId, tx);
       },
     );
     if (result.needsConfirmation) {
@@ -417,7 +451,10 @@ export class PackageService {
         actorId: user.userId,
       },
       async (tx) => {
-        const updated = await tx.package.update({ where: { id: pid }, data: { msdsFileId: asset.id } });
+        const updated = await tx.package.update({
+          where: { id: pid },
+          data: { msdsFileId: asset.id },
+        });
         const items = await tx.item.findMany({ where: { packageId: pid }, orderBy: ITEM_ORDER });
         shaped = shapePackage({ ...updated, items });
       },

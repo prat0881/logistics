@@ -11,6 +11,7 @@ import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
+import { QueriesService } from "../queries/queries.service";
 import { shapeItem } from "./cargo-shape";
 
 @Injectable()
@@ -19,6 +20,7 @@ export class ItemService {
     private readonly prisma: PrismaService,
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
+    private readonly queries: QueriesService,
   ) {}
 
   // Verifies the parent package exists under this exact (queryId, cargoId) scope — 404 if
@@ -91,6 +93,10 @@ export class ItemService {
           },
         });
         shaped = shapeItem(created);
+        // A brand-new item can carry a DG tag straight from @create — re-sync inside this same
+        // tx (Task 8). `queryId` is already a method param here (threaded from the route), so
+        // this needs no extra DB round-trip to derive it.
+        await this.queries.syncDgIndicator(queryId, tx);
       },
     );
     if (result.needsConfirmation) {
@@ -157,6 +163,8 @@ export class ItemService {
           data: data as Prisma.ItemUncheckedUpdateInput,
         });
         shaped = shapeItem(updated);
+        // A field edit can add (or already carry) a DG tag — re-sync (Task 8).
+        await this.queries.syncDgIndicator(queryId, tx);
       },
     );
     if (result.needsConfirmation) {
