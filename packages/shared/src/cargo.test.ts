@@ -124,6 +124,15 @@ describe("cargoLabel", () => {
     expect(cargoLabel({ poReference: "", productName: "Steel", rowIndex: 0 })).toBe("Steel");
     expect(cargoLabel({ poReference: null, productName: "", rowIndex: 2 })).toBe("Row 3");
   });
+  it("falls back to label when PO is absent, before product name", () => {
+    expect(
+      cargoLabel({ poReference: null, label: "Engine Parts", productName: "Steel", rowIndex: 0 }),
+    ).toBe("Engine Parts");
+    expect(cargoLabel({ poReference: "", label: "", productName: "Steel", rowIndex: 0 })).toBe("Steel");
+    expect(cargoLabel({ poReference: undefined, label: "  ", productName: undefined, rowIndex: 4 })).toBe(
+      "Row 5",
+    );
+  });
 });
 
 describe("units", () => {

@@ -60,9 +60,16 @@ export function cbmFromCanonical(dimLcm: number, dimWcm: number, dimHcm: number)
   return (dimLcm * dimWcm * dimHcm) / 1e6;
 }
 
-export function cargoLabel(c: { poReference?: string | null; productName?: string | null; rowIndex?: number }): string {
+export function cargoLabel(c: {
+  poReference?: string | null;
+  label?: string | null;
+  productName?: string | null;
+  rowIndex?: number;
+}): string {
   const po = c.poReference?.trim();
   if (po) return po;
+  const label = c.label?.trim();
+  if (label) return label;
   const name = c.productName?.trim();
   if (name) return name;
   return `Row ${(c.rowIndex ?? 0) + 1}`;

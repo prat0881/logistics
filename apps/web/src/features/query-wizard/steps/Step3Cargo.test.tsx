@@ -124,6 +124,59 @@ function oneCargoWithTwoPackages(): CargoDto {
   };
 }
 
+/**
+ * One Cargo ("PO-2", MM/GM — deliberately NON-canonical units) with one package, one
+ * item. Canonical storage is always cm/kg; dimUnit/weightUnit here are chosen so
+ * `fromCanonicalDim`/`fromCanonicalWeight` are NOT identity functions, unlike
+ * `oneCargoWithTwoPackages` above (CM/KG, where conversion is a no-op and the display
+ * test can't distinguish "converted correctly" from "raw canonical value echoed as-is").
+ * Canonical dims 15/9/4 cm -> 150/90/40 mm; canonical gross 2.75 kg -> 2750 g — chosen to
+ * be distinctive from both the canonical values and from each other.
+ */
+function oneCargoWithNonCanonicalUnits(): CargoDto {
+  return {
+    id: CARGO_ID,
+    rowIndex: 0,
+    poReference: "PO-2",
+    label: null,
+    dimUnit: "MM",
+    weightUnit: "GM",
+    packages: [
+      {
+        id: PACKAGE_ID_1,
+        rowIndex: 0,
+        packageNo: "P-9",
+        packageType: "CRATE",
+        dimL: "15",
+        dimW: "9",
+        dimH: "4",
+        grossWt: "2.75",
+        netWt: null,
+        volumeCbm: "0.0005",
+        tags: [],
+        effectiveTags: [],
+        msdsFileId: null,
+        items: [
+          {
+            id: ITEM_ID_1,
+            rowIndex: 0,
+            product: "Deck paint",
+            qty: "8",
+            uom: "PC",
+            hsCode: null,
+            tags: [],
+          },
+        ],
+      },
+    ],
+    packageCount: 1,
+    grossWeightKg: "2.75",
+    volumeCbm: "0.0005",
+    tags: [],
+    chargeableWeight: null,
+  };
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -196,6 +249,30 @@ describe("Step3Cargo", () => {
 
     await user.click(screen.getByLabelText("Expand package P-1"));
     expect(await screen.findByText("Deck paint")).toBeInTheDocument(); // item row
+  });
+
+  it("converts non-canonical units (MM/GM) for display instead of echoing raw canonical cm/kg", async () => {
+    const user = userEvent.setup();
+    await renderStep3({ cargos: [oneCargoWithNonCanonicalUnits()] });
+
+    const cargoRow = (await screen.findByText("PO-2")).closest("tr")!;
+    // Σ Gross: canonical 2.75 kg -> 2750 g (GM) — a stub identity conversion would show "2.75"
+    expect(within(cargoRow).getByText("2750.00")).toBeInTheDocument();
+    expect(within(cargoRow).getByText("GM")).toBeInTheDocument();
+    expect(within(cargoRow).getByText("Deck paint ×8")).toBeInTheDocument(); // Contents cell
+
+    await user.click(screen.getByLabelText("Expand cargo PO-2"));
+    const pkgRow = (await screen.findByText("P-9")).closest("tr")!;
+
+    // L/W/H: canonical 15/9/4 cm -> 150/90/40 mm — a stub identity conversion would show 15/9/4
+    expect(within(pkgRow).getByText("150")).toBeInTheDocument(); // L
+    expect(within(pkgRow).getByText("90")).toBeInTheDocument(); // W
+    expect(within(pkgRow).getByText("40")).toBeInTheDocument(); // H
+    expect(within(pkgRow).getAllByText("MM")).toHaveLength(3);
+
+    // Gross: canonical 2.75 kg -> 2750 g, same math as the cargo-row rollup above
+    expect(within(pkgRow).getByText("2750.00")).toBeInTheDocument();
+    expect(within(pkgRow).getByText("GM")).toBeInTheDocument();
   });
 
   it("shows an empty state when there are no cargo rows", async () => {
