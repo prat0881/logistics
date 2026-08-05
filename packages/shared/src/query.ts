@@ -5,7 +5,7 @@ import { FREIGHT_MODES } from "./config";
 import type { FreightMode } from "./config";
 import type { LegStatus } from "./status";
 import type { LegExecutionStatus } from "./legs";
-import type { CargoDto } from "./cargo";
+import type { CargoDto, ReferenceTag } from "./cargo";
 import { isValidIanaZone } from "./timezone";
 
 export const Priority = { LOW: "LOW", MEDIUM: "MEDIUM", HIGH: "HIGH", URGENT: "URGENT" } as const;
@@ -158,16 +158,20 @@ export interface QueryForValidation {
   targetDelivery: Date | string | null;
   incoterms: Incoterms | null;
 }
-export interface CargoForValidation {
+export interface PackageForValidation {
   id: string;
-  isDangerous: boolean;
+  effectiveTags: ReferenceTag[];
   msdsFileId: string | null;
-  poReference: string;
+  packageNo: string;
+  dimL: number;
+  dimW: number;
+  dimH: number;
+  grossWt: number;
 }
 
 export function collectCreateFindings(
   q: QueryForValidation,
-  cargo: CargoForValidation[],
+  packages: PackageForValidation[],
 ): Finding[] {
   const findings: Finding[] = [];
   const need = (present: unknown, message: string) => {
@@ -203,13 +207,13 @@ export function collectCreateFindings(
       });
     }
   }
-  for (const c of cargo) {
-    if (c.isDangerous && !c.msdsFileId) {
+  for (const p of packages) {
+    if (p.effectiveTags.includes("DG") && !p.msdsFileId) {
       findings.push({
         rule: "F6",
         severity: "blocking",
-        scope: { type: "cargo", id: c.id },
-        message: `Cargo ${c.poReference}: a dangerous-goods row requires an MSDS (PDF)`,
+        scope: { type: "package", id: p.id },
+        message: `Package ${p.packageNo}: a dangerous-goods package requires an MSDS (PDF)`,
       });
     }
   }

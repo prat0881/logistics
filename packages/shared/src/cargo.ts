@@ -104,77 +104,138 @@ export function weightUnitLabel(u: WeightUnit): string {
   return u === "GM" ? "g" : u === "TONNE" ? "tonne" : "kg";
 }
 
-// A cargo row (§7.3). Core fields required (a row is atomic data entry + volumeCbm
-// is a generated column needing non-null dims/qty). volumeCbm is DB-generated (never written by the app).
-export const cargoCreateSchema = z
+// A cargo grouping (§7.3, re-modelled Query→Cargo→Package→Item). Cargo itself now holds
+// only the PO/label/unit grouping; Package carries dims/weights (§ packageCreateSchema),
+// Item carries product/qty (§ itemCreateSchema).
+export const cargoCreateSchema = z.object({
+  poReference: z.string().trim().max(120).optional(),
+  label: z.string().trim().max(160).optional(),
+  dimUnit: z.enum(DIM_UNITS).default("CM"),
+  weightUnit: z.enum(WEIGHT_UNITS).default("KG"),
+});
+export type CargoCreateInput = z.infer<typeof cargoCreateSchema>;
+export const cargoUpdateSchema = cargoCreateSchema.partial();
+export type CargoUpdateInput = z.infer<typeof cargoUpdateSchema>;
+
+// Package dims/weights arrive in the CARGO's entry unit; the service converts to canonical.
+export const packageCreateSchema = z
   .object({
-    poReference: z.string().trim().max(120).optional(),
-    productName: z.string().trim().min(1).max(200),
-    referenceTags: z.array(z.enum(REFERENCE_TAGS)).optional(),
-    hsCode: z.string().max(40).optional(),
-    packageType: z.string().trim().min(1).max(60),
-    isDangerous: z.boolean().optional(),
-    qty: z.number().int().positive().max(1000000), // F5: qty > 0
+    packageNo: z.string().trim().min(1).max(60),
+    packageType: z.enum(PACKAGE_TYPES),
     dimL: z.number().positive().max(100000),
     dimW: z.number().positive().max(100000),
     dimH: z.number().positive().max(100000),
+    grossWt: z.number().positive().max(1000000000),
     netWt: z.number().nonnegative().max(1000000000).optional(),
-    grossWt: z.number().positive().max(1000000000), // F5: gross present
-    dimUnit: z.enum(DIM_UNITS).default("CM"),
-    weightUnit: z.enum(WEIGHT_UNITS).default("KG"),
+    tags: z.array(z.enum(REFERENCE_TAGS)).optional(),
   })
-  .refine((c) => c.netWt === undefined || c.netWt <= c.grossWt, {
+  .refine((p) => p.netWt === undefined || p.netWt <= p.grossWt, {
     message: "Net weight must be ≤ gross weight",
-    path: ["netWt"],
+    path: ["netWt"], // V-2
   });
-export type CargoCreateInput = z.infer<typeof cargoCreateSchema>;
+export type PackageCreateInput = z.infer<typeof packageCreateSchema>;
 
 // Update: all fields optional; keep the Net ≤ Gross guard when both are present.
 // `reason` (Stage 4, SB6 §7.2): justification for a mediated edit that lands on the
 // change-order path (RfqDefining-or-heavier on a leg with live quotes). Metadata only — the
 // service extracts it onto ChangeRequest.reason and MUST NOT let it reach the Prisma patch.
-export const cargoUpdateSchema = z
+export const packageUpdateSchema = z
   .object({
-    poReference: z.string().trim().max(120),
-    productName: z.string().trim().min(1).max(200),
-    referenceTags: z.array(z.enum(REFERENCE_TAGS)),
-    hsCode: z.string().max(40).nullable(),
-    packageType: z.string().trim().min(1).max(60),
-    isDangerous: z.boolean(),
-    qty: z.number().int().positive().max(1000000),
+    packageNo: z.string().trim().min(1).max(60),
+    packageType: z.enum(PACKAGE_TYPES),
     dimL: z.number().positive().max(100000),
     dimW: z.number().positive().max(100000),
     dimH: z.number().positive().max(100000),
-    netWt: z.number().nonnegative().max(1000000000).nullable(),
     grossWt: z.number().positive().max(1000000000),
-    dimUnit: z.enum(DIM_UNITS),
-    weightUnit: z.enum(WEIGHT_UNITS),
+    netWt: z.number().nonnegative().max(1000000000).nullable(),
+    tags: z.array(z.enum(REFERENCE_TAGS)),
     reason: z.string().trim().min(1).max(500),
   })
   .partial()
-  .refine((c) => c.netWt == null || c.grossWt == null || c.netWt <= c.grossWt, {
+  .refine((p) => p.netWt == null || p.grossWt == null || p.netWt <= p.grossWt, {
     message: "Net weight must be ≤ gross weight",
     path: ["netWt"],
   });
-export type CargoUpdateInput = z.infer<typeof cargoUpdateSchema>;
+export type PackageUpdateInput = z.infer<typeof packageUpdateSchema>;
 
+export const itemCreateSchema = z
+  .object({
+    product: z.string().trim().max(200).optional(),
+    qty: z.number().positive().max(1000000000).optional(),
+    uom: z.enum(UOMS).optional(),
+    hsCode: z.string().trim().max(40).optional(),
+    tags: z.array(z.enum(REFERENCE_TAGS)).optional(),
+  })
+  .refine((i) => i.qty === undefined || i.uom !== undefined, {
+    message: "Unit of measure is required when a quantity is entered",
+    path: ["uom"], // V-4
+  });
+export type ItemCreateInput = z.infer<typeof itemCreateSchema>;
+export const itemUpdateSchema = z
+  .object({
+    product: z.string().trim().max(200).nullable(),
+    qty: z.number().positive().max(1000000000).nullable(),
+    uom: z.enum(UOMS).nullable(),
+    hsCode: z.string().trim().max(40).nullable(),
+    tags: z.array(z.enum(REFERENCE_TAGS)),
+  })
+  .partial()
+  .refine((i) => i.qty == null || i.uom != null, {
+    message: "Unit of measure is required when a quantity is entered",
+    path: ["uom"],
+  });
+export type ItemUpdateInput = z.infer<typeof itemUpdateSchema>;
+
+export interface ItemDto {
+  id: string;
+  rowIndex: number;
+  product: string | null;
+  qty: string | null;
+  uom: UnitOfMeasure | null;
+  hsCode: string | null;
+  tags: ReferenceTag[];
+}
+export interface PackageDto {
+  id: string;
+  rowIndex: number;
+  packageNo: string;
+  packageType: PackageType;
+  dimL: string;
+  dimW: string;
+  dimH: string; // canonical cm (Decimal → string)
+  grossWt: string;
+  netWt: string | null; // canonical kg
+  volumeCbm: string | null; // m³
+  tags: ReferenceTag[]; // own tags
+  effectiveTags: ReferenceTag[]; // own ∪ item tags (derived)
+  msdsFileId: string | null;
+  items: ItemDto[];
+}
 export interface CargoDto {
   id: string;
   rowIndex: number;
-  poReference: string;
-  productName: string;
-  referenceTags: ReferenceTag[];
-  hsCode: string | null;
-  packageType: string;
-  isDangerous: boolean;
-  msdsFileId: string | null;
-  qty: number;
-  dimL: string;
-  dimW: string;
-  dimH: string;
-  netWt: string | null;
-  grossWt: string;
-  volumeCbm: string | null; // Prisma Decimal serialises to string
+  poReference: string | null;
+  label: string | null;
   dimUnit: DimUnit;
   weightUnit: WeightUnit;
+  packages: PackageDto[];
+  // derived header (H4–H8) — computed by the service, never stored
+  packageCount: number;
+  grossWeightKg: string;
+  volumeCbm: string;
+  tags: ReferenceTag[];
+  chargeableWeight: null;
+}
+
+/** BL-3: a package's effective tags = its own tags ∪ every item's tags, deduped, order-stable. */
+export function effectiveTags(pkg: { tags: ReferenceTag[]; items: { tags: ReferenceTag[] }[] }): ReferenceTag[] {
+  const seen = new Set<ReferenceTag>();
+  const out: ReferenceTag[] = [];
+  for (const t of [...pkg.tags, ...pkg.items.flatMap((i) => i.tags)]) {
+    if (!seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
 }

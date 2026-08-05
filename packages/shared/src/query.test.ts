@@ -269,7 +269,7 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
     targetDelivery: new Date(),
     incoterms: "FOB" as const,
   };
-  it("returns no findings when all mandatory fields present + no DG cargo", () => {
+  it("returns no findings when all mandatory fields present + no DG package", () => {
     expect(collectCreateFindings(ready, [])).toEqual([]);
   });
   it("flags each missing mandatory field with rule F1", () => {
@@ -277,16 +277,33 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
     expect(f.map((x) => x.rule)).toEqual(["F1", "F1"]);
     expect(f.every((x) => x.severity === "blocking")).toBe(true);
   });
-  it("flags a DG cargo row missing its MSDS with rule F6", () => {
+  // Packing-list re-model: the cargo arm of collectCreateFindings moved from cargo-grain
+  // (isDangerous/poReference) to package-grain (effectiveTags/packageNo), scope "package".
+  // Adapted from the old "flags a DG cargo row missing its MSDS" test — now also exercises
+  // multi-package arrays (only the DG-and-uncovered package is flagged; a non-DG package and
+  // a DG-but-MSDS-covered package are both silent).
+  it("flags only the DG package missing its MSDS with rule F6 (per-package scope, multi-package array)", () => {
     const f = collectCreateFindings(ready, [
-      { id: "cg1", isDangerous: true, msdsFileId: null, poReference: "PO-9" },
+      { id: "pk-dg", effectiveTags: ["DG"], msdsFileId: null, packageNo: "P-1", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 },
+      { id: "pk-heavy", effectiveTags: ["HEAVY"], msdsFileId: null, packageNo: "P-2", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 },
+      { id: "pk-dg-covered", effectiveTags: ["DG"], msdsFileId: "file-1", packageNo: "P-3", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 },
     ]);
     expect(f).toHaveLength(1);
     expect(f[0]).toMatchObject({
       rule: "F6",
       severity: "blocking",
-      scope: { type: "cargo", id: "cg1" },
+      scope: { type: "package", id: "pk-dg" },
     });
+    expect(f[0].message).toMatch(/P-1/);
+  });
+  it("flags a package with a DG item but no MSDS (F6, per package)", () => {
+    const ready = { id: "q1", clientId: "c1", contactName: "Jo", contactEmail: "j@a.co",
+      contactPhone: "+911234567890", readyDate: new Date(), targetDelivery: new Date(), incoterms: "FOB" as const };
+    const f = collectCreateFindings(ready, [
+      { id: "pk1", effectiveTags: ["DG"], msdsFileId: null, packageNo: "P-1", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 },
+    ]);
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ rule: "F6", severity: "blocking", scope: { type: "package", id: "pk1" } });
   });
   it("treats a whitespace-only contactName as missing (F1) (G8)", () => {
     const f = collectCreateFindings({ ...ready, contactName: "   " }, []);
