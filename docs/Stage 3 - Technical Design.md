@@ -111,16 +111,17 @@ svyft-logistics/
 User ──assigned──▶ QUERY ──clientId──▶ Client ──▶ ClientContact
                     │  └─vesselId──▶ Vessel
                     ├──▶ Point   (5 types, reusable within the query)
-                    ├──▶ CargoItem ──msdsFileId──▶ FileAsset
+                    ├──▶ Cargo ──▶ Package ──▶ Item   (re-modelled — was flat CargoItem)
+                    │              └─msdsFileId──▶ FileAsset   (per package, DG-triggered)
                     ├──▶ Leg ──origin/destPointId──▶ Point
-                    │      └──▶ LegCargo ◀──cargoItemId── CargoItem   (D7 join)
+                    │      └──▶ LegPackage ◀──packageId── Package   (D7/C13 join, was LegCargo)
                     ├──▶ QueryChecklistItem
                     └──▶ Escalation · EmailLog · Notification
 StatusTransition ▶ (polymorphic: entity + id)      RefreshToken ▶ User
 ```
 
 ### 4.2 Entities by module
-Every table also carries `id` (uuid PK), nullable `tenantId`, and `createdAt`/`updatedAt` unless noted. Only architecturally significant columns are listed; full field semantics live in the functional spec §7. `ᵁ` = unique, `ᶠᵏ` = foreign key.
+Every table also carries `id` (uuid PK), nullable `tenantId`, and `createdAt`/`updatedAt` unless noted. Only architecturally significant columns are listed; full field semantics live in the functional spec §7. `ᵁ` = unique, `ᶠᵏ` = foreign key. Cargo/Package/Item/LegPackage reflect the Cargo→Package→Item re-model — source of truth `docs/superpowers/specs/2026-08-05-stage3-cargo-packing-list-design.md` (decisions cited below as C1–C14).
 
 **Identity & Access** — `auth`, `users`
 | Entity | Key columns | Notes |
@@ -141,8 +142,10 @@ Every table also carries `id` (uuid PK), nullable `tenantId`, and `createdAt`/`u
 | **Query** (root) | **queryCode** ᵁ `YALYY-NNNN`, queryDate, priority (default MEDIUM), responseDeadline(+remarks), clientId ᶠᵏ, **contact snapshot** (name/designation/email/phone/whatsappEnabled/fax), **vessel block** (vesselId ᶠᵏ?, vesselName, imoNumber, eta, etb, etd, portOfCall), incoterms (enum), shipmentDescription, **dgIndicator**, readyDate, targetDelivery, internalNotes, **status**, rfqReadyAt?, assignedUserId ᶠᵏ | `status` system-written only (§4.5, §7.2). Contact + vessel fields are **snapshots** so master edits never rewrite historical queries (§7.1). |
 | **Point** (single-table inheritance) | queryId ᶠᵏ, **type** (PICKUP·DELIVERY·WAREHOUSE·AIRPORT·SEAPORT), name, streetAddress, city, postalCode, country, contactName, contactPhone, contactEmail, warehouseType?, iataCode?, icaoCode?, unLocode?, terminal? | One table + type discriminator; per-type required fields enforced in Zod, not DB nullability. Reusable within the query → connectivity by shared point (D2). |
 | **Leg** | queryId ᶠᵏ, **legCode** (stable, never reused within a query), legName?, originPointId ᶠᵏ, destinationPointId ᶠᵏ, **mode** (ROAD·AIR·SEA), readyDate, targetDelivery, **status**, **executionStatus** (PENDING·IN_TRANSIT·COMPLETED), totalChargeableWeight? | Roll-ups (packages/CBM/gross/net) computed on read. `executionStatus` = tracking model (§12 of spec), UI in Stage 8–9. `totalChargeableWeight` null in Stage 3 (D4). |
-| **CargoItem** | queryId ᶠᵏ, rowIndex, poReference?, productName, referenceTags[] (HEAVY·FRAGILE·NON_STACKABLE·**OUT_OF_GAUGE**), hsCode?, packageType, **isDangerous**, msdsFileId ᶠᵏ?, qty(>0), dimL, dimW, dimH, **dimUnit** (CM·MM, default CM), netWt?, grossWt, **weightUnit** (KG·GM, default KG), **volumeCbm** (generated, always m³), freightDensity?, chargeableWeight? | `poReference` is optional (Round 3). `dimUnit`/`weightUnit` stored per row. `volumeCbm` = unit-aware Postgres generated column: `(L·W·H·qty) / (CASE WHEN dimUnit='MM' THEN 1e9 ELSE 1e6 END)` — always cubic metres (m³) regardless of entry unit. `Incoterms` enum includes **`NA`** (stored value; displayed "N/A" — Round 3 fix for the N/A persistence bug). `freightDensity`/`chargeableWeight` null in Stage 3, filled by FF in Stage 4 (D4). **Stage-4 display (post-testing fixes R1):** `referenceTags` (HEAVY/FRAGILE/NON_STACKABLE/OUT_OF_GAUGE) and `isDangerous` are now surfaced as consolidated deduped icons in the Stage-4 workspace query header Totals area — each characteristic shown at most once across all cargo rows. Display-only; no model change. |
-| **LegCargo** (join) | legId ᶠᵏ, cargoItemId ᶠᵏ, **manifestSnapshot** JSONB? | unique(legId, cargoItemId). Explicit tick (D7). `manifestSnapshot` null in Stage 3; reserved for the Stage-4 RFQ freeze (spec §7.4.3). |
+| **Cargo** | queryId ᶠᵏ, rowIndex, poReference?, label?, **dimUnit** (CM·MM, default CM), **weightUnit** (KG·**TONNE**·GM, default KG) | The PO/reference **grouping** row (C1/C11) — owns the entry-unit selectors for its packages; carries no dims/weight/DG of its own. Derived-on-read header **H4–H8** (`packageCount`, Σ`grossWeightKg`, Σ`volumeCbm`, ⋃`tags`, `chargeableWeight`=null) — never stored (C7, §4.5). |
+| **Package** (ex-`CargoItem`, C2) | queryId ᶠᵏ (denormalised, avoids touching queryId-scoped services) + cargoId ᶠᵏ, rowIndex, **packageNo** (ᵁ per query case-insensitive, V-5), **packageType** (BOX·PALLET·CRATE·CARTON·DRUM·BUNDLE), dimL, dimW, dimH, grossWt, netWt?, tags[] (HEAVY·FRAGILE·NON_STACKABLE·OUT_OF_GAUGE·**DG**), msdsFileId ᶠᵏ?, **volumeCbm** (generated), packageCount (parked) | **The freight unit** — same physical row `LegPackage`/`QuoteCargoLine` reference (still `CargoItem`'s old FK target, C2). Dims/weight **stored canonical cm/kg** (C6) — the entry unit lives on the parent Cargo, converts on write, converts back on read (BL-6). `volumeCbm` = Postgres generated column `dimL·dimW·dimH / 1e6` — always m³; no `×qty`, no unit CASE (dims are already canonical, unlike the old per-row unit-aware formula). `packageCount` default 1, reserved/not calculated/not shown (C5). Dropped from the old `CargoItem` shape: `poReference` (→ Cargo), `productName`/`qty`/`hsCode` (→ Item), `isDangerous` (→ the DG tag), `dimUnit`/`weightUnit` (→ Cargo), `freightDensity`/`chargeableWeight` (Stage-4's `QuoteCargoLine` already carries these per package, so the Stage-3 placeholder columns are dropped, not moved). |
+| **Item** (new) | packageId ᶠᵏ, rowIndex, product?, qty?, **uom** (PC·SET·BOX·KG·M·ROLL; required only when `qty` present, V-4), hsCode?, tags[] | The commercial/customs line inside a package (HSN, product, qty) — a package may hold many items (many HS codes) or none. An item with neither `product` nor `qty` is discarded on save (V-4). No separate customs-form output; this popup entry **is** the customs form (C12). |
+| **LegPackage** (was `LegCargo`) | legId ᶠᵏ, packageId ᶠᵏ | `unique(legId, packageId)`. Explicit tick (D7), **package grain** (C13). Plain many-to-many — **no snapshot column** carried forward; the old `LegCargo.manifestSnapshot` reservation isn't on this join. The Stage-4 RFQ freeze snapshot lives on `Quote.manifestSnapshot` (+ `chargeConfigSnapshot`) per FF instead, refreshed by the change-order cascade (§7.5). |
 | **FileAsset** | queryId ᶠᵏ, kind (MSDS…), filename, mime, sizeBytes, storageKey, uploadedById | Behind a storage service: local disk in dev → object store later (§8.4). |
 | **ChecklistDefinition** | itemKey, label, order, dgConditional | Admin-maintained reference data; seeded with the 9 items (spec §7.5). |
 | **QueryChecklistItem** | queryId ᶠᵏ, itemKey, checked | Per-query checkbox state; drives follow-up enablement. |
@@ -169,18 +172,18 @@ Every table also carries `id` (uuid PK), nullable `tenantId`, and `createdAt`/`u
 
 ### 4.3 Modeling decisions
 1. **Point = single-table inheritance.** One `points` table + `type` discriminator + per-type Zod validation. Legs FK cleanly to any point and the routing engine reads a uniform node shape.
-2. **Cargo↔leg is an explicit join** (`LegCargo`) carrying a reserved `manifestSnapshot` JSONB — live reference in Stage 3, frozen at RFQ in Stage 4 so FFs never quote stale cargo.
+2. **Package↔leg is an explicit join** (`LegPackage`, was `LegCargo`) — plain `(legId, packageId)` many-to-many, package grain (C13); a package rides every leg it's ticked onto, a live reference in Stage 3. It carries **no snapshot column** — the Stage-4 RFQ freeze lives on `Quote.manifestSnapshot` per FF instead (not on the join), refreshed by the change-order cascade so FFs never quote stale cargo.
 3. **Snapshots for client-contact + vessel fields on the Query** — master edits never rewrite historical queries (spec §7.1 "never changes the master").
 
 ### 4.4 ID generation (`YALYY-NNNN`)
 Minted on **first persist** (first Save, or first leg save — whichever comes first, spec §5). A row-locked `QuerySequence` row for the current year is incremented inside the same transaction; formatted `YAL` + 2-digit year + `-` + 4-digit zero-padded number; resets when the year rolls over. Immutable thereafter. `clientCode`/`vesselCode` use a simpler prefix+sequence (`CL-0001`, `VS-0001`) — **open item O-T1**, confirm house convention.
 
 ### 4.5 Derived vs stored
-- **Derived-on-read, never stored:** `Query.freightMode` (distinct leg modes), `Query.origin`/`destination` (from pickup/delivery points), leg roll-ups (packages/CBM/gross/net). Zero drift.
-- **Two deliberate exceptions:** `CargoItem.volumeCbm` (a deterministic Postgres *generated column*) and `Query.dgIndicator` (a stored bool a service keeps in sync — auto-true when any cargo is DG, with manual override allowed, spec §7.2).
+- **Derived-on-read, never stored:** `Query.freightMode` (distinct leg modes), `Query.origin`/`destination` (from pickup/delivery points), leg roll-ups (packages/CBM/gross/net), and the **Cargo header H4–H8** (`packageCount`, Σ`grossWeightKg`, Σ`volumeCbm`, ⋃`tags`, `chargeableWeight`=null — C7). Zero drift.
+- **Two deliberate exceptions:** `Package.volumeCbm` (ex-`CargoItem.volumeCbm`; a deterministic Postgres *generated column*) and `Query.dgIndicator` (a stored bool a service keeps in sync — auto-true when any **Package or Item** carries the DG tag, union derived on write, manual override allowed and never auto-cleared, spec §7.2).
 - **Status is persisted but system-only** (§7.2).
-- **Leg weight roll-ups (Round 3):** `totalGrossWt` and `totalNetWt` **normalize to kg** before summing — rows with `weightUnit = GM` are divided by 1000 before being added. This means leg-level weight roll-ups are always in **kg**, regardless of the per-row entry unit.
-- **Leg CBM roll-up (Round 3):** `totalCbm` sums `volumeCbm` values directly — each row's `volumeCbm` is already in m³ (unit-aware generated column), so the sum is m³ with no further conversion.
+- **Leg roll-ups simplify to a pure canonical Σ (Cargo→Package→Item re-model, C6, supersedes Round 3 below):** `totalPackages` = count of assigned packages, `totalGrossWt`/`totalNetWt` = Σ `Package.grossWt`/`netWt`, `totalCbm` = Σ `Package.volumeCbm` — every input is already canonical kg/m³, so no per-row unit normalization runs anymore.
+- **Round 3 (superseded):** the old per-row model normalized `totalGrossWt`/`totalNetWt` to kg before summing (`weightUnit = GM` rows divided by 1000) and summed each row's own unit-aware `volumeCbm` directly. Net behaviour is unchanged — leg roll-ups were always effectively kg/m³ sums — the per-row conversion step is simply gone now that storage is canonical.
 
 ### 4.6 Tenant-readiness
 Every table carries a nullable `tenantId`; all reads pass through a scoping helper/interceptor. Single-tenant today; multi-tenant is a config flip, not a migration.
@@ -203,8 +206,9 @@ Every table carries a nullable `tenantId`; all reads pass through a scoping help
 | **Query (save)** | `POST /queries` (first Save → mints `queryCode`) · `GET /queries/:id` · `PATCH /queries/:id` | PATCH = per-step partial save; runs the Change Mediator (§7.3). |
 | **Create Query** | `POST /queries/:id/create` | Full validation → `RFQ_READY`; returns `Finding[]` if blocked. |
 | **Points** | `POST/PATCH/DELETE /queries/:id/points` | Reusable within query. |
-| **Legs** | `POST /queries/:id/legs` (Save leg → mints `legCode`, partial allowed) · `PATCH/DELETE …/legs/:legId` | Cargo tick via `assignedCargoIds` in body → LegCargo. |
-| **Cargo** | `POST/PATCH/DELETE /queries/:id/cargo` · `POST …/cargo/export` (xlsx) · `POST …/cargo/:cid/msds` (multipart) | volumeCbm computed; MSDS PDF upload. |
+| **Legs** | `POST /queries/:id/legs` (Save leg → mints `legCode`, partial allowed) · `PATCH/DELETE …/legs/:legId` | Package tick via `assignedPackageIds` in body → `LegPackage` (was `assignedCargoIds`/`LegCargo`, package grain, C13). |
+| **Cargo** | `GET/POST /queries/:id/cargo` · `PATCH/DELETE …/cargo/:cid` · `POST …/cargo/export` (xlsx) | The PO/reference grouping (Cargo→Package→Item re-model). H4–H8 header derived on read; export = single worksheet `Packing List`, one row per Item (§8.6). |
+| **Packages / Items** | `POST …/cargo/:cid/packages` · `PATCH/DELETE …/packages/:pid` · `POST …/packages/:pid/msds` (multipart) · `POST …/packages/:pid/copies` ("add N copies", 2–50, C4) · `POST …/packages/:pid/items` · `PATCH/DELETE …/items/:iid` | Package = the freight unit (dims/weight/tags, `volumeCbm` generated column). Item = commercial/customs line (product/qty/HSN). MSDS is per package, required when effectively DG (F6). |
 | **Checklist** | `PATCH /queries/:id/checklist` | Drives follow-up enablement. |
 | **Validate** | `POST /queries/:id/validate?phase=draft\|create` | Runs the shared engine server-side; returns findings. |
 | **Emails** | `POST /queries/:id/emails/follow-up` · `/acknowledgement` · `GET …/emails` | Compose & **log** (no send). |
@@ -225,7 +229,7 @@ A **pure, isomorphic function** in `packages/shared`: `validateRoute(graph, phas
 Implements the entire functional-spec §10 catalogue: field (F1–F6, via Zod), connectivity/continuity R1–R5, mass-balance R6, mode↔endpoint V-M1, downstream-readiness R7–R9, temporal T1–T3, completeness C1–C3, edit-integrity E1.
 
 ### 6.3 Algorithm
-The route is a **graph** — points are nodes, legs are directed edges, `LegCargo` labels which cargo rides which edge. **Per cargo row**, build its leg subgraph and verify: it is a simple path Pickup→Delivery (R1/R2/R4), enters==leaves at every intermediate hub (R6), and is time-ordered with hub MAX-date convergence (T1/T3, spec §8.5). Then cross-cutting: orphans (R3), mode↔endpoint compatibility (V-M1), country presence on both endpoints (R7). Parallel legs of *different* cargo rows meet at shared points — continuity is checked per row, not as one global sequence (spec §10.2).
+The route is a **graph** — points are nodes, legs are directed edges, `LegPackage` labels which package rides which edge (was `LegCargo`; **one routable unit per Package**, not per Cargo grouping — Cargo→Package→Item re-model, C13). **Per package**, build its leg subgraph and verify: it is a simple path Pickup→Delivery (R1/R2/R4), enters==leaves at every intermediate hub (R6), and is time-ordered with hub MAX-date convergence (T1/T3, spec §8.5). Then cross-cutting: orphans (R3), mode↔endpoint compatibility (V-M1), country presence on both endpoints (R7). Parallel legs of *different* packages meet at shared points — continuity is checked per package, not as one global sequence (spec §10.2).
 
 ### 6.4 Client + server usage
 - `phase='draft'` downgrades structural rules to **warnings**; `phase='create'` makes them **blocking** (spec §10 preamble).
@@ -358,18 +362,18 @@ Change module says *"reopen leg 4 and why."* Status machine says *"that's a lega
 ### 7.5 Worked example — the same edit, Pre-RFQ vs Post-RFQ
 **Scene — Query `YAL26-0042`:**
 ```
-Cargo C1 = "10 × pallet, machine parts", grossWt 5,000 kg
+Cargo C1 "10 × pallet, machine parts" ─▶ Package P1, grossWt 5,000 kg
    L1 Road  Pickup(Mumbai) ─▶ Seaport(Nhava Sheva)     ┐
-   L2 Sea   Seaport(Nhava Sheva) ─▶ Seaport(Rotterdam) ├─ C1 rides all three
+   L2 Sea   Seaport(Nhava Sheva) ─▶ Seaport(Rotterdam) ├─ P1 rides all three
    L3 Road  Seaport(Rotterdam) ─▶ Delivery(Hamburg)    ┘
 ```
-**Edit (identical in both worlds):** `PATCH /queries/YAL26-0042/cargo/C1 { grossWt: 6200 }`
-Both enter the same door; the classifier returns `class=RfqDefining, scope=legs carrying C1={L1,L2,L3}`. The **only** fork is `scopeResolver.downstreamWork(scope)`.
+**Edit (identical in both worlds):** `PATCH /queries/YAL26-0042/cargo/C1/packages/P1 { grossWt: 6200 }` — weight lives on the **Package**, not the Cargo grouping (Cargo→Package→Item re-model).
+Both enter the same door; the classifier returns `class=RfqDefining, scope=legs carrying P1={L1,L2,L3}` (via `legsCarryingPackage`). The **only** fork is `scopeResolver.downstreamWork(scope)`.
 
 **PRE-RFQ** — legs `READY_FOR_RFQ`, no RFQ distributed → `downstreamWork=false` → **FREE PATH**:
 ```
-1 apply      C1.grossWt = 6200
-2 recompute  L1/L2/L3 roll-ups (derived-on-read, cache-bust)
+1 apply      P1.grossWt = 6200   (canonical kg)
+2 recompute  L1/L2/L3 roll-ups (derived-on-read, cache-bust) + Cargo C1's H4-H8 header
 3 revalidate validateRoute(phase='draft') → warnings only ✓
 4 log        changeLog.record(...) → NO-OP
 5 status     untouched — legs stay READY_FOR_RFQ
@@ -378,16 +382,18 @@ Both enter the same door; the classifier returns `class=RfqDefining, scope=legs 
 
 **POST-RFQ** — Stage 4 live, `L1=FULLY_QUOTED, L2=PARTIALLY_QUOTED, L3=RFQ_SENT` → `downstreamWork=true` → **CHANGE-ORDER**:
 ```
-STEP 1 PREVIEW (nothing applied): "C1 5,000→6,200 kg invalidates L1(3 quotes),
+STEP 1 PREVIEW (nothing applied): "P1 5,000→6,200 kg invalidates L1(3 quotes),
        L2(1 quote), L3(RFQ open). FFs re-quote. Reason required."
    → Exec confirms + reason "client revised packing list"
 STEP 2 COMMIT (one saga):
-   a apply    C1.grossWt=6200; stale LegCargo snapshots marked for re-freeze
+   a apply    P1.grossWt=6200; affected legs' pending Quote rows (manifestSnapshot)
+              marked for re-freeze — the freeze snapshot lives on Quote now, not on
+              the leg↔package join (LegPackage carries no snapshot column, §4.3)
    b cascade  for L1,L2,L3: void quotes; statusService.fire('leg', Lx, 'reopen')  ← seam
    c status   FULLY/PARTIALLY_QUOTED / RFQ_SENT ─▶ READY_FOR_RFQ
               · writes StatusTransition rows · emits leg.status.changed ×3
               · query rollup recomputes (Quoted → RFQ Ready)
-   d log      changeLog.record({what:C1 grossWt 5000→6200, why, affected:[L1,L2,L3]}) → REAL
+   d log      changeLog.record({what:P1 grossWt 5000→6200, why, affected:[L1,L2,L3]}) → REAL
    e re-distribute RFQ, notify affected FFs
 ```
 
@@ -399,7 +405,7 @@ STEP 2 COMMIT (one saga):
 | Future flow | New field/action | Impact class | Plug-in work — **no core rewrite** |
 |---|---|---|---|
 | S4 FF submits quote | `quote.submit` | *(own machine)* | Register Quote/RFQ transitions; leg `Partially/FullyQuoted` derive |
-| S4 edit leg cargo post-RFQ | `legCargo.*` | RfqDefining | ScopeResolver: "RFQs referencing leg"; `reopen` edge |
+| S4 edit package post-RFQ | `package.*` | RfqDefining | ScopeResolver: "RFQs referencing leg" (via `legsCarryingPackage`); `reopen` edge |
 | S5 change margin | `margin` | PricingAwardDefining | Reopen client-quotation scope |
 | S5 award FF | `award` | *(own machine)* | Leg `→ AWARDED` transition |
 | S8 PO change | `po.*` | Structural | Recompute awarded legs |
@@ -434,13 +440,13 @@ JWT **access token** in an httpOnly, `SameSite=strict` cookie (~15 min) + **refr
 FE polls `/notifications/unread-count` every ~30–60 s and `/notifications` on open. SSE/WebSocket deferred — polling suffices for informational escalations.
 
 ### 8.4 File storage
-`FileAsset` behind a storage service — local disk in dev → S3-compatible object store later. MSDS is PDF-only, per DG cargo row (spec §7.3, F6).
+`FileAsset` behind a storage service — local disk in dev → S3-compatible object store later. MSDS is PDF-only, per effectively-DG **package** (spec §7.3, F6; was "per DG cargo row" pre-re-model).
 
 ### 8.5 Concurrency
 Per spec §13: **last-write-wins, no record locking.** `updatedAt` is returned for display only.
 
 ### 8.6 Excel export
-Server-side `exceljs` stream, single worksheet named `Product` (spec §7.3). Excel **import** is out of scope.
+Server-side `exceljs` stream, single worksheet named **`Packing List`** (was `Product`, spec §7.3) — **one row per Item**, package/cargo context repeated per row, trailing totals row. Excel **import** is out of scope.
 
 ### 8.7 Email compose & log
 `EmailsService` renders the templates (spec §15) with dynamic tokens and writes an `EmailLog` row with `status=LOGGED`. **No live transmission** (D12). Follow-up compiles the unchecked checklist items into `{Missing_Fields_List}`.
@@ -489,7 +495,7 @@ Field schemas (Zod) and `validateRoute` come from `packages/shared`. The wizard 
 | Query lifecycle | `DRAFT → CREATED → RFQ_READY` | RFQ Sent → Quoted → … → Closed (rollup logic registers in `status`) |
 | Leg lifecycle | `DRAFT ↔ READY_FOR_RFQ` | Forward edges to Awarded/Delivered (Stage 4+ contribute) |
 | Change handling | **Free path** + impact classification + `reopen` seam wired | Change-order **cascade** strategy (Stage 4+) |
-| Cargo manifest | live reference on `LegCargo` | **freeze** into `manifestSnapshot` at RFQ (Stage 4) |
+| Cargo manifest | live reference via `LegPackage` (package grain, was `LegCargo`) | **freeze** into `Quote.manifestSnapshot` per FF at RFQ (Stage 4) |
 | Density / chargeable weight | null / read-only (D4) | FF sets per-row density; leg `totalChargeableWeight` sums (Stage 4) |
 | Tracking | `Leg.executionStatus` field + derived-position model | tracking **updates + screen** (Stage 8–9) |
 | Logging | `StatusTransition` | change-log (Stage 4), full audit (later) |

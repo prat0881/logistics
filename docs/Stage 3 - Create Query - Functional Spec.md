@@ -178,38 +178,86 @@ Foundational shipment parameters. **Simplified from the original PRD**: Freight 
 |---|---|---|---|
 | Incoterms | Dropdown | **Mandatory** | One of EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU, DDP, **N/A**. Default **N/A** (a valid value; stored as `NA`, displayed "N/A"). Stored with the query. |
 | Shipment Description | Free text | Optional | Plain text, 200-char limit, HTML/script sanitised. |
-| DG Indicator | Checkbox | Optional | Shipment-level dangerous-goods flag. **Auto-set** when any cargo row is flagged DG (§7.3); may also be set manually. When set, MSDS is expected per DG cargo row. |
+| DG Indicator | Checkbox | Optional | Shipment-level dangerous-goods flag. **Auto-set** when any package or item carries the **DG tag** (§7.3 — a package's *effective* tags are its own ∪ its items'; the union, not a per-row checkbox, now drives this); never auto-cleared once set; may also be set manually. When set, MSDS is expected per effectively-DG package. |
 
 ---
 
 ### 7.3 Step 3 — Cargo Details
 
-Cargo captured as a dynamic multi-row table (one row per package type/reference), added via **+ Add row**. The system auto-computes **Volume (CBM)** per row; **chargeable weight is computed per leg** (§8.6), not here (D4). Calculated fields are read-only and visually distinguished.
+> **Re-modelled.** Cargo is now a **three-level hierarchy** — `Cargo → Package → Item` — entered through a nested popup, not an inline row grid. Full rationale/decisions in `docs/superpowers/specs/2026-08-05-stage3-cargo-packing-list-design.md` (cited below as C1–C14).
 
-**Bulk action:** **Export to Excel** — exports current rows to `.xlsx` (single worksheet named `Product`). (Excel import is out of scope.)
+Cargo is captured as **`Cargo → Package → Item`** (C1):
+- **Cargo** — a PO/reference **grouping** row (what the main table shows). Owns the entry-unit selectors for everything under it. Carries no dims/weight/DG of its own.
+- **Package** — the physical **freight unit** (Box, Pallet, Crate, …). This is the level every downstream stage (legs, RFQ, quotes) actually operates on, and the sole source of weight/volume (C2/C3).
+- **Item** — the commercial/customs line inside a package (product, qty, HS code). A package may hold many items (many HS codes) or none.
 
-#### Column specification
+The system auto-computes each package's **Volume (CBM)**; **chargeable weight stays empty/read-only at Stage 3** (§8.6, D4) — it is a Stage-4 Freight Forwarder value. All calculated/derived fields are read-only and visually distinguished.
 
-| Column | Type | Mandatory | Unit / Rules |
+#### Main table (display-only)
+
+One row per **Cargo**, aggregated over its packages:
+
+| Column | Mandatory | Notes |
+|---|---|---|
+| # | Auto | Sequential cargo order. |
+| PO / Reference | Optional | Falls back to **Label**, then `Row N`, when blank. |
+| Package Count | Auto | Derived: count of packages under this cargo. |
+| Contents | Auto | Product × Qty summary across every item in the cargo. |
+| Σ Gross | Auto | Derived: sum of package Gross Wt, shown in the cargo's Weight Unit. |
+| Σ Volume (CBM) | Auto | Derived: sum of package Volume (CBM), in m³. |
+| Tags | Auto | Derived: union of every package's *effective* tags (own ∪ its items'), incl. DG. |
+| Chargeable Wt | Auto | Always blank at Stage 3 (Stage-4 Freight Forwarder value). |
+| Actions | — | **Edit** / **Remove** — opens the nested popup below; Remove cascades to the cargo's packages and items. |
+
+**Two-level expansion:** expanding a Cargo row reveals its **packages** (Package No, Type, L/W/H, Gross, Net, Volume, Tags, Contents); expanding a package reveals its **items** (SN, Product, Qty, UoM, HSN, Tags). No inline editing anywhere — entry and edits both go through the popup.
+
+#### Entry — nested Cargo popup fields
+
+**A · Cargo — the grouping**
+
+| Field | Type | Mandatory | Notes |
 |---|---|---|---|
-| # | Integer (auto) | Auto | Sequential row index. |
-| PO / Reference | Text | **Optional** | PO or shipment reference. Optional (Round 3); when blank, the cargo-row label falls back to Product Name. |
-| Product Name | Text | **Mandatory** | — |
-| Reference Tags | Multi-badge | Optional | Heavy / Fragile / Non-Stackable / **Out of Gauge Cargo** (multiple allowed). **Stage-4 display:** these tags (plus the DG flag below) are now surfaced as consolidated deduped icons in the downstream Query Workspace header — each characteristic shown at most once across all cargo; a Stage-4 post-testing display addition. Create-Query capture is unchanged. |
-| HS / HSN Code | Number | Optional | Per row. |
-| Package Type | Text | **Mandatory** | e.g. Carton, Crate, Box, Pallet, Loose, Drum, Can. |
-| DG | Checkbox | **Mandatory** | When checked, reveals MSDS upload and sets shipment DG indicator. (See Reference Tags note above — DG is included in the Stage-4 workspace consolidated icon display.) |
-| MSDS | File (PDF) | Conditional | Visible/required only when DG is checked. PDF only; shows filename with remove option. |
-| Qty | Integer | **Mandatory** | Must be > 0. |
-| Dims L×W×H | Numeric ×3 + unit | **Mandatory** | Three inline L/W/H fields with **one shared unit dropdown (CM / MM, default CM)**. The same unit applies to all three dimensions on this row. |
-| Net Wt | Numeric | Optional | **KG or GM** (shared unit dropdown with Gross Wt, default KG). Must be ≤ Gross Wt if provided. |
-| Gross Wt | Numeric | **Mandatory** | **KG or GM** (same unit as Net Wt; one dropdown governs both). Total incl. packaging. Basis for chargeable weight per leg. |
-| Volume (CBM) | Calculated | Auto | Always **cubic metres (m³)**: cm input → `(L × W × H × Qty) / 1,000,000`; mm input → `(L × W × H × Qty) / 1,000,000,000`. Read-only. There is no CBM unit selector — CBM is m³ by definition. |
-| Freight Density | Read-only | — | kg/CBM. **Empty in Stage 3**; set by the Freight Forwarder in Stage 4. |
-| Chargeable Wt (T) | Read-only | — | **Empty in Stage 3**; auto-calculated in Stage 4 once density is set. |
-| × (remove) | Action | — | Removes the row (undo via discard). |
+| PO / Reference | Text | Optional | The cargo's identity/label; one reference per grouping (no mixed references within a package, C11). |
+| Label | Text | Optional | Human label; used as the display-name fallback when PO/Reference is blank. |
+| Dimension Unit | Dropdown | Selected | CM / MM, default CM. Applies to **every package under this cargo** — entry/display only, storage is canonical cm (V-6). |
+| Weight Unit | Dropdown | Selected | **kg / tonne / g**, default kg. Applies to every package under this cargo — entry/display only, storage is canonical kg (V-6). |
 
-> **Note on Freight Density & Chargeable Weight (cargo-level; deferred to Stage 4):** both live on the **cargo row** and are **empty/read-only in Stage 3**. In Stage 4 the Freight Forwarder sets each row's **Freight Density** and the system calculates that row's **Chargeable Weight** — **one chargeable weight per cargo row**. The leg then shows a **Total Chargeable Weight** = the sum of its attached rows' chargeable weights (see §7.4.2).
+**B · Package — the freight unit**
+
+| Field | Type | Mandatory | Notes |
+|---|---|---|---|
+| Package No | Text | **Mandatory** | Auto-numbered, editable; must be **unique within the query**, case-insensitive/trimmed (V-5). |
+| Package Type | Dropdown | **Mandatory** | Box / Pallet / Crate / Carton / Drum / Bundle. |
+| Dim L / W / H | Numeric ×3 | **Mandatory** | All three > 0 (V-1). Entered in the cargo's Dimension Unit; converted to canonical cm on save. |
+| Gross Wt | Numeric | **Mandatory** | > 0 (V-1). Entered in the cargo's Weight Unit; converted to canonical kg on save. Total incl. packaging. |
+| Net Wt | Numeric | Optional | Same entry unit as Gross Wt. Must be ≤ Gross Wt if provided (V-2). |
+| Volume (CBM) | Calculated | Auto | `Dim L × Dim W × Dim H / 1,000,000` from the package's canonical-cm dims — always m³. One package = one physical unit, so there is no ×Qty multiplier (C4) and no unit branching (storage is canonical). Read-only. |
+| Tags | Multi-badge | Optional | Heavy / Fragile / Non-Stackable / Out of Gauge Cargo / **Dangerous Goods (DG)** — DG is now a **tag**, not a separate checkbox (multiple allowed). A package's *effective* tags = its own ∪ its items' (union, derived on read); a tag set by a child item can't be unchecked at the package (V-7, UI-enforced). |
+| MSDS | File (PDF) | Conditional | Visible/required only when the package is **effectively DG** — its own DG tag, or any of its items' (F6). PDF only, magic-byte validated; shows filename with remove option. |
+
+*(A `packageCount` column exists in the data model, default 1 — reserved for a possible future "N identical packages" multiplier. Not calculated, not shown in this UI, C5.)*
+
+**Add N copies:** on a saved package, clones it **2–50** times into discrete new package records, each auto-numbered with its own fresh Package No and a copy of its items (C4). There is no stored quantity multiplier — one record per physical package.
+
+**C · Item — commercial/customs line**
+
+| Field | Type | Mandatory | Notes |
+|---|---|---|---|
+| Product | Text | Optional | — |
+| Qty | Numeric | Optional | If entered, must be > 0; **UoM becomes mandatory** once Qty is present (V-4). |
+| UoM | Dropdown | Conditional | PC / Set / Box / Kg / M / Roll — required only when Qty is entered (V-4). |
+| HS / HSN Code | Text | Optional | Per item; captured for customs reference — no separate customs-form output is generated (C12). |
+| Tags | Multi-badge | Optional | Same tag set as Package, incl. DG. An item's DG tag makes its **parent package** effectively DG (triggers that package's MSDS requirement). |
+
+An item with **neither Product nor Qty is discarded on save** (V-4).
+
+**Popup flow:** `+ Add Cargo` / row **Edit** opens the popup — (1) the Cargo fields above; (2) a **Packages** section, where `+ Add Package` opens a package editor with a live CBM preview and an **Items** mini-table; (3) `+ Add Item` inside a package adds an item line — marking an item DG flags its package as effectively DG, revealing that package's MSDS upload; (4) **Add N copies** on a saved package (above); (5) **Save** persists the whole `Cargo → Packages → Items` tree in one transaction. **Remove** at the cargo level cascades to its packages and items.
+
+#### Bulk action: Export to Excel
+
+Exports the whole packing list to `.xlsx` — a single worksheet **`Packing List`**, **one row per Item** (its package and cargo context repeated on each line). A package with no items still emits one row (item columns blank). A trailing **Totals** row closes the sheet: distinct package count, Σ Gross, Σ Volume. Column order: Cargo # · PO/Reference · Package No · Package Type · Dim L/W/H (cm) · Gross/Net Wt (kg) · Volume (CBM) · Package Tags · SN · Product · Qty · UoM · HSN · Item Tags · DG (Yes/No) — values are always canonical cm/kg, regardless of the cargo's entry unit. (Excel import remains out of scope.)
+
+> **Note on Chargeable Weight (deferred to Stage 4):** the old per-row **Freight Density** field is gone — dropped from the Stage-3 model entirely (Stage 4's `QuoteCargoLine` already carries a per-package density/chargeable-weight pair, so Stage 3 no longer reserves a placeholder column for it). The one remaining Stage-3 placeholder is the **Cargo header's Chargeable Weight** — always blank/derived-null at this stage, filled in once Stage 4 exists. The leg still shows a **Total Chargeable Weight** roll-up (§8.6), empty until Stage 4 populates the values it sums.
 
 ---
 
@@ -409,8 +457,8 @@ Severity: **Blocking** (prevents progression) or **Warning** (advisory). Trigger
 | F2 | Email regex valid; phone E.164 valid; IMO 7-digit; IATA 3-char; ICAO 4-char; UN/LOCODE 5-char. | Blocking | save |
 | F3 | ETA < ETB < ETD (when provided). | Blocking | save |
 | F4 | Response Deadline not in the past. | Blocking | save |
-| F5 | Cargo: Qty > 0; Gross Wt present; if Net Wt provided, Net ≤ Gross; `dimUnit` and `weightUnit` recorded per row. PO / Reference is **not** required (Round 3 — optional). | Blocking (Net ≤ Gross = Warning inline) | save |
-| F6 | DG cargo row requires an MSDS (PDF) file. | Blocking | create |
+| F5 | Package: L/W/H and Gross Wt present and > 0; if Net Wt provided, Net ≤ Gross. Item: if Qty is entered, UoM is required; an item with neither Product nor Qty is discarded on save. `dimUnit`/`weightUnit` are recorded once per **Cargo** grouping (the entry unit for every package under it), not per package. PO / Reference (on the Cargo) is **not** required (Round 3 — optional). | Blocking (Net ≤ Gross = Warning inline) | save |
+| F6 | A **package** whose effective tags include DG (its own tag, or any of its items') requires an MSDS (PDF) file. | Blocking | create |
 
 > **Note — datetime minute default (Round 3):** all datetime inputs across all screens (Step-1 Target Pickup / Target Delivery / ETA / ETB / ETD / Response Deadline; leg Ready Date / Target Delivery; ETA / ETB / ETD) **default the minute component to `:00`** when a fresh value is entered. The minute field remains fully editable — this is a soft default, not a lock.
 
