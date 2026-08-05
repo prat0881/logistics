@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import type { CargoCreateInput, CargoDto, CargoUpdateInput } from "@svyft/shared";
+import ExcelJS from "exceljs";
 import { randomUUID } from "node:crypto";
 import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -35,7 +36,9 @@ export class CargoService {
       include: {
         packages: {
           orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-          include: { items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] } },
+          include: {
+            items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] },
+          },
         },
       },
     });
@@ -55,7 +58,9 @@ export class CargoService {
       include: {
         packages: {
           orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-          include: { items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] } },
+          include: {
+            items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] },
+          },
         },
       },
     });
@@ -137,7 +142,9 @@ export class CargoService {
         const packages = await tx.package.findMany({
           where: { cargoId: cid },
           orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-          include: { items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] } },
+          include: {
+            items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] },
+          },
         });
         shaped = shapeCargo({ ...updated, packages });
       },
@@ -169,5 +176,110 @@ export class CargoService {
         preview: result.preview,
       });
     }
+  }
+
+  // Server-side exceljs stream, single worksheet "Packing List" (design §8.3) — re-added at the
+  // new grain (Task 9) after Task 4 dropped the old flat one-row-per-CargoItem export. ONE ROW
+  // PER ITEM: package+cargo context repeats on every item row of that package. A package with no
+  // items still emits one row (item columns blank); every row of a DG package shows "Yes" in
+  // DG (Yes/No) since DG/MSDS is a package-level safety attribute, not an item one. A trailing
+  // TOTAL row closes the sheet with the distinct package count + Σ gross + Σ volume, summed once
+  // per package (not per item, so a multi-item package isn't double-counted).
+  async exportXlsx(queryId: string): Promise<Buffer> {
+    // getTree already 404s a missing query via its own assertQueryExists — no need to repeat it.
+    const cargos = await this.getTree(queryId);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Packing List");
+    ws.columns = [
+      { header: "Cargo #", key: "cargoNo", width: 8 },
+      { header: "PO / Reference", key: "poReference", width: 18 },
+      { header: "Package No", key: "packageNo", width: 14 },
+      { header: "Package Type", key: "packageType", width: 14 },
+      { header: "Dim L (cm)", key: "dimL", width: 12 },
+      { header: "Dim W (cm)", key: "dimW", width: 12 },
+      { header: "Dim H (cm)", key: "dimH", width: 12 },
+      { header: "Gross Wt (kg)", key: "grossWt", width: 12 },
+      { header: "Net Wt (kg)", key: "netWt", width: 12 },
+      { header: "Volume (CBM)", key: "volumeCbm", width: 14 },
+      { header: "Package Tags", key: "packageTags", width: 20 },
+      { header: "SN", key: "sn", width: 6 },
+      { header: "Product", key: "product", width: 24 },
+      { header: "Qty", key: "qty", width: 8 },
+      { header: "UoM", key: "uom", width: 8 },
+      { header: "HSN", key: "hsCode", width: 14 },
+      { header: "Item Tags", key: "itemTags", width: 20 },
+      { header: "DG (Yes/No)", key: "dg", width: 10 },
+    ];
+    ws.getRow(1).font = { bold: true };
+
+    // Totals row accumulators (§8.3: "package count, Σ gross, Σ volume"). Incremented once per
+    // PACKAGE below (outside the item/blank-row branch), never once per item — a multi-item
+    // package must contribute its gross/volume exactly once, not once per item row it renders.
+    let packageCount = 0;
+    let grossSum = 0;
+    let volumeSum = 0;
+
+    for (const cargo of cargos) {
+      for (const pkg of cargo.packages) {
+        packageCount += 1;
+        grossSum += Number(pkg.grossWt);
+        volumeSum += pkg.volumeCbm == null ? 0 : Number(pkg.volumeCbm);
+        const base = {
+          cargoNo: cargo.rowIndex + 1,
+          poReference: cargo.poReference ?? "",
+          packageNo: pkg.packageNo,
+          packageType: pkg.packageType,
+          dimL: Number(pkg.dimL),
+          dimW: Number(pkg.dimW),
+          dimH: Number(pkg.dimH),
+          grossWt: Number(pkg.grossWt),
+          netWt: pkg.netWt == null ? "" : Number(pkg.netWt),
+          volumeCbm: pkg.volumeCbm == null ? "" : Number(pkg.volumeCbm),
+          packageTags: pkg.effectiveTags.join(", "),
+          // DG/MSDS is a PACKAGE-level safety attribute (effectiveTags = own tags ∪ item tags),
+          // so every row of a DG package — including its blank-item row — shows "Yes" here, even
+          // though the underlying "DG" tag may have been set on an item rather than the package.
+          dg: pkg.effectiveTags.includes("DG") ? "Yes" : "No",
+        };
+        if (pkg.items.length === 0) {
+          // A package with no items still gets exactly one row — cargo/package columns filled,
+          // item-only columns blank — so the packing list shows every package, not just the
+          // ones someone got around to itemizing.
+          ws.addRow({ ...base, sn: "", product: "", qty: "", uom: "", hsCode: "", itemTags: "" });
+        } else {
+          pkg.items.forEach((item, idx) => {
+            ws.addRow({
+              ...base,
+              sn: idx + 1,
+              product: item.product ?? "",
+              qty: item.qty == null ? "" : Number(item.qty),
+              uom: item.uom ?? "",
+              hsCode: item.hsCode ?? "",
+              itemTags: item.tags.join(", "),
+            });
+          });
+        }
+      }
+    }
+
+    // TOTAL row: "Package No" carries the TOTAL label (§8.3); the distinct package count has no
+    // single obviously-right column of its own, so it goes in the adjacent "Package Type" cell
+    // (clearly a count, not a real package type, in context). Gross/volume sums land under their
+    // own columns. Every other cell on this row is left blank.
+    const totalsRow = ws.addRow({
+      packageNo: "TOTAL",
+      packageType: packageCount,
+      grossWt: Number(grossSum.toFixed(3)),
+      volumeCbm: Number(volumeSum.toFixed(6)),
+    });
+    totalsRow.font = { bold: true };
+
+    // exceljs's own .d.ts declares a local `Buffer extends ArrayBuffer {}` for writeBuffer()'s
+    // return type (browser-compat artifact) rather than Node's real Buffer, so `as Buffer` fails
+    // strict structural overlap checking. At runtime (lib/utils/stream-buf.js) it always returns
+    // a genuine Node Buffer via Buffer.concat(...); Buffer.from(...) both satisfies tsc against
+    // the declared ArrayBuffer-shaped type and is a correct (if redundantly-copying) no-op on an
+    // already-real Buffer at runtime — no `any` needed.
+    return Buffer.from(await wb.xlsx.writeBuffer());
   }
 }
