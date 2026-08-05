@@ -171,6 +171,12 @@ export const itemCreateSchema = z
     path: ["uom"], // V-4
   });
 export type ItemCreateInput = z.infer<typeof itemCreateSchema>;
+// No cross-field `.refine()` here (Task 7 §A2), unlike itemCreateSchema above: this schema
+// validates a PARTIAL patch, and a partial patch can't see the item's stored uom, so a refine
+// checking "qty ⇒ uom" against the patch ALONE would false-reject `{qty:5}` even when the
+// stored row already has a uom. V-4 is instead enforced in item.service.ts's `update` by
+// merging patched-or-stored qty/uom and validating the effective pair (same merge-then-validate
+// shape as package.service.ts's V-2 fix, §A1) — see item.service.ts and item.e2e-spec.ts.
 export const itemUpdateSchema = z
   .object({
     product: z.string().trim().max(200).nullable(),
@@ -179,11 +185,7 @@ export const itemUpdateSchema = z
     hsCode: z.string().trim().max(40).nullable(),
     tags: z.array(z.enum(REFERENCE_TAGS)),
   })
-  .partial()
-  .refine((i) => i.qty == null || i.uom != null, {
-    message: "Unit of measure is required when a quantity is entered",
-    path: ["uom"],
-  });
+  .partial();
 export type ItemUpdateInput = z.infer<typeof itemUpdateSchema>;
 
 export interface ItemDto {

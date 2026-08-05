@@ -186,71 +186,93 @@ export class PackageService {
     };
 
     const clones: PackageDto[] = [];
-    for (let i = 0; i < count; i++) {
-      const packageNo = await nextPackageNo();
-      const id = randomUUID();
-      let shaped: PackageDto | undefined;
-      const result = await this.mediator.apply(
-        { entity: "package", id, action: "@create", queryId, actorId: user.userId },
-        async (tx) => {
-          // Same KNOWN RACE as create() above (§8.5, last-write-wins) — accepted, not fixed here.
-          const max = await tx.package.aggregate({
-            where: { cargoId: source.cargoId },
-            _max: { rowIndex: true },
+    // Carry-forward fix (Task 7 §B): each clone is mediated as its own @create/own tx (see the
+    // TRANSACTION BOUNDARY note above this method) — there is no batch atomicity, so a mid-batch
+    // throw (a genuine DB error, or `nextPackageNo`'s 10_000-try exhaustion) leaves an
+    // unsignaled PREFIX of already-committed clones. `createdIds` tracks only clones that fully
+    // committed — an id is pushed AFTER `mediator.apply` resolves AND `needsConfirmation` is
+    // false (i.e. the row actually persisted, not just previewed). On any throw, best-effort
+    // delete that prefix (Items cascade via the schema's onDelete: Cascade) before re-throwing
+    // the ORIGINAL error — the cleanup itself is best-effort and must never mask the real
+    // failure, so its own errors are swallowed.
+    const createdIds: string[] = [];
+    try {
+      for (let i = 0; i < count; i++) {
+        const packageNo = await nextPackageNo();
+        const id = randomUUID();
+        let shaped: PackageDto | undefined;
+        const result = await this.mediator.apply(
+          { entity: "package", id, action: "@create", queryId, actorId: user.userId },
+          async (tx) => {
+            // Same KNOWN RACE as create() above (§8.5, last-write-wins) — accepted, not fixed here.
+            const max = await tx.package.aggregate({
+              where: { cargoId: source.cargoId },
+              _max: { rowIndex: true },
+            });
+            const created = await tx.package.create({
+              data: {
+                id,
+                queryId,
+                cargoId: source.cargoId,
+                tenantId: user.tenantId,
+                rowIndex: (max._max.rowIndex ?? 0) + 1,
+                packageNo,
+                // Stored canonical values, copied as-is — already cm/kg, never re-converted.
+                packageType: source.packageType,
+                dimL: source.dimL,
+                dimW: source.dimW,
+                dimH: source.dimH,
+                grossWt: source.grossWt,
+                netWt: source.netWt,
+                tags: source.tags,
+                msdsFileId: source.msdsFileId,
+                packageCount: source.packageCount,
+                // dgIndicator (T8) intentionally untouched — Package has no such column; Query's
+                // sync lives entirely in QueriesService and is out of this task's scope.
+              },
+            });
+            const items: Item[] = [];
+            for (const [idx, item] of source.items.entries()) {
+              items.push(
+                await tx.item.create({
+                  data: {
+                    id: randomUUID(),
+                    packageId: created.id,
+                    tenantId: user.tenantId,
+                    rowIndex: idx + 1,
+                    product: item.product,
+                    qty: item.qty,
+                    uom: item.uom,
+                    hsCode: item.hsCode,
+                    tags: item.tags,
+                  },
+                }),
+              );
+            }
+            shaped = shapePackage({ ...created, items });
+          },
+        );
+        if (result.needsConfirmation) {
+          throw new ConflictException({
+            message: "Change requires confirmation",
+            needsChangeOrder: true,
+            preview: result.preview,
           });
-          const created = await tx.package.create({
-            data: {
-              id,
-              queryId,
-              cargoId: source.cargoId,
-              tenantId: user.tenantId,
-              rowIndex: (max._max.rowIndex ?? 0) + 1,
-              packageNo,
-              // Stored canonical values, copied as-is — already cm/kg, never re-converted.
-              packageType: source.packageType,
-              dimL: source.dimL,
-              dimW: source.dimW,
-              dimH: source.dimH,
-              grossWt: source.grossWt,
-              netWt: source.netWt,
-              tags: source.tags,
-              msdsFileId: source.msdsFileId,
-              packageCount: source.packageCount,
-              // dgIndicator (T8) intentionally untouched — Package has no such column; Query's
-              // sync lives entirely in QueriesService and is out of this task's scope.
-            },
-          });
-          const items: Item[] = [];
-          for (const [idx, item] of source.items.entries()) {
-            items.push(
-              await tx.item.create({
-                data: {
-                  id: randomUUID(),
-                  packageId: created.id,
-                  tenantId: user.tenantId,
-                  rowIndex: idx + 1,
-                  product: item.product,
-                  qty: item.qty,
-                  uom: item.uom,
-                  hsCode: item.hsCode,
-                  tags: item.tags,
-                },
-              }),
-            );
-          }
-          shaped = shapePackage({ ...created, items });
-        },
-      );
-      if (result.needsConfirmation) {
-        throw new ConflictException({
-          message: "Change requires confirmation",
-          needsChangeOrder: true,
-          preview: result.preview,
-        });
+        }
+        createdIds.push(id);
+        clones.push(shaped!);
       }
-      clones.push(shaped!);
+      return clones;
+    } catch (err) {
+      if (createdIds.length > 0) {
+        try {
+          await this.prisma.package.deleteMany({ where: { id: { in: createdIds } } });
+        } catch {
+          // Best-effort cleanup — never let a failure here mask the original error below.
+        }
+      }
+      throw err;
     }
-    return clones;
   }
 
   // Mediated field edit. `reason` is ChangeRequest metadata, not a Package column — stripped
@@ -267,7 +289,7 @@ export class PackageService {
     input: PackageUpdateInput,
     user: RequestUser,
   ): Promise<PackageDto> {
-    await this.load(queryId, cargoId, pid);
+    const existing = await this.load(queryId, cargoId, pid);
     const { reason, ...patch } = input;
     const fields = Object.keys(patch);
     if (fields.length === 0) return this.getOne(queryId, cargoId, pid);
@@ -294,6 +316,30 @@ export class PackageService {
       if (patch.grossWt !== undefined) data.grossWt = toCanonicalWeight(patch.grossWt, cargo.weightUnit);
       if (patch.netWt !== undefined)
         data.netWt = patch.netWt === null ? null : toCanonicalWeight(patch.netWt, cargo.weightUnit);
+    }
+
+    // Carry-forward fix (Task 7 §A1, merge-then-validate): packageUpdateSchema's `.refine()`
+    // only ever sees this patch, not the stored row, so a single-sided partial PATCH (e.g.
+    // `{grossWt:50}` alone, on a stored `{grossWt:100,netWt:90}` row) never trips the
+    // netWt<=grossWt guard even though it would leave the STORED netWt above the newly patched
+    // grossWt. Compute the EFFECTIVE gross/net by merging `data` (patched, already converted to
+    // canonical kg above) over `existing` (stored, already canonical) and validate that merged
+    // pair — comparing in canonical kg is correct since net<=gross is scale-invariant. The
+    // schema's refine is left as-is (see itemUpdateSchema comment for why the item case differs):
+    // it never false-rejects a single-sided patch, so it still usefully catches a
+    // both-fields-present violation early at the pipe; this check covers the single-sided-vs-
+    // stored gap the refine structurally cannot see.
+    const effGross = data.grossWt !== undefined ? Number(data.grossWt) : Number(existing.grossWt);
+    const effNet =
+      data.netWt !== undefined
+        ? data.netWt === null
+          ? null
+          : Number(data.netWt)
+        : existing.netWt === null
+          ? null
+          : Number(existing.netWt);
+    if (effNet !== null && effNet > effGross) {
+      throw new BadRequestException("Net weight must be ≤ gross weight");
     }
 
     let shaped: PackageDto | undefined;

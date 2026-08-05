@@ -177,6 +177,30 @@ describe("Package CRUD (e2e)", () => {
     expect(updated.body.packageNo).toBe("P-1");
   });
 
+  // Carry-forward fix (Task 7 §A1): a partial PATCH bypasses packageUpdateSchema's `.refine()`
+  // because the refine only sees the patch, not the stored row — `{grossWt:50}` alone never
+  // triggers the "netWt <= grossWt" check. The service must merge patched-or-stored canonical
+  // gross/net and validate the merged pair. Before the fix this returns 200 and persists
+  // netWt(90) > grossWt(50); confirmed failing first per TDD before implementing.
+  it("rejects a partial PATCH that would leave stored netWt above the patched grossWt (V-2 merge-then-validate)", async () => {
+    const { queryId } = await freshQuery();
+    const cargo = await addCargo(queryId, { dimUnit: "CM", weightUnit: "KG" }).expect(201);
+    const created = await addPackage(queryId, cargo.body.id, {
+      packageNo: "P-1",
+      packageType: "BOX",
+      dimL: 1,
+      dimW: 1,
+      dimH: 1,
+      grossWt: 100,
+      netWt: 90,
+    }).expect(201);
+    await api()
+      .patch(`/api/queries/${queryId}/cargo/${cargo.body.id}/packages/${created.body.id}`)
+      .set("Cookie", cookie())
+      .send({ grossWt: 50 })
+      .expect(400);
+  });
+
   it("rejects renaming a package to a packageNo already used elsewhere in the query (V-5 on update)", async () => {
     const { queryId } = await freshQuery();
     const cargo = await addCargo(queryId, {}).expect(201);
@@ -380,6 +404,50 @@ describe("Package CRUD (e2e)", () => {
       }).expect(201);
       await copyPackage(queryId, cargo.body.id, p.body.id, 1).expect(400);
       await copyPackage(queryId, cargo.body.id, p.body.id, 51).expect(400);
+    });
+
+    // Carry-forward fix (Task 7 §B): each clone is its own mediated transaction (no batch
+    // atomicity), so a mid-batch throw can leave an unsignaled PREFIX of already-committed
+    // clones. Trigger a deterministic mid-batch failure WITHOUT reaching into Prisma's internal
+    // interactive-transaction client (mocking `tx.package.create` isn't reliable — `tx` is a
+    // distinct object from `prisma.package` created per-transaction, not the same instance a
+    // jest.spyOn on the outer `prisma.package` would intercept). Instead: `copy()` calls
+    // `prisma.package.findFirst` OUTSIDE any tx, 3 times before it matters here — #1 loads
+    // `source`, #2 is clone 0's `nextPackageNo` probe (succeeds → clone 0 fully commits via its
+    // own tx), #3 is clone 1's `nextPackageNo` probe. Rejecting on call #3 throws inside
+    // `nextPackageNo()` BEFORE clone 1's own `mediator.apply`/`tx.package.create` ever runs — so
+    // the only row that could be orphaned is clone 0, which by then already committed.
+    it("rolls back already-committed clones when a later clone in the batch fails (Task 7 §B)", async () => {
+      const { queryId } = await freshQuery();
+      const cargo = await addCargo(queryId, {}).expect(201);
+      const p = await addPackage(queryId, cargo.body.id, {
+        packageNo: "ROLLBACK",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      }).expect(201);
+
+      type FindFirstFn = typeof prisma.package.findFirst;
+      const original: FindFirstFn = prisma.package.findFirst.bind(prisma.package);
+      let calls = 0;
+      const spy = jest
+        .spyOn(prisma.package, "findFirst")
+        .mockImplementation((...args: Parameters<FindFirstFn>) => {
+          calls += 1;
+          if (calls === 3) return Promise.reject(new Error("simulated DB failure (test)"));
+          return original(...args);
+        });
+
+      try {
+        await copyPackage(queryId, cargo.body.id, p.body.id, 3).expect(500);
+      } finally {
+        spy.mockRestore();
+      }
+
+      // No orphaned prefix: only the original source package survives under this cargo.
+      expect(await prisma.package.count({ where: { cargoId: cargo.body.id } })).toBe(1);
     });
   });
 });

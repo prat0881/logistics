@@ -82,11 +82,22 @@ describe("packageUpdateSchema", () => {
   });
 });
 
+// Task 7 §A2: unlike itemCreateSchema (stateless — qty⇒uom must hold within the submitted
+// object), itemUpdateSchema's old `.refine()` was STRICT on a PARTIAL patch: `{qty:8}` alone
+// false-rejected even when the stored item already had a uom, because a partial-update schema
+// structurally cannot see stored state. V-4 cross-field enforcement on update moved to
+// item.service.ts's `update` (merge patched-or-stored qty/uom, then validate); e2e coverage for
+// the merge behavior lives in apps/api/test/item.e2e-spec.ts. This schema now validates only
+// per-field shape on update, no cross-field refine.
 describe("itemUpdateSchema", () => {
-  it("rejects qty without uom on update (V-4)", () => {
-    expect(itemUpdateSchema.safeParse({ qty: 8 }).success).toBe(false);
+  it("accepts qty alone on a partial patch (V-4 cross-field check moved service-side)", () => {
+    expect(itemUpdateSchema.safeParse({ qty: 8 }).success).toBe(true);
     expect(itemUpdateSchema.safeParse({ qty: 8, uom: "PC" }).success).toBe(true);
     expect(itemUpdateSchema.safeParse({ qty: null, uom: null }).success).toBe(true);
+  });
+  it("still rejects an out-of-range qty regardless of uom (per-field shape still enforced)", () => {
+    expect(itemUpdateSchema.safeParse({ qty: 0 }).success).toBe(false); // qty must be positive
+    expect(itemUpdateSchema.safeParse({ qty: -5, uom: "PC" }).success).toBe(false);
   });
 });
 
