@@ -34,7 +34,7 @@ export class LegsService {
 
   private load(queryId: string, legId: string) {
     return this.prisma.leg
-      .findFirst({ where: { id: legId, queryId }, include: { legCargo: { select: { cargoItemId: true } } } })
+      .findFirst({ where: { id: legId, queryId }, include: { legPackages: { select: { packageId: true } } } })
       .then((l) => {
         if (!l) throw new NotFoundException("Leg not found");
         return l;
@@ -47,11 +47,11 @@ export class LegsService {
     if (!p) throw new BadRequestException(`Point ${pointId} does not belong to this query`);
   }
 
-  private async assertCargoRefs(queryId: string, cargoIds: string[]): Promise<void> {
-    if (!cargoIds.length) return;
-    const found = await this.prisma.cargoItem.count({ where: { queryId, id: { in: cargoIds } } });
-    if (found !== new Set(cargoIds).size)
-      throw new BadRequestException("One or more assigned cargo rows do not belong to this query");
+  private async assertPackageRefs(queryId: string, packageIds: string[]): Promise<void> {
+    if (!packageIds.length) return;
+    const found = await this.prisma.package.count({ where: { queryId, id: { in: packageIds } } });
+    if (found !== new Set(packageIds).size)
+      throw new BadRequestException("One or more assigned packages do not belong to this query");
   }
 
   // V-M1 (spec §10.4) blocks a leg save with an impossible mode↔endpoint. Only checkable when
@@ -110,8 +110,8 @@ export class LegsService {
     await this.assertQueryExists(queryId);
     await this.assertPointRef(queryId, input.originPointId);
     await this.assertPointRef(queryId, input.destinationPointId);
-    const cargoIds = input.assignedCargoIds ?? [];
-    await this.assertCargoRefs(queryId, cargoIds);
+    const packageIds = input.assignedPackageIds ?? [];
+    await this.assertPackageRefs(queryId, packageIds);
     await this.assertModeEndpoints(queryId, input.mode, input.originPointId, input.destinationPointId);
 
     const id = randomUUID();
@@ -137,9 +137,9 @@ export class LegsService {
             targetDelivery: input.targetDelivery ? new Date(input.targetDelivery) : null,
           },
         });
-        if (cargoIds.length)
-          await tx.legCargo.createMany({
-            data: cargoIds.map((cid) => ({ legId: id, cargoItemId: cid, tenantId: user.tenantId })),
+        if (packageIds.length)
+          await tx.legPackage.createMany({
+            data: packageIds.map((pid) => ({ legId: id, packageId: pid, tenantId: user.tenantId })),
           });
       },
     );
@@ -157,7 +157,7 @@ export class LegsService {
     const existing = await this.load(queryId, legId);
     if (input.originPointId !== undefined) await this.assertPointRef(queryId, input.originPointId);
     if (input.destinationPointId !== undefined) await this.assertPointRef(queryId, input.destinationPointId);
-    if (input.assignedCargoIds !== undefined) await this.assertCargoRefs(queryId, input.assignedCargoIds);
+    if (input.assignedPackageIds !== undefined) await this.assertPackageRefs(queryId, input.assignedPackageIds);
 
     const effMode = input.mode !== undefined ? input.mode : existing.mode;
     const effOrigin = input.originPointId !== undefined ? input.originPointId : existing.originPointId;
@@ -175,7 +175,7 @@ export class LegsService {
     // mediator runs, so a conflict never even reaches the free/change-order fork.
     if (input.warehouseHandlingIncluded === true) await this.assertWarehouseExclusivity(queryId, legId);
 
-    const { assignedCargoIds, chargeLineDefinitionIds, readyDate, targetDelivery, ...rest } = fieldsInput;
+    const { assignedPackageIds, chargeLineDefinitionIds, readyDate, targetDelivery, ...rest } = fieldsInput;
     const result = await this.mediator.apply(
       {
         entity: "leg",
@@ -195,15 +195,15 @@ export class LegsService {
             ...(targetDelivery !== undefined ? { targetDelivery: targetDelivery ? new Date(targetDelivery) : null } : {}),
           } as Prisma.LegUncheckedUpdateInput,
         });
-        if (assignedCargoIds !== undefined) {
-          await tx.legCargo.deleteMany({ where: { legId } });
-          if (assignedCargoIds.length)
-            await tx.legCargo.createMany({
-              data: assignedCargoIds.map((cid) => ({ legId, cargoItemId: cid, tenantId: user.tenantId })),
+        if (assignedPackageIds !== undefined) {
+          await tx.legPackage.deleteMany({ where: { legId } });
+          if (assignedPackageIds.length)
+            await tx.legPackage.createMany({
+              data: assignedPackageIds.map((pid) => ({ legId, packageId: pid, tenantId: user.tenantId })),
             });
         }
         // chargeLineDefinitionIds is not a Leg column (LegChargeLineSelection is its own
-        // table) — replace-set semantics, same shape as the assignedCargoIds block above.
+        // table) — replace-set semantics, same shape as the assignedPackageIds block above.
         if (chargeLineDefinitionIds !== undefined) {
           await tx.legChargeLineSelection.deleteMany({ where: { legId } });
           if (chargeLineDefinitionIds.length)
@@ -228,7 +228,7 @@ export class LegsService {
     const result = await this.mediator.apply(
       { entity: "leg", id: legId, action: "@delete", queryId, actorId: user.userId },
       async (tx) => {
-        await tx.leg.delete({ where: { id: legId } }); // legCargo cascades
+        await tx.leg.delete({ where: { id: legId } }); // legPackage cascades
       },
     );
     if (result.needsConfirmation) {

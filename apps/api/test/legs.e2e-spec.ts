@@ -21,7 +21,8 @@ describe("Legs (e2e)", () => {
   let deliveryId: string;
   let seaportId: string;
   let seaport2Id: string;
-  let cargoId: string;
+  let pkg1Id: string;
+  let pkg2Id: string;
   const cookie = () => `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: EXEC_ID, role: Role.EXECUTIVE, tenantId: null })}`;
   const api = () => request(app.getHttpServer());
 
@@ -41,21 +42,31 @@ describe("Legs (e2e)", () => {
     deliveryId = (await prisma.point.create({ data: { queryId, type: "DELIVERY", name: "DE", country: "DE" } })).id;
     seaportId = (await prisma.point.create({ data: { queryId, type: "SEAPORT", name: "SP", country: "IN" } })).id;
     seaport2Id = (await prisma.point.create({ data: { queryId, type: "SEAPORT", name: "SP2", country: "SG" } })).id;
-    cargoId = (await prisma.cargoItem.create({ data: { queryId, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } })).id;
+    const cargo = await prisma.cargo.create({ data: { queryId, rowIndex: 0 } });
+    pkg1Id = (
+      await prisma.package.create({
+        data: { queryId, cargoId: cargo.id, rowIndex: 0, packageNo: "P-1", packageType: "BOX", dimL: 100, dimW: 50, dimH: 40, grossWt: 5 },
+      })
+    ).id;
+    pkg2Id = (
+      await prisma.package.create({
+        data: { queryId, cargoId: cargo.id, rowIndex: 1, packageNo: "P-2", packageType: "BOX", dimL: 100, dimW: 50, dimH: 40, grossWt: 10 },
+      })
+    ).id;
   });
   afterAll(async () => {
     await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } });
     await app.close();
   });
 
-  it("mints sequential legCodes L1, L2 and stores LegCargo", async () => {
+  it("mints sequential legCodes L1, L2 and stores LegPackage", async () => {
     const l1 = await api()
       .post(`/api/queries/${queryId}/legs`)
       .set("Cookie", cookie())
-      .send({ mode: "ROAD", originPointId: pickupId, destinationPointId: seaportId, assignedCargoIds: [cargoId] })
+      .send({ mode: "ROAD", originPointId: pickupId, destinationPointId: seaportId, assignedPackageIds: [pkg1Id] })
       .expect(201);
     expect(l1.body.legCode).toBe("L1");
-    expect(l1.body.legCargo).toHaveLength(1);
+    expect(l1.body.legPackages).toHaveLength(1);
 
     const l2 = await api()
       .post(`/api/queries/${queryId}/legs`)
@@ -74,15 +85,15 @@ describe("Legs (e2e)", () => {
     expect(res.body.findings[0].rule).toBe("V-M1");
   });
 
-  it("400s an assignedCargoId from another query", async () => {
+  it("400s an assignedPackageId from another query", async () => {
     await api()
       .post(`/api/queries/${queryId}/legs`)
       .set("Cookie", cookie())
-      .send({ mode: "ROAD", assignedCargoIds: [EXEC_ID] })
+      .send({ mode: "ROAD", assignedPackageIds: [EXEC_ID] })
       .expect(400);
   });
 
-  it("patches cargo assignment and deletes the leg", async () => {
+  it("patches package assignment and deletes the leg", async () => {
     const leg = await api()
       .post(`/api/queries/${queryId}/legs`)
       .set("Cookie", cookie())
@@ -92,9 +103,23 @@ describe("Legs (e2e)", () => {
     const patched = await api()
       .patch(`/api/queries/${queryId}/legs/${legId}`)
       .set("Cookie", cookie())
-      .send({ assignedCargoIds: [cargoId] })
+      .send({ assignedPackageIds: [pkg1Id] })
       .expect(200);
-    expect(patched.body.legCargo).toHaveLength(1);
+    expect(patched.body.legPackages).toHaveLength(1);
     await api().delete(`/api/queries/${queryId}/legs/${legId}`).set("Cookie", cookie()).expect(204);
+  });
+
+  it("assigns packages to a leg; the query read sums canonical roll-ups directly", async () => {
+    const leg = await api()
+      .post(`/api/queries/${queryId}/legs`)
+      .set("Cookie", cookie())
+      .send({ mode: "ROAD", originPointId: pickupId, destinationPointId: deliveryId, assignedPackageIds: [pkg1Id, pkg2Id] })
+      .expect(201);
+    const res = await api().get(`/api/queries/${queryId}`).set("Cookie", cookie()).expect(200);
+    const shaped = res.body.legs.find((l: { id: string }) => l.id === leg.body.id);
+    expect(shaped.assignedPackageIds).toEqual(expect.arrayContaining([pkg1Id, pkg2Id]));
+    expect(shaped.rollup.totalPackages).toBe(2); // count — Package IS the freight unit
+    expect(shaped.rollup.totalGrossWt).toBeCloseTo(15, 3); // 5 + 10 kg, direct canonical Σ (no toKg)
+    await api().delete(`/api/queries/${queryId}/legs/${leg.body.id}`).set("Cookie", cookie()).expect(204);
   });
 });

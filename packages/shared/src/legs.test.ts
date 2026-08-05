@@ -15,9 +15,9 @@ describe("legSaveSchema", () => {
   it("rejects a non-mode value", () => {
     expect(legSaveSchema.safeParse({ mode: "TRAIN" }).success).toBe(false);
   });
-  it("accepts assignedCargoIds as uuids", () => {
+  it("accepts assignedPackageIds as uuids", () => {
     expect(
-      legSaveSchema.safeParse({ assignedCargoIds: ["11111111-1111-1111-1111-111111111111"] })
+      legSaveSchema.safeParse({ assignedPackageIds: ["11111111-1111-1111-1111-111111111111"] })
         .success,
     ).toBe(true);
   });
