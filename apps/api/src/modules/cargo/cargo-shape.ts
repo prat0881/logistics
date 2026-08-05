@@ -10,9 +10,12 @@ export type ItemRow = Item;
 export type PackageRow = Package & { items: ItemRow[] };
 export type CargoRow = Cargo & { packages: PackageRow[] };
 
-// SKELETON (Task 4): a straight field-for-field mapping — Item has no derived fields of its
-// own (effectiveTags is a PACKAGE-level roll-up, computed in shapePackage below). Task 7 owns
-// any further refinement.
+// A straight field-for-field mapping — Item has no derived fields of its own (effectiveTags is a
+// PACKAGE-level roll-up, computed in shapePackage below). Task 7 owns any further refinement.
+// `as ReferenceTag[]`: consistent with shapePackage's identical cast below (T4-review) — Prisma's
+// generated Item.tags type and @svyft/shared's ReferenceTag are structurally identical string
+// unions but nominally distinct types, so both call sites assert the same way rather than one
+// relying on structural inference to happen to line up.
 export function shapeItem(item: ItemRow): ItemDto {
   return {
     id: item.id,
@@ -21,15 +24,16 @@ export function shapeItem(item: ItemRow): ItemDto {
     qty: item.qty === null ? null : item.qty.toString(),
     uom: item.uom,
     hsCode: item.hsCode,
-    tags: item.tags,
+    tags: item.tags as ReferenceTag[],
   };
 }
 
-// SKELETON (Task 4): base fields, nested items, and effectiveTags (already fully implemented in
-// @svyft/shared, so there's no reason to stub it — shapeCargo's tag roll-up below reads it).
-// What's genuinely deferred to Task 5: canonical-unit DISPLAY conversion — dimL/dimW/dimH are
-// stored canonical-cm, and converting them to the parent Cargo's dimUnit for display needs that
-// cargo's units threaded through, which isn't wired up yet. dims below are raw canonical cm.
+// Base fields, nested items, and effectiveTags (implemented in @svyft/shared). Dims/weights
+// (dimL/dimW/dimH/grossWt/netWt) are returned RAW canonical cm/kg, by design (Task 5, per the
+// task-5 brief) — NOT converted to the parent Cargo's display unit here. The DTO stays canonical
+// end-to-end; whichever layer renders for a human (web) converts for display using the owning
+// Cargo's dimUnit/weightUnit, same as PackageService converts entry-unit input INTO canonical on
+// the way in (see package.service.ts create/update).
 export function shapePackage(pkg: PackageRow): PackageDto {
   const items = pkg.items.map(shapeItem);
   return {
