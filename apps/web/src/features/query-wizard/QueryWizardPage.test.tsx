@@ -45,7 +45,7 @@ const draftDetail = {
   assignedUserId: null,
   createdAt: "2026-01-01T00:00:00+00:00",
   updatedAt: "2026-01-01T00:00:00+00:00",
-  cargo: [],
+  cargos: [],
   checklist: [],
   files: [],
   points: [],
@@ -73,24 +73,37 @@ const fullDraftDetail = {
   readyDate: READY_DATE_Q9,
   targetDelivery: TARGET_DELIVERY_Q9,
   internalNotes: "Ready for RFQ",
-  cargo: [
+  cargos: [
     {
-      id: CARGO_ID_Q9,
+      id: "aaaa0006-0000-0000-0000-000000000000",
       rowIndex: 0,
       poReference: "PO-Q9-001",
-      productName: "Widget",
-      referenceTags: [],
-      hsCode: null,
-      packageType: "Carton",
-      isDangerous: false,
-      msdsFileId: null,
-      qty: 5,
-      dimL: "30",
-      dimW: "20",
-      dimH: "10",
-      netWt: null,
-      grossWt: "10",
+      label: null,
+      dimUnit: "CM",
+      weightUnit: "KG",
+      packageCount: 1,
+      grossWeightKg: "10",
       volumeCbm: "0.006",
+      tags: [],
+      chargeableWeight: null,
+      packages: [
+        {
+          id: CARGO_ID_Q9,
+          rowIndex: 0,
+          packageNo: "PKG-1",
+          packageType: "CARTON",
+          dimL: "30",
+          dimW: "20",
+          dimH: "10",
+          netWt: null,
+          grossWt: "10",
+          volumeCbm: "0.006",
+          tags: [],
+          effectiveTags: [],
+          msdsFileId: null,
+          items: [],
+        },
+      ],
     },
   ],
   points: [
@@ -155,7 +168,7 @@ const fullDraftDetail = {
       executionStatus: "NOT_STARTED",
       createdAt: "2026-01-01T00:00:00+00:00",
       updatedAt: "2026-01-01T00:00:00+00:00",
-      assignedCargoIds: [CARGO_ID_Q9],
+      assignedPackageIds: [CARGO_ID_Q9],
       rollup: { totalPackages: 5, totalCbm: 0.006, totalGrossWt: 10, totalNetWt: 0 },
     },
   ],
@@ -258,6 +271,66 @@ describe("QueryWizardPage", () => {
       expect(screen.getByText("Client is required")).toBeInTheDocument(),
     );
     // Status should still be DRAFT
+    expect(screen.getByText("DRAFT")).toBeInTheDocument();
+    // The server /create endpoint must NOT have been called — client preview blocked it
+    expect(createCalls.length).toBe(0);
+  });
+
+  it("Create Query blocks with F6 when a package is dangerous-goods without an MSDS (per-package now)", async () => {
+    const createCalls: string[] = [];
+    // F6 moved from the old flat-cargo shape to PackageForValidation (Task 2) — a package's
+    // *effective* tags (own ∪ item tags) including DG with no msdsFileId must still block.
+    const detailWithDgPackageNoMsds = {
+      ...fullDraftDetail,
+      cargos: [
+        {
+          ...fullDraftDetail.cargos[0],
+          packages: [
+            {
+              ...fullDraftDetail.cargos[0].packages[0],
+              tags: ["DG"],
+              effectiveTags: ["DG"],
+              msdsFileId: null,
+            },
+          ],
+        },
+      ],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.includes("/api/auth/me"))
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
+        if (url.includes("/api/queries/q9/create") && init?.method === "POST") {
+          createCalls.push(url);
+          return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
+        }
+        if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithDgPackageNoMsds };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      {
+        route: "/queries/q9?step=4",
+        user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" },
+      },
+    );
+
+    const createBtn = await screen.findByRole("button", { name: /Create Query/i });
+    await userEvent.click(createBtn);
+
+    // F6: "Package <packageNo>: a dangerous-goods package requires an MSDS (PDF)"
+    await waitFor(() =>
+      expect(screen.getByText(/dangerous-goods package requires an MSDS/i)).toBeInTheDocument(),
+    );
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
     // The server /create endpoint must NOT have been called — client preview blocked it
     expect(createCalls.length).toBe(0);

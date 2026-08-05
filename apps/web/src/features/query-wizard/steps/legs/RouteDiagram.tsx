@@ -599,7 +599,7 @@ function RouteTooltip({
       <div className="font-semibold">{leg.legCode} · {leg.mode ?? "no mode"}</div>
       <div>{leg.status}</div>
       <div>{originName} → {destName}</div>
-      <div>{leg.assignedCargoIds.length} cargo</div>
+      <div>{leg.assignedPackageIds.length} packages</div>
       <div>{rollupLine}</div>
       {msgs.map((m, i) => (
         <div key={i} className="text-destructive">{m}</div>

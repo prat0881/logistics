@@ -4,18 +4,23 @@ import { toRouteGraph } from "./routeGraph";
 
 const QUERY_ID = "q-1";
 
-/** Minimal valid QueryDetail; override points/legs/cargo/query fields per test. */
+/** Minimal valid QueryDetail; override points/legs/cargos/query fields per test. */
 function makeDetail(over: {
   id?: string;
   readyDate?: string | null;
   targetDelivery?: string | null;
   points?: Array<Partial<QueryDetail["points"][number]> & { id: string; type: string }>;
-  cargo?: Array<Partial<QueryDetail["cargo"][number]> & { id: string }>;
+  cargos?: Array<
+    Partial<Omit<QueryDetail["cargos"][number], "packages">> & {
+      id: string;
+      packages?: Array<Partial<QueryDetail["cargos"][number]["packages"][number]> & { id: string }>;
+    }
+  >;
   legs?: Array<
     Partial<QueryDetail["legs"][number]> & {
       id: string;
       legCode: string;
-      assignedCargoIds: string[];
+      assignedPackageIds: string[];
     }
   >;
 } = {}): QueryDetail {
@@ -40,26 +45,39 @@ function makeDetail(over: {
     updatedAt: "2026-01-01T00:00:00+00:00",
     ...p,
   })) as QueryDetail["points"];
-  const cargo = (over.cargo ?? []).map((c, i) => ({
-    rowIndex: i,
-    poReference: "PO",
-    productName: "Widget",
-    referenceTags: [],
-    hsCode: null,
-    packageType: "Carton",
-    isDangerous: false,
-    msdsFileId: null,
-    qty: 1,
-    dimL: "10",
-    dimW: "10",
-    dimH: "10",
-    netWt: null,
-    grossWt: "10",
-    volumeCbm: "1",
-    dimUnit: "CM",
-    weightUnit: "KG",
-    ...c,
-  })) as QueryDetail["cargo"];
+  const cargos = (over.cargos ?? []).map((c, i) => {
+    const { packages: rawPackages, ...cargoOverride } = c;
+    const packages = (rawPackages ?? []).map((p, j) => ({
+      rowIndex: j,
+      packageNo: `PKG-${j + 1}`,
+      packageType: "CARTON",
+      dimL: "10",
+      dimW: "10",
+      dimH: "10",
+      netWt: null,
+      grossWt: "10",
+      volumeCbm: "1",
+      tags: [],
+      effectiveTags: [],
+      msdsFileId: null,
+      items: [],
+      ...p,
+    }));
+    return {
+      rowIndex: i,
+      poReference: "PO",
+      label: null,
+      dimUnit: "CM",
+      weightUnit: "KG",
+      packageCount: packages.length,
+      grossWeightKg: "0",
+      volumeCbm: "0",
+      tags: [],
+      chargeableWeight: null,
+      ...cargoOverride,
+      packages,
+    };
+  }) as QueryDetail["cargos"];
   const legs = (over.legs ?? []).map((l) => ({
     tenantId: null,
     queryId: id,
@@ -74,6 +92,8 @@ function makeDetail(over: {
     createdAt: "2026-01-01T00:00:00+00:00",
     updatedAt: "2026-01-01T00:00:00+00:00",
     rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+    warehouseHandlingIncluded: null,
+    chargeLineDefinitionIds: [],
     ...l,
   })) as QueryDetail["legs"];
   return {
@@ -111,7 +131,7 @@ function makeDetail(over: {
     assignedUserId: null,
     createdAt: "2026-01-01T00:00:00+00:00",
     updatedAt: "2026-01-01T00:00:00+00:00",
-    cargo,
+    cargos,
     checklist: [],
     files: [],
     points,
@@ -123,20 +143,24 @@ function makeDetail(over: {
 }
 
 describe("toRouteGraph", () => {
-  it("assembles a RouteGraph with legCargo edges from assignedCargoIds", () => {
+  it("assembles a RouteGraph with legCargo edges from assignedPackageIds", () => {
     const detail = makeDetail({
       points: [
         { id: "p1", type: "PICKUP" },
         { id: "p2", type: "DELIVERY" },
       ],
-      cargo: [
+      cargos: [
         {
           id: "c1",
           poReference: "PO1",
-          isDangerous: false,
-          msdsFileId: null,
-          grossWt: "10",
-          volumeCbm: "1",
+          packages: [
+            {
+              id: "pkg1",
+              msdsFileId: null,
+              grossWt: "10",
+              volumeCbm: "1",
+            },
+          ],
         },
       ],
       legs: [
@@ -148,12 +172,12 @@ describe("toRouteGraph", () => {
           destinationPointId: "p2",
           readyDate: null,
           targetDelivery: null,
-          assignedCargoIds: ["c1"],
+          assignedPackageIds: ["pkg1"],
         },
       ],
     });
     const g = toRouteGraph(detail);
-    expect(g.legCargo).toEqual([{ legId: "l1", cargoItemId: "c1" }]);
+    expect(g.legCargo).toEqual([{ legId: "l1", cargoItemId: "pkg1" }]);
     expect(g.legs[0]).toMatchObject({
       legCode: "L1",
       originPointId: "p1",
@@ -161,7 +185,7 @@ describe("toRouteGraph", () => {
     });
   });
 
-  it("maps query, point endpoint fields, and cargo Decimal strings through as-is", () => {
+  it("maps query, point endpoint fields, and package Decimal strings through as-is", () => {
     const detail = makeDetail({
       readyDate: "2026-02-01T00:00:00+00:00",
       targetDelivery: "2026-03-01T00:00:00+00:00",
@@ -178,7 +202,13 @@ describe("toRouteGraph", () => {
           icaoCode: null,
         },
       ],
-      cargo: [{ id: "c1", poReference: "PO9", grossWt: "180.5", volumeCbm: "12.25" }],
+      cargos: [
+        {
+          id: "c1",
+          poReference: "PO9",
+          packages: [{ id: "pkgA", grossWt: "180.5", volumeCbm: "12.25" }],
+        },
+      ],
       legs: [],
     });
     const g = toRouteGraph(detail);
@@ -196,9 +226,10 @@ describe("toRouteGraph", () => {
       unLocode: "INNSA",
       terminal: "JNPT",
     });
-    // Decimal strings pass through untouched (engine coerces).
+    // Decimal strings pass through untouched (engine coerces). RouteCargo.id is the
+    // PACKAGE id (one routable unit per Package); poReference comes from the parent Cargo.
     expect(g.cargo[0]).toMatchObject({
-      id: "c1",
+      id: "pkgA",
       poReference: "PO9",
       grossWt: "180.5",
       volumeCbm: "12.25",
@@ -206,15 +237,15 @@ describe("toRouteGraph", () => {
     });
   });
 
-  it("flattens multiple assignedCargoIds across legs into legCargo edges", () => {
+  it("flattens multiple assignedPackageIds on a leg into legCargo edges", () => {
     const detail = makeDetail({
       points: [
         { id: "p1", type: "PICKUP" },
         { id: "p2", type: "DELIVERY" },
       ],
-      cargo: [
-        { id: "c1", poReference: "PO1" },
-        { id: "c2", poReference: "PO2" },
+      cargos: [
+        { id: "c1", poReference: "PO1", packages: [{ id: "pkg1" }] },
+        { id: "c2", poReference: "PO2", packages: [{ id: "pkg2" }] },
       ],
       legs: [
         {
@@ -223,19 +254,19 @@ describe("toRouteGraph", () => {
           mode: "ROAD",
           originPointId: "p1",
           destinationPointId: "p2",
-          assignedCargoIds: ["c1", "c2"],
+          assignedPackageIds: ["pkg1", "pkg2"],
         },
       ],
     });
     const g = toRouteGraph(detail);
     expect(g.legCargo).toEqual([
-      { legId: "l1", cargoItemId: "c1" },
-      { legId: "l1", cargoItemId: "c2" },
+      { legId: "l1", cargoItemId: "pkg1" },
+      { legId: "l1", cargoItemId: "pkg2" },
     ]);
   });
 
   it("validateRoute flags R2 when a cargo chain STARTS at a Delivery point in create phase", () => {
-    // p1 DELIVERY → p2 WAREHOUSE, single leg carrying c1. A chain may start at any point
+    // p1 DELIVERY → p2 WAREHOUSE, single leg carrying pkg1. A chain may start at any point
     // type EXCEPT a delivery (a delivery is where cargo arrives) → R2 blocking at create.
     // (Ending at a warehouse is allowed now, so the start-type is what R2 checks here.)
     const brokenDetail = makeDetail({
@@ -245,7 +276,7 @@ describe("toRouteGraph", () => {
         { id: "p1", type: "DELIVERY" },
         { id: "p2", type: "WAREHOUSE" },
       ],
-      cargo: [{ id: "c1", poReference: "PO1" }],
+      cargos: [{ id: "c1", poReference: "PO1", packages: [{ id: "pkg1" }] }],
       legs: [
         {
           id: "l1",
@@ -253,7 +284,7 @@ describe("toRouteGraph", () => {
           mode: "ROAD",
           originPointId: "p1",
           destinationPointId: "p2",
-          assignedCargoIds: ["c1"],
+          assignedPackageIds: ["pkg1"],
         },
       ],
     });

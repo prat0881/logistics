@@ -5,7 +5,8 @@ import { StageRail, isRfqStageEnabled } from "@/features/rfq-workspace/StageRail
 import type {
   Finding,
   QueryForValidation,
-  CargoForValidation,
+  PackageForValidation,
+  PackageDto,
   QuerySaveInput,
   QueryDetail,
 } from "@svyft/shared";
@@ -63,14 +64,16 @@ function toQueryForValidation(
   };
 }
 
-function toCargoForValidation(
-  cargo: NonNullable<ReturnType<typeof useWizard>["detail"]>["cargo"][number],
-): CargoForValidation {
+function toPackageForValidation(p: PackageDto): PackageForValidation {
   return {
-    id: cargo.id,
-    isDangerous: cargo.isDangerous,
-    msdsFileId: cargo.msdsFileId,
-    poReference: cargo.poReference,
+    id: p.id,
+    packageNo: p.packageNo,
+    effectiveTags: p.effectiveTags, // already the union (own ∪ items) from shapePackage
+    msdsFileId: p.msdsFileId,
+    dimL: Number(p.dimL),
+    dimW: Number(p.dimW),
+    dimH: Number(p.dimH),
+    grossWt: Number(p.grossWt),
   };
 }
 
@@ -167,7 +170,7 @@ function WizardInner({ id }: { id?: string }) {
     const preview = dedupeFindings([
       ...collectCreateFindings(
         toQueryForValidation(fresh),
-        fresh.cargo.map(toCargoForValidation),
+        fresh.cargos.flatMap((c) => c.packages).map(toPackageForValidation),
       ),
       ...validateRoute(graph, "create"),
       ...collectChecklistFindings(checklistItems, fresh.internalNotes),
