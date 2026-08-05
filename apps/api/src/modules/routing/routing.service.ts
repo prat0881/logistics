@@ -72,8 +72,11 @@ export class RoutingService {
       // stop buildGraph from throwing (previously: `client.cargoItem`/`client.legCargo` are
       // `undefined` post-migration, so `.findMany` threw a TypeError on every call, which broke
       // EVERY mediated write in the app — FreePathStrategy.run calls revalidate()->buildGraph()
-      // unconditionally, not just for cargo edits). Leg/point-level rules (R5, R7, R8, C1, V-M1,
-      // T3) are unaffected — they never read graph.cargo/legCargo.
+      // unconditionally, not just for cargo edits). CORRECTION (T4 review): R3 ("leg carries no
+      // cargo") and C1 ("leg missing cargo") do NOT go quiet — they go NOISY. cargosByLeg is built
+      // from legCargo (now []), so EVERY leg is falsely flagged (warning at phase=draft on every
+      // revalidate; BLOCKING via POST /validate?phase=create). Only R5, R7, R8, V-M1, T3 (pure
+      // leg/point rules) are truly unaffected. The T10 re-derivation must restore R3/C1 too.
       cargo: [],
       legCargo: [],
     };
@@ -90,9 +93,13 @@ export class RoutingService {
   // fan-out through Package is a dedicated later task's call, not this one's — see buildGraph
   // above for the full rationale). [] is the faithful "no LegCargo rows exist anymore" state and
   // keeps this from throwing (client.legCargo is not a Prisma delegate post-migration).
-  // ImpactClassifier's own `default: legIds = []` branch already treats an empty result as
-  // ordinary self-scope (pre-RFQ / unassigned), so this is "cargo always self-scopes until
-  // package-leg assignment exists" — not a new behavior, just an early version of it.
+  // ImpactClassifier's `default: legIds = []` branch treats empty as ordinary self-scope — BUT
+  // (T4 review, IMPORTANT): ScopeResolver.downstreamWork only inspects type==="leg" scope entries,
+  // so a cargo self-scope makes downstreamWork ALWAYS false → decidePath free-paths even Structural
+  // @create/@delete. This doesn't just narrow scope, it DEFEATS change-order gating for cargo
+  // changes. INERT today (nothing populates Package/LegPackage yet), but T10's re-derivation MUST
+  // restore real Package→Leg scoping here BEFORE any RFQ/quote work trusts cargo Structural changes
+  // — else a cargo delete with live downstream quotes silently free-paths.
   async legsCarryingCargo(_cargoId: string, _client: Db = this.prisma): Promise<string[]> {
     return [];
   }
