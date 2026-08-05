@@ -1,16 +1,21 @@
 import { describe, it, expect } from "vitest";
-import { REFERENCE_TAGS, referenceTagLabel, cargoCreateSchema, cargoUpdateSchema, cargoLabel } from "./cargo";
+import {
+  REFERENCE_TAGS, referenceTagLabel, cargoCreateSchema, cargoUpdateSchema, cargoLabel,
+  PACKAGE_TYPES, UOMS,
+  toCanonicalDim, fromCanonicalDim, toCanonicalWeight, fromCanonicalWeight,
+  cbmFromCanonical, weightUnitLabel,
+} from "./cargo";
 import { DIM_UNITS, WEIGHT_UNITS, cbmFromDims, toKg } from "./cargo";
 
 describe("ReferenceTag vocabulary", () => {
   it("pins the tag order", () => {
-    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE", "OUT_OF_GAUGE"]);
+    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE", "OUT_OF_GAUGE", "DG"]);
   });
 });
 
 describe("reference tags", () => {
   it("includes OUT_OF_GAUGE", () => {
-    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE", "OUT_OF_GAUGE"]);
+    expect(REFERENCE_TAGS).toEqual(["HEAVY", "FRAGILE", "NON_STACKABLE", "OUT_OF_GAUGE", "DG"]);
   });
   it("labels OUT_OF_GAUGE as 'Out of Gauge Cargo'", () => {
     expect(referenceTagLabel("OUT_OF_GAUGE")).toBe("Out of Gauge Cargo");
@@ -94,7 +99,7 @@ describe("cargoLabel", () => {
 describe("units", () => {
   it("pins the unit arrays", () => {
     expect(DIM_UNITS).toEqual(["CM", "MM"]);
-    expect(WEIGHT_UNITS).toEqual(["KG", "GM"]);
+    expect(WEIGHT_UNITS).toEqual(["KG", "TONNE", "GM"]);
   });
   it("cbmFromDims returns m³ and is unit-consistent (same box, either unit)", () => {
     // 100×50×40 cm, qty 2 → 0.4 m³
@@ -105,5 +110,39 @@ describe("units", () => {
   it("toKg normalizes grams", () => {
     expect(toKg(5, "KG")).toBe(5);
     expect(toKg(5000, "GM")).toBe(5);
+  });
+});
+
+describe("packing-list vocabularies", () => {
+  it("pins package types + UoMs", () => {
+    expect(PACKAGE_TYPES).toEqual(["BOX", "PALLET", "CRATE", "CARTON", "DRUM", "BUNDLE"]);
+    expect(UOMS).toEqual(["PC", "SET", "BOX", "KG", "M", "ROLL"]);
+  });
+  it("adds DG and TONNE", () => {
+    expect(REFERENCE_TAGS).toContain("DG");
+    expect(WEIGHT_UNITS).toEqual(["KG", "TONNE", "GM"]);
+  });
+});
+
+describe("canonical unit helpers", () => {
+  it("dims round-trip cm/mm to canonical cm", () => {
+    expect(toCanonicalDim(100, "CM")).toBe(100);
+    expect(toCanonicalDim(1000, "MM")).toBe(100);          // 1000 mm = 100 cm
+    expect(fromCanonicalDim(100, "MM")).toBe(1000);        // 100 cm shown as 1000 mm
+    expect(fromCanonicalDim(toCanonicalDim(37, "MM"), "MM")).toBeCloseTo(37, 9); // V-6 round-trip
+  });
+  it("weights round-trip kg/tonne/g to canonical kg", () => {
+    expect(toCanonicalWeight(5, "KG")).toBe(5);
+    expect(toCanonicalWeight(2, "TONNE")).toBe(2000);
+    expect(toCanonicalWeight(5000, "GM")).toBe(5);
+    expect(fromCanonicalWeight(2000, "TONNE")).toBe(2);
+  });
+  it("cbmFromCanonical returns m³ from cm dims", () => {
+    expect(cbmFromCanonical(100, 50, 40)).toBeCloseTo(0.2, 9); // one package, no ×qty
+  });
+  it("labels g and tonne", () => {
+    expect(weightUnitLabel("GM")).toBe("g");
+    expect(weightUnitLabel("TONNE")).toBe("tonne");
+    expect(weightUnitLabel("KG")).toBe("kg");
   });
 });

@@ -4,9 +4,21 @@ export const DimUnit = { CM: "CM", MM: "MM" } as const;
 export type DimUnit = (typeof DimUnit)[keyof typeof DimUnit];
 export const DIM_UNITS = Object.values(DimUnit) as [DimUnit, ...DimUnit[]];
 
-export const WeightUnit = { KG: "KG", GM: "GM" } as const;
+export const WeightUnit = { KG: "KG", TONNE: "TONNE", GM: "GM" } as const;
 export type WeightUnit = (typeof WeightUnit)[keyof typeof WeightUnit];
 export const WEIGHT_UNITS = Object.values(WeightUnit) as [WeightUnit, ...WeightUnit[]];
+
+export const PackageType = {
+  BOX: "BOX", PALLET: "PALLET", CRATE: "CRATE", CARTON: "CARTON", DRUM: "DRUM", BUNDLE: "BUNDLE",
+} as const;
+export type PackageType = (typeof PackageType)[keyof typeof PackageType];
+export const PACKAGE_TYPES = Object.values(PackageType) as [PackageType, ...PackageType[]];
+
+export const UnitOfMeasure = {
+  PC: "PC", SET: "SET", BOX: "BOX", KG: "KG", M: "M", ROLL: "ROLL",
+} as const;
+export type UnitOfMeasure = (typeof UnitOfMeasure)[keyof typeof UnitOfMeasure];
+export const UOMS = Object.values(UnitOfMeasure) as [UnitOfMeasure, ...UnitOfMeasure[]];
 
 /** Volume in cubic metres from dims in the chosen unit. cm³/1e6 = m³; mm³/1e9 = m³. */
 export function cbmFromDims(dimL: number, dimW: number, dimH: number, qty: number, dimUnit: DimUnit): number {
@@ -17,6 +29,35 @@ export function cbmFromDims(dimL: number, dimW: number, dimH: number, qty: numbe
 /** Normalize a weight in the chosen unit to kilograms. */
 export function toKg(weight: number, weightUnit: WeightUnit): number {
   return weightUnit === "GM" ? weight / 1000 : weight;
+}
+
+/** Convert a dimension value to canonical cm. */
+export function toCanonicalDim(v: number, u: DimUnit): number {
+  return u === "MM" ? v / 10 : v;
+}
+
+/** Convert from canonical cm to the chosen unit. */
+export function fromCanonicalDim(vCm: number, u: DimUnit): number {
+  return u === "MM" ? vCm * 10 : vCm;
+}
+
+/** Convert a weight value to canonical kg. */
+export function toCanonicalWeight(v: number, u: WeightUnit): number {
+  if (u === "TONNE") return v * 1000;
+  if (u === "GM") return v / 1000;
+  return v;
+}
+
+/** Convert from canonical kg to the chosen unit. */
+export function fromCanonicalWeight(vKg: number, u: WeightUnit): number {
+  if (u === "TONNE") return vKg / 1000;
+  if (u === "GM") return vKg * 1000;
+  return vKg;
+}
+
+/** Volume in m³ from a single package's canonical-cm dims (no ×qty). */
+export function cbmFromCanonical(dimLcm: number, dimWcm: number, dimHcm: number): number {
+  return (dimLcm * dimWcm * dimHcm) / 1e6;
 }
 
 export function cargoLabel(c: { poReference?: string | null; productName?: string | null; rowIndex?: number }): string {
@@ -33,6 +74,7 @@ export const ReferenceTag = {
   FRAGILE: "FRAGILE",
   NON_STACKABLE: "NON_STACKABLE",
   OUT_OF_GAUGE: "OUT_OF_GAUGE",
+  DG: "DG",
 } as const;
 export type ReferenceTag = (typeof ReferenceTag)[keyof typeof ReferenceTag];
 export const REFERENCE_TAGS = Object.values(ReferenceTag) as [ReferenceTag, ...ReferenceTag[]];
@@ -42,9 +84,24 @@ const REFERENCE_TAG_LABELS: Record<ReferenceTag, string> = {
   FRAGILE: "Fragile",
   NON_STACKABLE: "Non Stackable",
   OUT_OF_GAUGE: "Out of Gauge Cargo",
+  DG: "Dangerous Goods",
 };
 export function referenceTagLabel(tag: ReferenceTag): string {
   return REFERENCE_TAG_LABELS[tag] ?? tag.replace(/_/g, " ");
+}
+
+const PACKAGE_TYPE_LABELS: Record<PackageType, string> = {
+  BOX: "Box", PALLET: "Pallet", CRATE: "Crate", CARTON: "Carton", DRUM: "Drum", BUNDLE: "Bundle",
+};
+export function packageTypeLabel(t: PackageType): string { return PACKAGE_TYPE_LABELS[t] ?? t; }
+
+const UOM_LABELS: Record<UnitOfMeasure, string> = {
+  PC: "pc", SET: "set", BOX: "box", KG: "kg", M: "m", ROLL: "roll",
+};
+export function uomLabel(u: UnitOfMeasure): string { return UOM_LABELS[u] ?? u; }
+
+export function weightUnitLabel(u: WeightUnit): string {
+  return u === "GM" ? "g" : u === "TONNE" ? "tonne" : "kg";
 }
 
 // A cargo row (§7.3). Core fields required (a row is atomic data entry + volumeCbm
