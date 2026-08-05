@@ -1,14 +1,12 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import type { CargoCreateInput, CargoUpdateInput } from "@svyft/shared";
-import ExcelJS from "exceljs";
+import type { Prisma } from "@prisma/client";
+import type { CargoCreateInput, CargoDto, CargoUpdateInput } from "@svyft/shared";
 import { randomUUID } from "node:crypto";
 import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
-import { FilesService, type MsdsUpload } from "../files/files.service";
-import { QueriesService } from "../queries/queries.service";
+import { shapeCargo } from "./cargo-shape";
 
 @Injectable()
 export class CargoService {
@@ -16,8 +14,6 @@ export class CargoService {
     private readonly prisma: PrismaService,
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
-    private readonly queries: QueriesService,
-    private readonly files: FilesService,
   ) {}
 
   private async assertQueryExists(queryId: string): Promise<void> {
@@ -26,17 +22,52 @@ export class CargoService {
   }
 
   private async load(queryId: string, cid: string) {
-    const row = await this.prisma.cargoItem.findFirst({ where: { id: cid, queryId } });
-    if (!row) throw new NotFoundException("Cargo row not found");
+    const row = await this.prisma.cargo.findFirst({ where: { id: cid, queryId } });
+    if (!row) throw new NotFoundException("Cargo not found");
     return row;
   }
 
-  // Mediated @create: assign the next rowIndex, persist the row, re-sync dgIndicator — all
-  // inside the Free-path strategy's transaction.
-  async create(queryId: string, input: CargoCreateInput, user: RequestUser) {
+  // Re-reads one cargo with its full packages->items tree, shaped. Used for GET-by-id-ish call
+  // sites (a no-op `update` and, later, any single-cargo read).
+  private async getOne(queryId: string, cid: string): Promise<CargoDto> {
+    const row = await this.prisma.cargo.findFirst({
+      where: { id: cid, queryId },
+      include: {
+        packages: {
+          orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+          include: { items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] } },
+        },
+      },
+    });
+    if (!row) throw new NotFoundException("Cargo not found");
+    return shapeCargo(row);
+  }
+
+  // Reads the full Query -> Cargo -> Package -> Item tree for a query, each cargo shaped with
+  // its derived header (H4-H8). Same deterministic tie-break at every level (rowIndex asc, then
+  // createdAt/id asc) as the pre-re-model CargoItem list, so display order stays stable even if
+  // the known create-race (see `create` below) ever produces a duplicate rowIndex.
+  async getTree(queryId: string): Promise<CargoDto[]> {
+    await this.assertQueryExists(queryId);
+    const rows = await this.prisma.cargo.findMany({
+      where: { queryId },
+      orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      include: {
+        packages: {
+          orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+          include: { items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] } },
+        },
+      },
+    });
+    return rows.map(shapeCargo);
+  }
+
+  // Mediated @create: mint the next rowIndex, insert, shape the result (packages is always []
+  // for a brand-new cargo) — all inside the Free-path strategy's transaction.
+  async create(queryId: string, input: CargoCreateInput, user: RequestUser): Promise<CargoDto> {
     await this.assertQueryExists(queryId);
     const id = randomUUID();
-    let created: unknown;
+    let shaped: CargoDto | undefined;
     const result = await this.mediator.apply(
       { entity: "cargo", id, action: "@create", queryId, actorId: user.userId },
       async (tx) => {
@@ -45,34 +76,23 @@ export class CargoService {
         // POST /queries/:id/cargo on the *same* query can both read the same max and each
         // create their own row with the same rowIndex — a duplicate ordinal, not data loss (both
         // rows persist). Accepted for Stage 3 per spec §8.5 ("last-write-wins, no record
-        // locking"). Reads order by rowIndex with a createdAt/id tie-break (see
-        // QueriesService.getWithin), so display order stays deterministic even if a duplicate
-        // occurs. Follow-up (Stage 3, not scheduled): harden with a unique (queryId, rowIndex)
-        // constraint + retry-on-conflict, or a per-query atomic counter (à la QuerySequence).
-        const max = await tx.cargoItem.aggregate({ where: { queryId }, _max: { rowIndex: true } });
-        created = await tx.cargoItem.create({
+        // locking") — same acceptance as the pre-re-model CargoItem.create this replaces. Reads
+        // order by rowIndex with a createdAt/id tie-break (see getTree/getOne above), so display
+        // order stays deterministic even if a duplicate occurs.
+        const max = await tx.cargo.aggregate({ where: { queryId }, _max: { rowIndex: true } });
+        const created = await tx.cargo.create({
           data: {
             id,
             queryId,
             tenantId: user.tenantId,
             rowIndex: (max._max.rowIndex ?? 0) + 1,
-            poReference: input.poReference ?? "",
-            productName: input.productName,
-            referenceTags: input.referenceTags ?? [],
-            hsCode: input.hsCode ?? null,
-            packageType: input.packageType,
-            isDangerous: input.isDangerous ?? false,
-            qty: input.qty,
-            dimL: input.dimL,
-            dimW: input.dimW,
-            dimH: input.dimH,
-            netWt: input.netWt ?? null,
-            grossWt: input.grossWt,
+            poReference: input.poReference ?? null,
+            label: input.label ?? null,
             dimUnit: input.dimUnit,
             weightUnit: input.weightUnit,
           },
         });
-        await this.queries.syncDgIndicator(queryId, tx);
+        shaped = shapeCargo({ ...created, packages: [] });
       },
     );
     if (result.needsConfirmation) {
@@ -82,33 +102,44 @@ export class CargoService {
         preview: result.preview,
       });
     }
-    return created;
+    return shaped!;
   }
 
-  async update(queryId: string, cid: string, input: CargoUpdateInput, user: RequestUser) {
+  // Mediated field edit: poReference/label/dimUnit/weightUnit are all Corrective (see
+  // cargo.impact.ts) — a cargo grouping carries no RfqDefining fields of its own (those live on
+  // Package). No `reason` to strip here: unlike packageUpdateSchema/itemUpdateSchema,
+  // cargoUpdateSchema has no `reason` field (Corrective edits never need change-order
+  // justification).
+  async update(
+    queryId: string,
+    cid: string,
+    input: CargoUpdateInput,
+    user: RequestUser,
+  ): Promise<CargoDto> {
     await this.load(queryId, cid);
-    // `reason` is ChangeRequest metadata, not a cargo column — strip it before it can reach
-    // `fields`/highestImpactField or the Prisma patch (Task 10, SB6 §7.2).
-    const { reason, ...cargoInput } = input;
-    const fields = Object.keys(cargoInput);
-    if (fields.length === 0) return this.load(queryId, cid);
-    let updated: unknown;
+    const fields = Object.keys(input);
+    if (fields.length === 0) return this.getOne(queryId, cid);
+    let shaped: CargoDto | undefined;
     const result = await this.mediator.apply(
       {
         entity: "cargo",
         id: cid,
         field: this.impacts.highestImpactField("cargo", fields),
-        patch: cargoInput,
+        patch: input,
         queryId,
         actorId: user.userId,
-        reason,
       },
       async (tx) => {
-        updated = await tx.cargoItem.update({
+        const updated = await tx.cargo.update({
           where: { id: cid },
-          data: cargoInput as Prisma.CargoItemUncheckedUpdateInput,
+          data: input as Prisma.CargoUncheckedUpdateInput,
         });
-        await this.queries.syncDgIndicator(queryId, tx);
+        const packages = await tx.package.findMany({
+          where: { cargoId: cid },
+          orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+          include: { items: { orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }] } },
+        });
+        shaped = shapeCargo({ ...updated, packages });
       },
     );
     if (result.needsConfirmation) {
@@ -118,16 +149,17 @@ export class CargoService {
         preview: result.preview,
       });
     }
-    return updated;
+    return shaped!;
   }
 
-  async remove(queryId: string, cid: string, user: RequestUser) {
+  // Mediated @delete. Package/Item cascade via the schema's onDelete: Cascade (Cargo->Package,
+  // Package->Item), so no extra cleanup is needed here.
+  async remove(queryId: string, cid: string, user: RequestUser): Promise<void> {
     await this.load(queryId, cid);
     const result = await this.mediator.apply(
       { entity: "cargo", id: cid, action: "@delete", queryId, actorId: user.userId },
       async (tx) => {
-        await tx.cargoItem.delete({ where: { id: cid } });
-        await this.queries.syncDgIndicator(queryId, tx);
+        await tx.cargo.delete({ where: { id: cid } });
       },
     );
     if (result.needsConfirmation) {
@@ -137,94 +169,5 @@ export class CargoService {
         preview: result.preview,
       });
     }
-  }
-
-  // Store the PDF + FileAsset, then link cargo.msdsFileId through the mediator (Corrective).
-  // ORDERING IS LOAD-BEARING: `load` (queryId+cid scoped findFirst) MUST run before
-  // `storeMsds` — it verifies the cargo row exists under this exact query, so a
-  // malformed/mismatched queryId 404s/P2023s here rather than storeMsds ever writing a
-  // FileAsset (or interpolating an attacker-controlled queryId into the storage path) for a
-  // row that isn't there.
-  async attachMsds(queryId: string, cid: string, file: MsdsUpload | undefined, user: RequestUser) {
-    await this.load(queryId, cid);
-    const asset = await this.files.storeMsds(queryId, file, user.userId); // 400s a non-PDF/no-file
-    let updated: unknown;
-    const result = await this.mediator.apply(
-      {
-        entity: "cargo",
-        id: cid,
-        field: "msdsFileId",
-        patch: { msdsFileId: asset.id },
-        queryId,
-        actorId: user.userId,
-      },
-      async (tx) => {
-        updated = await tx.cargoItem.update({ where: { id: cid }, data: { msdsFileId: asset.id } });
-      },
-    );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
-    return updated;
-  }
-
-  // Server-side exceljs stream, single worksheet "Product" (§7.3, §8.6). Excel IMPORT is out of
-  // scope for Stage 3. Same deterministic tie-break as QueriesService.getWithin (rowIndex asc,
-  // then createdAt/id asc) so export row order matches on-screen order even if the read-mitigated
-  // rowIndex duplicate race (see CargoService.create) ever produces one.
-  async exportXlsx(queryId: string): Promise<Buffer> {
-    await this.assertQueryExists(queryId);
-    const rows = await this.prisma.cargoItem.findMany({
-      where: { queryId },
-      orderBy: [{ rowIndex: "asc" }, { createdAt: "asc" }, { id: "asc" }],
-    });
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("Product");
-    ws.columns = [
-      { header: "#", key: "rowIndex", width: 6 },
-      { header: "PO / Reference", key: "poReference", width: 18 },
-      { header: "Product Name", key: "productName", width: 24 },
-      { header: "Reference Tags", key: "referenceTags", width: 20 },
-      { header: "HS / HSN Code", key: "hsCode", width: 14 },
-      { header: "Package Type", key: "packageType", width: 14 },
-      { header: "DG", key: "isDangerous", width: 6 },
-      { header: "Qty", key: "qty", width: 8 },
-      { header: "Dim L (cm)", key: "dimL", width: 12 },
-      { header: "Dim W (cm)", key: "dimW", width: 12 },
-      { header: "Dim H (cm)", key: "dimH", width: 12 },
-      { header: "Net Wt (kg)", key: "netWt", width: 12 },
-      { header: "Gross Wt (kg)", key: "grossWt", width: 12 },
-      { header: "Volume (CBM)", key: "volumeCbm", width: 14 },
-    ];
-    ws.getRow(1).font = { bold: true };
-    for (const r of rows) {
-      ws.addRow({
-        rowIndex: r.rowIndex,
-        poReference: r.poReference,
-        productName: r.productName,
-        referenceTags: r.referenceTags.join(", "),
-        hsCode: r.hsCode ?? "",
-        packageType: r.packageType,
-        isDangerous: r.isDangerous ? "Yes" : "No",
-        qty: r.qty,
-        dimL: Number(r.dimL),
-        dimW: Number(r.dimW),
-        dimH: Number(r.dimH),
-        netWt: r.netWt == null ? "" : Number(r.netWt),
-        grossWt: Number(r.grossWt),
-        volumeCbm: r.volumeCbm == null ? "" : Number(r.volumeCbm),
-      });
-    }
-    // exceljs's own .d.ts declares a local `Buffer extends ArrayBuffer {}` for writeBuffer()'s
-    // return type (browser-compat artifact) rather than Node's real Buffer, so `as Buffer` fails
-    // strict structural overlap checking. At runtime (lib/utils/stream-buf.js) it always returns
-    // a genuine Node Buffer via Buffer.concat(...); Buffer.from(...) both satisfies tsc against
-    // the declared ArrayBuffer-shaped type and is a correct (if redundantly-copying) no-op on an
-    // already-real Buffer at runtime — no `any` needed.
-    return Buffer.from(await wb.xlsx.writeBuffer());
   }
 }

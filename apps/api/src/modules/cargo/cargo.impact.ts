@@ -1,33 +1,17 @@
 import { ImpactClass, type CargoUpdateInput } from "@svyft/shared";
 
-// Cargo field → impact class (§11.1). Weight/dims/DG = RfqDefining (FFs quote against
-// them); labels/refs/docs = Corrective; add/remove a row = Structural. volumeCbm is
-// DB-generated → never edited here.
+// Cargo field -> impact class (§11.1). A cargo grouping now holds only PO/label/unit metadata —
+// no dims/weight/DG of its own (Package carries those, RfqDefining) — so every header field is
+// Corrective: cosmetic/grouping edits an FF never re-quotes against. Adding/removing a grouping
+// row is Structural.
 // Typed as Record<keyof CargoUpdateInput | ..., ImpactClass> (rather than the looser
-// EntityImpactMap) so the compiler REQUIRES an entry for EVERY cargoUpdateSchema field —
-// mirrors queryImpactMap (see query.impact.ts). Still structurally assignable to
-// ImpactRegistry.declare's EntityImpactMap (= Record<string, ImpactClass>) param.
-// `reason` is excluded — it's ChangeRequest metadata (Task 10, SB6), never the classified
-// field; CargoService strips it from `fields` before highestImpactField ever sees it.
-export const cargoImpactMap: Record<
-  Exclude<keyof CargoUpdateInput, "reason"> | "msdsFileId" | "@create" | "@delete",
-  ImpactClass
-> = {
+// EntityImpactMap) so the compiler REQUIRES an entry for EVERY cargoUpdateSchema field — mirrors
+// queryImpactMap (see query.impact.ts).
+export const cargoImpactMap: Record<keyof CargoUpdateInput | "@create" | "@delete", ImpactClass> = {
   poReference: ImpactClass.Corrective,
-  productName: ImpactClass.Corrective,
-  referenceTags: ImpactClass.Corrective,
-  hsCode: ImpactClass.Corrective,
-  msdsFileId: ImpactClass.Corrective,
-  packageType: ImpactClass.RfqDefining,
-  isDangerous: ImpactClass.RfqDefining,
-  qty: ImpactClass.RfqDefining,
-  dimL: ImpactClass.RfqDefining,
-  dimW: ImpactClass.RfqDefining,
-  dimH: ImpactClass.RfqDefining,
-  netWt: ImpactClass.RfqDefining,
-  grossWt: ImpactClass.RfqDefining,
-  dimUnit: ImpactClass.RfqDefining,
-  weightUnit: ImpactClass.RfqDefining,
+  label: ImpactClass.Corrective,
+  dimUnit: ImpactClass.Corrective,
+  weightUnit: ImpactClass.Corrective,
   "@create": ImpactClass.Structural,
   "@delete": ImpactClass.Structural,
 };
