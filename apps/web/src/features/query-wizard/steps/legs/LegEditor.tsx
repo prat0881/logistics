@@ -44,7 +44,7 @@ import { ZonedDateTimeField } from "@/components/ZonedDateTimeField";
 import { useLegs } from "./useLegs";
 import { PointEditor } from "./PointEditor";
 import { CargoAssignmentControl } from "./CargoAssignmentControl";
-import { computeCargoConflicts } from "./cargoConflicts";
+import { computePackageConflicts } from "./cargoConflicts";
 
 interface LegEditorProps {
   open: boolean;
@@ -96,7 +96,7 @@ export function LegEditor({
     mode: leg?.mode ?? undefined,
     readyDate: leg?.readyDate ?? undefined,
     targetDelivery: leg?.targetDelivery ?? undefined,
-    assignedCargoIds: leg?.assignedCargoIds ?? [],
+    assignedPackageIds: leg?.assignedPackageIds ?? [],
   };
 
   const form = useForm<LegSaveInput>({
@@ -114,7 +114,7 @@ export function LegEditor({
         mode: leg?.mode ?? undefined,
         readyDate: leg?.readyDate ?? undefined,
         targetDelivery: leg?.targetDelivery ?? undefined,
-        assignedCargoIds: leg?.assignedCargoIds ?? [],
+        assignedPackageIds: leg?.assignedPackageIds ?? [],
       });
     }
   }, [open, leg?.id]); // Only reset when dialog opens or the leg being edited changes
@@ -129,12 +129,12 @@ export function LegEditor({
 
   const legLike = { originPointId: watchedOriginId, destinationPointId: watchedDestId };
 
-  // Cargo already carried by another leg sharing this leg's origin (parallel drop) or
-  // destination (merge) — assigning it here would break the single-chain rule (D5/R1),
-  // so the CargoAssignmentControl disables it with an "already on L#" note.
-  const cargoConflicts = useMemo(
+  // Packages already carried by another leg sharing this leg's origin (parallel drop) or
+  // destination (merge) — assigning them here would break the single-chain rule (D5/R1),
+  // so the CargoAssignmentControl disables them with an "already on L#" note.
+  const packageConflicts = useMemo(
     () =>
-      computeCargoConflicts(detail.legs, {
+      computePackageConflicts(detail.legs, {
         id: leg?.id,
         originPointId: watchedOriginId,
         destinationPointId: watchedDestId,
@@ -347,19 +347,19 @@ export function LegEditor({
                 <label className="text-sm font-medium">Assigned Cargo</label>
                 <Controller
                   control={form.control}
-                  name="assignedCargoIds"
+                  name="assignedPackageIds"
                   render={({ field }) => (
                     <CargoAssignmentControl
-                      cargo={detail.cargo}
+                      cargo={detail.cargos}
                       value={field.value ?? []}
                       onChange={field.onChange}
-                      conflicts={cargoConflicts}
+                      conflicts={packageConflicts}
                     />
                   )}
                 />
-                {form.formState.errors.assignedCargoIds && (
+                {form.formState.errors.assignedPackageIds && (
                   <p className="text-sm font-medium text-destructive">
-                    {form.formState.errors.assignedCargoIds.message}
+                    {form.formState.errors.assignedPackageIds.message}
                   </p>
                 )}
               </div>

@@ -11,6 +11,7 @@ const PICKUP_POINT_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const DELIVERY_POINT_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const SEAPORT_POINT_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 const CARGO_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+const PACKAGE_ID = "abababab-abab-abab-abab-abababababab";
 
 // Points with explicit IANA timezones for zone-anchor tests
 const KOLKATA_POINT_ID = "11111111-1111-1111-1111-111111111111";
@@ -53,26 +54,37 @@ const baseDetail: QueryDetail = {
   assignedUserId: null,
   createdAt: "2026-01-01T00:00:00+00:00",
   updatedAt: "2026-01-01T00:00:00+00:00",
-  cargo: [
+  cargos: [
     {
       id: CARGO_ID,
       rowIndex: 0,
       poReference: "PO-001",
-      productName: "Widget A",
-      referenceTags: [],
-      hsCode: null,
-      packageType: "Carton",
-      isDangerous: false,
-      msdsFileId: null,
-      qty: 1,
-      dimL: "10",
-      dimW: "10",
-      dimH: "10",
-      netWt: null,
-      grossWt: "5",
-      volumeCbm: null,
+      label: null,
       dimUnit: "CM" as const,
       weightUnit: "KG" as const,
+      packages: [
+        {
+          id: PACKAGE_ID,
+          rowIndex: 0,
+          packageNo: "PKG-001",
+          packageType: "CARTON" as const,
+          dimL: "10",
+          dimW: "10",
+          dimH: "10",
+          grossWt: "5",
+          netWt: null,
+          volumeCbm: "0.001",
+          tags: [],
+          effectiveTags: [],
+          msdsFileId: null,
+          items: [],
+        },
+      ],
+      packageCount: 1,
+      grossWeightKg: "5",
+      volumeCbm: "0.001",
+      tags: [],
+      chargeableWeight: null,
     },
   ],
   checklist: [],
@@ -351,7 +363,7 @@ describe("LegEditor", () => {
       expect(body.originPointId).toBe(PICKUP_POINT_ID);
       expect(body.destinationPointId).toBe(DELIVERY_POINT_ID);
       expect(body.mode).toBe("ROAD");
-      expect(body.assignedCargoIds).toEqual([CARGO_ID]);
+      expect(body.assignedPackageIds).toEqual([PACKAGE_ID]);
     });
   });
 
@@ -440,7 +452,7 @@ describe("LegEditor", () => {
       mode: "ROAD" as const,
       originPointId: PICKUP_POINT_ID,
       destinationPointId: DELIVERY_POINT_ID,
-      assignedCargoIds: [] as string[],
+      assignedPackageIds: [] as string[],
       readyDate: null,
       targetDelivery: null,
       status: "DRAFT" as const,
@@ -531,7 +543,7 @@ describe("LegEditor", () => {
       mode: "ROAD" as const,
       originPointId: PICKUP_POINT_ID,
       destinationPointId: DELIVERY_POINT_ID,
-      assignedCargoIds: [] as string[],
+      assignedPackageIds: [] as string[],
       readyDate: null,
       targetDelivery: null,
       status: "DRAFT" as const,
@@ -603,7 +615,7 @@ describe("LegEditor", () => {
       mode: "ROAD" as const,
       originPointId: null, // dangling origin — the dead-end scenario
       destinationPointId: DELIVERY_POINT_ID,
-      assignedCargoIds: [] as string[],
+      assignedPackageIds: [] as string[],
       readyDate: null,
       targetDelivery: null,
       status: "DRAFT" as const,

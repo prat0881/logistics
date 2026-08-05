@@ -11,7 +11,7 @@ const QUERY_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const LEG_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const ORIGIN_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const DEST_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
-const CARGO_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+const PACKAGE_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -31,7 +31,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("useLegs", () => {
   describe("add()", () => {
-    it("POSTs to /api/queries/:id/legs with assignedCargoIds and returns the saved leg", async () => {
+    it("POSTs to /api/queries/:id/legs with assignedPackageIds and returns the saved leg", async () => {
       const fetchMock = vi.fn((url: string, init?: RequestInit) => {
         if (url.includes("/api/auth/me"))
           return Promise.resolve({
@@ -76,7 +76,7 @@ describe("useLegs", () => {
           originPointId: ORIGIN_ID,
           destinationPointId: DEST_ID,
           mode: "ROAD",
-          assignedCargoIds: [CARGO_ID],
+          assignedPackageIds: [PACKAGE_ID],
         });
       });
 
@@ -87,7 +87,7 @@ describe("useLegs", () => {
       );
       expect(postCall).toBeTruthy();
       const sentBody = JSON.parse((postCall![1] as RequestInit).body as string);
-      expect(sentBody.assignedCargoIds).toEqual([CARGO_ID]);
+      expect(sentBody.assignedPackageIds).toEqual([PACKAGE_ID]);
       expect(sentBody.originPointId).toBe(ORIGIN_ID);
       expect(returned?.id).toBe(LEG_ID);
     });
@@ -140,7 +140,7 @@ describe("useLegs", () => {
             originPointId: ORIGIN_ID,
             destinationPointId: DEST_ID,
             mode: "SEA",
-            assignedCargoIds: [CARGO_ID],
+            assignedPackageIds: [PACKAGE_ID],
           });
         } catch (err) {
           caught = err as ApiError;

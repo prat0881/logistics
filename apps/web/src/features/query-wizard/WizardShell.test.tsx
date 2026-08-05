@@ -153,7 +153,7 @@ const detailWithClientAndNotesFindings = {
       executionStatus: "NOT_STARTED",
       createdAt: "2026-01-01T00:00:00+00:00",
       updatedAt: "2026-01-01T00:00:00+00:00",
-      assignedCargoIds: [CARGO_ID],
+      assignedPackageIds: [CARGO_ID],
       rollup: { totalPackages: 2, totalCbm: 0.006, totalGrossWt: 5, totalNetWt: 0 },
     },
   ],

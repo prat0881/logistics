@@ -17,7 +17,7 @@ export interface LegDto {
  * Leg CRUD hook — POST/PATCH/DELETE /api/queries/:id/legs[/:legId].
  *
  * Important: the write response is the raw Leg row and does NOT include
- * `assignedCargoIds` or `rollup`. Those fields only appear on `detail.legs[]`
+ * `assignedPackageIds` or `rollup`. Those fields only appear on `detail.legs[]`
  * after a re-GET (triggered by invalidating ["query", queryId]).
  *
  * A 422 from the server (V-M1 mode↔endpoint violation) propagates as an
