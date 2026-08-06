@@ -3,21 +3,20 @@ import type { QuoteStatus } from "./status";
 import type { Incoterms } from "./query";
 import type { FreightMode } from "./config";
 import type { FreightForwarderDto } from "./masters";
+import type { ReferenceTag } from "./cargo";
 
 export interface ManifestSnapshotCargo {
-  cargoItemId: string;
-  poReference: string;
-  productName: string;
-  hsCode: string | null;
+  packageId: string;
+  packageNo: string;
   packageType: string;
-  isDangerous: boolean;
-  qty: number;
-  dimL: string;
+  packageCount: number;
+  dimL: string; // canonical cm
   dimW: string;
   dimH: string;
-  netWt: string | null;
+  netWt: string | null; // canonical kg
   grossWt: string;
-  volumeCbm: string | null;
+  volumeCbm: string | null; // m³
+  tags: ReferenceTag[]; // effectiveTags(package ∪ items), incl. DG
 }
 
 export interface ManifestSnapshot {
