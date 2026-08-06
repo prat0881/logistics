@@ -12,7 +12,7 @@ describe("QueryWorkspaceHub", () => {
     vi.stubGlobal("fetch", mockFetch((url) => {
       if (url.endsWith("/api/queries/q1"))
         return { status: 200, body: { id: "q1", queryCode: "YAL26-0001", status: "RFQ_READY",
-          incoterms: "FOB", freightMode: [], origin: [], destination: [], cargo: [], points: [], legs: [] } };
+          incoterms: "FOB", freightMode: [], origin: [], destination: [], cargos: [], points: [], legs: [] } };
       if (url.includes("/rfq-state")) return { status: 200, body: { quotes: [], rfqs: [], freightForwarders: [] } };
       return { status: 404 };
     }));

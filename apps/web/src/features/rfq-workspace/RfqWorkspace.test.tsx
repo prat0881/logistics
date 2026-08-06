@@ -21,7 +21,7 @@ const basePoints = [
 const baseLeg = {
   id: "l1", legCode: "L1", legName: "Air leg", mode: "AIR", status: "READY_FOR_RFQ",
   originPointId: "p1", destinationPointId: "p2", readyDate: null, targetDelivery: null,
-  assignedCargoIds: [], rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
+  assignedPackageIds: [], rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
 };
 const secondLeg = {
   ...baseLeg, id: "l2", legCode: "L2", legName: "Sea leg", originPointId: "p2", destinationPointId: "p1",
@@ -46,7 +46,7 @@ function makeQueryDetail(status: string) {
     freightMode: ["AIR"],
     origin: [{ id: "p1", name: "PVG", city: "Shanghai", country: "CN" }],
     destination: [{ id: "p2", name: "DXB", city: "Dubai", country: "AE" }],
-    cargo: [], checklist: [], files: [],
+    cargos: [], checklist: [], files: [],
     points: basePoints,
     legs: [baseLeg],
   };

@@ -7,21 +7,15 @@ const makeCargo = (over: Partial<CargoDto>): CargoDto => ({
   id: "c1",
   rowIndex: 0,
   poReference: "PO",
-  productName: "Product",
-  referenceTags: [],
-  isDangerous: false,
-  hsCode: null,
-  msdsFileId: null,
-  packageType: "BOX",
-  qty: 1,
-  dimL: "100",
-  dimW: "100",
-  dimH: "100",
-  netWt: null,
-  grossWt: "500",
-  volumeCbm: null,
+  label: null,
   dimUnit: "CM",
   weightUnit: "KG",
+  packages: [],
+  packageCount: 0,
+  grossWeightKg: "500",
+  volumeCbm: "0",
+  tags: [],
+  chargeableWeight: null,
   ...over,
 });
 
@@ -36,7 +30,7 @@ const query = {
     { rollup: { totalPackages: 3, totalCbm: 12, totalGrossWt: 500, totalNetWt: 400 } },
     { rollup: { totalPackages: 2, totalCbm: 8, totalGrossWt: 300, totalNetWt: 250 } },
   ],
-  cargo: [],
+  cargos: [],
 } as unknown as QueryDetail;
 
 describe("QueryOverviewHeader", () => {
@@ -55,17 +49,17 @@ describe("QueryOverviewHeader", () => {
     expect(screen.queryByText("Destination")).toBeNull();
   });
 
-  it("renders the Dangerous goods icon when a cargo row has isDangerous=true", () => {
+  it("renders the Dangerous goods icon when a cargo row has the DG tag", () => {
     const queryWithDg = {
       ...query,
-      cargo: [makeCargo({ isDangerous: true })],
+      cargos: [makeCargo({ tags: ["DG"] })],
     } as unknown as QueryDetail;
     render(<QueryOverviewHeader query={queryWithDg} />);
     expect(screen.getByLabelText(/dangerous goods/i)).toBeInTheDocument();
   });
 
   it("renders reference-tag icons under their own 'Reference Tags' field, not under Totals", () => {
-    const queryWithTag = { ...query, cargo: [makeCargo({ referenceTags: ["OUT_OF_GAUGE"] })] } as unknown as QueryDetail;
+    const queryWithTag = { ...query, cargos: [makeCargo({ tags: ["OUT_OF_GAUGE"] })] } as unknown as QueryDetail;
     render(<QueryOverviewHeader query={queryWithTag} />);
     const label = screen.getByText("Reference Tags");
     const field = label.closest("div")!;

@@ -98,7 +98,7 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
             queryId={queryId}
             leg={leg}
             points={q.points}
-            cargo={q.cargo}
+            cargo={q.cargos}
             legQuotes={quotes.filter((qt) => qt.legId === leg.id)}
             referencedFfs={referencedFfs}
             open={openLegId === leg.id}

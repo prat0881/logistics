@@ -57,7 +57,7 @@ export function QueryOverviewHeader({ query }: { query: QueryDetail }) {
             <div>{totals.pkg} pkg · {totals.cbm} CBM · {totals.gross} kg</div>
           </Field>
           <Field label="Reference Tags">
-            <CargoTagIcons cargo={query.cargo} />
+            <CargoTagIcons cargo={query.cargos} />
           </Field>
         </dl>
         <Badge variant={queryStatusVariant(query.status)}>{statusLabel}</Badge>

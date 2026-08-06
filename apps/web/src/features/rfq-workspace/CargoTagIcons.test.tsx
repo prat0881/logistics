@@ -7,21 +7,15 @@ const cargo = (over: Partial<CargoDto>): CargoDto => ({
   id: "c",
   rowIndex: 0,
   poReference: "PO",
-  productName: "P",
-  referenceTags: [],
-  isDangerous: false,
-  hsCode: null,
-  msdsFileId: null,
-  packageType: "BOX",
-  qty: 1,
-  dimL: "100",
-  dimW: "100",
-  dimH: "100",
-  netWt: null,
-  grossWt: "500",
-  volumeCbm: null,
+  label: null,
   dimUnit: "CM",
   weightUnit: "KG",
+  packages: [],
+  packageCount: 0,
+  grossWeightKg: "500",
+  volumeCbm: "0",
+  tags: [],
+  chargeableWeight: null,
   ...over,
 });
 
@@ -30,8 +24,8 @@ describe("CargoTagIcons", () => {
     render(
       <CargoTagIcons
         cargo={[
-          cargo({ isDangerous: true, referenceTags: ["HEAVY"] }),
-          cargo({ isDangerous: true }),
+          cargo({ tags: ["DG", "HEAVY"] }),
+          cargo({ tags: ["DG"] }),
         ]}
       />,
     );
@@ -46,17 +40,17 @@ describe("CargoTagIcons", () => {
   });
 
   it("renders Fragile icon when cargo has FRAGILE tag", () => {
-    render(<CargoTagIcons cargo={[cargo({ referenceTags: ["FRAGILE"] })]} />);
+    render(<CargoTagIcons cargo={[cargo({ tags: ["FRAGILE"] })]} />);
     expect(screen.getByLabelText(/fragile/i)).toBeInTheDocument();
   });
 
   it("renders Non stackable icon when cargo has NON_STACKABLE tag", () => {
-    render(<CargoTagIcons cargo={[cargo({ referenceTags: ["NON_STACKABLE"] })]} />);
+    render(<CargoTagIcons cargo={[cargo({ tags: ["NON_STACKABLE"] })]} />);
     expect(screen.getByLabelText(/non stackable/i)).toBeInTheDocument(); // "Non Stackable"
   });
 
   it("renders the Out of Gauge icon when cargo has OUT_OF_GAUGE tag", () => {
-    render(<CargoTagIcons cargo={[cargo({ referenceTags: ["OUT_OF_GAUGE"] })]} />);
+    render(<CargoTagIcons cargo={[cargo({ tags: ["OUT_OF_GAUGE"] })]} />);
     expect(screen.getByLabelText(/out of gauge/i)).toBeInTheDocument();
   });
 });
