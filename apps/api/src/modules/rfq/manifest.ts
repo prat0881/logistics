@@ -1,5 +1,5 @@
 import type { Incoterms } from "@prisma/client";
-import { toKg } from "@svyft/shared";
+import { effectiveTags } from "@svyft/shared";
 import type { ManifestSnapshot } from "@svyft/shared";
 import type { LegRfqContext } from "./leg-context";
 
@@ -23,23 +23,22 @@ export function buildManifestSnapshot(
       : null,
     readyDate: leg.readyDate ? leg.readyDate.toISOString() : null,
     targetDelivery: leg.targetDelivery ? leg.targetDelivery.toISOString() : null,
-    cargo: leg.legCargo.map((lc) => ({
-      cargoItemId: lc.cargoItem.id,
-      poReference: lc.cargoItem.poReference,
-      productName: lc.cargoItem.productName,
-      hsCode: lc.cargoItem.hsCode,
-      packageType: lc.cargoItem.packageType,
-      isDangerous: lc.cargoItem.isDangerous,
-      qty: lc.cargoItem.qty,
-      dimL: lc.cargoItem.dimL.toString(),
-      dimW: lc.cargoItem.dimW.toString(),
-      dimH: lc.cargoItem.dimH.toString(),
-      netWt: lc.cargoItem.netWt
-        ? toKg(Number(lc.cargoItem.netWt), lc.cargoItem.weightUnit).toString()
-        : null,
-      grossWt: toKg(Number(lc.cargoItem.grossWt), lc.cargoItem.weightUnit).toString(),
-      volumeCbm: lc.cargoItem.volumeCbm ? lc.cargoItem.volumeCbm.toString() : null,
-    })),
+    cargo: leg.legPackages.map((lp) => {
+      const p = lp.package;
+      return {
+        packageId: p.id,
+        packageNo: p.packageNo,
+        packageType: p.packageType,
+        packageCount: p.packageCount,
+        dimL: p.dimL.toString(),
+        dimW: p.dimW.toString(),
+        dimH: p.dimH.toString(),
+        netWt: p.netWt ? p.netWt.toString() : null,
+        grossWt: p.grossWt.toString(),
+        volumeCbm: p.volumeCbm ? p.volumeCbm.toString() : null,
+        tags: effectiveTags({ tags: p.tags, items: p.items }),
+      };
+    }),
     frozenAt: frozenAt.toISOString(),
   };
 }
