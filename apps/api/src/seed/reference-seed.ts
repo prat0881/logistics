@@ -37,18 +37,22 @@ const CHARGE_LINE_DEFINITIONS: ChargeDef[] = [
   { key: "AIR_MAIN_SEC", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Security Exchange (SEC)", sortOrder: 7 },
   { key: "AIR_MAIN_CARRIER_SURCHARGE", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Airline / Carrier Surcharge", sortOrder: 8 },
   { key: "AIR_MAIN_HEAVY_WEIGHT", mode: "AIR", role: "CORE", inputType: "HEAVY_WEIGHT_CALC", zone: "MAIN_FREIGHT", label: "Heavy Weight Surcharge", sortOrder: 9 },
-  { key: "AIR_MAIN_FSC", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Fuel Surcharge (FSC)", sortOrder: 9.1 },
-  { key: "AIR_MAIN_PEAK_SEASON", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Peak Season Surcharge", sortOrder: 9.2 },
+  // sortOrder is Int (Prisma) — these were briefly 9.1/9.2 and got silently truncated to 9 by
+  // Postgres, tying with AIR_MAIN_HEAVY_WEIGHT (3-way, nondeterministic display order). Renumbered
+  // as whole integers so FSC/Peak slot in right after Heavy Weight without colliding; everything
+  // from the old AIR_DEST_THC=10 onward shifts +2 (see the paired sortOrder-fix migration).
+  { key: "AIR_MAIN_FSC", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Fuel Surcharge (FSC)", sortOrder: 10 },
+  { key: "AIR_MAIN_PEAK_SEASON", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Peak Season Surcharge", sortOrder: 11 },
   // ── AIR configurable (destination) ──
-  { key: "AIR_DEST_THC", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Destination THC / Airport Handling", sortOrder: 10 },
-  { key: "AIR_DEST_IMPORT_CLEARANCE", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Import Customs Clearance", sortOrder: 11 },
-  { key: "AIR_DEST_STORAGE", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Storage 1 Free Day Charges", sortOrder: 12 },
-  { key: "AIR_DEST_LAST_MILE", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Last Mile Handling / Lift Gate", sortOrder: 13, isActive: false },
-  { key: "AIR_TAG_NON_STACKABLE", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "NON_STACKABLE", label: "Non-stackable handling", sortOrder: 14 },
-  { key: "AIR_TAG_FRAGILE", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "FRAGILE", label: "Fragile handling", sortOrder: 15 },
-  { key: "AIR_TAG_DG", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "DG", label: "DG handling", sortOrder: 16 },
-  { key: "AIR_TAG_OOG", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "OUT_OF_GAUGE", label: "OOG handling", sortOrder: 17 },
-  { key: "AIR_TAG_HEAVY", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "HEAVY", label: "Heavy handling", sortOrder: 18 },
+  { key: "AIR_DEST_THC", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Destination THC / Airport Handling", sortOrder: 12 },
+  { key: "AIR_DEST_IMPORT_CLEARANCE", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Import Customs Clearance", sortOrder: 13 },
+  { key: "AIR_DEST_STORAGE", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Storage 1 Free Day Charges", sortOrder: 14 },
+  { key: "AIR_DEST_LAST_MILE", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Last Mile Handling / Lift Gate", sortOrder: 15, isActive: false },
+  { key: "AIR_TAG_NON_STACKABLE", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "NON_STACKABLE", label: "Non-stackable handling", sortOrder: 16 },
+  { key: "AIR_TAG_FRAGILE", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "FRAGILE", label: "Fragile handling", sortOrder: 17 },
+  { key: "AIR_TAG_DG", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "DG", label: "DG handling", sortOrder: 18 },
+  { key: "AIR_TAG_OOG", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "OUT_OF_GAUGE", label: "OOG handling", sortOrder: 19 },
+  { key: "AIR_TAG_HEAVY", mode: "AIR", role: "TAG_DRIVEN", zone: "DESTINATION", tagKey: "HEAVY", label: "Heavy handling", sortOrder: 20 },
   // ── SEA cores ──
   { key: "SEA_ORIGIN_EXPORT_CLEARANCE", mode: "SEA", role: "CORE", zone: "ORIGIN", label: "Export Customs Clearance", sortOrder: 1 },
   { key: "SEA_ORIGIN_DOCUMENTATION", mode: "SEA", role: "CORE", zone: "ORIGIN", label: "Documentation Charges", sortOrder: 2 },
