@@ -10,6 +10,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 // Task 9 — distribute wiring: seeds ScheduledEvent reminder/expiry timers (anchored to the
 // RFQ) and dispatches rfq.invitation (fresh mint) / rfq.updated (amend) via the dispatcher.
@@ -59,7 +60,7 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
   };
@@ -84,25 +85,14 @@ describe(`${PREFIX} (e2e)`, () => {
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
-  const mkLeg = async (queryId: string, legCode: string, poRef: string) => {
+  const mkLeg = async (queryId: string, legCode: string, _poRef: string) => {
     const origin = await prisma.point.create({ data: { queryId, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId,
-        rowIndex: 0,
-        poReference: poRef,
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 1,
-        isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 1 }],
     });
-    return prisma.leg.create({
+    const leg = await prisma.leg.create({
       data: {
         queryId,
         legCode,
@@ -112,9 +102,10 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
+    return leg;
   };
 
   it("distribute seeds reminder+expiry timers and logs an invitation email", async () => {

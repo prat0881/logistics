@@ -12,6 +12,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 // Task 11 (SB6): re-distributing a REOPENED leg (READY_FOR_RFQ, post-change-order) must
 // reactivate its INVALID quote(s) — the SAME row (Quote @@unique([legId, freightForwarderId])
@@ -69,7 +70,7 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
   };
@@ -99,11 +100,11 @@ describe(`${PREFIX} (e2e)`, () => {
 
   // A stale manifest snapshot, as the ORIGINAL distribution would have frozen it before the
   // change-order invalidated this quote (mirrors change-order-apply.e2e-spec.ts's oldSnapshot).
-  const oldSnapshot = (legId: string, cargoItemId: string) => ({
+  const oldSnapshot = (legId: string, packageId: string) => ({
     legId,
     frozenAt: "2020-01-01T00:00:00.000Z",
     mode: "SEA", // the live leg is AIR — proves the whole snapshot is rebuilt, not patched
-    cargo: [{ cargoItemId, grossWt: String(OLD_GROSS_WT) }],
+    cargo: [{ packageId, grossWt: String(OLD_GROSS_WT) }],
   });
 
   it("reactivates an INVALID quote on re-distribute: RFQ_SENT, manifest refreshed, deadline reset, FF notified", async () => {
@@ -113,21 +114,11 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-REDIST-1",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 250,
-        isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 250 }],
     });
+    const [packageId] = packageIds;
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -138,9 +129,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await mkFf(`FF-${PREFIX}-A`);
 
     // The FF's Rfq from the ORIGINAL distribution — invalidation never deletes it (non-
@@ -164,7 +155,7 @@ describe(`${PREFIX} (e2e)`, () => {
         freightForwarderId: ff.id,
         rfqId: rfq.id,
         status: QuoteStatus.INVALID,
-        manifestSnapshot: oldSnapshot(leg.id, cargo.id) as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: oldSnapshot(leg.id, packageId) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -268,20 +259,9 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: `${CODE}-FRESH`, incoterms: "FOB" } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-REDIST-FRESH",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 5,
-        isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
     });
     const leg = await prisma.leg.create({
       data: {
@@ -293,9 +273,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await mkFf(`FF-${PREFIX}-FRESH`);
 
     await request(app.getHttpServer())
@@ -324,21 +304,11 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: `${CODE}-ALL`, incoterms: "FOB" } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-REDIST-ALL",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 42,
-        isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 42 }],
     });
+    const [packageId] = packageIds;
     // Reopened leg (READY_FOR_RFQ) whose ONLY quote is INVALID — the "distributeAll silently
     // skips this" bug the fix closes: without `&& ctx.invalidQuotes.length === 0` on the gate,
     // `ctx.freshQuotes.length === 0` alone would mark it "already-distributed" and never call
@@ -353,9 +323,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await mkFf(`FF-${PREFIX}-ALL`);
     const oldDeadline = new Date(Date.now() - 3600_000);
     const rfq = await prisma.rfq.create({
@@ -376,7 +346,7 @@ describe(`${PREFIX} (e2e)`, () => {
         freightForwarderId: ff.id,
         rfqId: rfq.id,
         status: QuoteStatus.INVALID,
-        manifestSnapshot: oldSnapshot(leg.id, cargo.id) as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: oldSnapshot(leg.id, packageId) as unknown as Prisma.InputJsonValue,
       },
     });
 

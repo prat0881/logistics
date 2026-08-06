@@ -6,10 +6,11 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
-import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
+import { Role, ACCESS_TOKEN_COOKIE, type ManifestSnapshot } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 const PREFIX = "RFQ-DIST";
 const CODE = `YAL00-${PREFIX}`;
@@ -52,7 +53,7 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
   };
@@ -91,7 +92,7 @@ describe(`${PREFIX} (e2e)`, () => {
       isDangerous?: boolean;
       skipTargetDelivery?: boolean;
       skipCargo?: boolean;
-      cargoItemId?: string;
+      packageIds?: string[];
     },
   ) => {
     const origin = await prisma.point.create({
@@ -101,24 +102,15 @@ describe(`${PREFIX} (e2e)`, () => {
       data: { queryId, type: "DELIVERY", country: "AE" },
     });
 
-    let cargoId = opts.cargoItemId;
-    if (!cargoId && !opts.skipCargo) {
-      const cargo = await prisma.cargoItem.create({
-        data: {
-          queryId,
-          rowIndex: 0,
-          poReference: `PO-${opts.legCode}`,
-          productName: "Widget",
-          packageType: "BOX",
-          qty: 1,
-          dimL: 10,
-          dimW: 10,
-          dimH: 10,
-          grossWt: 1,
-          isDangerous: opts.isDangerous ?? false,
-        },
+    let packageIds = opts.packageIds;
+    if (!packageIds && !opts.skipCargo) {
+      const built = await createCargoWithPackages(prisma, {
+        queryId,
+        packages: [
+          { dimL: 10, dimW: 10, dimH: 10, grossWt: 1, tags: opts.isDangerous ? ["DG"] : [] },
+        ],
       });
-      cargoId = cargo.id;
+      packageIds = built.packageIds;
     }
 
     const leg = await prisma.leg.create({
@@ -131,9 +123,11 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: opts.skipTargetDelivery ? undefined : new Date(Date.now() + 86400000),
-        ...(cargoId ? { legCargo: { create: { cargoItemId: cargoId } } } : {}),
       },
     });
+    if (packageIds && packageIds.length > 0) {
+      await assignPackagesToLeg(prisma, leg.id, packageIds);
+    }
     return leg;
   };
 
@@ -144,20 +138,9 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-DIST-1",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 2,
-        dimL: 10,
-        dimW: 20,
-        dimH: 30,
-        grossWt: 5,
-        isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 20, dimH: 30, grossWt: 5 }],
     });
     const leg = await prisma.leg.create({
       data: {
@@ -169,9 +152,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await mkFf(`FF-${PREFIX}-A`, ["CN", "AE"], ["AIR"], "ACTIVE");
 
     // Select FF via ff-selection endpoint to mint the SELECT quote
@@ -211,14 +194,12 @@ describe(`${PREFIX} (e2e)`, () => {
       incoterms: "FOB",
       origin: { country: "CN" },
       destination: { country: "AE" },
-      cargo: expect.arrayContaining([
-        expect.objectContaining({
-          cargoItemId: cargo.id,
-          qty: 2,
-          grossWt: "5",
-        }),
-      ]),
     });
+    const snap = quote?.manifestSnapshot as unknown as ManifestSnapshot;
+    expect(snap.cargo).toEqual(
+      expect.arrayContaining([expect.objectContaining({ packageId: packageIds[0] })]),
+    );
+    expect(Number(snap.cargo[0]!.grossWt)).toBe(5);
 
     // --- verify status rollup ---
     expect((await prisma.leg.findUnique({ where: { id: leg.id } }))?.status).toBe("RFQ_SENT");

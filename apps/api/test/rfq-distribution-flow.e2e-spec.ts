@@ -10,6 +10,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 const PREFIX = "RFQ-FLOW";
 const CODE = `YAL00-${PREFIX}`;
@@ -51,7 +52,7 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
   };
@@ -97,22 +98,11 @@ describe(`${PREFIX} (e2e)`, () => {
       const dest = await prisma.point.create({
         data: { queryId, type: "DELIVERY", country: "AE" },
       });
-      const cargo = await prisma.cargoItem.create({
-        data: {
-          queryId,
-          rowIndex: 0,
-          poReference: `PO-${legCode}`,
-          productName: "Widget",
-          packageType: "BOX",
-          qty: 1,
-          dimL: 10,
-          dimW: 10,
-          dimH: 10,
-          grossWt: 1,
-          isDangerous: false,
-        },
+      const { packageIds } = await createCargoWithPackages(prisma, {
+        queryId,
+        packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 1 }],
       });
-      return prisma.leg.create({
+      const leg = await prisma.leg.create({
         data: {
           queryId,
           legCode,
@@ -122,9 +112,10 @@ describe(`${PREFIX} (e2e)`, () => {
           destinationPointId: dest.id,
           readyDate: new Date(),
           targetDelivery: new Date(Date.now() + 86400000),
-          legCargo: { create: { cargoItemId: cargo.id } },
         },
       });
+      await assignPackagesToLeg(prisma, leg.id, packageIds);
+      return leg;
     };
 
     const l1 = await mkReadyLeg("L-FLOW-1");

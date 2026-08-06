@@ -9,6 +9,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 const PREFIX = "RFQ-ELIG";
 const CODE = `YAL00-${PREFIX}`;
@@ -28,7 +29,7 @@ describe(`${PREFIX} (e2e)`, () => {
     if (q) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
     // FF codes in this test are FF-ELIG-A/B/C/D (brief verbatim)
     await prisma.freightForwarder.deleteMany({
@@ -72,16 +73,16 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: CODE } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: { queryId: query.id, rowIndex: 0, poReference: "PO1", productName: "Widget",
-              packageType: "BOX", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1, isDangerous: false },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 1, dimW: 1, dimH: 1, grossWt: 1 }],
     });
     const leg = await prisma.leg.create({
       data: { queryId: query.id, legCode: "L1", mode: "AIR", status: "READY_FOR_RFQ",
               originPointId: origin.id, destinationPointId: dest.id,
-              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000),
-              legCargo: { create: { cargoItemId: cargo.id } } },
+              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000) },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const mkFf = (code: string, countries: string[], modes: ("AIR"|"SEA"|"ROAD")[], status: "ACTIVE"|"INACTIVE", handleDg = false) =>
       prisma.freightForwarder.create({ data: {
         freightForwarderCode: code, companyName: `${code} Co`, pic: "P", contactNumber: "+1000000000",
@@ -117,16 +118,16 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: DG_CODE } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "SG" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "DE" } });
-    const dgCargo = await prisma.cargoItem.create({
-      data: { queryId: query.id, rowIndex: 0, poReference: "PO-DG", productName: "Hazmat",
-              packageType: "BOX", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1, isDangerous: true },
+    const { packageIds: dgPackageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 1, dimW: 1, dimH: 1, grossWt: 1, tags: ["DG"] }],
     });
     const leg = await prisma.leg.create({
       data: { queryId: query.id, legCode: "L-DG", mode: "AIR", status: "READY_FOR_RFQ",
               originPointId: origin.id, destinationPointId: dest.id,
-              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000),
-              legCargo: { create: { cargoItemId: dgCargo.id } } },
+              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000) },
     });
+    await assignPackagesToLeg(prisma, leg.id, dgPackageIds);
 
     // FF-DG-Y: handleDg=true, ACTIVE → eligible even without SG/DE country match (broaden)
     const y = await prisma.freightForwarder.create({ data: {
@@ -158,16 +159,16 @@ describe(`${PREFIX} (e2e)`, () => {
     // Endpoint countries entered as NAMES via the point editor's free-text field.
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "United Kingdom" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "Germany" } });
-    const cargo = await prisma.cargoItem.create({
-      data: { queryId: query.id, rowIndex: 0, poReference: "PO", productName: "W",
-              packageType: "BOX", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1, isDangerous: false },
+    const { packageIds: cty1PackageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 1, dimW: 1, dimH: 1, grossWt: 1 }],
     });
     const leg = await prisma.leg.create({
       data: { queryId: query.id, legCode: "L1", mode: "AIR", status: "READY_FOR_RFQ",
               originPointId: origin.id, destinationPointId: dest.id,
-              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000),
-              legCargo: { create: { cargoItemId: cargo.id } } },
+              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000) },
     });
+    await assignPackagesToLeg(prisma, leg.id, cty1PackageIds);
     const mk = (code: string, countries: string[]) =>
       prisma.freightForwarder.create({ data: {
         freightForwarderCode: code, companyName: `${code} Co`, pic: "P", contactNumber: "+1000000000",
@@ -190,16 +191,16 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: `YAL00-RFQ-ELIG-CTY2` } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "GB" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY" } }); // no country
-    const cargo = await prisma.cargoItem.create({
-      data: { queryId: query.id, rowIndex: 0, poReference: "PO", productName: "W",
-              packageType: "BOX", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1, isDangerous: false },
+    const { packageIds: cty2PackageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 1, dimW: 1, dimH: 1, grossWt: 1 }],
     });
     const leg = await prisma.leg.create({
       data: { queryId: query.id, legCode: "L1", mode: "AIR", status: "READY_FOR_RFQ",
               originPointId: origin.id, destinationPointId: dest.id,
-              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000),
-              legCargo: { create: { cargoItemId: cargo.id } } },
+              readyDate: new Date(), targetDelivery: new Date(Date.now() + 86400000) },
     });
+    await assignPackagesToLeg(prisma, leg.id, cty2PackageIds);
     const gb = await prisma.freightForwarder.create({ data: {
       freightForwarderCode: "FF-ELIG-CTY-GB", companyName: "FF-ELIG-CTY-GB Co", pic: "P", contactNumber: "+1000000000",
       email: "ff-elig-cty-gb@e2e.test", availableCountries: ["GB"], modes: ["AIR"], status: "ACTIVE", handleDg: false } });

@@ -12,6 +12,7 @@ import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { ScheduledEventService } from "../src/modules/comms/scheduled-event.service";
 import { QueryStatusProjector } from "../src/modules/status/query-status.projector";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 // Task 12 — a leg whose FFs ALL expired still rolls up to FULLY_QUOTED (the leg-quote
 // projector counts EXPIRED as "resolved"), so without this fix the query would misreport
@@ -66,7 +67,7 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo/notifications
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items/notifications
     }
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
   };
@@ -93,25 +94,14 @@ describe(`${PREFIX} (e2e)`, () => {
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
-  const mkLeg = async (queryId: string, legCode: string, poRef: string) => {
+  const mkLeg = async (queryId: string, legCode: string, _poRef: string) => {
     const origin = await prisma.point.create({ data: { queryId, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId,
-        rowIndex: 0,
-        poReference: poRef,
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 1,
-        isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 1 }],
     });
-    return prisma.leg.create({
+    const leg = await prisma.leg.create({
       data: {
         queryId,
         legCode,
@@ -121,9 +111,10 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
+    return leg;
   };
 
   it("a query whose only quote expired rolls up to NO_RESPONSE", async () => {
