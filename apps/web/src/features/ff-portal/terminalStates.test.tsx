@@ -34,19 +34,17 @@ describe("terminalStates", () => {
       manifest: {
         cargo: [
           {
-            cargoItemId: "c1",
-            poReference: "PO-1",
-            productName: "Pumps",
-            hsCode: "8413",
+            packageId: "pk1",
+            packageNo: "PK-1",
             packageType: "Crate",
-            isDangerous: false,
-            qty: 2,
+            packageCount: 2,
             dimL: "1.2",
             dimW: "1.0",
             dimH: "0.8",
             netWt: "900",
             grossWt: "1500",
             volumeCbm: "2.5",
+            tags: [],
           },
         ],
       } as never,
@@ -60,7 +58,6 @@ describe("terminalStates", () => {
         },
       ],
       seededCharges: [],
-      seededDensity: [{ cargoItemId: "c1", freightDensity: 1000 }],
       draft: {
         legId: "L1",
         mode: "AIR",
@@ -68,21 +65,21 @@ describe("terminalStates", () => {
         quoteValidityUntil: "2026-09-30T00:00:00.000Z",
         cargo: [
           {
-            cargoItemId: "c1",
-            grossWtT: 1.5,
+            packageId: "pk1",
+            grossWtKg: 1500,
             cbm: 2.5,
-            isDangerous: false,
-            freightDensity: 1000,
+            chargedWeightKg: 1500,
           },
         ],
         charges: [
           { zone: "MAIN_FREIGHT", presetKey: "air_freight", label: "Air Freight", amount: 3500 },
         ],
         trucking: [],
+        seaRates: [],
         warehouse: [
           { warehousePointId: "w1", position: "ORIGIN", label: "Origin warehouse", amount: 200 },
         ],
-        transit: { departureDate: null, arrivalDate: null },
+        transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
         dgSurchargeNote: null,
         termsConditions: null,
       },
@@ -90,7 +87,8 @@ describe("terminalStates", () => {
 
     render(<AlreadySubmittedSummary leg={leg} rfq={rfq} />);
     expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
-    expect(screen.getByTestId("grand-total")).toBeInTheDocument();
+    // Single-variant (AIR) grand total — QuoteSummary keys the testid per rate variant.
+    expect(screen.getByTestId("grand-total-AIR")).toBeInTheDocument();
   });
 
   it("AlreadySubmittedSummary falls back to draftFromDto when leg.draft is null", () => {
@@ -112,19 +110,17 @@ describe("terminalStates", () => {
       manifest: {
         cargo: [
           {
-            cargoItemId: "c2",
-            poReference: "PO-2",
-            productName: "Valves",
-            hsCode: "8481",
+            packageId: "pk2",
+            packageNo: "PK-2",
             packageType: "Pallet",
-            isDangerous: false,
-            qty: 4,
+            packageCount: 4,
             dimL: "1.0",
             dimW: "0.8",
             dimH: "0.6",
             netWt: "800",
             grossWt: "2000",
             volumeCbm: "3.0",
+            tags: [],
           },
         ],
       } as never,
@@ -140,13 +136,13 @@ describe("terminalStates", () => {
       seededCharges: [
         { zone: "MAIN_FREIGHT", presetKey: "air_freight", label: "Air Freight" },
       ],
-      seededDensity: [{ cargoItemId: "c2", freightDensity: 600 }],
       draft: null,
     } as never;
 
     render(<AlreadySubmittedSummary leg={leg} rfq={rfq} />);
     expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
-    const grandTotal = screen.getByTestId("grand-total");
+    // Single-variant (AIR) grand total — QuoteSummary keys the testid per rate variant.
+    const grandTotal = screen.getByTestId("grand-total-AIR");
     expect(grandTotal).toBeInTheDocument();
     expect(grandTotal).toHaveTextContent(rfq.currency!);
   });

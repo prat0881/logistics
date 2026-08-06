@@ -185,7 +185,7 @@ function LegSectionForm({
               <RoadChargesPanel />
             </>
           ) : (
-            <ChargeZonePanel />
+            <ChargeZonePanel seededCharges={leg.seededCharges} />
           )}
         </section>
 

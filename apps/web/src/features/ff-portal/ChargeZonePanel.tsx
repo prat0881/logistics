@@ -1,9 +1,10 @@
 import { useFormContext, useFieldArray, useWatch } from "react-hook-form";
-import type { QuoteDraft, ChargeZone } from "@svyft/shared";
-import { computeQuoteTotals } from "@svyft/shared";
+import type { QuoteDraft, ChargeZone, FfPortalSeededCharge } from "@svyft/shared";
+import { computeHeavyWeightAmount } from "@svyft/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "./NumberField";
+import { HeavyWeightCalcRow } from "./HeavyWeightCalcRow";
 import { fmtAmount } from "./format";
 
 const ZONES: { key: ChargeZone; title: string }[] = [
@@ -12,17 +13,18 @@ const ZONES: { key: ChargeZone; title: string }[] = [
   { key: "DESTINATION", title: "Destination charges" },
 ];
 
-const ZONE_SUBTOTAL_KEY: Record<ChargeZone, "origin" | "mainFreight" | "destination"> = {
-  ORIGIN: "origin",
-  MAIN_FREIGHT: "mainFreight",
-  DESTINATION: "destination",
-};
+export interface ChargeZonePanelProps {
+  seededCharges: FfPortalSeededCharge[];
+}
 
-export function ChargeZonePanel() {
+export function ChargeZonePanel({ seededCharges }: ChargeZonePanelProps) {
   const { control, register, setValue } = useFormContext<QuoteDraft>();
   const { fields, append } = useFieldArray({ control, name: "charges" });
   const draft = useWatch({ control }) as Partial<QuoteDraft>;
-  const totals = computeQuoteTotals(draft as QuoteDraft);
+  // definitionKey → inputType, so a HEAVY_WEIGHT_CALC seeded line renders the calc row instead
+  // of a plain amount field. PLAIN lines (incl. FSC/Peak) fall through to the normal row — no
+  // special-casing needed for them.
+  const inputTypeByKey = new Map(seededCharges.map((s) => [s.definitionKey, s.inputType]));
 
   return (
     <div className="space-y-6">
@@ -35,7 +37,16 @@ export function ChargeZonePanel() {
           .map((f, idx) => ({ f, idx }))
           .filter(({ f, idx }) => (draft.charges?.[idx]?.zone ?? (f as { zone?: ChargeZone }).zone) === key);
 
-        const subtotalValue = totals.zoneSubtotals[ZONE_SUBTOTAL_KEY[key]];
+        // Zone subtotal computed LOCALLY from this zone's rows' effective amounts (QuoteTotals
+        // no longer exposes zoneSubtotals). A HEAVY_WEIGHT_CALC line's amount is derived from its
+        // 3 inputs, never stored on `amount` — mirrors computeQuoteTotals' effectiveChargeAmount.
+        const subtotalValue = rows.reduce((s, { idx }) => {
+          const c = draft.charges?.[idx];
+          if (!c) return s;
+          if (c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null)
+            return s + computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg);
+          return s + (c.amount ?? 0);
+        }, 0);
 
         return (
           <div key={key} className="space-y-2">
@@ -54,8 +65,21 @@ export function ChargeZonePanel() {
             <div className="space-y-2">
               {rows.map(({ f, idx }) => {
                 const chargeAtIdx = draft.charges?.[idx];
-                const isPreset = (chargeAtIdx?.presetKey ?? null) != null;
                 const label = chargeAtIdx?.label ?? (f as { label?: string }).label ?? "charge";
+                const definitionKey =
+                  chargeAtIdx?.definitionKey ?? (f as { definitionKey?: string | null }).definitionKey ?? undefined;
+
+                if (inputTypeByKey.get(definitionKey) === "HEAVY_WEIGHT_CALC") {
+                  return <HeavyWeightCalcRow key={f.id} index={idx} label={label} />;
+                }
+
+                // Catalogue (seeded) lines always carry a definitionKey; only a genuine custom
+                // [+ Add line] row has none. presetKey is always null on catalogue lines now
+                // (kept only for shape compatibility — see FfPortalSeededCharge), so a
+                // presetKey-based check would wrongly treat every seeded line — FSC, Peak, THC,
+                // Air Freight, etc. — as "custom" and render an editable label. Matches
+                // RoadChargesPanel.tsx's isPreset check.
+                const isPreset = definitionKey != null;
 
                 return (
                   <div
