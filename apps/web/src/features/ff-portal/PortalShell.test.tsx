@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PortalShell } from "./PortalShell";
-import type { FfPortalRfqDto } from "@svyft/shared";
+import type { FfPortalRfqDto, FfPortalLegDto } from "@svyft/shared";
 
 const rfq = {
   rfqNumber: "R-42",
@@ -110,5 +110,82 @@ describe("PortalShell interactions", () => {
 
     fireEvent.change(input, { target: { value: "" } });
     expect(onValidityChange).toHaveBeenCalledWith(null);
+  });
+});
+
+// ── RFQ PDF download + preview (design §4.8.14, Unit-4 Task 18) ──────────────────────────
+const rfqWithLeg: FfPortalRfqDto = {
+  ...rfq,
+  legs: [
+    {
+      legId: "L1",
+      quoteId: "Q1",
+      status: "RFQ_SENT",
+      mode: "AIR",
+      manifest: {
+        legId: "L1",
+        legCode: "LEG-01",
+        legName: null,
+        mode: "AIR",
+        incoterms: null,
+        origin: null,
+        destination: null,
+        readyDate: null,
+        targetDelivery: null,
+        cargo: [],
+        frozenAt: "2026-08-01T00:00:00.000Z",
+      },
+      endpoints: [],
+      seededCharges: [],
+      warehouseIncluded: true,
+      draft: null,
+    } satisfies FfPortalLegDto,
+  ],
+};
+
+describe("PortalShell — RFQ PDF download + preview", () => {
+  it("calls window.print when Download PDF is clicked", async () => {
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    const user = userEvent.setup();
+    render(
+      <PortalShell
+        rfq={rfqWithLeg}
+        currency="USD"
+        onCurrencyChange={() => {}}
+        quoteValidityUntil={null}
+        onValidityChange={() => {}}
+      >
+        x
+      </PortalShell>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /download pdf/i }));
+
+    expect(printSpy).toHaveBeenCalledTimes(1);
+    printSpy.mockRestore();
+  });
+
+  it("opens a read-only preview dialog showing the print view when Preview is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <PortalShell
+        rfq={rfqWithLeg}
+        currency="USD"
+        onCurrencyChange={() => {}}
+        quoteValidityUntil={null}
+        onValidityChange={() => {}}
+      >
+        x
+      </PortalShell>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /preview/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    // The print view's content (leg code from RfqPrintView) appears inside the dialog.
+    expect(within(dialog).getByText("LEG-01")).toBeInTheDocument();
+    // Read-only: no inputs/checkboxes inside the preview document itself.
+    expect(within(dialog).queryByRole("textbox")).toBeNull();
+    expect(within(dialog).queryByRole("checkbox")).toBeNull();
   });
 });
