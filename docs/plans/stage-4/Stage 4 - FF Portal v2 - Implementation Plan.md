@@ -917,13 +917,24 @@ export function resolveChargeConfig(
 
 ```ts
 { key: "AIR_MAIN_HEAVY_WEIGHT", mode: "AIR", role: "CORE", inputType: "HEAVY_WEIGHT_CALC", zone: "MAIN_FREIGHT", label: "Heavy Weight Surcharge", sortOrder: 9 },
-{ key: "AIR_MAIN_FSC", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Fuel Surcharge (FSC)", sortOrder: 9.1 },
-{ key: "AIR_MAIN_PEAK_SEASON", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Peak Season Surcharge", sortOrder: 9.2 },
+{ key: "AIR_MAIN_FSC", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Fuel Surcharge (FSC)", sortOrder: 10 },
+{ key: "AIR_MAIN_PEAK_SEASON", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Peak Season Surcharge", sortOrder: 11 },
 ```
+
+> **`sortOrder` is an `Int` column** — do NOT use fractional values (`9.1` truncates to `9` → a tie). FSC/Peak take `10`/`11` and the downstream Air lines (old `10`–`18`: `AIR_DEST_*` + `AIR_TAG_*`) renumber **+2** (→ `12`–`20`) to keep the sequence distinct and monotonic. Because `seedReferenceData` is create-only, a paired data migration (`20260806030000_air_surcharge_sortorder`) must UPDATE those already-seeded rows on :5433/prod.
 
 *(Sea B/L `SEA_ORIGIN_BILL_OF_LADING` already exists as a CORE line — no seed change; the B/L dropdown is a portal-side attribute on that line's `ChargeLine.billOfLadingType`.)*
 
-- [ ] **Step 5: Extend `reference-seed.e2e-spec.ts`** — assert the two new keys exist and `AIR_MAIN_HEAVY_WEIGHT.inputType === "HEAVY_WEIGHT_CALC"`. Run both suites — expect PASS. Rebuild shared first.
+- [ ] **Step 4b (review finding — retire the flat sea-freight line): deactivate `SEA_MAIN_FREIGHT`.** Design §5.2 makes sea freight the structured `seaRates[]` dual-rate that *replaces* the old flat `SEA_MAIN_FREIGHT` CORE/PLAIN charge line. If left active it would be priced twice (via `draft.charges` AND `seaRates`) and double-counted by `computeQuoteTotals`. Set `isActive: false` on `SEA_MAIN_FREIGHT` in the seed def (line 56) so fresh DBs seed it inactive **and** add a tiny data migration (create-only seed can't update the existing :5433/prod row):
+
+```sql
+-- prisma/migrations/<timestamp>_retire_sea_main_freight/migration.sql
+UPDATE "ChargeLineDefinition" SET "isActive" = false WHERE "key" = 'SEA_MAIN_FREIGHT';
+```
+
+Apply via `migrate deploy` (never `migrate dev`). (Road/Air unaffected: `ROAD_CORE_TRUCKING` is `inputType TRUCKING`; Air is single-rate, so `AIR_MAIN_FREIGHT` stays active and correctly priced as the single AIR variant.)
+
+- [ ] **Step 5: Extend `reference-seed.e2e-spec.ts`** — assert the two new keys exist, `AIR_MAIN_HEAVY_WEIGHT.inputType === "HEAVY_WEIGHT_CALC"`, and `SEA_MAIN_FREIGHT.isActive === false` (and that it is absent from a resolved Sea `chargeConfigSnapshot`). Run both suites — expect PASS. Rebuild shared first.
 
 - [ ] **Step 6: Report to controller** — files: `packages/shared/src/charge-config.ts`, `packages/shared/src/charge-config.test.ts`, `apps/api/src/seed/reference-seed.ts`, `apps/api/test/reference-seed.e2e-spec.ts`. Message: `feat(shared,api): tag two-gate resolver + FSC/Peak/heavy-weight-calc catalogue`.
 
