@@ -208,6 +208,7 @@ model Quote {
   quoteCargoLines       QuoteCargoLine[]
   chargeLines           ChargeLine[]
   truckingCharges       TruckingCharge[]
+  seaFreightRates       SeaFreightRate[]
   warehouseStagingLines WarehouseStagingLine[]
   transitPlan           TransitPlan?
 
@@ -225,16 +226,15 @@ model RfqSequence {
 }
 
 model QuoteCargoLine {
-  id                String    @id @default(uuid()) @db.Uuid
-  tenantId          String?   @db.Uuid
-  quoteId           String    @db.Uuid
-  quote             Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  packageId         String    @db.Uuid
-  package           Package   @relation(fields: [packageId], references: [id], onDelete: Restrict)
-  freightDensity    Decimal   @db.Decimal(12, 3)
-  chargeableWeightT Decimal   @db.Decimal(12, 3)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String?  @db.Uuid
+  quoteId         String   @db.Uuid
+  quote           Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  packageId       String   @db.Uuid
+  package         Package  @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  chargedWeightKg Decimal  @db.Decimal(12, 3)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@unique([quoteId, packageId])
   @@index([quoteId])
@@ -254,6 +254,10 @@ model ChargeLine {
   note      String?
   sortOrder Int        @default(0)
   definitionKey String?
+  pieceWeightKg    Decimal?          @db.Decimal(12, 3)
+  airlineLimitKg   Decimal?          @db.Decimal(12, 3)
+  ratePerExcessKg  Decimal?          @db.Decimal(14, 2)
+  billOfLadingType BillOfLadingType?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
@@ -262,19 +266,37 @@ model ChargeLine {
 }
 
 model TruckingCharge {
-  id                 String        @id @default(uuid()) @db.Uuid
-  tenantId           String?       @db.Uuid
-  quoteId            String        @db.Uuid
-  quote              Quote         @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  legEndpointPointId String        @db.Uuid
-  legEndpointPoint   Point         @relation(fields: [legEndpointPointId], references: [id], onDelete: Restrict)
+  id                 String            @id @default(uuid()) @db.Uuid
+  tenantId           String?           @db.Uuid
+  quoteId            String            @db.Uuid
+  quote              Quote             @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  legEndpointPointId String            @db.Uuid
+  legEndpointPoint   Point             @relation(fields: [legEndpointPointId], references: [id], onDelete: Restrict)
   truckingType       TruckingType
   basis              TruckingBasis
-  amount             Decimal       @db.Decimal(14, 2)
+  amount             Decimal           @db.Decimal(14, 2)
   remarks            String?
   definitionKey      String?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  rateVariant        ChargeRateVariant @default(DEDICATED)
+  tonnage            TruckTonnage?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([quoteId])
+  @@index([tenantId])
+}
+
+model SeaFreightRate {
+  id            String            @id @default(uuid()) @db.Uuid
+  tenantId      String?           @db.Uuid
+  quoteId       String            @db.Uuid
+  quote         Quote             @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  rateVariant   ChargeRateVariant // FCL | LCL
+  containerSize ContainerSize?    // FCL only
+  amount        Decimal           @db.Decimal(14, 2)
+  remarks       String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
   @@index([quoteId])
   @@index([tenantId])
@@ -294,6 +316,8 @@ model WarehouseStagingLine {
   note                  String?
   cargoAcceptanceWindow String?
   definitionKey         String?
+  cfsCode               String?
+  side                  WarehouseSide?
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
 
@@ -344,6 +368,15 @@ model TransitPlan {
   arrivalDate           DateTime
   carrierSurcharge      Decimal? @db.Decimal(14, 2)
   guaranteedTransitDays Int?
+  plannedPickupDate     DateTime?
+  airline               String?
+  flightNumber          String?
+  plannedDeparture      DateTime?
+  plannedArrival        DateTime?
+  shippingLine          String?
+  vesselVoyage          String?
+  etd                   DateTime?
+  eta                   DateTime?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
@@ -539,6 +572,44 @@ enum ChargeLineInputType {
   PLAIN
   TRUCKING
   WAREHOUSE_STAGING
+  HEAVY_WEIGHT_CALC
+}
+
+enum ChargeRateVariant {
+  DEDICATED
+  GROUPAGE
+  FCL
+  LCL
+}
+
+enum TruckTonnage {
+  T_1
+  T_2
+  T_3_5
+  T_5
+  T_7
+  T_9
+  T_12
+  T_16
+  T_20
+  T_25
+  TRAILER_30_40T
+}
+
+enum ContainerSize {
+  TWENTY
+  FORTY
+  FORTY_FIVE_HC
+}
+
+enum BillOfLadingType {
+  ORIGINAL
+  TELEX
+}
+
+enum WarehouseSide {
+  DROP
+  PICKUP
 }
 
 enum TruckingType {
