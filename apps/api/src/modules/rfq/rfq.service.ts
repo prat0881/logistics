@@ -264,7 +264,7 @@ export class RfqService {
       !leg.originPointId ||
       !leg.destinationPointId ||
       !leg.mode ||
-      leg.legCargo.length === 0 ||
+      leg.legPackages.length === 0 ||
       !leg.readyDate ||
       !leg.targetDelivery
     ) {

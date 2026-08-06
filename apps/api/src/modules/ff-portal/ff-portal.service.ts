@@ -92,7 +92,7 @@ export class FfPortalService {
         seededDensity:
           density == null
             ? []
-            : manifest.cargo.map((c) => ({ cargoItemId: c.cargoItemId, freightDensity: density })),
+            : manifest.cargo.map((c) => ({ cargoItemId: c.packageId, freightDensity: density })),
         draft: q.draftJson ? (q.draftJson as QuoteDraft) : null,
       };
     });
@@ -161,11 +161,11 @@ export class FfPortalService {
       currency: scope.rfq.currency,
       quoteValidityUntil: scope.rfq.quoteValidityUntil?.toISOString() ?? null,
       cargo: manifest.cargo.map((c) => ({
-        cargoItemId: c.cargoItemId,
+        cargoItemId: c.packageId,
         grossWtT: Number(c.grossWt) / 1000,
         cbm: Number(c.volumeCbm ?? 0),
-        isDangerous: c.isDangerous,
-        freightDensity: stored.cargo?.find((s) => s.cargoItemId === c.cargoItemId)?.freightDensity ?? null,
+        isDangerous: c.tags.includes("DG"),
+        freightDensity: stored.cargo?.find((s) => s.cargoItemId === c.packageId)?.freightDensity ?? null,
       })),
       charges: (stored.charges ?? []).map((c) => ({ ...c })),
       trucking: (stored.trucking ?? []).map((t) => ({ ...t })),
@@ -223,7 +223,7 @@ export class FfPortalService {
         await tx.quoteCargoLine.createMany({
           data: draft.cargo.map((c) => ({
             quoteId: q.id,
-            cargoItemId: c.cargoItemId,
+            packageId: c.cargoItemId, // field carries the packageId this unit (renamed in Unit 2)
             freightDensity: c.freightDensity!,
             chargeableWeightT: computeChargeableWeight(c.grossWtT, c.cbm, c.freightDensity!),
           })),
