@@ -227,6 +227,35 @@ describe("validateQuote — Q_CUSTOM_REMARK (custom [+ Add Charge] lines)", () =
   });
 });
 
+describe("validateQuote — Q_WEIGHT (Charged Weight (kg) mandatory per package)", () => {
+  it("blocks a package with no Charged Weight (kg) — QuoteCargoLine.chargedWeightKg is NOT NULL", () => {
+    const d = airOkDraft();
+    d.cargo = [{ packageId: "c1", grossWtKg: 1000, cbm: 2, chargedWeightKg: null }];
+    const f = validateQuote(d, deadline, now, airActiveLines);
+    expect(f.some((x) => x.rule === "Q_WEIGHT")).toBe(true);
+  });
+  it("passes when every package has a Charged Weight", () => {
+    const f = validateQuote(airOkDraft(), deadline, now, airActiveLines);
+    expect(f.some((x) => x.rule === "Q_WEIGHT")).toBe(false);
+  });
+});
+
+describe("validateQuote — Q_CUSTOM_AMOUNT (custom [+ Add Charge] amount mandatory)", () => {
+  it("blocks a custom line that has a remark but no amount — force-unwrapped at materialize", () => {
+    const d = airOkDraft();
+    d.charges = [{ zone: null, definitionKey: null, presetKey: null, label: "Ad-hoc handling", amount: null, note: "Client-requested crating" }];
+    const f = validateQuote(d, deadline, now, []);
+    expect(f.some((x) => x.rule === "Q_CUSTOM_AMOUNT")).toBe(true);
+    expect(f.some((x) => x.rule === "Q_CUSTOM_REMARK")).toBe(false); // has a note — remark rule doesn't also fire
+  });
+  it("passes a custom line with both a remark and an amount", () => {
+    const d = airOkDraft();
+    d.charges = [{ zone: null, definitionKey: null, presetKey: null, label: "Ad-hoc handling", amount: 40, note: "Client-requested crating" }];
+    const f = validateQuote(d, deadline, now, []);
+    expect(f.some((x) => x.rule === "Q_CUSTOM_AMOUNT")).toBe(false);
+  });
+});
+
 describe("validateQuote — Q_TRANSIT (Guaranteed Transit Time mandatory)", () => {
   it("blocks a leg missing Guaranteed Transit Time", () => {
     const d = airOkDraft();

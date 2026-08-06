@@ -247,7 +247,11 @@ export class FfPortalService {
           })),
         });
 
-        for (const t of draft.trucking) {
+        // Q_RATE only requires >=1 of the two rate variants filled — a dual-rate draft can
+        // legitimately carry the other as amount=null (blank rate → "–" for that variant, per
+        // computeQuoteTotals). Filter here so `amount!` below is safe and an unpriced variant
+        // never hits the NOT NULL `amount` column.
+        for (const t of draft.trucking.filter((t) => t.amount != null)) {
           await tx.truckingCharge.create({
             data: {
               quoteId: q.id,
@@ -262,7 +266,7 @@ export class FfPortalService {
           });
         }
 
-        for (const r of draft.seaRates) {
+        for (const r of draft.seaRates.filter((r) => r.amount != null)) {
           await tx.seaFreightRate.create({
             data: {
               quoteId: q.id,
@@ -296,8 +300,8 @@ export class FfPortalService {
               quoteId: q.id,
               carrier: draft.transit.carrier ?? null,
               flightVoyageNo: draft.transit.flightVoyageNo ?? null,
-              departureDate: new Date(draft.transit.departureDate!),
-              arrivalDate: new Date(draft.transit.arrivalDate!),
+              departureDate: draft.transit.departureDate ? new Date(draft.transit.departureDate) : null,
+              arrivalDate: draft.transit.arrivalDate ? new Date(draft.transit.arrivalDate) : null,
               carrierSurcharge: draft.transit.carrierSurcharge ?? null,
               guaranteedTransitDays: draft.transit.guaranteedTransitDays ?? null,
               plannedPickupDate: draft.transit.plannedPickupDate ? new Date(draft.transit.plannedPickupDate) : null,

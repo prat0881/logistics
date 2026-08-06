@@ -36,6 +36,16 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 // normal Q_PRICED rule, not a bespoke note-mandatory check. This spec keeps a DG-tagged package
 // in the fixture (manifest-grain fidelity, mirrors Task 3) but does not assert a DG-specific
 // submit gate, since none exists in v2.
+//
+// Post-review addendum: two crash paths the original 6 v2 rules left open (both force-unwrap
+// at materialize, ff-portal.service.ts) are now covered here -- (1) `QuoteCargoLine
+// .chargedWeightKg` is a NOT NULL column but nothing gated `chargedWeightKg == null`, so a
+// missing weight used to crash past the gate as a generic 400 "Invalid request" (a Prisma
+// PrismaClientValidationError caught by PrismaExceptionFilter) instead of a proper, specific 422
+// finding (Q_WEIGHT closes this, quote-engine.ts); (2) Q_RATE only requires >=1 of the two
+// trucking/seaRate variants filled, so a dual-rate draft can legitimately carry the OTHER
+// variant as amount=null -- submit now filters those out before materializing instead of
+// force-unwrapping `amount!` on a row that was never priced (same crash class).
 const PFX = "FFGRAIN_";
 
 describe(`${PFX}ff-portal-grain (e2e)`, () => {
@@ -412,5 +422,331 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     // ChargeLine reality end to end, not just the individual line.
     const quote = await prisma.quote.findUniqueOrThrow({ where: { id: quoteId } });
     expect(Number(quote.grandTotal)).toBe(plainCount * 50 + 200);
+  });
+
+  it("blocks submit with 422 Q_WEIGHT (not a 500) when a package has no Charged Wt", async () => {
+    const admin = cookie(Role.ADMINISTRATOR);
+    const CODE = `${PFX}3`;
+
+    const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
+    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
+    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+
+    const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
+    const pkg1 = await prisma.package.create({
+      data: {
+        queryId: query.id, cargoId: cargo.id, rowIndex: 0, packageNo: "PK-1", packageType: "BOX",
+        dimL: 100, dimW: 50, dimH: 40, grossWt: 120,
+      },
+    });
+    const pkg2 = await prisma.package.create({
+      data: {
+        queryId: query.id, cargoId: cargo.id, rowIndex: 1, packageNo: "PK-2", packageType: "DRUM",
+        dimL: 60, dimW: 60, dimH: 60, grossWt: 45,
+      },
+    });
+
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L-FFGRAIN-3",
+        mode: "ROAD",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+        legPackages: { create: [{ packageId: pkg1.id }, { packageId: pkg2.id }] },
+      },
+    });
+
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PFX}C`,
+        companyName: `FF-${PFX}C Co`,
+        pic: "P",
+        contactNumber: "+1000000002",
+        email: `ff-${PFX.toLowerCase()}c@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["ROAD"],
+        status: "ACTIVE",
+        handleDg: false,
+        defaultCurrency: "USD",
+      },
+    });
+
+    await api()
+      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [ff.id] })
+      .expect(200);
+    const distRes = await api()
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    const token = distRes.body.rfqs[0].accessToken as string;
+
+    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const legDto = (got.body as FfPortalRfqDto).legs[0];
+
+    // pkg1 priced, pkg2 left WITHOUT a Charged Wt — everything else (currency, validity,
+    // trucking, transit) is genuinely valid, so a 422 here can only come from Q_WEIGHT.
+    const draft: QuoteDraft = {
+      legId: leg.id,
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      cargo: legDto.manifest.cargo.map((c) => ({
+        packageId: c.packageId,
+        grossWtKg: Number(c.grossWt),
+        cbm: Number(c.volumeCbm ?? 0),
+        chargedWeightKg: c.packageId === pkg1.id ? 125.5 : null,
+      })),
+      charges: [],
+      trucking: [
+        {
+          legEndpointPointId: origin.id, truckingType: "DEDICATED", basis: "PER_TRUCK",
+          amount: 500, remarks: "Dedicated ex-origin", rateVariant: "DEDICATED", tonnage: "T_5",
+        },
+      ],
+      seaRates: [],
+      warehouse: [],
+      transit: {
+        departureDate: "2026-08-12T00:00:00.000Z", arrivalDate: "2026-08-14T00:00:00.000Z",
+        guaranteedTransitDays: 3,
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+
+    await api().patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draft).expect(200);
+    // Before the fix: quoteCargoLine.createMany's `chargedWeightKg: c.chargedWeightKg!` force-
+    // unwraps null onto a NOT NULL column — Prisma rejects it with a PrismaClientValidationError,
+    // which the global PrismaExceptionFilter maps to a generic 400 "Invalid request" (crashing
+    // past the submit gate with zero diagnostic info for the FF), not this proper, specific 422
+    // Q_WEIGHT finding. `.expect(422)` fails loudly (with the real status) if that regresses.
+    const res = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(422);
+    const weightFinding = (res.body.findings as { rule: string; scope: { type: string; id?: string } }[]).find(
+      (f) => f.rule === "Q_WEIGHT",
+    );
+    expect(weightFinding).toBeDefined();
+    expect(weightFinding?.scope).toEqual({ type: "cargo", id: pkg2.id });
+  });
+
+  it("materializes only the priced trucking variant when the other dual-rate row is left blank", async () => {
+    const admin = cookie(Role.ADMINISTRATOR);
+    const CODE = `${PFX}4`;
+
+    const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
+    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
+    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+
+    const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
+    const pkg = await prisma.package.create({
+      data: {
+        queryId: query.id, cargoId: cargo.id, rowIndex: 0, packageNo: "PK-1", packageType: "BOX",
+        dimL: 100, dimW: 50, dimH: 40, grossWt: 120,
+      },
+    });
+
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L-FFGRAIN-4",
+        mode: "ROAD",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+        legPackages: { create: [{ packageId: pkg.id }] },
+      },
+    });
+
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PFX}D`,
+        companyName: `FF-${PFX}D Co`,
+        pic: "P",
+        contactNumber: "+1000000003",
+        email: `ff-${PFX.toLowerCase()}d@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["ROAD"],
+        status: "ACTIVE",
+        handleDg: false,
+        defaultCurrency: "USD",
+      },
+    });
+
+    await api()
+      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [ff.id] })
+      .expect(200);
+    const distRes = await api()
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    const token = distRes.body.rfqs[0].accessToken as string;
+
+    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const legDto = (got.body as FfPortalRfqDto).legs[0];
+
+    // Dedicated priced; Groupage row present but amount left blank — Q_RATE only requires ONE
+    // of the two variants filled, so this is a legitimate, submittable draft.
+    const draft: QuoteDraft = {
+      legId: leg.id,
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      cargo: legDto.manifest.cargo.map((c) => ({
+        packageId: c.packageId, grossWtKg: Number(c.grossWt), cbm: Number(c.volumeCbm ?? 0), chargedWeightKg: 130,
+      })),
+      charges: [],
+      trucking: [
+        {
+          legEndpointPointId: origin.id, truckingType: "DEDICATED", basis: "PER_TRUCK",
+          amount: 500, remarks: "Dedicated priced", rateVariant: "DEDICATED", tonnage: "T_5",
+        },
+        {
+          legEndpointPointId: dest.id, truckingType: "GROUPAGE", basis: "PER_CBM",
+          amount: null, rateVariant: "GROUPAGE", tonnage: null,
+        },
+      ],
+      seaRates: [],
+      warehouse: [],
+      transit: {
+        departureDate: "2026-08-12T00:00:00.000Z", arrivalDate: "2026-08-14T00:00:00.000Z",
+        guaranteedTransitDays: 4,
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+
+    await api().patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draft).expect(200);
+    // Before the fix: `truckingCharge.create`'s `amount: t.amount!` force-unwraps null onto a
+    // NOT NULL column for the (legitimately blank) Groupage row — Prisma rejects it with a
+    // PrismaClientValidationError, which PrismaExceptionFilter maps to a generic 400 "Invalid
+    // request" instead of this succeeding, even though the draft is fully valid per Q_RATE
+    // (>=1 of the two variants filled is enough to submit).
+    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(201);
+    expect(submitRes.body.status).toBe("QUOTED");
+
+    // Exactly ONE TruckingCharge persisted — the unpriced Groupage row is dropped entirely
+    // rather than written with a null (or 0-substituted) amount.
+    const trucking = await prisma.truckingCharge.findMany({ where: { quoteId: submitRes.body.quoteId } });
+    expect(trucking).toHaveLength(1);
+    expect(trucking[0]!.rateVariant).toBe("DEDICATED");
+    expect(Number(trucking[0]!.amount)).toBe(500);
+  });
+
+  it("persists a null TransitPlan.departureDate/arrivalDate (not the 1970 epoch) when only the mode-specific transit fields are set", async () => {
+    const admin = cookie(Role.ADMINISTRATOR);
+    const CODE = `${PFX}5`;
+
+    const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
+    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
+    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+
+    const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
+    const pkg = await prisma.package.create({
+      data: {
+        queryId: query.id, cargoId: cargo.id, rowIndex: 0, packageNo: "PK-1", packageType: "BOX",
+        dimL: 100, dimW: 50, dimH: 40, grossWt: 120,
+      },
+    });
+
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L-FFGRAIN-5",
+        mode: "ROAD",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+        legPackages: { create: [{ packageId: pkg.id }] },
+      },
+    });
+
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PFX}E`,
+        companyName: `FF-${PFX}E Co`,
+        pic: "P",
+        contactNumber: "+1000000004",
+        email: `ff-${PFX.toLowerCase()}e@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["ROAD"],
+        status: "ACTIVE",
+        handleDg: false,
+        defaultCurrency: "USD",
+      },
+    });
+
+    await api()
+      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [ff.id] })
+      .expect(200);
+    const distRes = await api()
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    const token = distRes.body.rfqs[0].accessToken as string;
+
+    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const legDto = (got.body as FfPortalRfqDto).legs[0];
+
+    // Guaranteed Transit Time set (mandatory, Q_TRANSIT) but NO generic departureDate/
+    // arrivalDate — only the Road-specific plannedPickupDate. This is a fully valid v2 draft:
+    // v2 replaced the old departure/arrival requirement with mandatory guaranteedTransitDays,
+    // and every mode-specific date field is optional.
+    const draft: QuoteDraft = {
+      legId: leg.id,
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      cargo: legDto.manifest.cargo.map((c) => ({
+        packageId: c.packageId, grossWtKg: Number(c.grossWt), cbm: Number(c.volumeCbm ?? 0), chargedWeightKg: 130,
+      })),
+      charges: [],
+      trucking: [
+        {
+          legEndpointPointId: origin.id, truckingType: "DEDICATED", basis: "PER_TRUCK",
+          amount: 500, remarks: "Dedicated", rateVariant: "DEDICATED", tonnage: "T_5",
+        },
+      ],
+      seaRates: [],
+      warehouse: [],
+      transit: {
+        departureDate: null,
+        arrivalDate: null,
+        plannedPickupDate: "2026-08-11T00:00:00.000Z",
+        guaranteedTransitDays: 5,
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+
+    await api().patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draft).expect(200);
+    // Before the fix: `transitPlan.create`'s `new Date(draft.transit.departureDate!)` doesn't
+    // throw on null — it silently evaluates to 1970-01-01T00:00:00.000Z and Prisma writes that
+    // to the (then) NOT NULL column instead of erroring. `.expect(201)` alone wouldn't have
+    // caught that (it "succeeds" either way) — the assertions below are what actually pin it.
+    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(201);
+    expect(submitRes.body.status).toBe("QUOTED");
+
+    const transitPlan = await prisma.transitPlan.findFirstOrThrow({
+      where: { quoteId: submitRes.body.quoteId },
+    });
+    expect(transitPlan.departureDate).toBeNull(); // NOT 1970-01-01T00:00:00.000Z
+    expect(transitPlan.arrivalDate).toBeNull();
+    expect(transitPlan.guaranteedTransitDays).toBe(5);
+    expect(transitPlan.plannedPickupDate?.toISOString()).toBe("2026-08-11T00:00:00.000Z");
   });
 });

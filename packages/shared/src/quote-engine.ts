@@ -54,7 +54,10 @@ export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
   return { variants, sharedSubtotal, chargeableWeightKg };
 }
 
-/** Submit-gate v2 (design §7): 6 blocking rules gating FF portal submission. */
+/** Submit-gate v2 (design §7): blocking rules gating FF portal submission. Every rule here
+ *  guards a value that gets force-unwrapped (`!`) at materialize (ff-portal.service.ts) onto a
+ *  NOT NULL column — Q_WEIGHT (QuoteCargoLine.chargedWeightKg) and Q_CUSTOM_AMOUNT
+ *  (ChargeLine.amount for a custom line) close the two gaps the original 6 rules left open. */
 export function validateQuote(
   draft: QuoteDraft, deadlineIso: string, nowIso: string, activeLines: ResolvedChargeLine[] = [],
 ): Finding[] {
@@ -72,6 +75,11 @@ export function validateQuote(
   else if (new Date(draft.quoteValidityUntil).getTime() < new Date(deadlineIso).getTime())
     f.push(blk("Q_VALIDITY", "Quote Validity Until must be on or after the submission deadline", { type: "field", id: "quoteValidityUntil" }));
 
+  // Charged Weight (kg) mandatory on every package (QuoteCargoLine.chargedWeightKg is NOT NULL)
+  for (const c of draft.cargo)
+    if (c.chargedWeightKg == null)
+      f.push(blk("Q_WEIGHT", "Charged Weight (kg) is required for every package", { type: "cargo", id: c.packageId }));
+
   // (2) every active charge line priced — amount present; 0 allowed ONLY with a remark
   const byKey = new Map(draft.charges.filter((c) => c.definitionKey).map((c) => [c.definitionKey!, c]));
   for (const line of activeLines) {
@@ -88,10 +96,13 @@ export function validateQuote(
       f.push(blk("Q_PRICED", `A remark is required to quote "${line.label}" at 0`, leg));
   }
 
-  // (3) remark mandatory on every custom [+ Add Charge] line
+  // (3) remark + amount mandatory on every custom [+ Add Charge] line (its `amount` is
+  // force-unwrapped at materialize — ff-portal.service.ts's chargeLine.createMany)
   for (const c of draft.charges)
-    if (!c.definitionKey && !c.presetKey && !c.note?.trim())
-      f.push(blk("Q_CUSTOM_REMARK", `A remark is required on the custom charge "${c.label}"`, leg));
+    if (!c.definitionKey && !c.presetKey) {
+      if (!c.note?.trim()) f.push(blk("Q_CUSTOM_REMARK", `A remark is required on the custom charge "${c.label}"`, leg));
+      if (c.amount == null) f.push(blk("Q_CUSTOM_AMOUNT", `An amount is required on the custom charge "${c.label}"`, leg));
+    }
 
   // (4) Guaranteed Transit Time present on every leg
   if (draft.transit?.guaranteedTransitDays == null)

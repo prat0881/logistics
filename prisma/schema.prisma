@@ -364,8 +364,8 @@ model TransitPlan {
   quote                 Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
   carrier               String?
   flightVoyageNo        String?
-  departureDate         DateTime
-  arrivalDate           DateTime
+  departureDate         DateTime?
+  arrivalDate           DateTime?
   carrierSurcharge      Decimal? @db.Decimal(14, 2)
   guaranteedTransitDays Int?
   plannedPickupDate     DateTime?
