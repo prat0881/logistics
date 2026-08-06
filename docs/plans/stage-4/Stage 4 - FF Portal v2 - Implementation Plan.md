@@ -736,8 +736,16 @@ export interface QuoteTotals {
   chargeableWeightKg: number;
 }
 
+// A HEAVY_WEIGHT_CALC line's amount is DERIVED from its 3 inputs (its `amount` stays null),
+// so the totals must compute it — never trust `amount` for calc lines. All other lines use `amount ?? 0`.
+function effectiveChargeAmount(c: QuoteDraftCharge): number {
+  if (c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null)
+    return computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg);
+  return c.amount ?? 0;
+}
+
 export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
-  const chargesSum = draft.charges.reduce((s, c) => s + (c.amount ?? 0), 0);
+  const chargesSum = draft.charges.reduce((s, c) => s + effectiveChargeAmount(c), 0);
   const warehouseSum = draft.warehouse.reduce((s, w) => s + (w.amount ?? 0), 0);
   const sharedSubtotal = chargesSum + warehouseSum;
   const chargeableWeightKg = draft.cargo.reduce((s, c) => s + (c.chargedWeightKg ?? 0), 0);
@@ -826,10 +834,18 @@ export function validateQuote(
       f.push(blk("Q_PRICED", `A remark is required to quote "${line.label}" at 0`, leg));
   }
 
-  // (3) remark mandatory on every custom [+ Add Charge] line
+  // (3) every custom [+ Add Charge] line needs BOTH a remark and an amount (both are force-
+  //     unwrapped at materialize; the column is NOT NULL, so an ungated null → 500 not 422)
   for (const c of draft.charges)
-    if (!c.definitionKey && !c.presetKey && !c.note?.trim())
-      f.push(blk("Q_CUSTOM_REMARK", `A remark is required on the custom charge "${c.label}"`, leg));
+    if (!c.definitionKey && !c.presetKey) {
+      if (!c.note?.trim()) f.push(blk("Q_CUSTOM_REMARK", `A remark is required on the custom charge "${c.label}"`, leg));
+      if (c.amount == null) f.push(blk("Q_CUSTOM_AMOUNT", `An amount is required on the custom charge "${c.label}"`, leg));
+    }
+
+  // (3b) Charged Weight (kg) mandatory on every package — QuoteCargoLine.chargedWeightKg is NOT NULL
+  for (const c of draft.cargo)
+    if (c.chargedWeightKg == null)
+      f.push(blk("Q_WEIGHT", "Charged Weight (kg) is required for every package", { type: "cargo", id: c.packageId }));
 
   // (4) Guaranteed Transit Time present on every leg
   if (draft.transit?.guaranteedTransitDays == null)
@@ -999,11 +1015,13 @@ await tx.chargeLine.createMany({
     ratePerExcessKg: c.ratePerExcessKg ?? null, billOfLadingType: c.billOfLadingType ?? null,
   })),
 });
-for (const t of draft.trucking)
+// Only priced rate rows are persisted — the gate allows ≥1 variant filled, so an unpriced
+// (amount=null) variant row is legitimate and must be dropped (its column is NOT NULL).
+for (const t of draft.trucking.filter((t) => t.amount != null))
   await tx.truckingCharge.create({ data: { quoteId: q.id, legEndpointPointId: t.legEndpointPointId,
     truckingType: t.truckingType, basis: t.basis, amount: t.amount!, remarks: t.remarks,
     rateVariant: t.rateVariant, tonnage: t.tonnage } });
-for (const r of draft.seaRates)
+for (const r of draft.seaRates.filter((r) => r.amount != null))
   await tx.seaFreightRate.create({ data: { quoteId: q.id, rateVariant: r.rateVariant,
     containerSize: r.containerSize, amount: r.amount!, remarks: r.remarks } });
 // warehouse rows: add cfsCode/side
