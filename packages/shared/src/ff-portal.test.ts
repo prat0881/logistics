@@ -4,10 +4,10 @@ import type { QuoteDraft } from "./quote";
 
 const valid: QuoteDraft = {
   legId: "l1", mode: "AIR", currency: "USD", quoteValidityUntil: "2026-08-20T00:00:00.000Z",
-  cargo: [{ cargoItemId: "c1", grossWtT: 1, cbm: 2, isDangerous: false, freightDensity: 167 }],
+  cargo: [{ packageId: "c1", grossWtKg: 1000, cbm: 2, chargedWeightKg: 1000 }],
   charges: [{ zone: "ORIGIN", presetKey: "AIR_ORIGIN_THC", label: "Origin THC", amount: 100, note: "x" }],
-  trucking: [], warehouse: [],
-  transit: { departureDate: "2026-08-12T00:00:00.000Z", arrivalDate: "2026-08-14T00:00:00.000Z" },
+  trucking: [], seaRates: [], warehouse: [],
+  transit: { departureDate: "2026-08-12T00:00:00.000Z", arrivalDate: "2026-08-14T00:00:00.000Z", guaranteedTransitDays: 5 },
   dgSurchargeNote: null, termsConditions: null,
 };
 

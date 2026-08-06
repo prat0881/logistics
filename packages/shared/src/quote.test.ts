@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   CHARGE_ZONES, TRUCKING_TYPES, TRUCKING_BASES, WAREHOUSE_POSITIONS,
   AIR_CHARGE_PRESETS, SEA_CHARGE_PRESETS,
+  CHARGE_RATE_VARIANTS, TRUCK_TONNAGES, CONTAINER_SIZES, BILL_OF_LADING_TYPES, WAREHOUSE_SIDES,
+  truckTonnageLabel, containerSizeLabel,
+  type QuoteDraftCargo, type QuoteDraft,
 } from "./quote";
 
 describe("quote vocabulary", () => {
@@ -21,5 +24,53 @@ describe("quote vocabulary", () => {
     expect(AIR_CHARGE_PRESETS.filter((p) => p.zone === "MAIN_FREIGHT")).toHaveLength(4);
     expect(SEA_CHARGE_PRESETS.filter((p) => p.zone === "MAIN_FREIGHT")).toHaveLength(1);
     expect(new Set(SEA_CHARGE_PRESETS.map((p) => p.presetKey)).size).toBe(SEA_CHARGE_PRESETS.length); // keys unique
+  });
+});
+
+// ── v2: dual-rate / calc option-sets (Task 5) ──
+describe("dual-rate / calc option-sets", () => {
+  it("exposes dual-rate option-sets", () => {
+    expect(CHARGE_RATE_VARIANTS).toEqual(["DEDICATED", "GROUPAGE", "FCL", "LCL"]);
+    expect(TRUCK_TONNAGES).toContain("TRAILER_30_40T");
+    expect(CONTAINER_SIZES).toEqual(["TWENTY", "FORTY", "FORTY_FIVE_HC"]);
+    const c: QuoteDraftCargo = { packageId: "p", grossWtKg: 100, cbm: 0.9, chargedWeightKg: 120 };
+    expect(c.chargedWeightKg).toBe(120);
+  });
+
+  it("pins the full TruckTonnage set (11 values), and the B/L + warehouse-side sets", () => {
+    expect(TRUCK_TONNAGES).toEqual([
+      "T_1", "T_2", "T_3_5", "T_5", "T_7", "T_9", "T_12", "T_16", "T_20", "T_25", "TRAILER_30_40T",
+    ]);
+    expect(BILL_OF_LADING_TYPES).toEqual(["ORIGINAL", "TELEX"]);
+    expect(WAREHOUSE_SIDES).toEqual(["DROP", "PICKUP"]);
+  });
+
+  it("labels tonnage + container size for display", () => {
+    expect(truckTonnageLabel("T_3_5")).toBe("3.5 T");
+    expect(truckTonnageLabel("TRAILER_30_40T")).toBe("Trailer 30–40 T");
+    expect(containerSizeLabel("TWENTY")).toBe("20'");
+    expect(containerSizeLabel("FORTY_FIVE_HC")).toBe("45' HC");
+  });
+
+  it("builds a full v2 QuoteDraft including seaRates and mode-specific transit fields (shape check)", () => {
+    const draft: QuoteDraft = {
+      legId: "l1", mode: "SEA", currency: "USD", quoteValidityUntil: null,
+      cargo: [{ packageId: "p1", grossWtKg: 500, cbm: 3, chargedWeightKg: 500 }],
+      charges: [{ zone: "ORIGIN", presetKey: null, label: "Doc fee", amount: 20, billOfLadingType: "TELEX" }],
+      trucking: [{
+        legEndpointPointId: "e1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: 100,
+        rateVariant: "DEDICATED", tonnage: "T_9",
+      }],
+      seaRates: [{ rateVariant: "FCL", containerSize: "TWENTY", amount: 900, remarks: "spot rate" }],
+      warehouse: [{ warehousePointId: "w1", position: "ORIGIN", label: "WH", amount: 50, cfsCode: "CFS1", side: "DROP" }],
+      transit: {
+        departureDate: null, arrivalDate: null, guaranteedTransitDays: 10,
+        shippingLine: "Maersk", vesselVoyage: "MV1/001", etd: null, eta: null,
+      },
+      dgSurchargeNote: null, termsConditions: null,
+    };
+    expect(draft.seaRates[0].rateVariant).toBe("FCL");
+    expect(draft.warehouse[0].side).toBe("DROP");
+    expect(draft.trucking[0].tonnage).toBe("T_9");
   });
 });

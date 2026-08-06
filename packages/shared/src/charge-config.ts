@@ -16,6 +16,7 @@ export const ChargeLineInputType = {
   PLAIN: "PLAIN",                       // ChargeLine {amount, note}
   TRUCKING: "TRUCKING",                 // TruckingCharge {type, basis, amount, remarks}
   WAREHOUSE_STAGING: "WAREHOUSE_STAGING", // WarehouseStagingLine {amount, cargoAcceptanceWindow}
+  HEAVY_WEIGHT_CALC: "HEAVY_WEIGHT_CALC", // QuoteDraftCharge {pieceWeightKg, airlineLimitKg, ratePerExcessKg} → computeHeavyWeightAmount
 } as const;
 export type ChargeLineInputType = (typeof ChargeLineInputType)[keyof typeof ChargeLineInputType];
 export const CHARGE_LINE_INPUT_TYPES = Object.values(ChargeLineInputType) as [

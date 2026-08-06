@@ -4,7 +4,10 @@ import type { QuoteStatus } from "./status";
 import type { ManifestSnapshot } from "./rfq";
 import type { ChargeZone, WarehousePosition, QuoteDraft } from "./quote";
 import type { ChargeLineInputType } from "./charge-config";
-import { CHARGE_ZONES, TRUCKING_TYPES, TRUCKING_BASES, WAREHOUSE_POSITIONS } from "./quote";
+import {
+  CHARGE_ZONES, TRUCKING_TYPES, TRUCKING_BASES, WAREHOUSE_POSITIONS,
+  CHARGE_RATE_VARIANTS, TRUCK_TONNAGES, CONTAINER_SIZES, WAREHOUSE_SIDES, BILL_OF_LADING_TYPES,
+} from "./quote";
 
 // ── GET /ff/rfq/:token response ──
 export interface FfPortalEndpoint {
@@ -53,26 +56,41 @@ export const quoteDraftSchema: z.ZodType<QuoteDraft> = z.object({
   currency: z.string().nullable(),
   quoteValidityUntil: z.string().nullable(),
   cargo: z.array(z.object({
-    cargoItemId: z.string(), grossWtT: z.number(), cbm: z.number(),
-    isDangerous: z.boolean(), freightDensity: z.number().nullable(),
+    packageId: z.string(), grossWtKg: z.number(), cbm: z.number(),
+    chargedWeightKg: z.number().nullable(),
   })),
   charges: z.array(z.object({
     zone: z.enum(CHARGE_ZONES).nullable(), definitionKey: z.string().nullable().optional(),
     presetKey: z.string().nullable(), label: z.string(),
     amount: z.number().nullable(), note: z.string().optional(),
+    billOfLadingType: z.enum(BILL_OF_LADING_TYPES).nullable().optional(),
+    pieceWeightKg: z.number().nullable().optional(),
+    airlineLimitKg: z.number().nullable().optional(),
+    ratePerExcessKg: z.number().nullable().optional(),
   })),
   trucking: z.array(z.object({
     legEndpointPointId: z.string(), truckingType: z.enum(TRUCKING_TYPES), basis: z.enum(TRUCKING_BASES),
+    amount: z.number().nullable(), remarks: z.string().optional(),
+    rateVariant: z.enum(CHARGE_RATE_VARIANTS), tonnage: z.enum(TRUCK_TONNAGES).nullable(),
+  })),
+  seaRates: z.array(z.object({
+    rateVariant: z.enum(CHARGE_RATE_VARIANTS), containerSize: z.enum(CONTAINER_SIZES).nullable(),
     amount: z.number().nullable(), remarks: z.string().optional(),
   })),
   warehouse: z.array(z.object({
     warehousePointId: z.string(), position: z.enum(WAREHOUSE_POSITIONS), label: z.string(),
     amount: z.number().nullable(), cargoAcceptanceWindow: z.string().optional(),
+    cfsCode: z.string().nullable().optional(), side: z.enum(WAREHOUSE_SIDES).nullable().optional(),
   })),
   transit: z.object({
     departureDate: z.string().nullable(), arrivalDate: z.string().nullable(),
     carrier: z.string().nullable().optional(), flightVoyageNo: z.string().nullable().optional(),
-    carrierSurcharge: z.number().nullable().optional(), guaranteedTransitDays: z.number().nullable().optional(),
+    carrierSurcharge: z.number().nullable().optional(), guaranteedTransitDays: z.number().nullable(),
+    plannedPickupDate: z.string().nullable().optional(),
+    airline: z.string().nullable().optional(), flightNumber: z.string().nullable().optional(),
+    plannedDeparture: z.string().nullable().optional(), plannedArrival: z.string().nullable().optional(),
+    shippingLine: z.string().nullable().optional(), vesselVoyage: z.string().nullable().optional(),
+    etd: z.string().nullable().optional(), eta: z.string().nullable().optional(),
   }).nullable(),
   dgSurchargeNote: z.string().nullable(),
   termsConditions: z.string().nullable(),

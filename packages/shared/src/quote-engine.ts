@@ -3,85 +3,97 @@ import type { Finding } from "./findings";
 import type { FreightMode } from "./config";
 import type { ResolvedChargeLine } from "./charge-config";
 
-/** Chargeable weight (tonnes) = max(actual gross T, volumetric T). Volumetric = cbm(m³) × density(kg/CBM) / 1000. */
-export function computeChargeableWeight(grossWtT: number, cbm: number, densityKgPerCbm: number): number {
-  const volumetricT = (cbm * densityKgPerCbm) / 1000;
-  return Math.max(grossWtT, volumetricT);
+/** Heavy-Weight excess amount = max(0, pieceWeightKg − airlineLimitKg) × ratePerExcessKg. */
+export function computeHeavyWeightAmount(pieceWeightKg: number, airlineLimitKg: number, ratePerExcessKg: number): number {
+  return Math.max(0, pieceWeightKg - airlineLimitKg) * ratePerExcessKg;
 }
 
+export interface QuoteVariantTotal { key: string; rateAmount: number | null; grandTotal: number; }
 export interface QuoteTotals {
-  zoneSubtotals: { origin: number; mainFreight: number; destination: number };
-  configuredSubtotal: number;
-  truckingSubtotal: number;
-  warehouseSubtotal: number;
-  totalChargeableWeightT: number;
-  grandTotal: number;
+  variants: QuoteVariantTotal[];
+  sharedSubtotal: number;
+  chargeableWeightKg: number;
 }
 
+/**
+ * One grand total per rate variant (design §7): Road/Sea are dual-rate (Dedicated/Groupage,
+ * FCL/LCL) — each filled rate yields its own grand total over the shared subtotal (Air/Sea
+ * zone charges + warehouse). Air is single-variant.
+ */
 export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
-  const zoneSubtotals = { origin: 0, mainFreight: 0, destination: 0 };
-  let configuredSubtotal = 0;
-  for (const c of draft.charges) {
-    const amt = c.amount ?? 0;
-    if (c.zone === "ORIGIN") zoneSubtotals.origin += amt;
-    else if (c.zone === "MAIN_FREIGHT") zoneSubtotals.mainFreight += amt;
-    else if (c.zone === "DESTINATION") zoneSubtotals.destination += amt;
-    else configuredSubtotal += amt; // zone === null → Road configured lines
+  const chargesSum = draft.charges.reduce((s, c) => s + (c.amount ?? 0), 0);
+  const warehouseSum = draft.warehouse.reduce((s, w) => s + (w.amount ?? 0), 0);
+  const sharedSubtotal = chargesSum + warehouseSum;
+  const chargeableWeightKg = draft.cargo.reduce((s, c) => s + (c.chargedWeightKg ?? 0), 0);
+
+  const variants: QuoteVariantTotal[] = [];
+  if (draft.mode === "ROAD") {
+    const byVariant = new Map<string, number>();
+    for (const t of draft.trucking)
+      byVariant.set(t.rateVariant, (byVariant.get(t.rateVariant) ?? 0) + (t.amount ?? 0));
+    for (const [key, rateAmount] of byVariant)
+      variants.push({ key, rateAmount, grandTotal: rateAmount + sharedSubtotal });
+  } else if (draft.mode === "SEA") {
+    for (const r of draft.seaRates)
+      variants.push({ key: r.rateVariant, rateAmount: r.amount, grandTotal: (r.amount ?? 0) + sharedSubtotal });
+  } else {
+    variants.push({ key: "AIR", rateAmount: null, grandTotal: sharedSubtotal });
   }
-  const truckingSubtotal = draft.trucking.reduce((s, t) => s + (t.amount ?? 0), 0);
-  const warehouseSubtotal = draft.warehouse.reduce((s, w) => s + (w.amount ?? 0), 0);
-  const totalChargeableWeightT = draft.cargo.reduce(
-    (s, c) => s + (c.freightDensity != null ? computeChargeableWeight(c.grossWtT, c.cbm, c.freightDensity) : 0),
-    0,
-  );
-  const grandTotal =
-    zoneSubtotals.origin + zoneSubtotals.mainFreight + zoneSubtotals.destination +
-    configuredSubtotal + truckingSubtotal + warehouseSubtotal;
-  return { zoneSubtotals, configuredSubtotal, truckingSubtotal, warehouseSubtotal, totalChargeableWeightT, grandTotal };
+  return { variants, sharedSubtotal, chargeableWeightKg };
 }
 
+/** Submit-gate v2 (design §7): 6 blocking rules gating FF portal submission. */
 export function validateQuote(
-  draft: QuoteDraft, deadlineIso: string, nowIso: string, mandatoryLines: ResolvedChargeLine[] = [],
+  draft: QuoteDraft, deadlineIso: string, nowIso: string, activeLines: ResolvedChargeLine[] = [],
 ): Finding[] {
   const f: Finding[] = [];
   const blk = (rule: string, message: string, scope: Finding["scope"]): Finding => ({ rule, severity: "blocking", scope, message });
   const leg = { type: "leg", id: draft.legId } as const;
 
-  // Q7 — submission not past the deadline
+  // (6) submission before the deadline
   if (new Date(nowIso).getTime() > new Date(deadlineIso).getTime())
-    f.push(blk("Q7", "The submission deadline has passed", leg));
+    f.push(blk("Q_DEADLINE", "The submission deadline has passed", leg));
 
-  // Q1 — every frozen mandatory PLAIN line must be priced (0 allowed). Road trucking blocks too.
-  const priced = new Set(draft.charges.filter((c) => c.amount != null).map((c) => c.definitionKey ?? undefined));
-  for (const line of mandatoryLines)
-    if (!priced.has(line.definitionKey)) f.push(blk("Q1", `Charge line "${line.label}" must be priced`, leg));
-  if (draft.mode === "ROAD")
-    for (const t of draft.trucking)
-      if (t.amount == null) f.push(blk("Q1", "A trucking charge is required for every pickup/drop block", leg));
-
-  // Q8 — warehousing in/out priced for every warehouse endpoint
-  for (const w of draft.warehouse)
-    if (w.amount == null) f.push(blk("Q8", `Warehousing (In/Out) must be priced for ${w.label}`, leg));
-
-  // Q2 — density on every cargo row
-  for (const c of draft.cargo)
-    if (c.freightDensity == null) f.push(blk("Q2", "Freight density is required for every cargo row", { type: "cargo", id: c.cargoItemId }));
-
-  // Q3 — validity present + ≥ deadline
-  if (!draft.quoteValidityUntil) f.push(blk("Q3", "Quote Validity Until is required", { type: "field", id: "quoteValidityUntil" }));
+  // (1) currency + validity (validity ≥ deadline)
+  if (!draft.currency) f.push(blk("Q_CURRENCY", "Currency is required", { type: "field", id: "currency" }));
+  if (!draft.quoteValidityUntil) f.push(blk("Q_VALIDITY", "Quote Validity Until is required", { type: "field", id: "quoteValidityUntil" }));
   else if (new Date(draft.quoteValidityUntil).getTime() < new Date(deadlineIso).getTime())
-    f.push(blk("Q3", "Quote Validity Until must be on or after the submission deadline", { type: "field", id: "quoteValidityUntil" }));
+    f.push(blk("Q_VALIDITY", "Quote Validity Until must be on or after the submission deadline", { type: "field", id: "quoteValidityUntil" }));
 
-  // Q4 — currency
-  if (!draft.currency) f.push(blk("Q4", "Currency is required", { type: "field", id: "currency" }));
+  // (2) every active charge line priced — amount present; 0 allowed ONLY with a remark
+  const byKey = new Map(draft.charges.filter((c) => c.definitionKey).map((c) => [c.definitionKey!, c]));
+  for (const line of activeLines) {
+    if (line.inputType === "HEAVY_WEIGHT_CALC") {
+      const c = byKey.get(line.definitionKey);
+      if (!c || c.pieceWeightKg == null || c.airlineLimitKg == null || c.ratePerExcessKg == null)
+        f.push(blk("Q_PRICED", `Heavy-Weight inputs are required for "${line.label}"`, leg));
+      continue;
+    }
+    if (line.inputType !== "PLAIN") continue;
+    const c = byKey.get(line.definitionKey);
+    if (!c || c.amount == null) f.push(blk("Q_PRICED", `Charge line "${line.label}" must be priced`, leg));
+    else if (c.amount === 0 && !c.note?.trim())
+      f.push(blk("Q_PRICED", `A remark is required to quote "${line.label}" at 0`, leg));
+  }
 
-  // Q5 — DG surcharge note when any assigned row is DG
-  if (draft.cargo.some((c) => c.isDangerous) && !draft.dgSurchargeNote?.trim())
-    f.push(blk("Q5", "A DG Surcharge Note is required when the shipment includes dangerous goods", { type: "field", id: "dgSurchargeNote" }));
+  // (3) remark mandatory on every custom [+ Add Charge] line
+  for (const c of draft.charges)
+    if (!c.definitionKey && !c.presetKey && !c.note?.trim())
+      f.push(blk("Q_CUSTOM_REMARK", `A remark is required on the custom charge "${c.label}"`, leg));
 
-  // Q6 — transit departure + arrival
-  if (!draft.transit?.departureDate) f.push(blk("Q6", "Transit Plan departure date is required", { type: "field", id: "departureDate" }));
-  if (!draft.transit?.arrivalDate) f.push(blk("Q6", "Transit Plan arrival date is required", { type: "field", id: "arrivalDate" }));
+  // (4) Guaranteed Transit Time present on every leg
+  if (draft.transit?.guaranteedTransitDays == null)
+    f.push(blk("Q_TRANSIT", "Guaranteed Transit Time is required", { type: "field", id: "guaranteedTransitDays" }));
+
+  // (5) dual-rate — ≥1 of the two rates filled (each filled rate yields its own grand total)
+  if (draft.mode === "ROAD" && !draft.trucking.some((t) => t.amount != null))
+    f.push(blk("Q_RATE", "Enter at least one trucking rate (Dedicated or Groupage)", leg));
+  if (draft.mode === "SEA" && !draft.seaRates.some((r) => r.amount != null))
+    f.push(blk("Q_RATE", "Enter at least one sea freight rate (FCL or LCL)", leg));
+
+  // warehouse: every included warehouse line priced
+  for (const w of draft.warehouse)
+    if (w.amount == null) f.push(blk("Q_PRICED", `Warehousing must be priced for ${w.label}`, leg));
 
   return f;
 }
