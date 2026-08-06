@@ -20,13 +20,12 @@ export interface FfPortalEndpoint {
 export interface FfPortalSeededCharge {
   zone: ChargeZone | null;
   definitionKey?: string;           // optional in the TYPE only so the pre-Task-9 seeding compiles; always set from Task 9 on
-  inputType?: ChargeLineInputType;  // PLAIN here; TRUCKING/WAREHOUSE_STAGING seed via endpoints
+  inputType?: ChargeLineInputType;  // PLAIN or HEAVY_WEIGHT_CALC; TRUCKING/WAREHOUSE_STAGING seed via endpoints, not here
   presetKey: string | null;         // null for catalogue lines (kept for shape compatibility)
   label: string;
   isPreset: true;
   amount: null;
 }
-export interface FfPortalSeededDensity { cargoItemId: string; freightDensity: number; }
 export interface FfPortalLegDto {
   legId: string;
   quoteId: string;
@@ -35,7 +34,6 @@ export interface FfPortalLegDto {
   manifest: ManifestSnapshot;
   endpoints: FfPortalEndpoint[];
   seededCharges: FfPortalSeededCharge[];
-  seededDensity: FfPortalSeededDensity[];
   warehouseIncluded?: boolean;   // frozen Leg warehouse decision (design §9); optional so pre-Task-9 build stays green, set from Task 9 on
   draft: QuoteDraft | null;
 }

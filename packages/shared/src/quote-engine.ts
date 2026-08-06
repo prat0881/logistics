@@ -1,4 +1,4 @@
-import { WarehousePosition, type QuoteDraft } from "./quote";
+import { WarehousePosition, type QuoteDraft, type QuoteDraftCharge } from "./quote";
 import type { Finding } from "./findings";
 import type { FreightMode } from "./config";
 import type { ResolvedChargeLine } from "./charge-config";
@@ -6,6 +6,14 @@ import type { ResolvedChargeLine } from "./charge-config";
 /** Heavy-Weight excess amount = max(0, pieceWeightKg − airlineLimitKg) × ratePerExcessKg. */
 export function computeHeavyWeightAmount(pieceWeightKg: number, airlineLimitKg: number, ratePerExcessKg: number): number {
   return Math.max(0, pieceWeightKg - airlineLimitKg) * ratePerExcessKg;
+}
+
+// effective amount of a charge line: HEAVY_WEIGHT_CALC lines derive their amount from
+// the 3 inputs (their `amount` is null); all others use `amount ?? 0`.
+function effectiveChargeAmount(c: QuoteDraftCharge): number {
+  if (c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null)
+    return computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg);
+  return c.amount ?? 0;
 }
 
 export interface QuoteVariantTotal { key: string; rateAmount: number | null; grandTotal: number; }
@@ -18,10 +26,14 @@ export interface QuoteTotals {
 /**
  * One grand total per rate variant (design §7): Road/Sea are dual-rate (Dedicated/Groupage,
  * FCL/LCL) — each filled rate yields its own grand total over the shared subtotal (Air/Sea
- * zone charges + warehouse). Air is single-variant.
+ * zone charges + warehouse). Air is single-variant. Charge amounts run through
+ * `effectiveChargeAmount` so a HEAVY_WEIGHT_CALC line's derived amount folds into the total the
+ * same way it folds into the persisted `ChargeLine.amount` at submit (ff-portal.service.ts) —
+ * the live client total (web) and the submitted grandTotal must agree regardless of whether the
+ * calc line ever gets a literal `amount` written onto it.
  */
 export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
-  const chargesSum = draft.charges.reduce((s, c) => s + (c.amount ?? 0), 0);
+  const chargesSum = draft.charges.reduce((s, c) => s + effectiveChargeAmount(c), 0);
   const warehouseSum = draft.warehouse.reduce((s, w) => s + (w.amount ?? 0), 0);
   const sharedSubtotal = chargesSum + warehouseSum;
   const chargeableWeightKg = draft.cargo.reduce((s, c) => s + (c.chargedWeightKg ?? 0), 0);

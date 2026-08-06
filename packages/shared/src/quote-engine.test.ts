@@ -67,6 +67,25 @@ describe("computeQuoteTotals", () => {
     expect(t.sharedSubtotal).toBe(0);
     expect(t.variants).toEqual([{ key: "DEDICATED", rateAmount: 0, grandTotal: 0 }]);
   });
+
+  it("folds a HEAVY_WEIGHT_CALC line's derived amount into the Air shared subtotal / grandTotal", () => {
+    // The calc line's own `amount` is null (the FF prices it via piece/limit/rate, not a flat
+    // figure) — computeHeavyWeightAmount(1200, 1000, 2) = (1200-1000)*2 = 400 must still be
+    // folded in, same as it is at ChargeLine-materialize time (ff-portal.service.ts).
+    const t = computeQuoteTotals(base({
+      mode: "AIR",
+      charges: [
+        { zone: "MAIN_FREIGHT", presetKey: null, label: "Air Freight", amount: 100 },
+        {
+          zone: "MAIN_FREIGHT", presetKey: null, definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
+          label: "Heavy Weight Surcharge", amount: null,
+          pieceWeightKg: 1200, airlineLimitKg: 1000, ratePerExcessKg: 2,
+        },
+      ],
+    }));
+    expect(t.sharedSubtotal).toBe(530); // 100 + 400 (derived) + 30 (default warehouse)
+    expect(t.variants).toEqual([{ key: "AIR", rateAmount: null, grandTotal: 530 }]);
+  });
 });
 
 describe("computeHeavyWeightAmount", () => {

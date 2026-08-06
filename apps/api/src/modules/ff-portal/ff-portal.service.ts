@@ -3,7 +3,7 @@ import {
   classifyWarehousePositions,
   validateQuote,
   computeQuoteTotals,
-  computeChargeableWeight,
+  computeHeavyWeightAmount,
   QuoteEvent,
   Role,
 } from "@svyft/shared";
@@ -12,16 +12,23 @@ import type {
   FfPortalLegDto,
   ManifestSnapshot,
   QuoteDraft,
+  QuoteDraftCharge,
   Finding,
   ChargeConfigSnapshot,
 } from "@svyft/shared";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
-import { ConfigDataService } from "../config/config-data.service";
 import { StatusService } from "../status/status.service";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
 import { ScheduledEventService } from "../comms/scheduled-event.service";
 import type { FfScope } from "../rfq/rfq-token.service";
+
+/** Calc line amount (design §7): HEAVY_WEIGHT_CALC lines compute from the FF-entered piece
+ *  weight / airline limit / excess rate; every other charge line carries its own amount. */
+const chargeAmount = (c: QuoteDraftCharge): number =>
+  c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null
+    ? computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg)
+    : c.amount!;
 
 @Injectable()
 export class FfPortalService {
@@ -29,7 +36,6 @@ export class FfPortalService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigDataService,
     private readonly status: StatusService,
     private readonly dispatcher: NotificationDispatcher,
     private readonly scheduled: ScheduledEventService,
@@ -40,9 +46,6 @@ export class FfPortalService {
       where: { id: scope.rfq.freightForwarderId },
       select: { companyName: true, defaultCurrency: true },
     });
-    const densities = await this.config.densityFactors(); // [{ mode, kgPerCbm }]
-    const densityOf = (mode: string | null) => densities.find((d) => d.mode === mode)?.kgPerCbm ?? null;
-
     // Warehouse positions across the FF's WHOLE leg set (§6.4)
     const whLegs = scope.quotes.map((q) => ({
       originPointId: q.leg.originPoint?.id ?? null,
@@ -60,7 +63,6 @@ export class FfPortalService {
       const manifest = q.manifestSnapshot as ManifestSnapshot;
       const mode = q.leg.mode;
       const snap = (q.chargeConfigSnapshot as ChargeConfigSnapshot | null) ?? { lines: [], warehouseIncluded: false };
-      const density = densityOf(mode);
       const endpoints = [q.leg.originPoint, q.leg.destinationPoint]
         .filter((p): p is NonNullable<typeof p> => !!p)
         .map((p) => ({
@@ -77,22 +79,20 @@ export class FfPortalService {
         mode: mode as FfPortalLegDto["mode"],
         manifest,
         endpoints,
-        seededCharges: snap.lines
-          .filter((l) => l.inputType === "PLAIN")
-          .map((l) => ({
-            zone: l.zone,
-            definitionKey: l.definitionKey,
-            inputType: l.inputType,
-            presetKey: null,
-            label: l.label,
-            isPreset: true as const,
-            amount: null,
-          })),
+        // snap.lines is already PLAIN | HEAVY_WEIGHT_CALC only (resolveChargeConfig excludes
+        // TRUCKING/WAREHOUSE_STAGING, which seed via `endpoints` instead) — seed every resolved
+        // line onto the portal unfiltered; the FF prices HEAVY_WEIGHT_CALC lines via
+        // piece/limit/rate inputs client-side rather than a flat amount.
+        seededCharges: snap.lines.map((l) => ({
+          zone: l.zone,
+          definitionKey: l.definitionKey,
+          inputType: l.inputType,
+          presetKey: null,
+          label: l.label,
+          isPreset: true as const,
+          amount: null,
+        })),
         warehouseIncluded: snap.warehouseIncluded,
-        seededDensity:
-          density == null
-            ? []
-            : manifest.cargo.map((c) => ({ cargoItemId: c.packageId, freightDensity: density })),
         draft: q.draftJson ? (q.draftJson as QuoteDraft) : null,
       };
     });
@@ -161,14 +161,14 @@ export class FfPortalService {
       currency: scope.rfq.currency,
       quoteValidityUntil: scope.rfq.quoteValidityUntil?.toISOString() ?? null,
       cargo: manifest.cargo.map((c) => ({
-        cargoItemId: c.packageId,
-        grossWtT: Number(c.grossWt) / 1000,
+        packageId: c.packageId,
+        grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
-        isDangerous: c.tags.includes("DG"),
-        freightDensity: stored.cargo?.find((s) => s.cargoItemId === c.packageId)?.freightDensity ?? null,
+        chargedWeightKg: stored.cargo?.find((s) => s.packageId === c.packageId)?.chargedWeightKg ?? null,
       })),
       charges: (stored.charges ?? []).map((c) => ({ ...c })),
       trucking: (stored.trucking ?? []).map((t) => ({ ...t })),
+      seaRates: (stored.seaRates ?? []).map((r) => ({ ...r })),
       warehouse: (snap.warehouseIncluded ? (stored.warehouse ?? []) : []).map((w) => ({
         ...w,
         position: whPos[w.warehousePointId] ?? w.position,
@@ -199,7 +199,7 @@ export class FfPortalService {
         ],
       });
 
-    // ── validate (§10.4 Q1–Q8) ──
+    // ── validate (design §7, submit-gate v2 — 6 blocking rules) ──
     const findings: Finding[] = validateQuote(
       draft,
       scope.rfq.submissionDeadline.toISOString(),
@@ -216,6 +216,7 @@ export class FfPortalService {
         await tx.quoteCargoLine.deleteMany({ where: { quoteId: q.id } });
         await tx.chargeLine.deleteMany({ where: { quoteId: q.id } });
         await tx.truckingCharge.deleteMany({ where: { quoteId: q.id } });
+        await tx.seaFreightRate.deleteMany({ where: { quoteId: q.id } });
         await tx.warehouseStagingLine.deleteMany({ where: { quoteId: q.id } });
         await tx.transitPlan.deleteMany({ where: { quoteId: q.id } });
 
@@ -223,9 +224,8 @@ export class FfPortalService {
         await tx.quoteCargoLine.createMany({
           data: draft.cargo.map((c) => ({
             quoteId: q.id,
-            packageId: c.cargoItemId, // field carries the packageId this unit (renamed in Unit 2)
-            freightDensity: c.freightDensity!,
-            chargeableWeightT: computeChargeableWeight(c.grossWtT, c.cbm, c.freightDensity!),
+            packageId: c.packageId,
+            chargedWeightKg: c.chargedWeightKg!,
           })),
         });
 
@@ -237,9 +237,13 @@ export class FfPortalService {
             label: c.label,
             isPreset: c.presetKey != null,
             presetKey: c.presetKey,
-            amount: c.amount!,
+            amount: chargeAmount(c),
             note: c.note,
             sortOrder: i,
+            pieceWeightKg: c.pieceWeightKg ?? null,
+            airlineLimitKg: c.airlineLimitKg ?? null,
+            ratePerExcessKg: c.ratePerExcessKg ?? null,
+            billOfLadingType: c.billOfLadingType ?? null,
           })),
         });
 
@@ -252,6 +256,20 @@ export class FfPortalService {
               basis: t.basis,
               amount: t.amount!,
               remarks: t.remarks,
+              rateVariant: t.rateVariant,
+              tonnage: t.tonnage,
+            },
+          });
+        }
+
+        for (const r of draft.seaRates) {
+          await tx.seaFreightRate.create({
+            data: {
+              quoteId: q.id,
+              rateVariant: r.rateVariant,
+              containerSize: r.containerSize,
+              amount: r.amount!,
+              remarks: r.remarks,
             },
           });
         }
@@ -266,6 +284,8 @@ export class FfPortalService {
               isPreset: false,
               amount: w.amount!,
               cargoAcceptanceWindow: w.cargoAcceptanceWindow,
+              cfsCode: w.cfsCode ?? null,
+              side: w.side ?? null,
             },
           });
         }
@@ -280,6 +300,15 @@ export class FfPortalService {
               arrivalDate: new Date(draft.transit.arrivalDate!),
               carrierSurcharge: draft.transit.carrierSurcharge ?? null,
               guaranteedTransitDays: draft.transit.guaranteedTransitDays ?? null,
+              plannedPickupDate: draft.transit.plannedPickupDate ? new Date(draft.transit.plannedPickupDate) : null,
+              airline: draft.transit.airline ?? null,
+              flightNumber: draft.transit.flightNumber ?? null,
+              plannedDeparture: draft.transit.plannedDeparture ? new Date(draft.transit.plannedDeparture) : null,
+              plannedArrival: draft.transit.plannedArrival ? new Date(draft.transit.plannedArrival) : null,
+              shippingLine: draft.transit.shippingLine ?? null,
+              vesselVoyage: draft.transit.vesselVoyage ?? null,
+              etd: draft.transit.etd ? new Date(draft.transit.etd) : null,
+              eta: draft.transit.eta ? new Date(draft.transit.eta) : null,
             },
           });
         }
@@ -287,8 +316,8 @@ export class FfPortalService {
         await tx.quote.update({
           where: { id: q.id },
           data: {
-            totalChargeableWeightT: totals.totalChargeableWeightT,
-            grandTotal: totals.grandTotal,
+            grandTotal: Math.max(...totals.variants.map((v) => v.grandTotal), 0),
+            totalChargeableWeightT: null, // column kept for now; kg lives on QuoteCargoLine
             dgSurchargeNote: draft.dgSurchargeNote,
             termsConditions: draft.termsConditions,
             submittedAt: new Date(),
