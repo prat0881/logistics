@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { useCountdown } from "./useCountdown";
 import type { CountdownTier } from "./useCountdown";
+import { ScopedRouteDiagram } from "./ScopedRouteDiagram";
 
 const CURRENCIES = ["USD", "EUR", "GBP", "INR", "AED"];
 
@@ -133,6 +134,9 @@ export function PortalShell({
             </div>
           </CardContent>
         </Card>
+
+        {/* Route overview — assignment-scoped, address-masked (design §4.8.3) */}
+        <ScopedRouteDiagram legs={rfq.legs} />
 
         {/* Leg sections */}
         {children}
