@@ -2,6 +2,7 @@ import { Test } from "@nestjs/testing";
 import { INestApplication } from "@nestjs/common";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { createCargoWithPackages } from "./helpers/cargo";
 
 const PFX = "qp-schema-";
 
@@ -23,26 +24,21 @@ describe("Quote pricing schema — smoke (e2e)", () => {
   });
 
   async function cleanup() {
-    // Clean children of Quote first (Restrict FKs), then Quote, then parents
-    await prisma.transitPlan.deleteMany({ where: { quote: { query: { queryCode: { startsWith: PFX } } } } }).catch(() => {});
-    await prisma.warehouseStagingLine.deleteMany({ where: { quote: { query: { queryCode: { startsWith: PFX } } } } }).catch(() => {});
-    await prisma.truckingCharge.deleteMany({ where: { quote: { query: { queryCode: { startsWith: PFX } } } } }).catch(() => {});
-    await prisma.chargeLine.deleteMany({ where: { quote: { query: { queryCode: { startsWith: PFX } } } } }).catch(() => {});
-    await prisma.quoteCargoLine.deleteMany({ where: { quote: { query: { queryCode: { startsWith: PFX } } } } }).catch(() => {});
+    // Quote (and its Cascade children: QuoteCargoLine/ChargeLine/TruckingCharge/SeaFreightRate/
+    // WarehouseStagingLine/TransitPlan) must be deleted BEFORE Query — QuoteCargoLine.packageId ->
+    // Package is onDelete: Restrict, so if Query's cascade reached Package first (deleting it)
+    // while a QuoteCargoLine still pointed at it, the delete would fail (mirrors the quote-then-
+    // query cleanup order in ff-portal-v2-model.e2e-spec.ts / ff-portal-grain.e2e-spec.ts).
     await prisma.quote.deleteMany({ where: { query: { queryCode: { startsWith: PFX } } } }).catch(() => {});
-    await prisma.legCargo.deleteMany({ where: { leg: { query: { queryCode: { startsWith: PFX } } } } }).catch(() => {});
-    await prisma.leg.deleteMany({ where: { query: { queryCode: { startsWith: PFX } } } }).catch(() => {});
-    await prisma.cargoItem.deleteMany({ where: { query: { queryCode: { startsWith: PFX } } } }).catch(() => {});
-    await prisma.point.deleteMany({ where: { query: { queryCode: { startsWith: PFX } } } }).catch(() => {});
+    await prisma.query.deleteMany({ where: { queryCode: { startsWith: PFX } } }).catch(() => {}); // cascades points/legs/cargo/packages/items
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: PFX } } }).catch(() => {});
-    await prisma.query.deleteMany({ where: { queryCode: { startsWith: PFX } } }).catch(() => {});
   }
 
-  it("creates and reads back all five pricing child tables with correct types", async () => {
+  it("creates and reads back all six pricing child tables with correct types", async () => {
     const code = `${PFX}${Date.now()}`;
     const ffCode = `${PFX}FF-${Date.now()}`;
 
-    // 1. Create the parent chain: Query → Leg → CargoItem → Point(s) → FreightForwarder → Quote
+    // 1. Create the parent chain: Query → Leg → Cargo→Package → Point(s) → FreightForwarder → Quote
     const query = await prisma.query.create({ data: { queryCode: code } });
 
     const originPoint = await prisma.point.create({
@@ -63,20 +59,12 @@ describe("Quote pricing schema — smoke (e2e)", () => {
       },
     });
 
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 1,
-        poReference: "PO-001",
-        productName: "Widget",
-        packageType: "Box",
-        qty: 2,
-        dimL: 100,
-        dimW: 80,
-        dimH: 60,
-        grossWt: 50,
-      },
+    // Cargo → Package replaces the dropped flat CargoItem model (Unit 2 re-model).
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageType: "BOX", dimL: 100, dimW: 80, dimH: 60, grossWt: 50 }],
     });
+    const packageId = packageIds[0]!;
 
     const ff = await prisma.freightForwarder.create({
       data: {
@@ -97,20 +85,24 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         legId: leg.id,
         freightForwarderId: ff.id,
         status: "SELECT",
-        totalChargeableWeightT: 2.500,
+        totalChargeableWeightT: 2.500, // column kept for now but unused post-Unit-2 (kg lives on QuoteCargoLine) — still a real, writable Decimal(12,3) column
         grandTotal: 1500.00,
         dgSurchargeNote: "No DG",
         termsConditions: "NET 30",
       },
     });
 
-    // 2. Insert one row per pricing table
+    // 2. Insert one row per pricing table — v2 grain (design §7, Unit 2 re-model): QuoteCargoLine
+    // keys off packageId + a single FF-entered chargedWeightKg (the dropped freightDensity/
+    // chargeableWeightT density-derived columns are gone); TruckingCharge/SeaFreightRate carry
+    // the dual-rate rateVariant (+tonnage/containerSize); ChargeLine/WarehouseStagingLine grew
+    // mode-specific calc/attribution columns; SeaFreightRate is a new 6th pricing child table
+    // (replaces the retired flat SEA_MAIN_FREIGHT preset).
     const qcl = await prisma.quoteCargoLine.create({
       data: {
         quoteId: quote.id,
-        cargoItemId: cargo.id,
-        freightDensity: 167.000,
-        chargeableWeightT: 2.500,
+        packageId,
+        chargedWeightKg: 123.456,
       },
     });
 
@@ -121,6 +113,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         label: "Origin handling",
         isPreset: true,
         presetKey: "ORIGIN_HANDLING",
+        definitionKey: "AIR_ORIGIN_THC",
         amount: 200.00,
         sortOrder: 1,
       },
@@ -134,6 +127,18 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         basis: "PER_TRUCK",
         amount: 350.00,
         remarks: "Door pickup",
+        rateVariant: "DEDICATED",
+        tonnage: "T_5",
+      },
+    });
+
+    const sfr = await prisma.seaFreightRate.create({
+      data: {
+        quoteId: quote.id,
+        rateVariant: "FCL",
+        containerSize: "FORTY",
+        amount: 1800.00,
+        remarks: "Main leg",
       },
     });
 
@@ -146,6 +151,8 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         isPreset: false,
         amount: 100.00,
         cargoAcceptanceWindow: "2026-08-01T08:00:00Z",
+        cfsCode: "CFS-001",
+        side: "DROP",
       },
     });
 
@@ -158,6 +165,8 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         arrivalDate: new Date("2026-08-06T06:00:00Z"),
         carrierSurcharge: 50.00,
         guaranteedTransitDays: 1,
+        airline: "Emirates SkyCargo",
+        flightNumber: "EK9601",
       },
     });
 
@@ -169,6 +178,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         quoteCargoLines: true,
         chargeLines: true,
         truckingCharges: true,
+        seaFreightRates: true,
         warehouseStagingLines: true,
         transitPlan: true,
       },
@@ -179,36 +189,50 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     expect(reloadedQuote.dgSurchargeNote).toBe("No DG");
     expect(reloadedQuote.termsConditions).toBe("NET 30");
 
-    // QuoteCargoLine
+    // QuoteCargoLine — v2: packageId + chargedWeightKg only (the density-derived columns are gone)
     expect(reloadedQuote.quoteCargoLines).toHaveLength(1);
-    expect(Number(reloadedQuote.quoteCargoLines[0].chargeableWeightT)).toBeCloseTo(2.5, 3);
-    expect(Number(reloadedQuote.quoteCargoLines[0].freightDensity)).toBeCloseTo(167, 3);
-    expect(reloadedQuote.quoteCargoLines[0].cargoItemId).toBe(cargo.id);
+    expect(Number(reloadedQuote.quoteCargoLines[0].chargedWeightKg)).toBeCloseTo(123.456, 3);
+    expect(reloadedQuote.quoteCargoLines[0].packageId).toBe(packageId);
+    expect(reloadedQuote.quoteCargoLines[0]).not.toHaveProperty("freightDensity");
+    expect(reloadedQuote.quoteCargoLines[0]).not.toHaveProperty("chargeableWeightT");
 
     // ChargeLine
     expect(reloadedQuote.chargeLines).toHaveLength(1);
     expect(reloadedQuote.chargeLines[0].zone).toBe("ORIGIN");
     expect(Number(reloadedQuote.chargeLines[0].amount)).toBeCloseTo(200, 2);
     expect(reloadedQuote.chargeLines[0].presetKey).toBe("ORIGIN_HANDLING");
+    expect(reloadedQuote.chargeLines[0].definitionKey).toBe("AIR_ORIGIN_THC");
 
-    // TruckingCharge
+    // TruckingCharge — v2 dual-rate: rateVariant + tonnage
     expect(reloadedQuote.truckingCharges).toHaveLength(1);
     expect(reloadedQuote.truckingCharges[0].truckingType).toBe("DEDICATED");
     expect(reloadedQuote.truckingCharges[0].basis).toBe("PER_TRUCK");
     expect(reloadedQuote.truckingCharges[0].legEndpointPointId).toBe(originPoint.id);
+    expect(reloadedQuote.truckingCharges[0].rateVariant).toBe("DEDICATED");
+    expect(reloadedQuote.truckingCharges[0].tonnage).toBe("T_5");
 
-    // WarehouseStagingLine
+    // SeaFreightRate — new v2 pricing child table
+    expect(reloadedQuote.seaFreightRates).toHaveLength(1);
+    expect(reloadedQuote.seaFreightRates[0].rateVariant).toBe("FCL");
+    expect(reloadedQuote.seaFreightRates[0].containerSize).toBe("FORTY");
+    expect(Number(reloadedQuote.seaFreightRates[0].amount)).toBeCloseTo(1800, 2);
+
+    // WarehouseStagingLine — v2 gained cfsCode/side
     expect(reloadedQuote.warehouseStagingLines).toHaveLength(1);
     expect(reloadedQuote.warehouseStagingLines[0].position).toBe("ORIGIN");
     expect(reloadedQuote.warehouseStagingLines[0].warehousePointId).toBe(originPoint.id);
     expect(reloadedQuote.warehouseStagingLines[0].cargoAcceptanceWindow).toBe("2026-08-01T08:00:00Z");
+    expect(reloadedQuote.warehouseStagingLines[0].cfsCode).toBe("CFS-001");
+    expect(reloadedQuote.warehouseStagingLines[0].side).toBe("DROP");
 
-    // TransitPlan (1:1)
+    // TransitPlan (1:1) — pre-existing columns kept as-is, plus v2's mode-specific airline/flightNumber
     expect(reloadedQuote.transitPlan).not.toBeNull();
     expect(reloadedQuote.transitPlan!.carrier).toBe("Emirates SkyCargo");
     expect(reloadedQuote.transitPlan!.flightVoyageNo).toBe("EK9601");
     expect(reloadedQuote.transitPlan!.guaranteedTransitDays).toBe(1);
     expect(reloadedQuote.transitPlan!.quoteId).toBe(quote.id);
+    expect(reloadedQuote.transitPlan!.airline).toBe("Emirates SkyCargo");
+    expect(reloadedQuote.transitPlan!.flightNumber).toBe("EK9601");
 
     // Point back-relations
     const reloadedOriginPoint = await prisma.point.findUniqueOrThrow({
@@ -225,11 +249,17 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     // Verify Restrict FK: cannot delete Point while TruckingCharge references it
     await expect(prisma.point.delete({ where: { id: originPoint.id } })).rejects.toThrow();
 
-    // Cascade: deleting Quote removes all 5 child rows
+    // Verify Restrict FK (new in v2): cannot delete Package while QuoteCargoLine references it —
+    // QuoteCargoLine.packageId -> Package is onDelete: Restrict, the same protective shape as the
+    // TruckingCharge/WarehouseStagingLine -> Point Restrict FKs verified above.
+    await expect(prisma.package.delete({ where: { id: packageId } })).rejects.toThrow();
+
+    // Cascade: deleting Quote removes all 6 child rows
     await prisma.quote.delete({ where: { id: quote.id } });
     expect(await prisma.quoteCargoLine.count({ where: { id: qcl.id } })).toBe(0);
     expect(await prisma.chargeLine.count({ where: { id: cl.id } })).toBe(0);
     expect(await prisma.truckingCharge.count({ where: { id: tc.id } })).toBe(0);
+    expect(await prisma.seaFreightRate.count({ where: { id: sfr.id } })).toBe(0);
     expect(await prisma.warehouseStagingLine.count({ where: { id: wsl.id } })).toBe(0);
     expect(await prisma.transitPlan.count({ where: { id: tp.id } })).toBe(0);
   });

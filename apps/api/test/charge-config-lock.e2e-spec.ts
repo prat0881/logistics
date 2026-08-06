@@ -11,6 +11,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 // Task 11 (Charge Configuration & Warehouse Attribution), Phase E: per-leg charge selection
 // (`chargeLineDefinitionIds`) and the warehouse toggle (`warehouseHandlingIncluded`) are
@@ -37,7 +38,7 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo/chargeSelections
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items/chargeSelections
     }
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
   };
@@ -73,21 +74,6 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-CHG-LOCK-1",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 5,
-        isDangerous: false,
-      },
-    });
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -98,9 +84,15 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    // F1 (leg completeness) now gates on >=1 assigned package via LegPackage, not the dropped
+    // flat CargoItem/LegCargo model — see helpers/cargo.ts.
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: "PO-CHG-LOCK-1", dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const roadInsurance = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "ROAD_STD_INSURANCE" } });
 
     // --- pre-distribute: PATCH selection applies freely (200) ---
@@ -173,21 +165,6 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: `${CODE}-REFREEZE`, incoterms: "FOB" } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-CHG-RF-1",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 5,
-        isDangerous: false,
-      },
-    });
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -198,9 +175,15 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    // F1 (leg completeness) now gates on >=1 assigned package via LegPackage, not the dropped
+    // flat CargoItem/LegCargo model — see helpers/cargo.ts.
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: "PO-CHG-RF-1", dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     // Two ROAD STANDARD (PLAIN) lines to swap between; ROAD_CORE_TRUCKING is always a core.
     const tailLift = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "ROAD_STD_TAIL_LIFT" } });
     const insurance = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "ROAD_STD_INSURANCE" } });

@@ -10,6 +10,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 // Task 8 (Charge Configuration & Warehouse Attribution): at distribute, each quote's
 // chargeConfigSnapshot must freeze the leg's effective mandatory-to-price PLAIN charge set —
@@ -35,7 +36,7 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo/chargeSelections
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items/chargeSelections
     }
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
   };
@@ -67,21 +68,6 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-CHG-1",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 5,
-        isDangerous: false,
-      },
-    });
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -92,9 +78,15 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    // F1 (leg completeness) now gates on >=1 assigned package via LegPackage, not the dropped
+    // flat CargoItem/LegCargo model — see helpers/cargo.ts.
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: "PO-CHG-1", dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     // --- Executive selects AIR_DEST_THC (a STANDARD line) on the popover; nothing else ---
     const destThc = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "AIR_DEST_THC" } });
@@ -155,9 +147,10 @@ describe(`${PREFIX} (e2e)`, () => {
 
   let fixtureSeq = 0;
   /**
-   * Build Query → origin/dest Points → CargoItem → Leg(mode, READY_FOR_RFQ) → FF(modes:[mode])
-   * → optional LegChargeLineSelection(s) → PUT ff-selection → POST distribute.
-   * Mirrors ff-portal.e2e-spec.ts's distributeFixture. Returns the raw accessToken + ids.
+   * Build Query → origin/dest Points → Cargo→Package (LegPackage-assigned) →
+   * Leg(mode, READY_FOR_RFQ) → FF(modes:[mode]) → optional LegChargeLineSelection(s) →
+   * PUT ff-selection → POST distribute. Mirrors ff-portal.e2e-spec.ts's distributeFixture.
+   * Returns the raw accessToken + ids.
    */
   async function distributeFixture(opts: {
     mode: "AIR" | "SEA" | "ROAD";
@@ -170,21 +163,6 @@ describe(`${PREFIX} (e2e)`, () => {
     });
     const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
     const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: `PO-${PREFIX}-${seq}`,
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 5,
-        isDangerous: false,
-      },
-    });
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -195,9 +173,15 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    // F1 (leg completeness) now gates on >=1 assigned package via LegPackage, not the dropped
+    // flat CargoItem/LegCargo model — see helpers/cargo.ts.
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: `PO-${PREFIX}-${seq}`, dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     for (const key of opts.selectKeys ?? []) {
       const def = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key } });
       await prisma.legChargeLineSelection.create({ data: { legId: leg.id, definitionId: def.id } });
@@ -229,17 +213,24 @@ describe(`${PREFIX} (e2e)`, () => {
   }
 
   /**
-   * Build a complete valid draft from the GET response body (mirrors ff-portal.e2e-spec.ts's
-   * fullValidDraft, keyed by definitionKey instead of presetKey — the post-Task-9 shape).
-   * Optionally omit one mandatory line's charge (`omitKey`) to exercise the Q1 gate.
+   * Build a complete valid v2 draft from the GET response body (mirrors ff-portal-grain.e2e-spec.ts /
+   * ff-portal.e2e-spec.ts's fullValidDraft): cargo is per-package with an FF-entered
+   * chargedWeightKg (the dropped density model had no such concept), and a HEAVY_WEIGHT_CALC
+   * line (AIR_MAIN_HEAVY_WEIGHT) is priced via its 3 calc inputs rather than a flat amount.
+   * Optionally omit one mandatory line's charge (`omitKey`) to exercise the Q_PRICED gate.
    */
   function fullValidDraft(
     legId: string,
     mode: "AIR" | "SEA" | "ROAD",
     getBody: {
       legs: Array<{
-        seededDensity: Array<{ cargoItemId: string; freightDensity: number }>;
-        seededCharges: Array<{ zone: string | null; definitionKey: string; label: string }>;
+        manifest: { cargo: Array<{ packageId: string; grossWt: string; volumeCbm: string | null }> };
+        seededCharges: Array<{
+          zone: string | null;
+          definitionKey: string;
+          inputType?: string;
+          label: string;
+        }>;
       }>;
     },
     opts?: { omitKey?: string },
@@ -250,27 +241,42 @@ describe(`${PREFIX} (e2e)`, () => {
       mode,
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
-      cargo: leg.seededDensity.map((d) => ({
-        cargoItemId: d.cargoItemId,
-        grossWtT: 1,
-        cbm: 1,
-        isDangerous: false,
-        freightDensity: d.freightDensity,
+      cargo: leg.manifest.cargo.map((c) => ({
+        packageId: c.packageId,
+        grossWtKg: Number(c.grossWt),
+        cbm: Number(c.volumeCbm ?? 0),
+        chargedWeightKg: 10,
       })),
       charges: leg.seededCharges
         .filter((c) => c.definitionKey !== opts?.omitKey)
-        .map((c, i) => ({
-          zone: c.zone,
-          definitionKey: c.definitionKey,
-          presetKey: null,
-          label: c.label,
-          amount: i === 0 ? 0 : 10, // 0 is a valid price — Q1 treats amount != null as "priced"
-        })),
+        .map((c, i) =>
+          c.inputType === "HEAVY_WEIGHT_CALC"
+            ? {
+                zone: c.zone,
+                definitionKey: c.definitionKey,
+                presetKey: null,
+                label: c.label,
+                amount: null,
+                pieceWeightKg: 180,
+                airlineLimitKg: 100,
+                ratePerExcessKg: 2.5,
+              }
+            : {
+                zone: c.zone,
+                definitionKey: c.definitionKey,
+                presetKey: null,
+                label: c.label,
+                amount: i === 0 ? 0 : 10, // 0 is a valid price — Q_PRICED treats amount != null as "priced"
+                note: i === 0 ? "quoted at 0 by agreement" : undefined, // Q_PRICED requires a remark to accept 0
+              },
+        ),
       trucking: [],
+      seaRates: [],
       warehouse: [],
       transit: {
         departureDate: "2026-08-12T00:00:00.000Z",
         arrivalDate: "2026-08-14T00:00:00.000Z",
+        guaranteedTransitDays: 3,
       },
       dgSurchargeNote: null,
       termsConditions: null,
@@ -302,7 +308,7 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(res.body.status).toBe("QUOTED");
   });
 
-  it("submit: an unpriced mandatory line → 422 with a Q1 finding", async () => {
+  it("submit: an unpriced mandatory line → 422 with a Q_PRICED finding", async () => {
     const { token, legId } = await distributeFixture({ mode: "AIR" });
     const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
     const mandatoryKey = got.body.legs[0].seededCharges[0].definitionKey as string;
@@ -316,6 +322,6 @@ describe(`${PREFIX} (e2e)`, () => {
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
       .expect(422);
 
-    expect(res.body.findings.some((f: { rule: string }) => f.rule === "Q1")).toBe(true);
+    expect(res.body.findings.some((f: { rule: string }) => f.rule === "Q_PRICED")).toBe(true);
   });
 });
