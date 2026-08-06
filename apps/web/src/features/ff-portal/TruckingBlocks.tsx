@@ -1,6 +1,6 @@
 import { useFormContext, useFieldArray, useWatch } from "react-hook-form";
 import type { QuoteDraft, FfPortalEndpoint, TruckingBasis, TruckTonnage } from "@svyft/shared";
-import { TRUCK_TONNAGES, truckTonnageLabel } from "@svyft/shared";
+import { TRUCK_TONNAGES, truckTonnageLabel, rateVariantLabel } from "@svyft/shared";
 import {
   Select,
   SelectContent,
@@ -11,14 +11,6 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { NumberField } from "./NumberField";
 
-// Row heading: the rate variant IS the trucking type now (draftFromDto seeds one row per
-// variant) — no per-row Type Select anymore. Kept as a plain map rather than reusing
-// truckTonnageLabel, which labels TruckTonnage values, not rate variants.
-const RATE_VARIANT_LABELS: Record<string, string> = {
-  DEDICATED: "Dedicated",
-  GROUPAGE: "Groupage",
-};
-
 export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] }): JSX.Element {
   const { control, register, setValue } = useFormContext<QuoteDraft>();
   const { fields } = useFieldArray({ control, name: "trucking" });
@@ -28,8 +20,10 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
     <div className="space-y-6">
       {fields.map((field, i) => {
         const row = watchedTrucking?.[i];
+        // Row heading: the rate variant IS the trucking type now (draftFromDto seeds one row
+        // per variant) — no per-row Type Select anymore.
         const rateVariant = row?.rateVariant ?? field.rateVariant;
-        const heading = RATE_VARIANT_LABELS[rateVariant] ?? rateVariant;
+        const heading = rateVariantLabel(rateVariant);
         const pointId = field.legEndpointPointId;
         const pointName = endpoints.find((e) => e.pointId === pointId)?.name ?? pointId;
 

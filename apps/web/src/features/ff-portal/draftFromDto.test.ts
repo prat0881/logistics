@@ -83,6 +83,16 @@ describe("draftFromDto", () => {
     expect(d.trucking.map((t) => t.legEndpointPointId)).toEqual(["", ""]);
   });
 
+  it("seeds two Sea rate rows (FCL + LCL), both unpriced with no container size", () => {
+    const sea = { ...airLeg(), mode: "SEA" as const, seededCharges: [] };
+    const d = draftFromDto(sea, rfq);
+    expect(d.seaRates).toEqual([
+      { rateVariant: "FCL", containerSize: null, amount: null },
+      { rateVariant: "LCL", containerSize: null, amount: null },
+    ]);
+    expect(d.trucking).toEqual([]);
+  });
+
   it("leaves trucking and seaRates empty for non-Road modes (filled by later tasks)", () => {
     const d = draftFromDto(airLeg(), rfq); // AIR
     expect(d.trucking).toEqual([]);

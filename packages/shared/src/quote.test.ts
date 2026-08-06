@@ -3,7 +3,7 @@ import {
   CHARGE_ZONES, TRUCKING_TYPES, TRUCKING_BASES, WAREHOUSE_POSITIONS,
   AIR_CHARGE_PRESETS, SEA_CHARGE_PRESETS,
   CHARGE_RATE_VARIANTS, TRUCK_TONNAGES, CONTAINER_SIZES, BILL_OF_LADING_TYPES, WAREHOUSE_SIDES,
-  truckTonnageLabel, containerSizeLabel,
+  truckTonnageLabel, containerSizeLabel, rateVariantLabel,
   type QuoteDraftCargo, type QuoteDraft,
 } from "./quote";
 
@@ -50,6 +50,13 @@ describe("dual-rate / calc option-sets", () => {
     expect(truckTonnageLabel("TRAILER_30_40T")).toBe("Trailer 30–40 T");
     expect(containerSizeLabel("TWENTY")).toBe("20'");
     expect(containerSizeLabel("FORTY_FIVE_HC")).toBe("45' HC");
+  });
+
+  it("labels rate variants for display (shared across Road/Sea UIs)", () => {
+    expect(rateVariantLabel("DEDICATED")).toBe("Dedicated");
+    expect(rateVariantLabel("GROUPAGE")).toBe("Groupage");
+    expect(rateVariantLabel("FCL")).toBe("FCL");
+    expect(rateVariantLabel("LCL")).toBe("LCL");
   });
 
   it("builds a full v2 QuoteDraft including seaRates and mode-specific transit fields (shape check)", () => {

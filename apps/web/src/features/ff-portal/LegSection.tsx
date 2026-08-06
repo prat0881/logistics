@@ -11,6 +11,7 @@ import { ChargedWeightGrid } from "./ChargedWeightGrid";
 import { ChargeZonePanel } from "./ChargeZonePanel";
 import { RoadChargesPanel } from "./RoadChargesPanel";
 import { TruckingBlocks } from "./TruckingBlocks";
+import { SeaChargesPanel } from "./SeaChargesPanel";
 import { WarehouseStaging } from "./WarehouseStaging";
 import { TransitPlanForm } from "./TransitPlanForm";
 import { QuoteSummary } from "./QuoteSummary";
@@ -185,7 +186,17 @@ function LegSectionForm({
               <RoadChargesPanel />
             </>
           ) : (
-            <ChargeZonePanel seededCharges={leg.seededCharges} />
+            <>
+              <ChargeZonePanel seededCharges={leg.seededCharges} />
+              {leg.mode === "SEA" && (
+                <div className="mt-6">
+                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Sea freight (FCL / LCL)
+                  </h4>
+                  <SeaChargesPanel />
+                </div>
+              )}
+            </>
           )}
         </section>
 

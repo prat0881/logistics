@@ -114,3 +114,33 @@ describe("ChargeZonePanel — seeded inputType routing (Task 14)", () => {
     expect(screen.getByDisplayValue("Custom charge")).toBeInTheDocument();
   });
 });
+
+// ── Task 15: Sea Zone-1 Bill of Lading line gets a billOfLadingType dropdown ──
+const seaOriginCharges: QuoteDraftCharge[] = [
+  { zone: "ORIGIN", definitionKey: "SEA_ORIGIN_THC", presetKey: null, label: "Origin THC", amount: null },
+  { zone: "ORIGIN", definitionKey: "SEA_ORIGIN_BILL_OF_LADING", presetKey: null, label: "Bill of Lading", amount: null },
+];
+const seaOriginSeeded: FfPortalSeededCharge[] = [
+  { zone: "ORIGIN", definitionKey: "SEA_ORIGIN_THC", inputType: "PLAIN", presetKey: null, label: "Origin THC", isPreset: true, amount: null },
+  { zone: "ORIGIN", definitionKey: "SEA_ORIGIN_BILL_OF_LADING", inputType: "PLAIN", presetKey: null, label: "Bill of Lading", isPreset: true, amount: null },
+];
+
+describe("ChargeZonePanel — Sea Bill of Lading dropdown (Task 15)", () => {
+  it("renders a billOfLadingType Select only on the SEA_ORIGIN_BILL_OF_LADING line, alongside its amount input", () => {
+    render(<Harness charges={seaOriginCharges} seededCharges={seaOriginSeeded} />);
+    expect(screen.getByLabelText(/amount for bill of lading/i)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /bill of lading type for bill of lading/i })).toBeInTheDocument();
+    // The other Origin line (THC) gets no B/L dropdown
+    expect(screen.queryByRole("combobox", { name: /bill of lading type for origin thc/i })).toBeNull();
+  });
+
+  it("selecting a Bill of Lading type writes charges[idx].billOfLadingType", async () => {
+    render(<Harness charges={seaOriginCharges} seededCharges={seaOriginSeeded} />);
+    const trigger = screen.getByRole("combobox", { name: /bill of lading type for bill of lading/i });
+    await userEvent.click(trigger);
+    const option = screen.getByRole("option", { name: "Telex Release" });
+    await userEvent.click(option);
+    // charges[1] is the SEA_ORIGIN_BILL_OF_LADING line (absolute index within `charges`)
+    expect(screen.getByRole("combobox", { name: /bill of lading type for bill of lading/i })).toHaveTextContent("Telex Release");
+  });
+});

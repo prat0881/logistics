@@ -32,9 +32,15 @@ export function draftFromDto(leg: FfPortalLegDto, rfq: FfPortalRfqDto): QuoteDra
           truckingType: rv, basis: "PER_TRUCK" as const, amount: null, rateVariant: rv, tonnage: null,
         }))
       : [];
+  // Sea is dual-rate too (design §7): seed both FCL/LCL rows up front, same pattern as Road's
+  // Dedicated/Groupage — an unpriced row stays amount: null (blank rate → "–", computeQuoteTotals).
+  const seaRates =
+    leg.mode === "SEA"
+      ? (["FCL", "LCL"] as const).map((rv) => ({ rateVariant: rv, containerSize: null, amount: null }))
+      : [];
   return {
     legId: leg.legId, mode: leg.mode, currency: rfq.currency, quoteValidityUntil: rfq.quoteValidityUntil,
-    cargo, charges, trucking, seaRates: [], warehouse,
+    cargo, charges, trucking, seaRates, warehouse,
     transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
     dgSurchargeNote: null, termsConditions: null,
   };

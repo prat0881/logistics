@@ -41,6 +41,11 @@ const CONTAINER_SIZE_LABELS: Record<ContainerSize, string> = {
 };
 export function containerSizeLabel(c: ContainerSize): string { return CONTAINER_SIZE_LABELS[c] ?? c; }
 
+const CHARGE_RATE_VARIANT_LABELS: Record<ChargeRateVariant, string> = {
+  DEDICATED: "Dedicated", GROUPAGE: "Groupage", FCL: "FCL", LCL: "LCL",
+};
+export function rateVariantLabel(v: ChargeRateVariant): string { return CHARGE_RATE_VARIANT_LABELS[v] ?? v; }
+
 export const BillOfLadingType = { ORIGINAL: "ORIGINAL", TELEX: "TELEX" } as const;
 export type BillOfLadingType = (typeof BillOfLadingType)[keyof typeof BillOfLadingType];
 export const BILL_OF_LADING_TYPES = Object.values(BillOfLadingType) as [BillOfLadingType, ...BillOfLadingType[]];

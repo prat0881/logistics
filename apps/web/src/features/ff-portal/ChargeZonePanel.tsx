@@ -1,8 +1,15 @@
 import { useFormContext, useFieldArray, useWatch } from "react-hook-form";
-import type { QuoteDraft, ChargeZone, FfPortalSeededCharge } from "@svyft/shared";
-import { computeHeavyWeightAmount } from "@svyft/shared";
+import type { QuoteDraft, ChargeZone, FfPortalSeededCharge, BillOfLadingType } from "@svyft/shared";
+import { computeHeavyWeightAmount, BILL_OF_LADING_TYPES } from "@svyft/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { NumberField } from "./NumberField";
 import { HeavyWeightCalcRow } from "./HeavyWeightCalcRow";
 import { fmtAmount } from "./format";
@@ -12,6 +19,13 @@ const ZONES: { key: ChargeZone; title: string }[] = [
   { key: "MAIN_FREIGHT", title: "Main freight" },
   { key: "DESTINATION", title: "Destination charges" },
 ];
+
+// The seeded Sea Zone-1 line that also carries a Bill of Lading type (§7.4.3.2) — detected by
+// definitionKey, not presetKey (catalogue lines always carry definitionKey; presetKey is null).
+const BILL_OF_LADING_KEY = "SEA_ORIGIN_BILL_OF_LADING";
+const BILL_OF_LADING_LABELS: Record<BillOfLadingType, string> = {
+  ORIGINAL: "Original", TELEX: "Telex Release",
+};
 
 export interface ChargeZonePanelProps {
   seededCharges: FfPortalSeededCharge[];
@@ -82,30 +96,54 @@ export function ChargeZonePanel({ seededCharges }: ChargeZonePanelProps) {
                 const isPreset = definitionKey != null;
 
                 return (
-                  <div
-                    key={f.id}
-                    className="grid grid-cols-[1fr,10rem,1fr] items-center gap-2"
-                  >
-                    {isPreset ? (
-                      <span className="text-sm">{label}</span>
-                    ) : (
-                      <Input
-                        aria-label="Custom line label"
-                        {...register(`charges.${idx}.label` as const)}
+                  <div key={f.id} className="space-y-2">
+                    <div className="grid grid-cols-[1fr,10rem,1fr] items-center gap-2">
+                      {isPreset ? (
+                        <span className="text-sm">{label}</span>
+                      ) : (
+                        <Input
+                          aria-label="Custom line label"
+                          {...register(`charges.${idx}.label` as const)}
+                        />
+                      )}
+                      <NumberField
+                        aria-label={`Amount for ${label}`}
+                        value={chargeAtIdx?.amount ?? null}
+                        onChange={(v) =>
+                          setValue(`charges.${idx}.amount`, v, { shouldDirty: true })
+                        }
                       />
+                      <Input
+                        aria-label={`Note for ${label}`}
+                        placeholder="Note (optional)"
+                        {...register(`charges.${idx}.note` as const)}
+                      />
+                    </div>
+
+                    {definitionKey === BILL_OF_LADING_KEY && (
+                      <div className="w-48 space-y-1">
+                        <label htmlFor={`bl-type-${idx}`} className="text-xs font-medium text-muted-foreground">
+                          Bill of Lading type
+                        </label>
+                        <Select
+                          value={chargeAtIdx?.billOfLadingType ?? ""}
+                          onValueChange={(v) =>
+                            setValue(`charges.${idx}.billOfLadingType`, v as BillOfLadingType, {
+                              shouldDirty: true,
+                            })
+                          }
+                        >
+                          <SelectTrigger id={`bl-type-${idx}`} aria-label={`Bill of Lading type for ${label}`}>
+                            <SelectValue placeholder="Select type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {BILL_OF_LADING_TYPES.map((b) => (
+                              <SelectItem key={b} value={b}>{BILL_OF_LADING_LABELS[b]}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     )}
-                    <NumberField
-                      aria-label={`Amount for ${label}`}
-                      value={chargeAtIdx?.amount ?? null}
-                      onChange={(v) =>
-                        setValue(`charges.${idx}.amount`, v, { shouldDirty: true })
-                      }
-                    />
-                    <Input
-                      aria-label={`Note for ${label}`}
-                      placeholder="Note (optional)"
-                      {...register(`charges.${idx}.note` as const)}
-                    />
                   </div>
                 );
               })}

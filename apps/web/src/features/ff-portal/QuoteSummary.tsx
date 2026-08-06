@@ -1,10 +1,6 @@
-import type { QuoteDraft } from "@svyft/shared";
-import { computeQuoteTotals } from "@svyft/shared";
+import type { QuoteDraft, ChargeRateVariant } from "@svyft/shared";
+import { computeQuoteTotals, rateVariantLabel } from "@svyft/shared";
 import { fmtAmount } from "./format";
-
-const VARIANT_LABELS: Record<string, string> = {
-  DEDICATED: "Dedicated", GROUPAGE: "Groupage", FCL: "FCL", LCL: "LCL", AIR: "Air",
-};
 
 export function QuoteSummary({ draft, currency }: { draft: QuoteDraft; currency: string | null }): JSX.Element {
   const totals = computeQuoteTotals(draft);
@@ -21,9 +17,10 @@ export function QuoteSummary({ draft, currency }: { draft: QuoteDraft; currency:
       <div className="border-t pt-2 mt-2 space-y-2">
         {totals.variants.map((v) => {
           const blank = v.rateAmount == null && v.key !== "AIR";
+          const label = v.key === "AIR" ? "Air" : rateVariantLabel(v.key as ChargeRateVariant);
           return (
             <div key={v.key} className="flex justify-between" data-testid={`grand-total-${v.key}`}>
-              <dt className="font-display font-semibold">{VARIANT_LABELS[v.key] ?? v.key} total</dt>
+              <dt className="font-display font-semibold">{label} total</dt>
               <dd className="font-mono tabular-nums text-lg font-bold">
                 {blank ? "–" : <>{fmtAmount(v.grandTotal)}{currency && <span className="ml-1 text-sm font-normal">{currency}</span>}</>}
               </dd>
