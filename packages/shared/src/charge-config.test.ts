@@ -24,13 +24,35 @@ describe("resolveChargeConfig", () => {
   });
 
   it("includes selected STANDARD + TAG_DRIVEN lines, ordered by sortOrder", () => {
-    const snap = resolveChargeConfig(defs, ["AIR_DEST_THC", "AIR_TAG_FRAGILE"], true);
+    // two-gate: TAG_DRIVEN also needs its tagKey ("FRAGILE") present among packageTags.
+    const snap = resolveChargeConfig(defs, ["AIR_DEST_THC", "AIR_TAG_FRAGILE"], true, ["FRAGILE"]);
     expect(snap.lines.map((l) => l.definitionKey)).toEqual(["AIR_ORIGIN_THC", "AIR_DEST_THC", "AIR_TAG_FRAGILE"]);
     expect(snap.warehouseIncluded).toBe(true);
   });
 
   it("never puts TRUCKING or WAREHOUSE_STAGING lines in the PLAIN snapshot set", () => {
     const snap = resolveChargeConfig(defs, ["ROAD_WH_HANDLING"], true);
-    expect(snap.lines.some((l) => l.inputType !== "PLAIN")).toBe(false);
+    expect(snap.lines.some((l) => l.inputType !== "PLAIN" && l.inputType !== "HEAVY_WEIGHT_CALC")).toBe(false);
+  });
+
+  it("activates a tag-driven line only when selected AND a package carries the tag", () => {
+    const tagDefs = [
+      def({ key: "AIR_TAG_DG", role: "TAG_DRIVEN", inputType: "PLAIN", tagKey: "DG", sortOrder: 16 }),
+      def({ key: "AIR_TAG_FRAGILE", role: "TAG_DRIVEN", inputType: "PLAIN", tagKey: "FRAGILE", sortOrder: 15 }),
+    ];
+    const snap = resolveChargeConfig(tagDefs, ["AIR_TAG_DG", "AIR_TAG_FRAGILE"], false, ["DG"]);
+    expect(snap.lines.map((l) => l.definitionKey)).toEqual(["AIR_TAG_DG"]); // FRAGILE selected but no package carries it
+  });
+
+  it("omits a selected TAG_DRIVEN line when packageTags is defaulted (no 4th arg)", () => {
+    const snap = resolveChargeConfig(defs, ["AIR_TAG_FRAGILE"], false);
+    expect(snap.lines.map((l) => l.definitionKey)).not.toContain("AIR_TAG_FRAGILE");
+  });
+
+  it("includes a HEAVY_WEIGHT_CALC core line", () => {
+    const heavyDefs = [
+      def({ key: "AIR_MAIN_HEAVY_WEIGHT", role: "CORE", inputType: "HEAVY_WEIGHT_CALC", zone: "MAIN_FREIGHT", sortOrder: 9 }),
+    ];
+    expect(resolveChargeConfig(heavyDefs, [], false, []).lines).toHaveLength(1);
   });
 });

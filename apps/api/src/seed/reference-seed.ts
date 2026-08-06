@@ -23,7 +23,7 @@ const CHECKLIST: { itemKey: string; label: string; order: number; dgConditional?
 
 type ChargeDef = {
   key: string; mode: "ROAD" | "AIR" | "SEA"; role: "CORE" | "STANDARD" | "TAG_DRIVEN" | "WAREHOUSE";
-  inputType?: "PLAIN" | "TRUCKING" | "WAREHOUSE_STAGING"; zone?: "ORIGIN" | "MAIN_FREIGHT" | "DESTINATION" | null;
+  inputType?: "PLAIN" | "TRUCKING" | "WAREHOUSE_STAGING" | "HEAVY_WEIGHT_CALC"; zone?: "ORIGIN" | "MAIN_FREIGHT" | "DESTINATION" | null;
   tagKey?: string | null; label: string; sortOrder: number; isActive?: boolean;
 };
 const CHARGE_LINE_DEFINITIONS: ChargeDef[] = [
@@ -36,7 +36,9 @@ const CHARGE_LINE_DEFINITIONS: ChargeDef[] = [
   { key: "AIR_MAIN_FREIGHT", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Air Freight Charges", sortOrder: 6 },
   { key: "AIR_MAIN_SEC", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Security Exchange (SEC)", sortOrder: 7 },
   { key: "AIR_MAIN_CARRIER_SURCHARGE", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Airline / Carrier Surcharge", sortOrder: 8 },
-  { key: "AIR_MAIN_HEAVY_WEIGHT", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Heavy Weight Surcharge", sortOrder: 9 },
+  { key: "AIR_MAIN_HEAVY_WEIGHT", mode: "AIR", role: "CORE", inputType: "HEAVY_WEIGHT_CALC", zone: "MAIN_FREIGHT", label: "Heavy Weight Surcharge", sortOrder: 9 },
+  { key: "AIR_MAIN_FSC", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Fuel Surcharge (FSC)", sortOrder: 9.1 },
+  { key: "AIR_MAIN_PEAK_SEASON", mode: "AIR", role: "CORE", zone: "MAIN_FREIGHT", label: "Peak Season Surcharge", sortOrder: 9.2 },
   // ── AIR configurable (destination) ──
   { key: "AIR_DEST_THC", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Destination THC / Airport Handling", sortOrder: 10 },
   { key: "AIR_DEST_IMPORT_CLEARANCE", mode: "AIR", role: "STANDARD", zone: "DESTINATION", label: "Import Customs Clearance", sortOrder: 11 },
@@ -53,7 +55,12 @@ const CHARGE_LINE_DEFINITIONS: ChargeDef[] = [
   { key: "SEA_ORIGIN_THC", mode: "SEA", role: "CORE", zone: "ORIGIN", label: "Origin THC (Terminal Handling Charge)", sortOrder: 3 },
   { key: "SEA_ORIGIN_BILL_OF_LADING", mode: "SEA", role: "CORE", zone: "ORIGIN", label: "Bill of Lading", sortOrder: 4 },
   { key: "SEA_ORIGIN_WAREHOUSE", mode: "SEA", role: "CORE", zone: "ORIGIN", label: "Warehouse Charges", sortOrder: 5 },
-  { key: "SEA_MAIN_FREIGHT", mode: "SEA", role: "CORE", zone: "MAIN_FREIGHT", label: "Sea Freight Charges", sortOrder: 6 },
+  // Retired (design §5.2): sea freight is now the structured seaRates[] dual-rate, which
+  // REPLACES this flat CORE/PLAIN line. Left active it would be priced twice — via
+  // draft.charges AND seaRates — and double-counted by computeQuoteTotals. Seed is create-only
+  // (upsert … update:{}), so an already-seeded row needs the paired data migration
+  // prisma/migrations/20260806010000_retire_sea_main_freight to flip isActive on :5433/prod.
+  { key: "SEA_MAIN_FREIGHT", mode: "SEA", role: "CORE", zone: "MAIN_FREIGHT", label: "Sea Freight Charges", sortOrder: 6, isActive: false },
   // ── SEA configurable (destination) ──
   { key: "SEA_DEST_THC", mode: "SEA", role: "STANDARD", zone: "DESTINATION", label: "Destination THC / Handling Charges", sortOrder: 10 },
   { key: "SEA_DEST_IMPORT_CLEARANCE", mode: "SEA", role: "STANDARD", zone: "DESTINATION", label: "Import Customs Clearance", sortOrder: 11 },
