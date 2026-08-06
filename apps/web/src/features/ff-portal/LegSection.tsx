@@ -7,7 +7,7 @@ import { draftFromDto } from "./draftFromDto";
 import { useSaveDraft, useSubmit } from "./useFfPortal";
 import { PortalError } from "./portalClient";
 import { CargoManifestTable } from "./CargoManifestTable";
-import { DensityChargeableGrid } from "./DensityChargeableGrid";
+import { ChargedWeightGrid } from "./ChargedWeightGrid";
 import { ChargeZonePanel } from "./ChargeZonePanel";
 import { RoadChargesPanel } from "./RoadChargesPanel";
 import { TruckingBlocks } from "./TruckingBlocks";
@@ -145,8 +145,8 @@ function LegSectionForm({
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
-  // DG note visibility
-  const showDgNote = draft.cargo?.some((c) => c.isDangerous) ?? false;
+  // DG note visibility — DG is a package reference tag (frozen manifest), not a cargo-draft field
+  const showDgNote = leg.manifest.cargo.some((c) => c.tags.includes("DG"));
 
   // Grand total
   const { grandTotal } = computeQuoteTotals(draft);
@@ -162,12 +162,12 @@ function LegSectionForm({
           <CargoManifestTable cargo={leg.manifest.cargo} />
         </section>
 
-        {/* Density & chargeable weight */}
+        {/* Charged weight */}
         <section id={sectionAnchorId(leg.legId, "density")}>
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Density &amp; chargeable weight
+            Charged weight
           </h3>
-          <DensityChargeableGrid cargo={leg.manifest.cargo} />
+          <ChargedWeightGrid cargo={leg.manifest.cargo} />
         </section>
 
         {/* Mode pricing: AIR/SEA → ChargeZonePanel, ROAD → TruckingBlocks */}

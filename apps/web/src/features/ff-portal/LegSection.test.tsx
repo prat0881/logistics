@@ -33,19 +33,17 @@ const leg = {
   manifest: {
     cargo: [
       {
-        cargoItemId: "c1",
-        poReference: "PO-1",
-        productName: "P",
-        packageType: "Box",
-        isDangerous: false,
-        qty: 1,
-        dimL: "1",
-        dimW: "1",
-        dimH: "1",
+        packageId: "pk1",
+        packageNo: "PK-1",
+        packageType: "BOX",
+        packageCount: 1,
+        dimL: "100",
+        dimW: "100",
+        dimH: "100",
+        netWt: null,
         grossWt: "1000",
         volumeCbm: "1",
-        hsCode: null,
-        netWt: null,
+        tags: [],
       },
     ],
   },
@@ -59,7 +57,6 @@ const leg = {
       amount: null,
     },
   ],
-  seededDensity: [{ cargoItemId: "c1", freightDensity: 167 }],
   draft: null,
 } as unknown as FfPortalLegDto;
 

@@ -44,11 +44,10 @@ const sentDraft: QuoteDraft = {
   quoteValidityUntil: null, // will be merged from rfq.quoteValidityUntil by LegSectionForm
   cargo: [
     {
-      cargoItemId: "c1",
-      grossWtT: 1,
+      packageId: "c1",
+      grossWtKg: 1000,
       cbm: 1,
-      isDangerous: false,
-      freightDensity: 167, // seeded → Q2 passes
+      chargedWeightKg: 1000, // FF-entered → Q2 passes
     },
   ],
   charges: [
@@ -68,8 +67,9 @@ const sentDraft: QuoteDraft = {
     { zone: "DESTINATION", presetKey: "AIR_DEST_STORAGE", label: "Storage 1 Free Day Charges", amount: 0 },
   ],
   trucking: [],
+  seaRates: [],
   warehouse: [],
-  transit: { departureDate: null, arrivalDate: null }, // Q6 requires these to be set in the test
+  transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: 5 }, // Q6 requires dates to be set in the test
   dgSurchargeNote: null,
   termsConditions: null,
 };
@@ -80,33 +80,40 @@ const sentLeg: FfPortalLegDto = {
   status: "RFQ_SENT",
   mode: "AIR",
   manifest: {
+    legId: "L1",
+    legCode: "L1",
+    legName: null,
+    mode: "AIR",
+    incoterms: null,
+    origin: null,
+    destination: null,
+    readyDate: null,
+    targetDelivery: null,
     cargo: [
       {
-        cargoItemId: "c1",
-        poReference: "PO-1",
-        productName: "Pumps",
-        packageType: "Box",
-        isDangerous: false,
-        qty: 1,
-        dimL: "1",
-        dimW: "1",
-        dimH: "1",
+        packageId: "c1",
+        packageNo: "PK-1",
+        packageType: "BOX",
+        packageCount: 1,
+        dimL: "100",
+        dimW: "100",
+        dimH: "100",
+        netWt: null,
         grossWt: "1000",
         volumeCbm: "1",
-        hsCode: null,
-        netWt: null,
+        tags: [],
       },
     ],
+    frozenAt: "2026-08-01T00:00:00.000Z",
   },
   endpoints: [],
-  // seededCharges/seededDensity — only used when draft is null; here draft is set
+  // seededCharges — only used when draft is null; here draft is set
   seededCharges: [
     { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_FREIGHT", label: "Air Freight", isPreset: true, amount: null },
-  ] as unknown as FfPortalLegDto["seededCharges"],
-  seededDensity: [{ cargoItemId: "c1", freightDensity: 167 }],
+  ],
   // Pre-built draft: 12 charges pre-priced, Air Freight at null → test only needs to price one
   draft: sentDraft,
-} as unknown as FfPortalLegDto;
+};
 
 const sentRfq: FfPortalRfqDto = {
   rfqNumber: "R-1",
@@ -126,11 +133,10 @@ const quotedDraft: QuoteDraft = {
   quoteValidityUntil: "2999-02-01T00:00:00.000Z",
   cargo: [
     {
-      cargoItemId: "c1",
-      grossWtT: 1,
+      packageId: "c1",
+      grossWtKg: 1000,
       cbm: 1,
-      isDangerous: false,
-      freightDensity: 167,
+      chargedWeightKg: 1000,
     },
   ],
   charges: [
@@ -142,10 +148,12 @@ const quotedDraft: QuoteDraft = {
     },
   ],
   trucking: [],
+  seaRates: [],
   warehouse: [],
   transit: {
     departureDate: "2026-08-05T10:00:00.000Z",
     arrivalDate: "2026-08-07T10:00:00.000Z",
+    guaranteedTransitDays: 5,
   },
   dgSurchargeNote: null,
   termsConditions: "Accepted",
@@ -155,7 +163,7 @@ const quotedLeg: FfPortalLegDto = {
   ...sentLeg,
   status: "QUOTED",
   draft: quotedDraft,
-} as unknown as FfPortalLegDto;
+};
 
 const quotedRfq: FfPortalRfqDto = {
   ...sentRfq,
