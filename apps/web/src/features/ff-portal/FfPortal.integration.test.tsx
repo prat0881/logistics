@@ -34,7 +34,9 @@ const renderAt = (token: string) =>
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 // A pre-built draft with all AIR charges priced EXCEPT Air Freight (amount: null).
-// This lets the test price exactly ONE charge to pass Q1 validation.
+// This lets the test price exactly ONE charge to pass the Q_PRICED gate (validateQuote's
+// activeLines-driven catalogue-line check — only Air Freight carries a definitionKey in
+// sentLeg.seededCharges below, so it's the only line the client-side gate tracks).
 // currency/quoteValidityUntil are intentionally null here; they are merged from page-level state
 // (the RFQ top-level fields) by LegSectionForm — never typed into a per-leg field.
 const sentDraft: QuoteDraft = {
@@ -47,7 +49,7 @@ const sentDraft: QuoteDraft = {
       packageId: "c1",
       grossWtKg: 1000,
       cbm: 1,
-      chargedWeightKg: 1000, // FF-entered → Q2 passes
+      chargedWeightKg: 1000, // FF-entered → Q_WEIGHT passes
     },
   ],
   charges: [
@@ -57,7 +59,7 @@ const sentDraft: QuoteDraft = {
     { zone: "ORIGIN", presetKey: "AIR_ORIGIN_THC", label: "Origin THC / Airport Handling", amount: 0 },
     { zone: "ORIGIN", presetKey: "AIR_ORIGIN_SECURITY", label: "Security / Screening Charges", amount: 0 },
     { zone: "ORIGIN", presetKey: "AIR_ORIGIN_WAREHOUSE_PRESTORAGE", label: "Warehouse / Pre-storage at OAP", amount: 0 },
-    { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_FREIGHT", label: "Air Freight", amount: null }, // ← the one to price
+    { zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_FREIGHT", presetKey: "AIR_MAIN_FREIGHT", label: "Air Freight", amount: null }, // ← the one to price
     { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_SEC", label: "Security Exchange (SEC)", amount: 0 },
     { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_CARRIER_SURCHARGE", label: "Airline / Carrier Surcharge", amount: 0 },
     { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_HEAVY_WEIGHT", label: "Heavy Weight Surcharge", amount: 0 },
@@ -69,7 +71,10 @@ const sentDraft: QuoteDraft = {
   trucking: [],
   seaRates: [],
   warehouse: [],
-  transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: 5 }, // Q6 requires dates to be set in the test
+  // Q_TRANSIT requires guaranteedTransitDays (already 5, satisfied). departureDate/arrivalDate
+  // are legacy fields — required by the QuoteDraftTransit shape but ungated and no longer
+  // editable via TransitPlanForm (superseded by mode-specific plannedDeparture/plannedArrival).
+  transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: 5 },
   dgSurchargeNote: null,
   termsConditions: null,
 };
@@ -107,9 +112,21 @@ const sentLeg: FfPortalLegDto = {
     frozenAt: "2026-08-01T00:00:00.000Z",
   },
   endpoints: [],
-  // seededCharges — only used when draft is null; here draft is set
+  // seededCharges — drives the client-side activeLines/Q_PRICED gate (LegSection.tsx); mirrors
+  // the ONE deliberately-unpriced draft.charges line above (Air Freight) so the client gate
+  // targets exactly it. Real production always carries definitionKey on catalogue lines (see
+  // ff-portal.service.ts / resolveChargeConfig) — presetKey is threaded through only for shape
+  // compatibility (FfPortalSeededCharge) and is asserted on directly by Test 1's PATCH-body check.
   seededCharges: [
-    { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_FREIGHT", label: "Air Freight", isPreset: true, amount: null },
+    {
+      zone: "MAIN_FREIGHT",
+      definitionKey: "AIR_MAIN_FREIGHT",
+      inputType: "PLAIN",
+      presetKey: "AIR_MAIN_FREIGHT",
+      label: "Air Freight",
+      isPreset: true,
+      amount: null,
+    },
   ],
   // Pre-built draft: 12 charges pre-priced, Air Freight at null → test only needs to price one
   draft: sentDraft,
@@ -345,8 +362,13 @@ describe("FfPortal integration — 422 surfacing", () => {
 });
 
 // ── Test 3: Invalid submit makes ZERO network calls ──────────────────────────
+// sentDraft/sentLeg are set up so every rule passes EXCEPT Q_PRICED on "Air Freight" (the one
+// line in sentLeg.seededCharges, unpriced in sentDraft.charges) — this is the rule the
+// activeLines wiring (LegSection.tsx) is responsible for firing client-side. Before that wiring,
+// validateQuote's 4th arg defaulted to `[]`, the Q_PRICED-over-activeLines loop never ran, and
+// this test failed (no finding fired, so the alert never appeared).
 describe("FfPortal integration — client gate", () => {
-  it("shows findings alert and makes zero network calls to /quotes/ when submit is invalid", async () => {
+  it("shows the Q_PRICED finding for the unpriced Air Freight line and makes zero network calls", async () => {
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
 
@@ -372,10 +394,12 @@ describe("FfPortal integration — client gate", () => {
     // Click "Submit quote" WITHOUT pricing / filling anything
     await userEvent.click(screen.getByRole("button", { name: /submit quote/i }));
 
-    // Client gate: findings alert appears
+    // Client gate: findings alert appears, naming the specific unpriced catalogue line —
+    // proves activeLines (built from leg.seededCharges) reached validateQuote's Q_PRICED check.
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeInTheDocument();
     });
+    expect(screen.getByRole("alert").textContent).toMatch(/charge line.*air freight.*must be priced/i);
 
     // Assert zero calls to any /quotes/ URL
     const quotesCalls = fetchMock.mock.calls.filter(

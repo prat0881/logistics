@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useForm, FormProvider, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { FfPortalLegDto, FfPortalRfqDto, QuoteDraft, Finding } from "@svyft/shared";
+import type { FfPortalLegDto, FfPortalRfqDto, QuoteDraft, Finding, ResolvedChargeLine } from "@svyft/shared";
 import { quoteDraftSchema, validateQuote, computeQuoteTotals } from "@svyft/shared";
 import { draftFromDto } from "./draftFromDto";
 import { useSaveDraft, useSubmit } from "./useFfPortal";
@@ -82,6 +82,24 @@ function LegSectionForm({
     defaultValues: draftFromDto(leg, rfq),
   });
 
+  // Active charge lines for the client-side Q_PRICED gate — mirrors the server's frozen
+  // ChargeConfigSnapshot.lines (ff-portal.service.ts's `snap.lines`, passed to validateQuote at
+  // submit). Only seeded lines carrying a definitionKey are catalogue lines subject to the gate
+  // (a genuine custom [+ Add line] row has none and is gated separately, by Q_CUSTOM_*).
+  const activeLines: ResolvedChargeLine[] = useMemo(
+    () =>
+      leg.seededCharges
+        .filter((s): s is typeof s & { definitionKey: string } => s.definitionKey != null)
+        .map((s) => ({
+          definitionKey: s.definitionKey,
+          role: "CORE" as const, // unused by validateQuote; shape-fill only
+          inputType: s.inputType ?? "PLAIN",
+          zone: s.zone,
+          label: s.label,
+        })),
+    [leg.seededCharges],
+  );
+
   // Live draft: merge page-level currency & validity (source of truth)
   const watched = useWatch({ control: form.control });
   const draft = useMemo(
@@ -94,7 +112,7 @@ function LegSectionForm({
   const [serverFindings, setServerFindings] = useState<Finding[] | null>(null);
 
   const clientFindings = attempted
-    ? validateQuote(draft, rfq.submissionDeadline, new Date().toISOString())
+    ? validateQuote(draft, rfq.submissionDeadline, new Date().toISOString(), activeLines)
     : [];
   const displayedFindings = serverFindings ?? clientFindings;
 
@@ -125,7 +143,7 @@ function LegSectionForm({
     setServerFindings(null);
     setAttempted(true);
     const d = buildDraft();
-    const f = validateQuote(d, rfq.submissionDeadline, new Date().toISOString());
+    const f = validateQuote(d, rfq.submissionDeadline, new Date().toISOString(), activeLines);
     if (f.length > 0) return; // client-invalid: show findings, do NOT hit network
 
     try {
@@ -213,7 +231,7 @@ function LegSectionForm({
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Transit plan
           </h3>
-          <TransitPlanForm />
+          <TransitPlanForm mode={leg.mode} />
         </section>
 
         {/* Quote summary */}
