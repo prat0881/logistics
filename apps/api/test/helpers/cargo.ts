@@ -1,5 +1,5 @@
 import type { PrismaService } from "../../src/prisma/prisma.service";
-import type { PackageType, ReferenceTag, UnitOfMeasure } from "@svyft/shared";
+import type { DimUnit, PackageType, ReferenceTag, UnitOfMeasure, WeightUnit } from "@svyft/shared";
 
 // Task 19 (Unit 5, FF Portal v2 ripple): the legacy Stage-4 e2e specs build cargo through the
 // DROPPED flat CargoItem/LegCargo model. Every spec that touches cargo now has to build the real
@@ -19,8 +19,9 @@ export interface ItemSpec {
 }
 
 export interface PackageSpec {
-  /** Unique per query (`@@unique([queryId, packageNo])`). Auto-minted ("V-<n>") if omitted —
-   *  see `mintPackageNo` for the collision-avoidance scheme. */
+  /** Unique per query (`@@unique([queryId, packageNo])`). Auto-minted ("AUTO-P-<n>") if omitted —
+   *  see `mintPackageNo` for the collision-avoidance scheme. Callers supplying an explicit
+   *  `packageNo` should NOT use the `AUTO-P-` prefix, to stay clear of the auto-minted namespace. */
   packageNo?: string;
   packageType?: PackageType; // default PALLET
   dimL?: number | string; // canonical cm; default 120
@@ -45,9 +46,12 @@ export interface CreatedCargo {
 // the same packageNo, without callers having to track a counter themselves.
 let packageNoSeq = 0;
 
+// Auto-minted packageNos live in their own `AUTO-P-` namespace, distinct from the `V-`/`PK-`
+// prefixes specs commonly use for explicit packageNos — so an explicit `packageNo` can never
+// collide with an auto-minted one, even in the same query.
 function mintPackageNo(): string {
   packageNoSeq += 1;
-  return `V-${packageNoSeq}`;
+  return `AUTO-P-${packageNoSeq}`;
 }
 
 /**
@@ -64,8 +68,8 @@ export async function createCargoWithPackages(
   opts: {
     queryId: string;
     tenantId?: string | null;
-    dimUnit?: "CM" | "MM";
-    weightUnit?: "KG" | "TONNE" | "GM";
+    dimUnit?: DimUnit;
+    weightUnit?: WeightUnit;
     rowIndex?: number;
     packages: PackageSpec[];
   },
