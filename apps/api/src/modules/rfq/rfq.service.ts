@@ -371,7 +371,7 @@ export class RfqService {
         const legIds = new Set<string>();
         for (const { quoteId, legCtx } of items) {
           const snapshot = buildManifestSnapshot(legCtx, query, frozenAt);
-          const chargeConfig = await buildChargeConfigSnapshot(this.prisma, legCtx.leg);
+          const chargeConfig = await buildChargeConfigSnapshot(this.prisma, legCtx.leg, snapshot.cargo);
           await tx.quote.update({
             where: { id: quoteId },
             data: {

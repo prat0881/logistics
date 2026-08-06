@@ -152,7 +152,7 @@ export class ChangeOrderStrategy {
         // carries NO charge/warehouse data, so without this a refreshed FF keeps a STALE charge
         // set and the portal (seeding + Q1) mis-prices. Built from the SAME tx-reloaded leg
         // (ctx.leg carries chargeSelections/mode/warehouseHandlingIncluded via LEG_RFQ_INCLUDE).
-        const chargeConfig = await buildChargeConfigSnapshot(tx, ctx.leg);
+        const chargeConfig = await buildChargeConfigSnapshot(tx, ctx.leg, snap.cargo);
         await tx.quote.updateMany({
           where: { legId, id: { in: refreshingIds } },
           data: {
