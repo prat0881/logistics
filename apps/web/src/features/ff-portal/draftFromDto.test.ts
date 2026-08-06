@@ -66,12 +66,27 @@ describe("draftFromDto", () => {
     expect(d.warehouse[0]).toMatchObject({ warehousePointId: "w1", position: "ORIGIN", label: "Origin warehouse", amount: null, cfsCode: null, side: null });
   });
 
-  it("seeds trucking and seaRates empty (filled by later tasks) regardless of mode", () => {
+  it("seeds two Road rate rows (Dedicated + Groupage) off the leg's first endpoint, both unpriced", () => {
     const road = { ...airLeg(), mode: "ROAD" as const, seededCharges: [] };
     const d = draftFromDto(road, rfq);
-    expect(d.trucking).toEqual([]);
+    expect(d.trucking).toEqual([
+      { legEndpointPointId: "w1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: null, rateVariant: "DEDICATED", tonnage: null },
+      { legEndpointPointId: "w1", truckingType: "GROUPAGE", basis: "PER_TRUCK", amount: null, rateVariant: "GROUPAGE", tonnage: null },
+    ]);
     expect(d.seaRates).toEqual([]);
     expect(d.charges).toEqual([]);
+  });
+
+  it("falls back to an empty legEndpointPointId when a Road leg has no endpoints", () => {
+    const road = { ...airLeg(), mode: "ROAD" as const, endpoints: [] };
+    const d = draftFromDto(road, rfq);
+    expect(d.trucking.map((t) => t.legEndpointPointId)).toEqual(["", ""]);
+  });
+
+  it("leaves trucking and seaRates empty for non-Road modes (filled by later tasks)", () => {
+    const d = draftFromDto(airLeg(), rfq); // AIR
+    expect(d.trucking).toEqual([]);
+    expect(d.seaRates).toEqual([]);
   });
 
   it("seeds a mandatory-but-unset transit plan (guaranteedTransitDays null)", () => {

@@ -59,13 +59,21 @@ describe("computeQuoteTotals", () => {
     expect(t.chargeableWeightKg).toBe(100);
   });
 
-  it("treats a null trucking amount as a 0 contribution to its variant's rate sum", () => {
+  it("an unpriced Road variant (no row of that variant has an amount) yields rateAmount null, not 0", () => {
     const t = computeQuoteTotals(base({
       charges: [], warehouse: [],
       trucking: [{ legEndpointPointId: "e", truckingType: "DEDICATED", basis: "FIXED", amount: null, rateVariant: "DEDICATED", tonnage: null }],
     }));
     expect(t.sharedSubtotal).toBe(0);
-    expect(t.variants).toEqual([{ key: "DEDICATED", rateAmount: 0, grandTotal: 0 }]);
+    expect(t.variants).toEqual([{ key: "DEDICATED", rateAmount: null, grandTotal: 0 }]); // grandTotal = sharedSubtotal
+  });
+
+  it("pricing that same variant yields its numeric rateAmount", () => {
+    const t = computeQuoteTotals(base({
+      charges: [], warehouse: [],
+      trucking: [{ legEndpointPointId: "e", truckingType: "DEDICATED", basis: "FIXED", amount: 500, rateVariant: "DEDICATED", tonnage: null }],
+    }));
+    expect(t.variants).toEqual([{ key: "DEDICATED", rateAmount: 500, grandTotal: 500 }]);
   });
 
   it("folds a HEAVY_WEIGHT_CALC line's derived amount into the Air shared subtotal / grandTotal", () => {

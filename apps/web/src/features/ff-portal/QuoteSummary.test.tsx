@@ -3,39 +3,60 @@ import { render, screen } from "@testing-library/react";
 import type { QuoteDraft } from "@svyft/shared";
 import { QuoteSummary } from "./QuoteSummary";
 
-const draft: QuoteDraft = {
+const roadDraft: QuoteDraft = {
+  legId: "L1", mode: "ROAD", currency: "USD", quoteValidityUntil: null,
+  cargo: [{ packageId: "p1", grossWtKg: 1500, cbm: 2.5, chargedWeightKg: 1500 }],
+  charges: [{ zone: null, presetKey: null, label: "Fuel surcharge", amount: 200 }],
+  trucking: [
+    { legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: 500, rateVariant: "DEDICATED", tonnage: "T_5" },
+    { legEndpointPointId: "p1", truckingType: "GROUPAGE", basis: "PER_TRUCK", amount: null, rateVariant: "GROUPAGE", tonnage: null },
+  ],
+  seaRates: [],
+  warehouse: [{ warehousePointId: "w1", position: "ORIGIN", label: "Origin warehouse", amount: 300 }],
+  transit: null, dgSurchargeNote: null, termsConditions: null,
+};
+
+const airDraft: QuoteDraft = {
   legId: "L1", mode: "AIR", currency: "USD", quoteValidityUntil: null,
-  cargo: [{ cargoItemId: "c1", grossWtT: 1.5, cbm: 2.5, isDangerous: false, freightDensity: 1000 }],
-  charges: [{ zone: "ORIGIN", presetKey: "x", label: "THC", amount: 500 }, { zone: "MAIN_FREIGHT", presetKey: "y", label: "Freight", amount: 2000 }],
-  trucking: [], warehouse: [{ warehousePointId: "w1", position: "ORIGIN", label: "Origin warehouse", amount: 300 }],
+  cargo: [{ packageId: "p1", grossWtKg: 1000, cbm: 2, chargedWeightKg: 1000 }],
+  charges: [{ zone: "MAIN_FREIGHT", presetKey: "x", label: "Air Freight", amount: 900 }],
+  trucking: [], seaRates: [], warehouse: [],
   transit: null, dgSurchargeNote: null, termsConditions: null,
 };
 
 describe("QuoteSummary", () => {
-  it("shows subtotals, chargeable weight and grand total with currency", () => {
-    render(<QuoteSummary draft={draft} currency="USD" />);
-    expect(screen.getByTestId("grand-total")).toHaveTextContent("2,800.00");   // 500+2000+300
-    expect(screen.getByTestId("grand-total")).toHaveTextContent("USD");
-    expect(screen.getByTestId("total-chargeable")).toHaveTextContent("2.500"); // max(1.5, 2.5)
+  it("shows the shared subtotal and chargeable weight (kg)", () => {
+    render(<QuoteSummary draft={roadDraft} currency="USD" />);
+    // sharedSubtotal = 200 (charge) + 300 (warehouse) = 500; chargeableWeightKg = 1500
+    const sharedRow = screen.getByText("Shared subtotal").closest("div");
+    expect(sharedRow).toHaveTextContent("500.00");
+    expect(screen.getByTestId("total-chargeable")).toHaveTextContent("1500.000");
   });
 
-  it("hides zone/trucking/warehouse rows when draft has none", () => {
-    const emptyDraft: QuoteDraft = {
-      legId: "L1", mode: "AIR", currency: "USD", quoteValidityUntil: null,
-      cargo: [],
-      charges: [],
-      trucking: [],
-      warehouse: [],
-      transit: null, dgSurchargeNote: null, termsConditions: null,
-    };
-    render(<QuoteSummary draft={emptyDraft} currency="EUR" />);
-    expect(screen.queryByText(/origin subtotal/i)).toBeNull();
-    expect(screen.queryByText(/main freight subtotal/i)).toBeNull();
-    expect(screen.queryByText(/destination subtotal/i)).toBeNull();
-    expect(screen.queryByText(/trucking subtotal/i)).toBeNull();
-    expect(screen.queryByText(/warehouse subtotal/i)).toBeNull();
-    // grand total is always visible, shows zero
-    expect(screen.getByTestId("grand-total")).toHaveTextContent("0.00");
-    expect(screen.getByTestId("grand-total")).toHaveTextContent("EUR");
+  it("Road: shows two totals side by side — Dedicated priced, Groupage blank", () => {
+    render(<QuoteSummary draft={roadDraft} currency="USD" />);
+    expect(screen.getAllByTestId(/^grand-total-/)).toHaveLength(2);
+
+    // Dedicated: rateAmount 500 + sharedSubtotal 500 = 1000
+    const dedicated = screen.getByTestId("grand-total-DEDICATED");
+    expect(dedicated).toHaveTextContent("Dedicated total");
+    expect(dedicated).toHaveTextContent("1,000.00");
+    expect(dedicated).toHaveTextContent("USD");
+
+    // Groupage: no row priced → rateAmount null → blank ("–"), not "500.00"
+    const groupage = screen.getByTestId("grand-total-GROUPAGE");
+    expect(groupage).toHaveTextContent("Groupage total");
+    expect(groupage).toHaveTextContent("–");
+    expect(groupage).not.toHaveTextContent("USD");
+  });
+
+  it("Air: shows a single Air total, never blank even though rateAmount is always null", () => {
+    render(<QuoteSummary draft={airDraft} currency="USD" />);
+    expect(screen.getAllByTestId(/^grand-total-/)).toHaveLength(1);
+
+    const air = screen.getByTestId("grand-total-AIR");
+    expect(air).toHaveTextContent("Air total");
+    expect(air).toHaveTextContent("900.00"); // sharedSubtotal only (900 + 0 warehouse)
+    expect(air).not.toHaveTextContent("–");
   });
 });

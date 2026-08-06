@@ -148,8 +148,12 @@ function LegSectionForm({
   // DG note visibility — DG is a package reference tag (frozen manifest), not a cargo-draft field
   const showDgNote = leg.manifest.cargo.some((c) => c.tags.includes("DG"));
 
-  // Grand total
-  const { grandTotal } = computeQuoteTotals(draft);
+  // Grand total (sticky SubmissionBar figure): v2 is dual-rate (one grandTotal per variant —
+  // see QuoteSummary for the full side-by-side breakdown); the sticky bar needs one number, so
+  // show the highest variant total. Same reduction as the server-side summary field
+  // (ff-portal.service.ts's Quote.grandTotal at submit).
+  const { variants } = computeQuoteTotals(draft);
+  const grandTotal = Math.max(...variants.map((v) => v.grandTotal), 0);
 
   return (
     <FormProvider {...form}>

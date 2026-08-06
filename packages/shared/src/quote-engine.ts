@@ -40,11 +40,15 @@ export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
 
   const variants: QuoteVariantTotal[] = [];
   if (draft.mode === "ROAD") {
-    const byVariant = new Map<string, number>();
-    for (const t of draft.trucking)
-      byVariant.set(t.rateVariant, (byVariant.get(t.rateVariant) ?? 0) + (t.amount ?? 0));
-    for (const [key, rateAmount] of byVariant)
-      variants.push({ key, rateAmount, grandTotal: rateAmount + sharedSubtotal });
+    const byVariant = new Map<string, { sum: number; anyPriced: boolean }>();
+    for (const t of draft.trucking) {
+      const cur = byVariant.get(t.rateVariant) ?? { sum: 0, anyPriced: false };
+      cur.sum += t.amount ?? 0;
+      if (t.amount != null) cur.anyPriced = true;
+      byVariant.set(t.rateVariant, cur);
+    }
+    for (const [key, { sum, anyPriced }] of byVariant)
+      variants.push({ key, rateAmount: anyPriced ? sum : null, grandTotal: sum + sharedSubtotal });
   } else if (draft.mode === "SEA") {
     for (const r of draft.seaRates)
       variants.push({ key: r.rateVariant, rateAmount: r.amount, grandTotal: (r.amount ?? 0) + sharedSubtotal });

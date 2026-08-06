@@ -9,6 +9,11 @@ const endpoints: FfPortalEndpoint[] = [
   { pointId: "p1", type: "PICKUP", name: "Mumbai DC", country: "IN", warehousePosition: null },
 ];
 
+const truckingDefaults: QuoteDraft["trucking"] = [
+  { legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: null, rateVariant: "DEDICATED", tonnage: null },
+  { legEndpointPointId: "p1", truckingType: "GROUPAGE", basis: "PER_TRUCK", amount: null, rateVariant: "GROUPAGE", tonnage: null },
+];
+
 function Harness() {
   const form = useForm<QuoteDraft>({
     defaultValues: {
@@ -18,9 +23,7 @@ function Harness() {
       quoteValidityUntil: null,
       cargo: [],
       charges: [],
-      trucking: [
-        { legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: null },
-      ],
+      trucking: truckingDefaults,
       warehouse: [],
       transit: null,
       dgSurchargeNote: null,
@@ -34,7 +37,7 @@ function Harness() {
   );
 }
 
-/** Extended harness that exposes truckingType via an <output> for branch coverage */
+/** Extended harness that exposes trucking.0.tonnage via an <output> for branch coverage */
 function HarnessWithOutput() {
   const form = useForm<QuoteDraft>({
     defaultValues: {
@@ -44,9 +47,7 @@ function HarnessWithOutput() {
       quoteValidityUntil: null,
       cargo: [],
       charges: [],
-      trucking: [
-        { legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: null },
-      ],
+      trucking: truckingDefaults,
       warehouse: [],
       transit: null,
       dgSurchargeNote: null,
@@ -55,8 +56,8 @@ function HarnessWithOutput() {
   });
 
   function WatchOutput() {
-    const truckingType = useWatch({ control: form.control, name: "trucking.0.truckingType" });
-    return <output data-testid="tt-output">{truckingType}</output>;
+    const tonnage = useWatch({ control: form.control, name: "trucking.0.tonnage" });
+    return <output data-testid="tonnage-output">{tonnage ?? "NULL"}</output>;
   }
 
   return (
@@ -68,29 +69,37 @@ function HarnessWithOutput() {
 }
 
 describe("TruckingBlocks", () => {
-  it("renders one block per endpoint with type/basis/amount/remarks and NO add button", () => {
+  it("renders one block per trucking row, headed by the rate variant, with a tonnage Select on Dedicated only", () => {
     render(<Harness />);
-    expect(screen.getByText("Mumbai DC")).toBeInTheDocument();
-    expect(screen.getByLabelText(/amount.*Mumbai DC/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/remarks.*Mumbai DC/i)).toBeInTheDocument();
+
+    expect(screen.getByText("Dedicated")).toBeInTheDocument();
+    expect(screen.getByText("Groupage")).toBeInTheDocument();
+
+    // Both rows carry Amount + Remarks
+    expect(screen.getByLabelText(/amount for dedicated/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/remarks for dedicated/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/amount for groupage/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/remarks for groupage/i)).toBeInTheDocument();
+
+    // Tonnage Select only on the Dedicated row — Groupage has no tonnage
+    expect(screen.getByRole("combobox", { name: /tonnage for dedicated/i })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /tonnage for groupage/i })).toBeNull();
+
+    // The two rows are fixed (seeded by draftFromDto) — no add/remove control
     expect(screen.queryByRole("button", { name: /add charge/i })).toBeNull();
   });
 
-  it("changing trucking-type Select updates form value", async () => {
+  it("changing the tonnage Select updates trucking.0.tonnage", async () => {
     render(<HarnessWithOutput />);
 
-    // Initially DEDICATED
-    expect(screen.getByTestId("tt-output")).toHaveTextContent("DEDICATED");
+    expect(screen.getByTestId("tonnage-output")).toHaveTextContent("NULL");
 
-    // Open the Radix Select trigger for truckingType
-    const trigger = screen.getByRole("combobox", { name: /trucking type.*Mumbai DC/i });
+    const trigger = screen.getByRole("combobox", { name: /tonnage for dedicated/i });
     await userEvent.click(trigger);
 
-    // Click the GROUPAGE option
-    const groupageOption = screen.getByRole("option", { name: /groupage/i });
-    await userEvent.click(groupageOption);
+    const option = screen.getByRole("option", { name: "5 T" });
+    await userEvent.click(option);
 
-    // Form value should now be GROUPAGE
-    expect(screen.getByTestId("tt-output")).toHaveTextContent("GROUPAGE");
+    expect(screen.getByTestId("tonnage-output")).toHaveTextContent("T_5");
   });
 });

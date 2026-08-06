@@ -22,9 +22,19 @@ export function draftFromDto(leg: FfPortalLegDto, rfq: FfPortalRfqDto): QuoteDra
     warehousePointId: e.pointId, position: e.warehousePosition!, label: warehouseLabel(e.warehousePosition!),
     amount: null, cfsCode: null, side: null,
   }));
+  // Road is dual-rate (design §7): seed both variants up front so the FF can price either or
+  // both — an unpriced row stays amount: null (blank rate → "–", computeQuoteTotals). Both rows
+  // key off the same leg endpoint (Road legs quote at the leg level, not per-endpoint).
+  const trucking =
+    leg.mode === "ROAD"
+      ? (["DEDICATED", "GROUPAGE"] as const).map((rv) => ({
+          legEndpointPointId: leg.endpoints[0]?.pointId ?? "",
+          truckingType: rv, basis: "PER_TRUCK" as const, amount: null, rateVariant: rv, tonnage: null,
+        }))
+      : [];
   return {
     legId: leg.legId, mode: leg.mode, currency: rfq.currency, quoteValidityUntil: rfq.quoteValidityUntil,
-    cargo, charges, trucking: [], seaRates: [], warehouse,
+    cargo, charges, trucking, seaRates: [], warehouse,
     transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
     dgSurchargeNote: null, termsConditions: null,
   };
