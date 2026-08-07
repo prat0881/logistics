@@ -1,17 +1,44 @@
 import type {
   ChargeZone,
+  ChargeRateVariant,
   FfPortalLegDto,
   FfPortalRfqDto,
   FfPortalSeededCharge,
+  FreightMode,
+  QuoteDraft,
+  QuoteDraftCharge,
+} from "@svyft/shared";
+import {
+  variantsForMode,
+  rateVariantLabel,
+  effectiveChargeAmount,
+  computeQuoteTotals,
 } from "@svyft/shared";
 import { formatDate, formatDateTime } from "@/lib/dates";
 import { CargoManifestTable } from "./CargoManifestTable";
+import { fmtAmount } from "./format";
 
 /**
- * RfqPrintView — a clean, print-friendly rendering of the RFQ *request* document
- * (design §4.8.14): what the freight forwarder was asked to quote (header, per-leg masked
- * route, package list, and the charge structure to price) — NOT the FF's in-progress quote
- * amounts, which live in separate per-leg forms and aren't reachable from here.
+ * RfqPrintView — a print-friendly rendering of the RFQ document (design §4.8.14): header,
+ * per-leg masked route, package list, and the charge structure. Renders charges from
+ * `leg.draft` (Task 3's server-populated `QuoteDraft`): pre-submission (RFQ_SENT) that's a
+ * seeded blank per-variant matrix, so every cell correctly reads "—" — this is the *request*,
+ * what the FF is being asked to quote.
+ *
+ * Post-submission (QUOTED) this is the FF's own reference copy of what they *submitted* (design
+ * §6 finding #8) — this component reads `leg.draft`'s per-variant charges / freight rate /
+ * chargeable weight / notes instead of always rendering `seededCharges`' structurally-`null`
+ * amounts (the original bug). This relies on `FfPortalService.submit()` (ff-portal.service.ts)
+ * persisting the submitted draft back onto `Quote.draftJson` (instead of nulling it) so
+ * `resolveScope`'s GET returns the real submitted figures for a QUOTED leg rather than falling
+ * back to `seedQuoteDraft`'s blank matrix — safe because a change-order re-freeze only clears
+ * `draftJson` for the REFRESHING (RFQ_SENT) quotes on a leg, never a QUOTED one (see
+ * change-order.strategy.ts and task-8-report.md for the full root-cause trace). Degrades to the
+ * pre-Task-3 blank `seededCharges` rendering when `leg.draft` is `null` (defensive — the real API
+ * no longer sends that, but tests/older snapshots may).
+ *
+ * Still never the FF's in-progress, unsaved keystrokes — those live only in the per-leg edit
+ * form's local state and aren't reachable from here.
  *
  * Mounted by `PortalShell` in two places: inside a read-only preview Dialog, and inside a
  * `hidden print:block` container that `window.print()` turns into a PDF via the browser's own
@@ -87,6 +114,7 @@ function maskedLocation(
 }
 
 function LegPrintSection({ leg }: { leg: FfPortalLegDto }) {
+  const draft = leg.draft;
   return (
     <section className="space-y-3 break-inside-avoid">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border pb-1">
@@ -109,19 +137,170 @@ function LegPrintSection({ leg }: { leg: FfPortalLegDto }) {
       </div>
 
       <div>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Charges requested
-        </h3>
-        <ChargeStructureTable seededCharges={leg.seededCharges} />
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Charges requested
+          </h3>
+          {draft && (
+            <p className="text-sm">
+              <span className="text-muted-foreground">Chargeable weight (kg): </span>
+              <span className="font-mono tabular-nums font-medium">
+                {draft.chargedWeightKg != null ? draft.chargedWeightKg.toFixed(3) : "—"}
+              </span>
+            </p>
+          )}
+        </div>
+        {draft ? (
+          <ChargeMatrixPrintTable seededCharges={leg.seededCharges} mode={leg.mode} draft={draft} />
+        ) : (
+          <SeededChargesTable seededCharges={leg.seededCharges} />
+        )}
       </div>
+
+      {draft?.notes && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Notes
+          </h3>
+          <p className="whitespace-pre-wrap text-sm">{draft.notes}</p>
+        </div>
+      )}
     </section>
   );
 }
 
-/** The charge structure the FF is being asked to price — label + zone only. Amounts are always
- *  blank: this is the request document, not the FF's priced quote (that lives in the per-leg
- *  form, not this component). */
-function ChargeStructureTable({ seededCharges }: { seededCharges: FfPortalSeededCharge[] }) {
+function columnKey(v: ChargeRateVariant | null): string {
+  return v ?? "AIR";
+}
+function columnLabel(v: ChargeRateVariant | null): string {
+  return v ? rateVariantLabel(v) : "Air";
+}
+
+// Matches ChargeMatrix.tsx's own (module-private) freight-row labels exactly (design §3.1: the
+// freight-rate row's label per mode) — Air needs no entry here, its freight is already the
+// AIR_MAIN_FREIGHT line inside `charges`, rendered as a normal row below.
+const ROAD_FREIGHT_LABEL = "Road Freight";
+const SEA_FREIGHT_LABEL = "Sea Freight";
+
+/** A charge cell counts as "priced" once it carries a usable amount — a literal `amount`, or
+ *  (for a HEAVY_WEIGHT_CALC line) all three calc inputs. Mirrors quote-engine.ts's (unexported)
+ *  chargeCellPriced / ff-portal.service.ts's identical local copy (both already duplicate this
+ *  same check — see their comments). Needed here only to decide "—" vs a real figure; the amount
+ *  itself always comes from the shared `effectiveChargeAmount`, so the printed total can never
+ *  drift from `computeQuoteTotals`'s. */
+function chargeCellHasAmount(c: QuoteDraftCharge): boolean {
+  return (
+    c.amount != null ||
+    (c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null)
+  );
+}
+
+/**
+ * The charge structure for this leg, rendered as a per-variant matrix (design §3.1/§6 finding
+ * #8): rows are the distinct charge headers seeded onto the leg (`seededCharges`, already one
+ * row per definitionKey) plus the mode's freight-rate row (Road/Sea only); columns are
+ * `variantsForMode(mode)` — Air degrades to a single implicit column, matching ChargeMatrix.tsx
+ * (the live editing matrix this mirrors). Cell amounts come from `draft.charges` /
+ * `draft.trucking` / `draft.seaRates` — blank ("—") pre-submission (the seeded matrix has no
+ * amounts yet), the FF's own submitted figures post-submission.
+ */
+function ChargeMatrixPrintTable({
+  seededCharges,
+  mode,
+  draft,
+}: {
+  seededCharges: FfPortalSeededCharge[];
+  mode: FreightMode | null;
+  draft: QuoteDraft;
+}) {
+  const columns = variantsForMode(mode);
+  const hasFreightRow = mode === "ROAD" || mode === "SEA";
+  if (!hasFreightRow && seededCharges.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">No preset charge lines seeded for this leg.</p>
+    );
+  }
+
+  // Keyed by variant, not raw index (mirrors ChargeMatrix.tsx) — a mismatch between this
+  // component's `mode` prop and the leg's own `draft.mode` (should never happen; both trace back
+  // to `leg.mode`) can't silently misalign a total under the wrong column.
+  const totalByKey = new Map(computeQuoteTotals(draft).variants.map((t) => [t.key, t] as const));
+
+  return (
+    <div className="overflow-x-auto rounded-md border border-border">
+      <table className="w-full border-collapse text-left text-sm">
+        <thead>
+          <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+            <th className="px-3 py-2 font-medium">Charge</th>
+            {columns.map((v) => (
+              <th key={columnKey(v)} className="px-3 py-2 text-right font-medium">
+                {columnLabel(v)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {mode === "ROAD" && (
+            <tr className="border-b border-border/60">
+              <td className="px-3 py-2 font-medium">{ROAD_FREIGHT_LABEL}</td>
+              {columns.map((v) => (
+                <td key={columnKey(v)} className="px-3 py-2 text-right font-mono tabular-nums">
+                  {fmtAmount(draft.trucking.find((t) => t.rateVariant === v)?.amount ?? null)}
+                </td>
+              ))}
+            </tr>
+          )}
+          {mode === "SEA" && (
+            <tr className="border-b border-border/60">
+              <td className="px-3 py-2 font-medium">{SEA_FREIGHT_LABEL}</td>
+              {columns.map((v) => (
+                <td key={columnKey(v)} className="px-3 py-2 text-right font-mono tabular-nums">
+                  {fmtAmount(draft.seaRates.find((r) => r.rateVariant === v)?.amount ?? null)}
+                </td>
+              ))}
+            </tr>
+          )}
+          {seededCharges.map((s, i) => (
+            <tr
+              key={`${s.definitionKey ?? s.label}-${i}`}
+              className="border-b border-border/60 last:border-b-0"
+            >
+              <td className="px-3 py-2">{s.label}</td>
+              {columns.map((v) => {
+                const cell = draft.charges.find(
+                  (c) => c.definitionKey === s.definitionKey && c.rateVariant === v,
+                );
+                return (
+                  <td key={columnKey(v)} className="px-3 py-2 text-right font-mono tabular-nums">
+                    {cell && chargeCellHasAmount(cell)
+                      ? fmtAmount(effectiveChargeAmount(cell))
+                      : "—"}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+          <tr className="bg-muted/40 font-semibold">
+            <td className="px-3 py-2">Grand total</td>
+            {columns.map((v) => {
+              const t = totalByKey.get(columnKey(v));
+              return (
+                <td key={columnKey(v)} className="px-3 py-2 text-right font-mono tabular-nums">
+                  {t ? fmtAmount(t.grandTotal) : "—"}
+                </td>
+              );
+            })}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Pre-Task-3-seed fallback (defensive: the live API always populates `leg.draft` now, but older
+ *  snapshots/tests may still send `null`) — label + zone only, amounts always blank. Byte-for-byte
+ *  the original (pre-finding-#8-fix) `ChargeStructureTable`. */
+function SeededChargesTable({ seededCharges }: { seededCharges: FfPortalSeededCharge[] }) {
   if (seededCharges.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">No preset charge lines seeded for this leg.</p>

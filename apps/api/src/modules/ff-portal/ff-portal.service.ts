@@ -186,7 +186,9 @@ export class FfPortalService {
         warehouseIncluded: snap.warehouseIncluded,
         // v3 (design §5): seed the per-variant matrix when there's no saved draft yet — see
         // seedQuoteDraft above — instead of returning null.
-        draft: q.draftJson ? (q.draftJson as QuoteDraft) : seedQuoteDraft(q.legId, mode, snap.lines),
+        draft: q.draftJson
+          ? (q.draftJson as QuoteDraft)
+          : seedQuoteDraft(q.legId, mode, snap.lines),
       };
     });
 
@@ -429,7 +431,9 @@ export class FfPortalService {
         // [null]) to match ChargeLine/TruckingCharge/SeaFreightRate's null-for-Air convention.
         if (draft.transit) {
           const transit = draft.transit;
-          const pricedVariants = variantsForMode(draft.mode).filter((v) => isVariantPriced(draft, v));
+          const pricedVariants = variantsForMode(draft.mode).filter((v) =>
+            isVariantPriced(draft, v),
+          );
           for (const v of pricedVariants) {
             await tx.transitPlan.create({
               data: {
@@ -440,7 +444,8 @@ export class FfPortalService {
                 departureDate: transit.departureDate ? new Date(transit.departureDate) : null,
                 arrivalDate: transit.arrivalDate ? new Date(transit.arrivalDate) : null,
                 carrierSurcharge: transit.carrierSurcharge ?? null,
-                guaranteedTransitDays: transit.guaranteedTransitDaysByVariant[v ?? AIR_VARIANT_KEY] ?? null,
+                guaranteedTransitDays:
+                  transit.guaranteedTransitDaysByVariant[v ?? AIR_VARIANT_KEY] ?? null,
                 plannedPickupDate: transit.plannedPickupDate
                   ? new Date(transit.plannedPickupDate)
                   : null,
@@ -469,7 +474,20 @@ export class FfPortalService {
             dgSurchargeNote: draft.dgSurchargeNote,
             termsConditions: draft.termsConditions,
             submittedAt: new Date(),
-            draftJson: Prisma.DbNull,
+            // Keep the SUBMITTED (re-derived, validated, materialized) draft as the record —
+            // mirrors saveDraft()'s own write above, same column, same shape. Previously this
+            // wrote `Prisma.DbNull`, which made `resolveScope`'s GET (below) fall back to
+            // `seedQuoteDraft` — a blank per-variant matrix indistinguishable from a leg nobody
+            // had touched — for every QUOTED leg, so the FF-portal preview/print/
+            // AlreadySubmittedSummary all showed empty charges post-submission (design §6 finding
+            // #8). Safe to keep: a change-order re-freeze only clears `draftJson` for the
+            // REFRESHING (RFQ_SENT) quotes on a leg (change-order.strategy.ts) — a QUOTED quote is
+            // INVALIDATED instead, and its `draftJson` (like the rest of its snapshot) is left
+            // alone as history, never re-frozen. `draft` here (not the client-echoed `stored`) —
+            // the re-derived/validated/materialized object — so what's persisted always agrees
+            // with what actually got written to ChargeLine/TruckingCharge/SeaFreightRate/
+            // TransitPlan/Quote, never a stale or since-filtered client draft.
+            draftJson: draft as unknown as object,
           },
         });
       });

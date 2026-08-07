@@ -265,6 +265,89 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     expect(cargoLines[0]).not.toHaveProperty("chargedWeightKg");
   });
 
+  // design §6 finding #8 (FF-portal preview showed empty charges post-submission): submit()
+  // used to null Quote.draftJson, so resolveScope's GET fell back to seedQuoteDraft's blank
+  // matrix for a QUOTED leg — indistinguishable from a leg nobody had opened. Proves the fix
+  // end-to-end over real HTTP: distribute -> PATCH (price both variants + weight + notes) ->
+  // POST submit -> a FRESH GET (a new request, not reading anything cached from the PATCH/submit
+  // responses) must return leg.draft carrying those exact submitted figures, not nulls.
+  it("GET after submit: leg.draft carries the SUBMITTED per-variant charges + chargedWeightKg + notes, not a blank reseed (finding #8)", async () => {
+    const { token, legId } = await distributeRoadFixture();
+    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const legDto = (got.body as FfPortalRfqDto).legs[0];
+
+    const draft: QuoteDraft = {
+      legId,
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 482.75,
+      notes: "Handle with care -- fragile glassware",
+      cargo: legDto.manifest.cargo.map((c) => ({
+        packageId: c.packageId,
+        grossWtKg: Number(c.grossWt),
+        cbm: Number(c.volumeCbm ?? 0),
+      })),
+      charges: legDto.seededCharges.flatMap((c) => [
+        {
+          zone: c.zone,
+          definitionKey: c.definitionKey,
+          presetKey: c.presetKey,
+          label: c.label,
+          amount: 100,
+          rateVariant: "DEDICATED" as const,
+        },
+        {
+          zone: c.zone,
+          definitionKey: c.definitionKey,
+          presetKey: c.presetKey,
+          label: c.label,
+          amount: 150,
+          rateVariant: "GROUPAGE" as const,
+        },
+      ]),
+      trucking: [],
+      seaRates: [],
+      warehouse: [],
+      transit: {
+        departureDate: "2026-08-12T00:00:00.000Z",
+        arrivalDate: "2026-08-14T00:00:00.000Z",
+        guaranteedTransitDaysByVariant: { DEDICATED: 3, GROUPAGE: 5 },
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+
+    await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(draft).expect(200);
+    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    expect(submitRes.body.status).toBe("QUOTED");
+
+    // The end-to-end proof: a brand-new GET, exactly what the portal's Preview/print/
+    // AlreadySubmittedSummary all read from.
+    const after = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const afterLeg = (after.body as FfPortalRfqDto).legs[0];
+    expect(afterLeg.status).toBe("QUOTED");
+    expect(afterLeg.draft).not.toBeNull();
+    const afterDraft = afterLeg.draft as QuoteDraft;
+
+    expect(afterDraft.chargedWeightKg).toBe(482.75);
+    expect(afterDraft.notes).toBe("Handle with care -- fragile glassware");
+
+    const tailLiftCells = afterDraft.charges.filter(
+      (c) => c.definitionKey === "ROAD_STD_TAIL_LIFT",
+    );
+    expect(tailLiftCells).toHaveLength(2);
+    const dedicated = tailLiftCells.find((c) => c.rateVariant === "DEDICATED");
+    const groupage = tailLiftCells.find((c) => c.rateVariant === "GROUPAGE");
+    expect(dedicated?.amount).toBe(100);
+    expect(groupage?.amount).toBe(150);
+
+    expect(afterDraft.transit?.guaranteedTransitDaysByVariant).toEqual({
+      DEDICATED: 3,
+      GROUPAGE: 5,
+    });
+  });
+
   it("submit: a priced variant (DEDICATED) missing its transit-days -> 422 Q_TRANSIT, Quote stays RFQ_SENT", async () => {
     const { token, legId } = await distributeRoadFixture();
     const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
