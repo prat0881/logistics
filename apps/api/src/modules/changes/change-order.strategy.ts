@@ -8,7 +8,7 @@ import {
   type FindingScope,
   type ImpactDecision,
 } from "@svyft/shared";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type { ChangeResult, UnitOfWork } from "./free-path.strategy";
 import { PrismaService } from "../../prisma/prisma.service";
 import { CHANGE_LOG, type ChangeLog } from "./change-log";
@@ -158,6 +158,15 @@ export class ChangeOrderStrategy {
           data: {
             manifestSnapshot: snap as unknown as Prisma.InputJsonValue,
             chargeConfigSnapshot: chargeConfig as unknown as Prisma.InputJsonValue,
+            // Any change-order (mode/dates/cargo/charge-config/...) makes the FF's saved draft
+            // stale — a mode change would otherwise leave stale trucking rows, a charge-config
+            // change would leave a stale-priced or now-missing charge line (see ff-portal.service.ts
+            // submit()'s stale-draft filter for the defense-in-depth half of this fix). Clearing
+            // draftJson to SQL NULL (Prisma.DbNull, not JsonNull — this is a nullable Json column
+            // going to DB NULL) makes the reopened FF re-seed cleanly from the fresh
+            // manifestSnapshot/chargeConfigSnapshot: the client's draftFromDto takes the
+            // non-draft seeding branch whenever leg.draft is absent.
+            draftJson: Prisma.DbNull,
           },
         });
       }

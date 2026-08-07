@@ -266,4 +266,232 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(keysAfter).toContain("ROAD_STD_INSURANCE"); // the NEW selection is now frozen
     expect(keysAfter).not.toContain("ROAD_STD_TAIL_LIFT"); // the OLD selection is gone
   });
+
+  // CRITICAL fix (whole-branch review): the re-freeze proven above rewrites manifestSnapshot +
+  // chargeConfigSnapshot on the pending RFQ_SENT quote, but pre-fix left the FF's already-SAVED
+  // draftJson untouched. If the FF had priced a line the change-order just removed from the
+  // config, that stale-priced line would (a) ride verbatim through ff-portal.service.ts submit()'s
+  // stored-draft copy, (b) get summed into grandTotal even though the Executive removed it, or (c)
+  // crash with a NOT NULL violation if it had never been priced (chargeAmount(c)'s `c.amount!`
+  // force-unwrap) — and a newly-ADDED line could never be priced at all (the client never shows
+  // it), so validateQuote's Q_PRICED would permanently block submission. This exercises the fix:
+  // change-order.strategy.ts's re-freeze now also resets draftJson to SQL NULL, and
+  // ff-portal.service.ts's submit() additionally filters any stale charge out of a stored draft as
+  // defense-in-depth.
+  it("charge re-selection on a distributed leg clears the FF's stale draftJson on re-freeze; re-seeded submit excludes the removed line and prices the added one", async () => {
+    const admin = `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: randomUUID(), role: Role.ADMINISTRATOR, tenantId: null })}`;
+    const server = app.getHttpServer();
+
+    // --- a non-warehouse ROAD leg so F7/F8 never engage (same rationale as the tests above) ---
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-STALEDRAFT`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L-CHG-SD-1",
+        mode: "ROAD",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+      },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: "PO-CHG-SD-1", dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
+    const tailLift = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "ROAD_STD_TAIL_LIFT" },
+    });
+    const insurance = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "ROAD_STD_INSURANCE" },
+    });
+
+    // --- initial selection (pre-distribute, free): TAIL_LIFT ---
+    await request(server)
+      .patch(`/api/queries/${query.id}/legs/${leg.id}`)
+      .set("Cookie", admin)
+      .send({ chargeLineDefinitionIds: [tailLift.id] })
+      .expect(200);
+
+    // --- distribute to 1 FF → the single quote goes RFQ_SENT, chargeConfigSnapshot = [TAIL_LIFT] ---
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PREFIX}-SD`,
+        companyName: `FF-${PREFIX}-SD Co`,
+        pic: "P",
+        contactNumber: "+1000000000",
+        email: `FF-${PREFIX}-SD@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["ROAD"],
+        status: "ACTIVE",
+      },
+    });
+    await request(server)
+      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [ff.id] })
+      .expect(200);
+    const distRes = await request(server)
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    const token = distRes.body.rfqs[0].accessToken as string;
+
+    // --- the FF opens the portal and SAVES a draft pricing the TAIL_LIFT line (soon to be
+    //     removed by the Executive's change-order below) ---
+    const got1 = await request(server).get(`/api/ff/rfq/${token}`).expect(200);
+    const legDto1 = got1.body.legs[0];
+    expect(legDto1.seededCharges.map((c: { definitionKey: string }) => c.definitionKey)).toEqual([
+      "ROAD_STD_TAIL_LIFT",
+    ]);
+
+    const draftBefore = {
+      legId: leg.id,
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      cargo: legDto1.manifest.cargo.map(
+        (c: { packageId: string; grossWt: string; volumeCbm: string | null }) => ({
+          packageId: c.packageId,
+          grossWtKg: Number(c.grossWt),
+          cbm: Number(c.volumeCbm ?? 0),
+          chargedWeightKg: 5,
+        }),
+      ),
+      charges: legDto1.seededCharges.map(
+        (c: { zone: string | null; definitionKey: string; label: string }) => ({
+          zone: c.zone,
+          definitionKey: c.definitionKey,
+          presetKey: null,
+          label: c.label,
+          amount: 77,
+        }),
+      ),
+      trucking: [],
+      seaRates: [],
+      warehouse: [],
+      transit: null,
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+    await request(server)
+      .patch(`/api/ff/rfq/${token}/quotes/${leg.id}`)
+      .send(draftBefore)
+      .expect(200);
+
+    // sanity: draftJson is now populated and prices the soon-to-be-removed TAIL_LIFT line —
+    // otherwise the assertions below (draftJson cleared / stale charge dropped) would be vacuous
+    const quoteWithDraft = await prisma.quote.findFirstOrThrow({ where: { legId: leg.id } });
+    expect(quoteWithDraft.draftJson).not.toBeNull();
+    const storedCharges = (
+      quoteWithDraft.draftJson as { charges: { definitionKey: string; amount: number }[] }
+    ).charges;
+    expect(storedCharges).toHaveLength(1);
+    expect(storedCharges[0]!.definitionKey).toBe("ROAD_STD_TAIL_LIFT");
+    expect(storedCharges[0]!.amount).toBe(77);
+
+    // --- the Executive change-orders the charge config on the DISTRIBUTED leg: TAIL_LIFT out,
+    //     INSURANCE in (with a reason → APPLY, not the 409 preview) ---
+    await request(server)
+      .patch(`/api/queries/${query.id}/legs/${leg.id}`)
+      .set("Cookie", admin)
+      .send({ chargeLineDefinitionIds: [insurance.id], reason: "client re-scoped the charges" })
+      .expect(200);
+
+    // --- (a) THE FIX: the still-pending RFQ_SENT quote's draftJson is now cleared (SQL NULL) —
+    //     pre-fix this stayed populated with the stale TAIL_LIFT-priced draft ---
+    const quoteAfterChangeOrder = await prisma.quote.findFirstOrThrow({ where: { legId: leg.id } });
+    expect(quoteAfterChangeOrder.status).toBe("RFQ_SENT"); // refreshed in place, not invalidated
+    expect(quoteAfterChangeOrder.draftJson).toBeNull();
+
+    // --- the FF re-opens the portal: no stale draft, fresh config (INSURANCE only) ---
+    const got2 = await request(server).get(`/api/ff/rfq/${token}`).expect(200);
+    const legDto2 = got2.body.legs[0];
+    expect(legDto2.draft).toBeNull();
+    const keys2 = legDto2.seededCharges.map((c: { definitionKey: string }) => c.definitionKey);
+    expect(keys2).toEqual(["ROAD_STD_INSURANCE"]);
+
+    // --- the FF re-seeds and prices against the NEW config (INSURANCE + a trucking rate to
+    //     clear ROAD's Q_RATE gate) and submits ---
+    const draftAfter = {
+      legId: leg.id,
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      cargo: legDto2.manifest.cargo.map(
+        (c: { packageId: string; grossWt: string; volumeCbm: string | null }) => ({
+          packageId: c.packageId,
+          grossWtKg: Number(c.grossWt),
+          cbm: Number(c.volumeCbm ?? 0),
+          chargedWeightKg: 5,
+        }),
+      ),
+      charges: legDto2.seededCharges.map(
+        (c: { zone: string | null; definitionKey: string; label: string }) => ({
+          zone: c.zone,
+          definitionKey: c.definitionKey,
+          presetKey: null,
+          label: c.label,
+          amount: 55,
+        }),
+      ),
+      trucking: [
+        {
+          legEndpointPointId: origin.id,
+          truckingType: "DEDICATED",
+          basis: "PER_TRUCK",
+          amount: 500,
+          remarks: "Dedicated ex-origin",
+          rateVariant: "DEDICATED",
+          tonnage: "T_5",
+        },
+      ],
+      seaRates: [],
+      warehouse: [],
+      transit: {
+        departureDate: "2026-08-12T00:00:00.000Z",
+        arrivalDate: "2026-08-14T00:00:00.000Z",
+        guaranteedTransitDays: 3,
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+    await request(server)
+      .patch(`/api/ff/rfq/${token}/quotes/${leg.id}`)
+      .send(draftAfter)
+      .expect(200);
+
+    // --- (b) submit against the NEW config succeeds — NO 500, and the materialized ChargeLine
+    //     set is EXACTLY the new config's lines (the removed TAIL_LIFT line is absent) ---
+    const submitRes = await request(server)
+      .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .expect(201);
+    expect(submitRes.body.status).toBe("QUOTED");
+
+    const chargeLines = await prisma.chargeLine.findMany({
+      where: { quoteId: submitRes.body.quoteId },
+    });
+    const chargeKeys = chargeLines.map((c) => c.definitionKey);
+    expect(chargeKeys).toEqual(["ROAD_STD_INSURANCE"]); // exactly the new config's lines
+    expect(chargeKeys).not.toContain("ROAD_STD_TAIL_LIFT"); // the removed line is truly gone
+
+    // --- (c) the persisted grandTotal matches the NEW config only: trucking 500 + INSURANCE 55 =
+    //     555 — NOT 500 + 55 + 77, which is what it would be if the stale TAIL_LIFT charge had
+    //     leaked through and been summed in ---
+    const quoteFinal = await prisma.quote.findUniqueOrThrow({
+      where: { id: submitRes.body.quoteId },
+    });
+    expect(Number(quoteFinal.grandTotal)).toBe(555);
+  });
 });

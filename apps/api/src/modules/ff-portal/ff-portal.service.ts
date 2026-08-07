@@ -172,6 +172,23 @@ export class FfPortalService {
     );
     const whPos = classifyWarehousePositions(whLegs, whPointIds);
 
+    // Drop stale catalogue charges from the stored draft before they reach validation/
+    // materialization — defense-in-depth alongside change-order.strategy.ts's draftJson-clear on
+    // re-freeze (which is the primary fix; this covers any stale/unexpected charge that still
+    // reaches submit regardless). A charge survives only if it's (a) a catalogue line whose
+    // definitionKey is still present in the FROZEN chargeConfigSnapshot, or (b) a genuine custom
+    // [+ Add Charge] line (neither definitionKey nor presetKey). Without this, a stale charge
+    // whose definitionKey was removed from the config is "custom" to NEITHER validateQuote path
+    // (it isn't in `activeLines` for Q_PRICED, and it has a definitionKey so it isn't the
+    // !definitionKey && !presetKey custom check either) — it silently rides through unvalidated
+    // into chargeAmount(c)'s `c.amount!` force-unwrap (NOT NULL crash if never priced, or a
+    // phantom charge summed into grandTotal if it was).
+    const validKeys = new Set(snap.lines.map((l) => l.definitionKey));
+    const staleFilteredCharges = (stored.charges ?? []).filter(
+      (c) =>
+        (c.definitionKey && validKeys.has(c.definitionKey)) || (!c.definitionKey && !c.presetKey),
+    );
+
     const draft: QuoteDraft = {
       legId,
       mode: q.leg.mode as "AIR" | "SEA" | "ROAD",
@@ -184,7 +201,7 @@ export class FfPortalService {
         chargedWeightKg:
           stored.cargo?.find((s) => s.packageId === c.packageId)?.chargedWeightKg ?? null,
       })),
-      charges: (stored.charges ?? []).map((c) => ({ ...c })),
+      charges: staleFilteredCharges.map((c) => ({ ...c })),
       trucking: (stored.trucking ?? []).map((t) => ({ ...t })),
       seaRates: (stored.seaRates ?? []).map((r) => ({ ...r })),
       warehouse: (snap.warehouseIncluded ? (stored.warehouse ?? []) : []).map((w) => ({
