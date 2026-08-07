@@ -635,4 +635,95 @@ describe("RouteDiagram", () => {
     const tip = await screen.findByRole("tooltip");
     expect(tip).toHaveTextContent("2 packages");
   });
+
+  // ── right-column tooltip clipping regression ────────────────────────────────
+  // `overflow-x-auto` (needed so a wide diagram scrolls horizontally) clips any
+  // absolutely-positioned descendant that lands outside the scrolled viewport.
+  // The tooltip must live outside that clipping box so nodes/legs far to the
+  // right stay hoverable.
+
+  function makeChainedDetail(nPoints: number) {
+    const points = Array.from({ length: nPoints }, (_, i) => ({
+      id: `p${i + 1}`,
+      type: i === 0 ? "PICKUP" : i === nPoints - 1 ? "DELIVERY" : "WAREHOUSE",
+      name: `Point ${i + 1}`,
+    }));
+    const legs = Array.from({ length: nPoints - 1 }, (_, i) => ({
+      id: `l${i + 1}`,
+      legCode: `L${i + 1}`,
+      mode: "ROAD",
+      originPointId: `p${i + 1}`,
+      destinationPointId: `p${i + 2}`,
+      assignedPackageIds: [],
+    }));
+    return makeDetail({ points, legs });
+  }
+
+  it("renders the hover tooltip outside the horizontally-scrollable wrapper (not clipped) for a far-right point", async () => {
+    // Chain enough legs that the last point sits in a far-right column.
+    const detail = makeChainedDetail(6);
+    const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
+
+    const scrollBox = container.querySelector('[data-slot="route-diagram-scroll"]');
+    expect(scrollBox).not.toBeNull();
+
+    const rightmostNode = document.querySelector('[data-point-id="p6"]') as SVGGElement;
+    fireEvent.mouseEnter(rightmostNode);
+    const tip = await screen.findByRole("tooltip");
+
+    // The tooltip must NOT be a descendant of the overflow-x-auto scroll box —
+    // that box is what clips content that scrolls out of view. It should be a
+    // sibling, positioned against the non-clipping `figure` instead.
+    expect(scrollBox?.contains(tip)).toBe(false);
+    expect(tip).toHaveTextContent(/Point 6/i);
+  });
+
+  it("renders the hover tooltip outside the scroll wrapper for a far-right leg too", async () => {
+    const detail = makeChainedDetail(6);
+    const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
+
+    const scrollBox = container.querySelector('[data-slot="route-diagram-scroll"]');
+    const rightmostLeg = document.querySelector('[data-leg-id="l5"]') as SVGGElement;
+    fireEvent.mouseEnter(rightmostLeg);
+    const tip = await screen.findByRole("tooltip");
+
+    expect(scrollBox?.contains(tip)).toBe(false);
+    expect(tip).toHaveTextContent(/L5/i);
+  });
+
+  it("shifts the tooltip left by the wrapper's scrollLeft so it tracks the node while scrolled", async () => {
+    const detail = makeDetail({
+      points: [
+        { id: "p1", type: "PICKUP", name: "P1" },
+        { id: "p2", type: "DELIVERY", name: "P2" },
+      ],
+      legs: [
+        {
+          id: "l1",
+          legCode: "L1",
+          mode: "ROAD",
+          originPointId: "p1",
+          destinationPointId: "p2",
+          assignedPackageIds: [],
+        },
+      ],
+    });
+    const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
+    const scrollBox = container.querySelector(
+      '[data-slot="route-diagram-scroll"]',
+    ) as HTMLDivElement;
+    const node = document.querySelector('[data-point-id="p1"]') as SVGGElement;
+
+    fireEvent.mouseEnter(node);
+    const tipBefore = await screen.findByRole("tooltip");
+    const leftBefore = Number((tipBefore as HTMLElement).style.left.replace("px", ""));
+    fireEvent.mouseLeave(node);
+
+    fireEvent.scroll(scrollBox, { target: { scrollLeft: 50 } });
+    fireEvent.mouseEnter(node);
+    const tipAfter = await screen.findByRole("tooltip");
+    const leftAfter = Number((tipAfter as HTMLElement).style.left.replace("px", ""));
+
+    expect(leftAfter).toBe(leftBefore - 50);
+  });
 });

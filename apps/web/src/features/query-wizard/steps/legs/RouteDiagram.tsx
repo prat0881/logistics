@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { FreightMode, PointType, type Finding, type QueryDetail } from "@svyft/shared";
 import { cn } from "@/lib/utils";
 import { toRouteGraph } from "./routeGraph";
@@ -75,6 +75,12 @@ export function RouteDiagram({
   className,
 }: RouteDiagramProps) {
   const [hovered, setHovered] = useState<{ kind: "point" | "leg"; id: string } | null>(null);
+  // Horizontal scroll offset of the inner scroll wrapper (see the `figure`
+  // JSX below): the tooltip renders outside that wrapper so it can't be
+  // clipped, but its left/top are computed in SVG content-coordinate space,
+  // so we translate by scrollLeft to keep it pinned to the hovered node.
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const graph = useMemo(() => toRouteGraph(detail), [detail]);
 
@@ -126,7 +132,7 @@ export function RouteDiagram({
   return (
     <figure
       data-slot="route-diagram"
-      className={cn("relative overflow-x-auto rounded-md border bg-card p-3", className)}
+      className={cn("relative rounded-md border bg-card p-3", className)}
       aria-label="Route diagram"
     >
       <figcaption className="mb-2 flex items-center justify-between gap-2">
@@ -136,75 +142,90 @@ export function RouteDiagram({
         <Legend />
       </figcaption>
 
-      <svg
-        role="img"
-        aria-label="Route as a node graph — port nodes wired by leg edges"
-        width={width}
-        height={svgHeight}
-        viewBox={`0 0 ${width} ${svgHeight}`}
-        className="max-w-full"
-        style={{ minWidth: Math.min(width, 320) }}
+      {/*
+       * `overflow-x-auto` lives on THIS wrapper (not the `figure`) so it only
+       * clips/scrolls the SVG. The `figure` stays a plain, non-clipping
+       * `relative` positioning context so the absolutely-positioned
+       * `RouteTooltip` below — rendered as this wrapper's sibling — can never
+       * be clipped, no matter how far right a node/leg sits in a wide,
+       * scrolled diagram.
+       */}
+      <div
+        ref={scrollRef}
+        onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
+        className="overflow-x-auto"
+        data-slot="route-diagram-scroll"
       >
-        <defs>
-          {/* One arrowhead marker per mode color + the highlight variants. */}
-          {MODES.map((m) => (
-            <Arrow key={m} id={`arrow-${m}`} color={modeColor(m)} />
-          ))}
-          <Arrow id="arrow-unset" color="hsl(var(--muted-foreground))" />
-          <Arrow id="arrow-blocking" color="hsl(var(--destructive))" />
-          <Arrow id="arrow-warning" color="hsl(var(--warning))" />
-        </defs>
+        <svg
+          role="img"
+          aria-label="Route as a node graph — port nodes wired by leg edges"
+          width={width}
+          height={svgHeight}
+          viewBox={`0 0 ${width} ${svgHeight}`}
+          className="max-w-full"
+          style={{ minWidth: Math.min(width, 320) }}
+        >
+          <defs>
+            {/* One arrowhead marker per mode color + the highlight variants. */}
+            {MODES.map((m) => (
+              <Arrow key={m} id={`arrow-${m}`} color={modeColor(m)} />
+            ))}
+            <Arrow id="arrow-unset" color="hsl(var(--muted-foreground))" />
+            <Arrow id="arrow-blocking" color="hsl(var(--destructive))" />
+            <Arrow id="arrow-warning" color="hsl(var(--warning))" />
+          </defs>
 
-        {/* Edges first, so nodes paint on top. */}
-        <g>
-          {graph.legs.map((leg) => {
-            const o = leg.originPointId ? pos.get(leg.originPointId) : undefined;
-            const d = leg.destinationPointId ? pos.get(leg.destinationPointId) : undefined;
-            if (!o || !d) return null; // incomplete leg — C1 flags it in the panel
-            const hl = highlights.legs.get(leg.id) ?? { finding: null };
-            return (
-              <Edge
-                key={leg.id}
-                leg={leg}
-                from={o}
-                to={d}
-                bow={bows.get(leg.id) ?? 0}
-                highlight={hl}
-                messages={highlights.legMsgs.get(leg.id) ?? []}
-                reducedMotion={prefersReducedMotion}
-                onEditLeg={onEditLeg}
-                onHover={() => setHovered({ kind: "leg", id: leg.id })}
-                onLeave={() => setHovered(null)}
-              />
-            );
-          })}
-        </g>
+          {/* Edges first, so nodes paint on top. */}
+          <g>
+            {graph.legs.map((leg) => {
+              const o = leg.originPointId ? pos.get(leg.originPointId) : undefined;
+              const d = leg.destinationPointId ? pos.get(leg.destinationPointId) : undefined;
+              if (!o || !d) return null; // incomplete leg — C1 flags it in the panel
+              const hl = highlights.legs.get(leg.id) ?? { finding: null };
+              return (
+                <Edge
+                  key={leg.id}
+                  leg={leg}
+                  from={o}
+                  to={d}
+                  bow={bows.get(leg.id) ?? 0}
+                  highlight={hl}
+                  messages={highlights.legMsgs.get(leg.id) ?? []}
+                  reducedMotion={prefersReducedMotion}
+                  onEditLeg={onEditLeg}
+                  onHover={() => setHovered({ kind: "leg", id: leg.id })}
+                  onLeave={() => setHovered(null)}
+                />
+              );
+            })}
+          </g>
 
-        {/* Nodes. */}
-        <g>
-          {graph.points.map((p) => {
-            const at = pos.get(p.id);
-            if (!at) return null;
-            const hl = highlights.points.get(p.id) ?? { finding: null };
-            const orphan = highlights.orphans.has(p.id);
-            return (
-              <Node
-                key={p.id}
-                point={p}
-                x={at.x}
-                y={at.y}
-                highlight={hl}
-                messages={highlights.pointMsgs.get(p.id) ?? []}
-                orphan={orphan}
-                reducedMotion={prefersReducedMotion}
-                onEditPoint={onEditPoint}
-                onHover={() => setHovered({ kind: "point", id: p.id })}
-                onLeave={() => setHovered(null)}
-              />
-            );
-          })}
-        </g>
-      </svg>
+          {/* Nodes. */}
+          <g>
+            {graph.points.map((p) => {
+              const at = pos.get(p.id);
+              if (!at) return null;
+              const hl = highlights.points.get(p.id) ?? { finding: null };
+              const orphan = highlights.orphans.has(p.id);
+              return (
+                <Node
+                  key={p.id}
+                  point={p}
+                  x={at.x}
+                  y={at.y}
+                  highlight={hl}
+                  messages={highlights.pointMsgs.get(p.id) ?? []}
+                  orphan={orphan}
+                  reducedMotion={prefersReducedMotion}
+                  onEditPoint={onEditPoint}
+                  onHover={() => setHovered({ kind: "point", id: p.id })}
+                  onLeave={() => setHovered(null)}
+                />
+              );
+            })}
+          </g>
+        </svg>
+      </div>
 
       {hovered && (
         <RouteTooltip
@@ -213,6 +234,7 @@ export function RouteDiagram({
           pos={pos}
           pointMsgs={highlights.pointMsgs}
           legMsgs={highlights.legMsgs}
+          scrollLeft={scrollLeft}
         />
       )}
     </figure>
@@ -499,12 +521,18 @@ function RouteTooltip({
   pos,
   pointMsgs,
   legMsgs,
+  scrollLeft,
 }: {
   detail: QueryDetail;
   hovered: { kind: "point" | "leg"; id: string };
   pos: Map<string, Pt>;
   pointMsgs: Map<string, string[]>;
   legMsgs: Map<string, string[]>;
+  /** Current `scrollLeft` of the diagram's horizontal scroll wrapper. The
+   * tooltip renders outside that wrapper (so it isn't clipped), but `pos`
+   * coordinates are in unscrolled SVG content space — subtract scrollLeft to
+   * keep the tooltip pinned to the hovered node while scrolled. */
+  scrollLeft: number;
 }) {
   const GLYPH_LABELS: Record<string, string> = {
     [PointType.PICKUP]: "Pickup",
@@ -519,7 +547,7 @@ function RouteTooltip({
     if (!point) return null;
 
     const at = pos.get(hovered.id);
-    const left = Math.max(0, (at?.x ?? 0) + NODE_W + 8);
+    const left = Math.max(0, (at?.x ?? 0) + NODE_W + 8 - scrollLeft);
     const top = Math.max(0, at?.y ?? 0);
 
     const cityPostal = [point.city, point.postalCode].filter(Boolean).join(" ");
@@ -562,7 +590,7 @@ function RouteTooltip({
   const midX = oPos && dPos ? (oPos.x + NODE_W + dPos.x) / 2 : (oPos?.x ?? 0) + NODE_W;
   const midY =
     oPos && dPos ? (oPos.y + NODE_H / 2 + dPos.y + NODE_H / 2) / 2 : (oPos?.y ?? 0) + NODE_H / 2;
-  const left = Math.max(0, midX + 8);
+  const left = Math.max(0, midX + 8 - scrollLeft);
   const top = Math.max(0, midY - 20);
 
   const originName = leg.originPointId
