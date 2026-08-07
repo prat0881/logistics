@@ -142,6 +142,7 @@ export function Step3Cargo({ registerSave }: Step3CargoProps) {
         onOpenChange={setPopupOpen}
         queryId={queryId}
         cargo={popupCargo}
+        existingPackageNos={cargoRows.flatMap((c) => c.packages.map((p) => p.packageNo))}
       />
 
       {/* Cargo table */}

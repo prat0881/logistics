@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -7,6 +7,9 @@ import {
   DIM_UNITS,
   WEIGHT_UNITS,
   cargoLabel,
+  packageTypeLabel,
+  fromCanonicalDim,
+  fromCanonicalWeight,
 } from "@svyft/shared";
 import type { CargoCreateInput, CargoUpdateInput, CargoDto, PackageDto } from "@svyft/shared";
 import { ApiError } from "@/lib/api";
@@ -27,8 +30,18 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableHead,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ReferenceTagIcons } from "@/components/ReferenceTagIcons";
 import { useCargo } from "./useCargo";
+import { usePackages } from "./usePackages";
 import { PackageEditor } from "./PackageEditor";
 
 interface CargoPopupProps {
@@ -37,29 +50,50 @@ interface CargoPopupProps {
   queryId: string;
   /** Present = edit this existing cargo (+ its packages). Absent = Add mode. */
   cargo?: CargoDto;
+  /**
+   * Every packageNo already in use ACROSS THE WHOLE QUERY (all cargos). Package No is
+   * unique per query (V-5), and the FF sees packages with no cargo context — so numbers
+   * must stay unambiguous query-wide. Used to auto-suggest the next free "P-N" so adding a
+   * package to a second cargo never collides with the first.
+   */
+  existingPackageNos?: string[];
+}
+
+/** Next free "P-N" across the whole query — the max numeric suffix + 1 (defaults to P-1). */
+function nextPackageNo(nos: string[]): string {
+  let max = 0;
+  for (const n of nos) {
+    const m = /^P-(\d+)$/i.exec(n.trim());
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `P-${max + 1}`;
 }
 
 /**
- * CargoPopup (Task 13) — the nested cargo -> package -> item entry dialog. Wraps the
- * cargo-level fields (PO/Ref, label, Dimension/Weight Unit) and, once a cargoId exists,
- * a PackageEditor list (Task 14, which itself nests ItemsMiniTable, Task 15).
+ * CargoPopup (Task 13, redesigned) — the cargo → package → item entry dialog.
  *
- * Save-flow / birth order: a package write needs a real cargoId, and an item write needs
- * a real packageId (same constraint one level down, handled inside PackageEditor). Add
- * mode therefore shows ONLY the cargo fields first; saving them calls
- * useCargo(queryId).add(...) to mint the cargo, after which the Packages section appears.
- * Edit mode already has a cargoId (from the passed CargoDto) so packages are available
- * immediately. Packages/items persist on their own Save (usePackages/useItems), same as
- * the main cargo table's rows — this popup's own cargo-level Save only ever touches the
- * 4 cargo fields.
+ * Cargo-level fields on top; once a cargoId exists, a compact PACKAGE TABLE. Each package is
+ * a read-only summary row (No / Type / dims / weights / CBM / tags / item count) with inline
+ * Edit + Remove; Edit expands the row into the full PackageEditor (fields + its ItemsMiniTable)
+ * so items live under their package. "+ Add package" reveals an inline add form pre-filled with
+ * the next query-wide packageNo. This mirrors the item table one level up — add/edit/remove in
+ * place — instead of stacking an always-open form per package.
+ *
+ * Save-flow / birth order: a package write needs a real cargoId (and an item write a real
+ * packageId, handled inside PackageEditor). Add mode shows ONLY the cargo fields first; saving
+ * mints the cargo, after which the package table appears. Packages/items persist on their own
+ * Save (usePackages/useItems); this popup's cargo-level Save only touches the 4 cargo fields.
  */
-export function CargoPopup({ open, onOpenChange, queryId, cargo }: CargoPopupProps) {
+export function CargoPopup({
+  open,
+  onOpenChange,
+  queryId,
+  cargo,
+  existingPackageNos = [],
+}: CargoPopupProps) {
   const [cargoRow, setCargoRow] = useState<CargoDto | undefined>(cargo);
-  const [addingPackage, setAddingPackage] = useState(false);
 
   const isEdit = !!cargoRow;
-  const packages: PackageDto[] = cargoRow?.packages ?? [];
-  const suggestedPackageNo = `P-${packages.length + 1}`;
 
   const handlePackageSaved = (pkg: PackageDto) => {
     setCargoRow((prev) => {
@@ -70,7 +104,6 @@ export function CargoPopup({ open, onOpenChange, queryId, cargo }: CargoPopupPro
         : [...prev.packages, pkg];
       return { ...prev, packages: nextPackages };
     });
-    setAddingPackage(false);
   };
 
   const handlePackageRemoved = (pid: string) => {
@@ -83,16 +116,11 @@ export function CargoPopup({ open, onOpenChange, queryId, cargo }: CargoPopupPro
     setCargoRow((prev) => (prev ? { ...prev, packages: [...prev.packages, ...clones] } : prev));
   };
 
-  const handleDialogChange = (next: boolean) => {
-    if (!next) setAddingPackage(false);
-    onOpenChange(next);
-  };
-
   const title = cargoRow ? `Edit ${cargoRow.poReference || cargoLabel(cargoRow)}` : "Add Cargo";
 
   return (
-    <Dialog open={open} onOpenChange={handleDialogChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
@@ -104,53 +132,14 @@ export function CargoPopup({ open, onOpenChange, queryId, cargo }: CargoPopupPro
         )}
 
         {cargoRow ? (
-          <div className="space-y-3 border-t pt-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Packages</h3>
-              {!addingPackage && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setAddingPackage(true)}
-                >
-                  + Add Package
-                </Button>
-              )}
-            </div>
-
-            <div className="space-y-3">
-              {packages.map((pkg) => (
-                <PackageEditor
-                  key={pkg.id}
-                  queryId={queryId}
-                  cargoId={cargoRow.id}
-                  cargoDimUnit={cargoRow.dimUnit}
-                  cargoWeightUnit={cargoRow.weightUnit}
-                  pkg={pkg}
-                  onSaved={handlePackageSaved}
-                  onRemoved={handlePackageRemoved}
-                  onCopies={handlePackageCopies}
-                />
-              ))}
-              {addingPackage && (
-                <PackageEditor
-                  queryId={queryId}
-                  cargoId={cargoRow.id}
-                  cargoDimUnit={cargoRow.dimUnit}
-                  cargoWeightUnit={cargoRow.weightUnit}
-                  suggestedPackageNo={suggestedPackageNo}
-                  onSaved={handlePackageSaved}
-                  onCancelAdd={() => setAddingPackage(false)}
-                />
-              )}
-              {packages.length === 0 && !addingPackage && (
-                <p className="text-sm text-muted-foreground">
-                  No packages yet. Click &quot;+ Add Package&quot; to add one.
-                </p>
-              )}
-            </div>
-          </div>
+          <PackagesTable
+            queryId={queryId}
+            cargo={cargoRow}
+            existingPackageNos={existingPackageNos}
+            onSaved={handlePackageSaved}
+            onRemoved={handlePackageRemoved}
+            onCopies={handlePackageCopies}
+          />
         ) : (
           <p className="text-sm text-muted-foreground border-t pt-4">
             Save the cargo above to start adding packages.
@@ -158,12 +147,188 @@ export function CargoPopup({ open, onOpenChange, queryId, cargo }: CargoPopupPro
         )}
 
         <div className="flex justify-end pt-2">
-          <Button type="button" variant="ghost" size="sm" onClick={() => handleDialogChange(false)}>
+          <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
             Close
           </Button>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The compact package table for one cargo: summary rows with inline Edit/Remove (Edit expands
+ *  the full PackageEditor + its items), plus a "+ Add package" inline form. */
+function PackagesTable({
+  queryId,
+  cargo,
+  existingPackageNos,
+  onSaved,
+  onRemoved,
+  onCopies,
+}: {
+  queryId: string;
+  cargo: CargoDto;
+  existingPackageNos: string[];
+  onSaved: (pkg: PackageDto) => void;
+  onRemoved: (packageId: string) => void;
+  onCopies: (clones: PackageDto[]) => void;
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [rowError, setRowError] = useState<string | null>(null);
+  const packageActions = usePackages(queryId, cargo.id);
+
+  const packages = cargo.packages;
+  const suggestedPackageNo = nextPackageNo([
+    ...existingPackageNos,
+    ...packages.map((p) => p.packageNo),
+  ]);
+
+  const dim = (canonical: string) => fromCanonicalDim(Number(canonical), cargo.dimUnit);
+  const wt = (canonical: string | null) =>
+    canonical === null ? null : fromCanonicalWeight(Number(canonical), cargo.weightUnit);
+
+  const handleRemoveRow = async (pkg: PackageDto) => {
+    if (!window.confirm(`Remove package ${pkg.packageNo}?`)) return;
+    try {
+      setRowError(null);
+      await packageActions.remove(pkg.id);
+      if (expandedId === pkg.id) setExpandedId(null);
+      onRemoved(pkg.id);
+    } catch (e) {
+      setRowError(e instanceof ApiError ? e.message : "Remove failed");
+    }
+  };
+
+  return (
+    <div className="space-y-3 border-t pt-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Packages</h3>
+        {!adding && (
+          <Button type="button" size="sm" variant="outline" onClick={() => setAdding(true)}>
+            + Add package
+          </Button>
+        )}
+      </div>
+
+      {rowError && (
+        <p role="alert" className="text-sm text-destructive">
+          {rowError}
+        </p>
+      )}
+
+      {packages.length > 0 && (
+        <div className="overflow-x-auto rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>No</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="text-right">L×W×H ({cargo.dimUnit})</TableHead>
+                <TableHead className="text-right">Gross ({cargo.weightUnit})</TableHead>
+                <TableHead className="text-right">Net</TableHead>
+                <TableHead className="text-right">CBM</TableHead>
+                <TableHead>Tags</TableHead>
+                <TableHead className="text-right">Items</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {packages.map((pkg) => {
+                const netWt = wt(pkg.netWt);
+                return (
+                  <Fragment key={pkg.id}>
+                    <TableRow>
+                      <TableCell className="font-mono">{pkg.packageNo}</TableCell>
+                      <TableCell>{packageTypeLabel(pkg.packageType)}</TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {dim(pkg.dimL)}×{dim(pkg.dimW)}×{dim(pkg.dimH)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {wt(pkg.grossWt)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {netWt ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {pkg.volumeCbm ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <ReferenceTagIcons tags={pkg.effectiveTags} />
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {pkg.items.length}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            aria-expanded={expandedId === pkg.id}
+                            onClick={() => setExpandedId((cur) => (cur === pkg.id ? null : pkg.id))}
+                          >
+                            {expandedId === pkg.id ? "Close" : "Edit"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleRemoveRow(pkg)}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {expandedId === pkg.id && (
+                      <TableRow>
+                        <TableCell colSpan={9} className="bg-muted/30">
+                          <PackageEditor
+                            queryId={queryId}
+                            cargoId={cargo.id}
+                            cargoDimUnit={cargo.dimUnit}
+                            cargoWeightUnit={cargo.weightUnit}
+                            pkg={pkg}
+                            onSaved={onSaved}
+                            onRemoved={(id) => {
+                              setExpandedId(null);
+                              onRemoved(id);
+                            }}
+                            onCopies={onCopies}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {adding && (
+        <PackageEditor
+          queryId={queryId}
+          cargoId={cargo.id}
+          cargoDimUnit={cargo.dimUnit}
+          cargoWeightUnit={cargo.weightUnit}
+          suggestedPackageNo={suggestedPackageNo}
+          onSaved={(pkg) => {
+            setAdding(false);
+            onSaved(pkg);
+          }}
+          onCancelAdd={() => setAdding(false)}
+        />
+      )}
+
+      {packages.length === 0 && !adding && (
+        <p className="text-sm text-muted-foreground">
+          No packages yet. Click &quot;+ Add package&quot; to add one.
+        </p>
+      )}
+    </div>
   );
 }
 
