@@ -159,11 +159,15 @@ export interface QuoteDraftTransit {
   carrier?: string | null;
   flightVoyageNo?: string | null;
   carrierSurcharge?: number | null;
-  // v3: one Guaranteed Transit Time per rate variant (design §3.1/D3), keyed by ChargeRateVariant.
-  // Air has a single implicit column — see AIR_VARIANT_KEY (ChargeRateVariant has no AIR member;
-  // QuoteDraftCharge instead models Air as rateVariant: null — this map still needs a concrete
-  // object key, so Air's one slot is addressed via that fixed technical key).
-  guaranteedTransitDaysByVariant: Partial<Record<ChargeRateVariant, number>>;
+  // v3: one Guaranteed Transit Time per rate variant (design §3.1/D3), keyed by ChargeRateVariant
+  // for Road/Sea. Air has a single implicit column — QuoteDraftCharge models Air as
+  // rateVariant: null, but this map needs a concrete, parseable object key (Zod's z.record can't
+  // validate a `null` key), so the key type is widened with the standalone `typeof AIR_VARIANT_KEY`
+  // literal (NOT a 5th ChargeRateVariant member — see the file-level note by variantsForMode) and
+  // Air's one slot is written/read under that fixed technical key.
+  guaranteedTransitDaysByVariant: Partial<
+    Record<ChargeRateVariant | typeof AIR_VARIANT_KEY, number>
+  >;
   plannedPickupDate?: string | null; // Road
   airline?: string | null;
   flightNumber?: string | null;
@@ -197,6 +201,10 @@ export interface QuoteDraft {
 // `rateVariant: null` (see QuoteDraftCharge) and variantsForMode("AIR") returns [null] rather than
 // adding a 5th "AIR" member — QuoteDraftTrucking/QuoteDraftSeaRate's non-nullable
 // `rateVariant: ChargeRateVariant` would then structurally (if nonsensically) admit it too.
+// `guaranteedTransitDaysByVariant` is the one exception: it needs an actual object key for Air's
+// slot (see AIR_VARIANT_KEY below), so ONLY that field's key type is widened with a standalone
+// `"AIR"` literal via a union (`ChargeRateVariant | typeof AIR_VARIANT_KEY`) — `ChargeRateVariant`
+// itself, and every other field typed with it, is untouched.
 /** The columns a mode's charge/transit matrix renders, in display order. Road → Dedicated/Groupage,
  *  Sea → FCL/LCL, Air (or an unset mode) → a single implicit column (`null`). */
 export function variantsForMode(mode: FreightMode | null): (ChargeRateVariant | null)[] {
@@ -206,8 +214,11 @@ export function variantsForMode(mode: FreightMode | null): (ChargeRateVariant | 
 }
 
 /** Air's fixed technical key into `guaranteedTransitDaysByVariant` (a `Partial<Record<
- *  ChargeRateVariant, number>>`, shared across all modes). Air has exactly one implicit column
- *  (`variantsForMode("AIR") === [null]`) but that map has no `null`-keyable slot, so Air's single
- *  transit-days value is written/read under this constant instead — never compared against a
- *  real Road/Sea variant. Not a `ChargeRateVariant` member (see the file-level note above). */
-export const AIR_VARIANT_KEY = "AIR" as ChargeRateVariant;
+ *  ChargeRateVariant | typeof AIR_VARIANT_KEY, number>>`). Air has exactly one implicit column
+ *  (`variantsForMode("AIR") === [null]`) but that map needs a real, parseable object key (not
+ *  `null`), so Air's single transit-days value is written/read under this constant instead —
+ *  never compared against a real Road/Sea variant. Own literal type `"AIR"` (NOT cast to
+ *  `ChargeRateVariant` — that type stays exactly 4-valued everywhere else, see the file-level
+ *  note above); `quoteDraftSchema` (ff-portal.ts) widens its `guaranteedTransitDaysByVariant` key
+ *  enum with this same constant so a submitted `{AIR: n}` map parses instead of 400ing. */
+export const AIR_VARIANT_KEY = "AIR";

@@ -652,7 +652,15 @@ describe("validateQuote — Q_TRANSIT (Guaranteed Transit Time, per priced varia
     const f = validateQuote(d, deadline, now, airActiveLines);
     expect(f.some((x) => x.rule === "Q_TRANSIT")).toBe(true);
   });
-  it("passes a fully-priced Air leg with its Guaranteed Transit Time set", () => {
+  it("blocks a priced Air leg when the transit block exists but has no entry under Air's key (AIR_VARIANT_KEY) — distinct from transit being entirely absent above", () => {
+    const d = airOkDraft();
+    d.transit = { ...d.transit!, guaranteedTransitDaysByVariant: {} };
+    const f = validateQuote(d, deadline, now, airActiveLines);
+    const finding = f.find((x) => x.rule === "Q_TRANSIT");
+    expect(finding).toBeDefined();
+    expect(finding?.scope).toEqual({ type: "field", id: "guaranteedTransitDays" });
+  });
+  it("passes a fully-priced Air leg with its Guaranteed Transit Time set under AIR_VARIANT_KEY", () => {
     const f = validateQuote(airOkDraft(), deadline, now, airActiveLines);
     expect(f.some((x) => x.rule === "Q_TRANSIT")).toBe(false);
   });

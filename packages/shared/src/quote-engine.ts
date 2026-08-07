@@ -43,8 +43,14 @@ export interface QuoteTotals {
 }
 
 /** The freight-rate cell for variant `v` (design §3.1): Road ← the matching `trucking` row,
- *  Sea ← the matching `seaRates` row, Air ← 0 always (Air's freight is priced as the
- *  AIR_MAIN_FREIGHT charge line, already folded into that variant's charge-cell sum below). */
+ *  Sea ← the matching `seaRates` row, Air ← always `null` (NOT `0` — Air has no separate rate
+ *  cell; its freight is priced as the AIR_MAIN_FREIGHT charge line, folded into that variant's
+ *  charge-cell sum instead, both in computeQuoteTotals below and in isVariantPriced further
+ *  down). Returning `null` (rather than `0`) for Air is load-bearing: isVariantPriced's
+ *  `variantRate(draft, v) != null` check must be false for an untouched Air leg, or Air would
+ *  always look "priced" via its (nonexistent) rate cell alone and silently defeat Q_RATE. Callers
+ *  that want a number for arithmetic (computeQuoteTotals's grandTotal) still do `rateAmount ?? 0`
+ *  at the call site — the `0` lives there, not in this function. */
 function variantRate(draft: QuoteDraft, v: ChargeRateVariant | null): number | null {
   if (draft.mode === "ROAD") return draft.trucking.find((t) => t.rateVariant === v)?.amount ?? null;
   if (draft.mode === "SEA") return draft.seaRates.find((r) => r.rateVariant === v)?.amount ?? null;
