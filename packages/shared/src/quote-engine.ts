@@ -13,8 +13,10 @@ export function computeHeavyWeightAmount(
 }
 
 // effective amount of a charge line: HEAVY_WEIGHT_CALC lines derive their amount from
-// the 3 inputs (their `amount` is null); all others use `amount ?? 0`.
-function effectiveChargeAmount(c: QuoteDraftCharge): number {
+// the 3 inputs (their `amount` is null); all others use `amount ?? 0`. Exported so the web
+// (ChargeZonePanel's zone subtotal) folds a calc line the SAME way the engine does — one source
+// of truth, no drift between the live client total and the submitted grandTotal.
+export function effectiveChargeAmount(c: QuoteDraftCharge): number {
   if (c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null)
     return computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg);
   return c.amount ?? 0;

@@ -1,6 +1,6 @@
 import { useFormContext, useFieldArray, useWatch } from "react-hook-form";
 import type { QuoteDraft, ChargeZone, FfPortalSeededCharge, BillOfLadingType } from "@svyft/shared";
-import { computeHeavyWeightAmount, BILL_OF_LADING_TYPES } from "@svyft/shared";
+import { effectiveChargeAmount, BILL_OF_LADING_TYPES } from "@svyft/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -55,17 +55,13 @@ export function ChargeZonePanel({ seededCharges }: ChargeZonePanelProps) {
               (draft.charges?.[idx]?.zone ?? (f as { zone?: ChargeZone }).zone) === key,
           );
 
-        // Zone subtotal computed LOCALLY from this zone's rows' effective amounts (QuoteTotals
-        // no longer exposes zoneSubtotals). A HEAVY_WEIGHT_CALC line's amount is derived from its
-        // 3 inputs, never stored on `amount` — mirrors computeQuoteTotals' effectiveChargeAmount.
+        // Zone subtotal computed LOCALLY from this zone's rows' effective amounts (QuoteTotals no
+        // longer exposes zoneSubtotals). Reuses the engine's `effectiveChargeAmount` so a
+        // HEAVY_WEIGHT_CALC line (amount derived from its 3 inputs, never stored on `amount`) folds
+        // in EXACTLY as computeQuoteTotals does — one source of truth, no zone/total drift.
         const subtotalValue = rows.reduce((s, { idx }) => {
           const c = draft.charges?.[idx];
-          if (!c) return s;
-          if (c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null)
-            return (
-              s + computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg)
-            );
-          return s + (c.amount ?? 0);
+          return c ? s + effectiveChargeAmount(c) : s;
         }, 0);
 
         return (

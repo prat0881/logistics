@@ -393,11 +393,10 @@ Internal coordination layer — never exposed to client-facing views.
 - **Ready ≤ Target** holds at both the query and the leg level, compared as real UTC instants (leg Ready anchors to the origin point's zone, leg Target to the destination's).
 - **Hub effective date (MAX):** where several legs feed one hub/point, the onward leg cannot depart before the **latest** arriving leg — the point's effective ready date = **MAX** of the feeding legs' Target Delivery dates. Applied at **every** hub (D6, rule T3).
 
-### 8.6 Weights — cargo level vs leg level (D4)
+### 8.6 Weights — package level vs leg level (D4)
 
-- **Cargo level:** each cargo row has a **Freight Density** and a **Chargeable Weight**, both **empty/read-only in Stage 3**. In Stage 4 the FF sets that row's density and the system computes chargeable weight = greater of (a) gross weight (t) and (b) volumetric weight = CBM × density (t). **One chargeable weight per cargo row.**
-- **Leg level:** the leg rolls up **Total Packages, Total CBM, Total Gross Weight, Total Net Weight** in **Stage 3**, and a **Total Chargeable Weight** = the sum of its attached rows' chargeable weights (**empty in Stage 3**, populated once Stage 4 fills the rows). **No Freight Density and no DG at leg level** — those are cargo-row attributes.
-- Industry default densities (Air ≈ 167, Sea ≈ 1,000, Road ≈ 333 kg/CBM) may **seed** the FF's per-row density field in Stage 4 but are **not applied in Stage 3**.
+- **Package level:** each **package** carries its own **Gross Weight**, **Net Weight** (V-2: net ≤ gross) and a system-derived **Volume (CBM)** (= L × W × H) — all **Stage-3** values. There is **no Freight Density** field anywhere in the model; the old per-row density was dropped in the Stage-3 re-model (see the Chargeable-Weight note above). **Chargeable weight is not computed in Stage 3:** in Stage 4 the Freight Forwarder enters a per-package **Charged Weight (kg)** directly on the quote — Stage 3 neither stores nor derives it.
+- **Leg level:** the leg rolls up **Total Packages, Total CBM, Total Gross Weight, Total Net Weight** over its assigned packages in **Stage 3**, plus a **Total Charged Weight** = the sum of those packages' Stage-4 Charged Weights (**empty in Stage 3**, populated once the FF quotes). There is **no Freight Density** at any level; **DG** is a **package/item tag** surfaced through the query/leg **DG indicator**, not a leg-level weight attribute.
 
 ---
 

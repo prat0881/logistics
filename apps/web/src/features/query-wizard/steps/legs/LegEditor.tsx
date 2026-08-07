@@ -66,7 +66,7 @@ function pointLabel(p: QueryPointDto): string {
  *   - Origin / Destination: <Select> over detail.points + "+ New point" → <PointEditor>
  *   - Mode: <Select> over FREIGHT_MODES
  *   - Live V-M1 client-side check (non-blocking warning; server 422 is authoritative)
- *   - Assigned Cargo: <CargoAssignmentControl> (≥1 required)
+ *   - Assigned Packages: <CargoAssignmentControl> (≥1 required)
  *   - Ready Date / Target Delivery: datetime-local using floating-wall-clock helpers
  *
  * On save: catches ApiError 422 → surfaces findings inside dialog (keeps it open).
@@ -325,9 +325,9 @@ export function LegEditor({ open, leg, detail, queryId, onSaved, onClose }: LegE
                 </div>
               )}
 
-              {/* Assigned Cargo */}
+              {/* Assigned Packages */}
               <div className="space-y-2">
-                <label className="text-sm font-medium">Assigned Cargo</label>
+                <label className="text-sm font-medium">Assigned Packages</label>
                 <Controller
                   control={form.control}
                   name="assignedPackageIds"

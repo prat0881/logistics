@@ -1,7 +1,6 @@
 // apps/api/src/modules/legs/legs.service.ts
 import {
   BadRequestException,
-  ConflictException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -21,6 +20,7 @@ import {
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
+import { assertApplied } from "../changes/assert-applied";
 import { StatusService } from "../status/status.service";
 import type { RequestUser } from "../auth/types";
 import { warehousePointIds, findWarehouseYesConflict } from "../rfq/warehouse.util";
@@ -165,13 +165,7 @@ export class LegsService {
           });
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return this.load(queryId, id);
   }
 
@@ -255,13 +249,7 @@ export class LegsService {
         }
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return this.load(queryId, legId);
   }
 
@@ -273,13 +261,7 @@ export class LegsService {
         await tx.leg.delete({ where: { id: legId } }); // legPackage cascades
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
   }
 
   // Fire the leg machine forward. THE caller (Create Query) must have validated the whole route

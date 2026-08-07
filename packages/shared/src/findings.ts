@@ -1,7 +1,7 @@
 export type Severity = "blocking" | "warning";
 
 export interface FindingScope {
-  type: "query" | "leg" | "cargo" | "package" | "point" | "field";
+  type: "query" | "leg" | "cargo" | "package" | "item" | "point" | "field";
   id?: string;
 }
 

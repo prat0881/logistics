@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import type { CargoCreateInput, CargoDto, CargoUpdateInput } from "@svyft/shared";
 import ExcelJS from "exceljs";
@@ -7,6 +7,7 @@ import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
+import { assertApplied } from "../changes/assert-applied";
 import { shapeCargo } from "./cargo-shape";
 
 @Injectable()
@@ -100,13 +101,7 @@ export class CargoService {
         shaped = shapeCargo({ ...created, packages: [] });
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return shaped!;
   }
 
@@ -149,13 +144,7 @@ export class CargoService {
         shaped = shapeCargo({ ...updated, packages });
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return shaped!;
   }
 
@@ -169,13 +158,7 @@ export class CargoService {
         await tx.cargo.delete({ where: { id: cid } });
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
   }
 
   // Server-side exceljs stream, single worksheet "Packing List" (design §8.3) — re-added at the

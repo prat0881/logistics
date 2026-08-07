@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import type { ItemCreateInput, ItemDto, ItemUpdateInput } from "@svyft/shared";
 import { randomUUID } from "node:crypto";
@@ -11,6 +6,7 @@ import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
+import { assertApplied } from "../changes/assert-applied";
 import { QueriesService } from "../queries/queries.service";
 import { shapeItem } from "./cargo-shape";
 
@@ -99,13 +95,7 @@ export class ItemService {
         await this.queries.syncDgIndicator(queryId, tx);
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return shaped!;
   }
 
@@ -167,13 +157,7 @@ export class ItemService {
         await this.queries.syncDgIndicator(queryId, tx);
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return shaped!;
   }
 
@@ -194,12 +178,6 @@ export class ItemService {
         await tx.item.delete({ where: { id: iid } });
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
   }
 }

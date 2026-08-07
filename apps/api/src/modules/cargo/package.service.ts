@@ -17,6 +17,7 @@ import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
+import { assertApplied } from "../changes/assert-applied";
 import { FilesService, type MsdsUpload } from "../files/files.service";
 import { QueriesService } from "../queries/queries.service";
 import { shapePackage } from "./cargo-shape";
@@ -40,7 +41,7 @@ export class PackageService {
   // Verifies the parent cargo exists *and* belongs to this query. Bad ref -> BadRequestException
   // (400), not NotFoundException: P2003 (FK violation) is unmapped by PrismaExceptionFilter (falls
   // through to a 500), so the referenced cargo MUST be pre-validated before any Package write is
-  // attempted against it — mirrors LegsService.assertPointRef/assertCargoRefs.
+  // attempted against it — mirrors LegsService.assertPointRef/assertPackageRefs.
   private async assertCargoRef(queryId: string, cargoId: string) {
     const cargo = await this.prisma.cargo.findFirst({ where: { id: cargoId, queryId } });
     if (!cargo) throw new BadRequestException(`Cargo ${cargoId} does not belong to this query`);
@@ -150,13 +151,7 @@ export class PackageService {
         await this.queries.syncDgIndicator(queryId, tx);
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return shaped!;
   }
 
@@ -281,13 +276,7 @@ export class PackageService {
             await this.queries.syncDgIndicator(queryId, tx);
           },
         );
-        if (result.needsConfirmation) {
-          throw new ConflictException({
-            message: "Change requires confirmation",
-            needsChangeOrder: true,
-            preview: result.preview,
-          });
-        }
+        assertApplied(result);
         createdIds.push(id);
         clones.push(shaped!);
       }
@@ -396,13 +385,7 @@ export class PackageService {
         await this.queries.syncDgIndicator(queryId, tx);
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return shaped!;
   }
 
@@ -416,13 +399,7 @@ export class PackageService {
         await tx.package.delete({ where: { id: pid } });
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
   }
 
   // Store the PDF + FileAsset, then link package.msdsFileId through the mediator (Corrective).
@@ -459,13 +436,7 @@ export class PackageService {
         shaped = shapePackage({ ...updated, items });
       },
     );
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return shaped!;
   }
 }

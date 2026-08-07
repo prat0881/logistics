@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -27,6 +26,7 @@ import type { RequestUser } from "../auth/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
+import { assertApplied } from "../changes/assert-applied";
 import { QueryStatusProjector } from "../status/query-status.projector";
 import { LegsService } from "../legs/legs.service";
 import { RoutingService } from "../routing/routing.service";
@@ -429,13 +429,7 @@ export class QueriesService {
       await tx.query.update({ where: { id }, data: data as Prisma.QueryUncheckedUpdateInput });
       await this.syncDgIndicator(id, tx);
     });
-    if (result.needsConfirmation) {
-      throw new ConflictException({
-        message: "Change requires confirmation",
-        needsChangeOrder: true,
-        preview: result.preview,
-      });
-    }
+    assertApplied(result);
     return this.get(id);
   }
 

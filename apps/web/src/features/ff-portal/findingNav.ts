@@ -23,16 +23,18 @@ export const PORTAL_SECTION_ORDER: PortalSection[] = [
 export function findingSection(f: Finding): PortalSection {
   const { scope } = f;
 
-  if (scope.type === "cargo") return "density";
+  if (scope.type === "cargo") return "density"; // Q_WEIGHT — Charged Weight sits under the density block
 
   if (scope.type === "field") {
     if (scope.id === "currency" || scope.id === "quoteValidityUntil") return "rfq";
     if (scope.id === "dgSurchargeNote") return "terms";
-    if (scope.id === "departureDate" || scope.id === "arrivalDate") return "transit";
+    if (scope.id === "guaranteedTransitDays") return "transit"; // Q_TRANSIT (submit-gate v2)
   }
 
   if (scope.type === "leg") {
-    if (f.rule === "Q8") return "warehouse";
+    // Warehouse pricing findings share Q_PRICED + leg scope with charge-line findings, so the
+    // message is the only discriminator (validateQuote emits "Warehousing must be priced …").
+    if (f.message.startsWith("Warehousing")) return "warehouse";
     return "charges";
   }
 
