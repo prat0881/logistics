@@ -26,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { NumberField } from "./NumberField";
 import { HeavyWeightCalcRow } from "./HeavyWeightCalcRow";
 import { fmtAmount } from "./format";
@@ -77,7 +78,7 @@ function NotApplicableCell({ label }: { label: string }): JSX.Element {
  * charge configuration. Replaces ChargeZonePanel/RoadChargesPanel/TruckingBlocks/SeaChargesPanel.
  */
 export function ChargeMatrix({ seededCharges, mode }: ChargeMatrixProps): JSX.Element {
-  const { control, setValue } = useFormContext<QuoteDraft>();
+  const { control, setValue, register } = useFormContext<QuoteDraft>();
   // Full-draft watch (matches ChargeZonePanel's prior convention) — every cell in this matrix
   // reads live values off `draft`, so a single watch re-renders the whole grid on any keystroke.
   const draft = useWatch({ control }) as QuoteDraft;
@@ -241,12 +242,25 @@ export function ChargeMatrix({ seededCharges, mode }: ChargeMatrixProps): JSX.El
 
                   return (
                     <TableCell key={columnKey(v)} className="align-top">
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         <NumberField
                           aria-label={label}
                           className="text-right"
                           value={charges[idx].amount ?? null}
                           onChange={(val) => setValue(`charges.${idx}.amount`, val, { shouldDirty: true })}
+                        />
+                        {/* Compact note (design/gate note, not in the original brief — added per
+                            review round 1): validateQuote's Q_PRICED still requires a remark to
+                            quote a PLAIN line at exactly 0 (quote-engine.ts) and the retired
+                            panels' "Note (optional)" field was the only surface for it. Small/
+                            unobtrusive by design so a normal (non-zero) row stays dense; kept
+                            unconditionally visible rather than reveal-on-zero to avoid a11y/test
+                            churn from a second layer of conditional rendering. */}
+                        <Input
+                          aria-label={`Note for ${label}`}
+                          placeholder="Note (optional)"
+                          className="h-7 text-xs"
+                          {...register(`charges.${idx}.note` as const)}
                         />
                         {s.definitionKey === BILL_OF_LADING_KEY && (
                           <Select

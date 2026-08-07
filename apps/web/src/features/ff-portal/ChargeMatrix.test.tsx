@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useForm, FormProvider, useWatch, type Control } from "react-hook-form";
-import type { QuoteDraft, FfPortalSeededCharge, FreightMode } from "@svyft/shared";
+import type { QuoteDraft, FfPortalSeededCharge, FreightMode, ResolvedChargeLine } from "@svyft/shared";
+import { validateQuote } from "@svyft/shared";
 import { ChargeMatrix } from "./ChargeMatrix";
 
 // ── Radix Select helper ──────────────────────────────────────────────────────────────────────
@@ -228,7 +229,10 @@ describe("ChargeMatrix — Road (Dedicated/Groupage columns)", () => {
     render(
       <Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" withDebug />,
     );
-    await userEvent.type(screen.getByLabelText(/insurance — groupage/i), "75");
+    // Anchored (^...$): "Insurance — Groupage" is the amount field; the new per-cell note field
+    // (added review round 1) is aria-labelled "Note for Insurance — Groupage", which an
+    // unanchored /insurance — groupage/i would also match, making the query ambiguous.
+    await userEvent.type(screen.getByLabelText(/^insurance — groupage$/i), "75");
 
     const charges = chargesFrom(screen.getByTestId("charges-debug"));
     const insuranceGroupage = charges.find(
@@ -270,8 +274,11 @@ describe("ChargeMatrix — Road (Dedicated/Groupage columns)", () => {
       (c) => !(c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "GROUPAGE"),
     );
     render(<Harness seededCharges={ROAD_LINES} defaultValues={draft} mode="ROAD" />);
+    // Groupage is the N/A cell here — NotApplicableCell renders a single disabled field with no
+    // note sibling, so the unanchored query stays unambiguous; Dedicated is anchored (^...$)
+    // since it IS a normal editable cell and now also carries a "Note for ..." sibling field.
     expect(screen.getByLabelText(/insurance — groupage/i)).toBeDisabled();
-    expect(screen.getByLabelText(/insurance — dedicated/i)).toBeEnabled();
+    expect(screen.getByLabelText(/^insurance — dedicated$/i)).toBeEnabled();
   });
 
   it("shows a per-column grand total aligned under each column, en-dash while a variant's rate is blank", async () => {
@@ -281,7 +288,7 @@ describe("ChargeMatrix — Road (Dedicated/Groupage columns)", () => {
     expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("–");
 
     await userEvent.type(screen.getByLabelText(/road freight — dedicated/i), "1000");
-    await userEvent.type(screen.getByLabelText(/insurance — dedicated/i), "50");
+    await userEvent.type(screen.getByLabelText(/^insurance — dedicated$/i), "50");
     expect(screen.getByTestId("chargematrix-total-DEDICATED")).toHaveTextContent("1,050.00");
     // Groupage's freight rate is still unset — stays blank even though it has no charges either.
     expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("–");
@@ -382,5 +389,82 @@ describe("ChargeMatrix — Air (single column)", () => {
     expect(screen.getByTestId("chargematrix-total-AIR")).toHaveTextContent("0.00");
     await userEvent.type(screen.getByLabelText(/^air freight — air$/i), "2000");
     expect(screen.getByTestId("chargematrix-total-AIR")).toHaveTextContent("2,000.00");
+  });
+});
+
+// ── Per-cell note vs. the $0-price gate (review round 1) ────────────────────────────────────────
+// Retiring ChargeZonePanel/RoadChargesPanel dropped their "Note (optional)" field, but
+// validateQuote's Q_PRICED still requires a note to price a PLAIN catalogue line at exactly 0
+// (quote-engine.ts: `c.amount === 0 && !c.note?.trim()`) — with no note surface, an FF pricing a
+// line at 0 would hit a finding they could never clear. `activeLines` below mirrors how
+// LegSectionForm derives it from `leg.seededCharges` for the real client-side gate.
+function activeLinesFrom(seeded: FfPortalSeededCharge[]): ResolvedChargeLine[] {
+  return seeded
+    .filter((s): s is typeof s & { definitionKey: string } => s.definitionKey != null)
+    .map((s) => ({
+      definitionKey: s.definitionKey,
+      role: "CORE" as const,
+      inputType: s.inputType ?? "PLAIN",
+      zone: s.zone,
+      label: s.label,
+    }));
+}
+const FAR_FUTURE_DEADLINE = "2999-01-01T00:00:00.000Z";
+const NOW = "2026-01-01T00:00:00.000Z";
+const ZERO_REMARK_MESSAGE = 'A remark is required to quote "Insurance" (Dedicated) at 0';
+
+describe("ChargeMatrix — per-cell note clears the $0-price Q_PRICED gate", () => {
+  it("binds the note to exactly the (Insurance, Dedicated) cell — not its Groupage sibling or another line — and a note clears the zero-price finding", async () => {
+    render(
+      <Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" withDebug />,
+    );
+
+    await userEvent.type(screen.getByLabelText(/^insurance — dedicated$/i), "0");
+    await userEvent.type(
+      screen.getByLabelText(/note for insurance — dedicated/i),
+      "Waived per customer request",
+    );
+
+    const charges = chargesFrom(screen.getByTestId("charges-debug"));
+    const insuranceDedicated = charges.find(
+      (c) => c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "DEDICATED",
+    );
+    const insuranceGroupage = charges.find(
+      (c) => c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "GROUPAGE",
+    );
+    const tailLiftDedicated = charges.find(
+      (c) => c.definitionKey === "ROAD_STD_TAIL_LIFT" && c.rateVariant === "DEDICATED",
+    );
+    // The note landed on exactly the cell it was typed into — not the Groupage sibling sharing
+    // the same definitionKey, and not a different charge line sharing the same rateVariant.
+    expect(insuranceDedicated?.amount).toBe(0);
+    expect(insuranceDedicated?.note).toBe("Waived per customer request");
+    expect(insuranceGroupage?.note ?? "").toBe("");
+    expect(tailLiftDedicated?.note ?? "").toBe("");
+
+    // Run the REAL gate (unchanged — this test doesn't touch validateQuote) against the draft the
+    // matrix just produced.
+    const findings = validateQuote(
+      { ...roadDraft(), charges },
+      FAR_FUTURE_DEADLINE,
+      NOW,
+      activeLinesFrom(ROAD_LINES),
+    );
+    expect(findings.some((f) => f.rule === "Q_PRICED" && f.message === ZERO_REMARK_MESSAGE)).toBe(
+      false,
+    );
+  });
+
+  it("still blocks a $0 line with no note (negative control — proves the note, not the zero amount, clears the gate)", () => {
+    const draft = roadDraft();
+    draft.charges = draft.charges.map((c) =>
+      c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "DEDICATED"
+        ? { ...c, amount: 0 } // priced at 0, no note
+        : c,
+    );
+    const findings = validateQuote(draft, FAR_FUTURE_DEADLINE, NOW, activeLinesFrom(ROAD_LINES));
+    expect(findings.some((f) => f.rule === "Q_PRICED" && f.message === ZERO_REMARK_MESSAGE)).toBe(
+      true,
+    );
   });
 });
