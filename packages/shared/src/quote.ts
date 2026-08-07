@@ -115,7 +115,6 @@ export interface QuoteDraftCargo {
   packageId: string;
   grossWtKg: number; // display only (canonical kg from the manifest)
   cbm: number; // m³ (display only)
-  chargedWeightKg: number | null; // FF-entered chargeable weight (kg)
 }
 export interface QuoteDraftCharge {
   zone: ChargeZone | null;
@@ -123,6 +122,7 @@ export interface QuoteDraftCharge {
   presetKey: string | null;
   label: string;
   amount: number | null;
+  rateVariant: ChargeRateVariant | null; // v3: which column this cell prices; null = single-column/Air or a non-variant line
   note?: string;
   billOfLadingType?: BillOfLadingType | null; // Sea B/L line
   pieceWeightKg?: number | null; // HEAVY_WEIGHT_CALC inputs
@@ -159,7 +159,11 @@ export interface QuoteDraftTransit {
   carrier?: string | null;
   flightVoyageNo?: string | null;
   carrierSurcharge?: number | null;
-  guaranteedTransitDays: number | null; // now mandatory (gate)
+  // v3: one Guaranteed Transit Time per rate variant (design §3.1/D3), keyed by ChargeRateVariant.
+  // Air has a single implicit column — see AIR_VARIANT_KEY (ChargeRateVariant has no AIR member;
+  // QuoteDraftCharge instead models Air as rateVariant: null — this map still needs a concrete
+  // object key, so Air's one slot is addressed via that fixed technical key).
+  guaranteedTransitDaysByVariant: Partial<Record<ChargeRateVariant, number>>;
   plannedPickupDate?: string | null; // Road
   airline?: string | null;
   flightNumber?: string | null;
@@ -175,8 +179,10 @@ export interface QuoteDraft {
   mode: FreightMode | null;
   currency: string | null;
   quoteValidityUntil: string | null; // ISO
+  chargedWeightKg: number | null; // v3: one leg-level chargeable weight (kg), informational (design §3.1/D2)
+  notes: string | null; // v3: FF free-text notes (design §3.1, distinct from dgSurchargeNote/termsConditions)
   cargo: QuoteDraftCargo[];
-  charges: QuoteDraftCharge[]; // Air/Sea zone lines
+  charges: QuoteDraftCharge[]; // Air/Sea zone lines, now per-variant via QuoteDraftCharge.rateVariant
   trucking: QuoteDraftTrucking[]; // Road blocks
   seaRates: QuoteDraftSeaRate[]; // Sea FCL/LCL rate rows
   warehouse: QuoteDraftWarehouse[];
@@ -185,57 +191,23 @@ export interface QuoteDraft {
   termsConditions: string | null;
 }
 
-// ── Charge-line presets (spec §7.4.3.1 Air / §7.4.3.2 Sea), in display order ──
-export interface ChargePreset {
-  zone: ChargeZone;
-  presetKey: string;
-  label: string;
+// ── v3 per-variant columns (design §3.1/D1) ──
+// Air has no dual-rate columns to compare — the matrix degrades to a single implicit column.
+// `ChargeRateVariant` deliberately stays 4-valued (DEDICATED|GROUPAGE|FCL|LCL): Air's charges use
+// `rateVariant: null` (see QuoteDraftCharge) and variantsForMode("AIR") returns [null] rather than
+// adding a 5th "AIR" member — QuoteDraftTrucking/QuoteDraftSeaRate's non-nullable
+// `rateVariant: ChargeRateVariant` would then structurally (if nonsensically) admit it too.
+/** The columns a mode's charge/transit matrix renders, in display order. Road → Dedicated/Groupage,
+ *  Sea → FCL/LCL, Air (or an unset mode) → a single implicit column (`null`). */
+export function variantsForMode(mode: FreightMode | null): (ChargeRateVariant | null)[] {
+  if (mode === "ROAD") return [ChargeRateVariant.DEDICATED, ChargeRateVariant.GROUPAGE];
+  if (mode === "SEA") return [ChargeRateVariant.FCL, ChargeRateVariant.LCL];
+  return [null]; // AIR, and a not-yet-resolved mode: single column
 }
-export const AIR_CHARGE_PRESETS: ChargePreset[] = [
-  { zone: "ORIGIN", presetKey: "AIR_ORIGIN_EXPORT_CLEARANCE", label: "Export Customs Clearance" },
-  { zone: "ORIGIN", presetKey: "AIR_ORIGIN_DOCUMENTATION", label: "Documentation Charges" },
-  { zone: "ORIGIN", presetKey: "AIR_ORIGIN_THC", label: "Origin THC / Airport Handling" },
-  { zone: "ORIGIN", presetKey: "AIR_ORIGIN_SECURITY", label: "Security / Screening Charges" },
-  {
-    zone: "ORIGIN",
-    presetKey: "AIR_ORIGIN_WAREHOUSE_PRESTORAGE",
-    label: "Warehouse / Pre-storage at OAP",
-  },
-  { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_FREIGHT", label: "Air Freight Charges" },
-  { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_SEC", label: "Security Exchange (SEC)" },
-  {
-    zone: "MAIN_FREIGHT",
-    presetKey: "AIR_MAIN_CARRIER_SURCHARGE",
-    label: "Airline / Carrier Surcharge",
-  },
-  { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_HEAVY_WEIGHT", label: "Heavy Weight Surcharge" },
-  { zone: "DESTINATION", presetKey: "AIR_DEST_THC", label: "Destination THC / Airport Handling" },
-  {
-    zone: "DESTINATION",
-    presetKey: "AIR_DEST_IMPORT_CLEARANCE",
-    label: "Import Customs Clearance",
-  },
-  { zone: "DESTINATION", presetKey: "AIR_DEST_LAST_MILE", label: "Last Mile Handling / Lift Gate" },
-  { zone: "DESTINATION", presetKey: "AIR_DEST_STORAGE", label: "Storage 1 Free Day Charges" },
-];
-export const SEA_CHARGE_PRESETS: ChargePreset[] = [
-  { zone: "ORIGIN", presetKey: "SEA_ORIGIN_EXPORT_CLEARANCE", label: "Export Customs Clearance" },
-  { zone: "ORIGIN", presetKey: "SEA_ORIGIN_DOCUMENTATION", label: "Documentation Charges" },
-  { zone: "ORIGIN", presetKey: "SEA_ORIGIN_THC", label: "Origin THC (Terminal Handling Charge)" },
-  { zone: "ORIGIN", presetKey: "SEA_ORIGIN_BILL_OF_LADING", label: "Bill of Lading" },
-  { zone: "ORIGIN", presetKey: "SEA_ORIGIN_WAREHOUSE", label: "Warehouse Charges" },
-  { zone: "MAIN_FREIGHT", presetKey: "SEA_MAIN_FREIGHT", label: "Sea Freight Charges" },
-  { zone: "DESTINATION", presetKey: "SEA_DEST_THC", label: "Destination THC / Handling Charges" },
-  {
-    zone: "DESTINATION",
-    presetKey: "SEA_DEST_IMPORT_CLEARANCE",
-    label: "Import Customs Clearance",
-  },
-  {
-    zone: "DESTINATION",
-    presetKey: "SEA_DEST_DELIVERY",
-    label: "Delivery (Last Mile — Door to Door)",
-  },
-  { zone: "DESTINATION", presetKey: "SEA_DEST_LAST_MILE", label: "Last Mile Handling / Lift Gate" },
-  { zone: "DESTINATION", presetKey: "SEA_DEST_STORAGE", label: "Storage 1 Free Day Charges" },
-];
+
+/** Air's fixed technical key into `guaranteedTransitDaysByVariant` (a `Partial<Record<
+ *  ChargeRateVariant, number>>`, shared across all modes). Air has exactly one implicit column
+ *  (`variantsForMode("AIR") === [null]`) but that map has no `null`-keyable slot, so Air's single
+ *  transit-days value is written/read under this constant instead — never compared against a
+ *  real Road/Sea variant. Not a `ChargeRateVariant` member (see the file-level note above). */
+export const AIR_VARIANT_KEY = "AIR" as ChargeRateVariant;

@@ -60,12 +60,13 @@ export const quoteDraftSchema: z.ZodType<QuoteDraft> = z.object({
   mode: z.string().nullable(), // authoritative mode is re-derived from the manifest at submit
   currency: z.string().nullable(),
   quoteValidityUntil: z.string().nullable(),
+  chargedWeightKg: z.number().nullable(), // v3: one leg-level chargeable weight (kg)
+  notes: z.string().nullable(), // v3: FF free-text notes
   cargo: z.array(
     z.object({
       packageId: z.string(),
       grossWtKg: z.number(),
       cbm: z.number(),
-      chargedWeightKg: z.number().nullable(),
     }),
   ),
   charges: z.array(
@@ -75,6 +76,7 @@ export const quoteDraftSchema: z.ZodType<QuoteDraft> = z.object({
       presetKey: z.string().nullable(),
       label: z.string(),
       amount: z.number().nullable(),
+      rateVariant: z.enum(CHARGE_RATE_VARIANTS).nullable(), // v3: which column this cell prices
       note: z.string().optional(),
       billOfLadingType: z.enum(BILL_OF_LADING_TYPES).nullable().optional(),
       pieceWeightKg: z.number().nullable().optional(),
@@ -119,7 +121,10 @@ export const quoteDraftSchema: z.ZodType<QuoteDraft> = z.object({
       carrier: z.string().nullable().optional(),
       flightVoyageNo: z.string().nullable().optional(),
       carrierSurcharge: z.number().nullable().optional(),
-      guaranteedTransitDays: z.number().nullable(),
+      // v3: one Guaranteed Transit Time per rate variant (Air's single implicit column keyed via
+      // AIR_VARIANT_KEY — see quote.ts). z.record with a finite key enum infers as
+      // Partial<Record<ChargeRateVariant, number>>, matching QuoteDraftTransit exactly.
+      guaranteedTransitDaysByVariant: z.record(z.enum(CHARGE_RATE_VARIANTS), z.number()),
       plannedPickupDate: z.string().nullable().optional(),
       airline: z.string().nullable().optional(),
       flightNumber: z.string().nullable().optional(),

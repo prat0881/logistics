@@ -1,4 +1,13 @@
-import { WarehousePosition, type QuoteDraft, type QuoteDraftCharge } from "./quote";
+import {
+  WarehousePosition,
+  variantsForMode,
+  rateVariantLabel,
+  AIR_VARIANT_KEY,
+  type QuoteDraft,
+  type QuoteDraftCharge,
+  type QuoteDraftTransit,
+  type ChargeRateVariant,
+} from "./quote";
 import type { Finding } from "./findings";
 import type { FreightMode } from "./config";
 import type { ResolvedChargeLine } from "./charge-config";
@@ -29,53 +38,85 @@ export interface QuoteVariantTotal {
 }
 export interface QuoteTotals {
   variants: QuoteVariantTotal[];
-  sharedSubtotal: number;
+  sharedSubtotal: number; // v3: the shared warehouse total only — every other line is per-variant
   chargeableWeightKg: number;
 }
 
-/**
- * One grand total per rate variant (design §7): Road/Sea are dual-rate (Dedicated/Groupage,
- * FCL/LCL) — each filled rate yields its own grand total over the shared subtotal (Air/Sea
- * zone charges + warehouse). Air is single-variant. Charge amounts run through
- * `effectiveChargeAmount` so a HEAVY_WEIGHT_CALC line's derived amount folds into the total the
- * same way it folds into the persisted `ChargeLine.amount` at submit (ff-portal.service.ts) —
- * the live client total (web) and the submitted grandTotal must agree regardless of whether the
- * calc line ever gets a literal `amount` written onto it.
- */
-export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
-  const chargesSum = draft.charges.reduce((s, c) => s + effectiveChargeAmount(c), 0);
-  const warehouseSum = draft.warehouse.reduce((s, w) => s + (w.amount ?? 0), 0);
-  const sharedSubtotal = chargesSum + warehouseSum;
-  const chargeableWeightKg = draft.cargo.reduce((s, c) => s + (c.chargedWeightKg ?? 0), 0);
-
-  const variants: QuoteVariantTotal[] = [];
-  if (draft.mode === "ROAD") {
-    const byVariant = new Map<string, { sum: number; anyPriced: boolean }>();
-    for (const t of draft.trucking) {
-      const cur = byVariant.get(t.rateVariant) ?? { sum: 0, anyPriced: false };
-      cur.sum += t.amount ?? 0;
-      if (t.amount != null) cur.anyPriced = true;
-      byVariant.set(t.rateVariant, cur);
-    }
-    for (const [key, { sum, anyPriced }] of byVariant)
-      variants.push({ key, rateAmount: anyPriced ? sum : null, grandTotal: sum + sharedSubtotal });
-  } else if (draft.mode === "SEA") {
-    for (const r of draft.seaRates)
-      variants.push({
-        key: r.rateVariant,
-        rateAmount: r.amount,
-        grandTotal: (r.amount ?? 0) + sharedSubtotal,
-      });
-  } else {
-    variants.push({ key: "AIR", rateAmount: null, grandTotal: sharedSubtotal });
-  }
-  return { variants, sharedSubtotal, chargeableWeightKg };
+/** The freight-rate cell for variant `v` (design §3.1): Road ← the matching `trucking` row,
+ *  Sea ← the matching `seaRates` row, Air ← 0 always (Air's freight is priced as the
+ *  AIR_MAIN_FREIGHT charge line, already folded into that variant's charge-cell sum below). */
+function variantRate(draft: QuoteDraft, v: ChargeRateVariant | null): number | null {
+  if (draft.mode === "ROAD") return draft.trucking.find((t) => t.rateVariant === v)?.amount ?? null;
+  if (draft.mode === "SEA") return draft.seaRates.find((r) => r.rateVariant === v)?.amount ?? null;
+  return null; // Air
 }
 
-/** Submit-gate v2 (design §7): blocking rules gating FF portal submission. Every rule here
+/**
+ * One grand total per rate-variant column (design §3.1/D1, v3): each variant is a full column —
+ * its own charge cells (`charges` grouped by `rateVariant`) + its own freight rate
+ * (`variantRate`) + the one shared warehouse total. Road/Sea always yield exactly the mode's two
+ * columns (`variantsForMode`), regardless of which cells happen to be filled; Air yields its
+ * single implicit column. Charge amounts run through `effectiveChargeAmount` so a
+ * HEAVY_WEIGHT_CALC line's derived amount folds into the total the same way it folds into the
+ * persisted `ChargeLine.amount` at submit (ff-portal.service.ts) — the live client total (web)
+ * and the submitted grandTotal must agree regardless of whether the calc line ever gets a
+ * literal `amount` written onto it. `chargeableWeightKg` is the single leg-level value
+ * (`QuoteDraft.chargedWeightKg`) — display only, never summed into any grand total.
+ */
+export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
+  const warehouseSum = draft.warehouse.reduce((s, w) => s + (w.amount ?? 0), 0);
+  const chargeableWeightKg = draft.chargedWeightKg ?? 0;
+
+  const variants: QuoteVariantTotal[] = variantsForMode(draft.mode).map((v) => {
+    const chargeSum = draft.charges
+      .filter((c) => c.rateVariant === v)
+      .reduce((s, c) => s + effectiveChargeAmount(c), 0);
+    const rateAmount = variantRate(draft, v);
+    return {
+      key: v ?? "AIR",
+      rateAmount,
+      grandTotal: chargeSum + (rateAmount ?? 0) + warehouseSum,
+    };
+  });
+
+  return { variants, sharedSubtotal: warehouseSum, chargeableWeightKg };
+}
+
+// a charge cell counts as "priced" once it carries a usable amount — a literal `amount`, or
+// (for a HEAVY_WEIGHT_CALC line) all three calc inputs, matching effectiveChargeAmount's own
+// notion of "computable". Partial calc inputs don't count (Q_PRICED below reports precisely
+// which input is still missing).
+function chargeCellPriced(c: QuoteDraftCharge): boolean {
+  if (c.amount != null) return true;
+  return c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null;
+}
+
+// has variant `v` had *anything* entered against it yet — its freight-rate cell or any charge
+// cell? Gates both Q_RATE (leg-wide: has any variant been started at all) and which variants
+// Q_PRICED/Q_TRANSIT hold to full completeness below (design §3.2: "for each priced variant").
+function isVariantPriced(draft: QuoteDraft, v: ChargeRateVariant | null): boolean {
+  if (variantRate(draft, v) != null) return true;
+  return draft.charges.some((c) => c.rateVariant === v && chargeCellPriced(c));
+}
+
+// Guaranteed Transit Time for variant `v` (AIR_VARIANT_KEY stands in for Air's single implicit
+// column — see quote.ts).
+function transitDaysFor(
+  transit: QuoteDraftTransit | null,
+  v: ChargeRateVariant | null,
+): number | null {
+  return transit?.guaranteedTransitDaysByVariant[v ?? AIR_VARIANT_KEY] ?? null;
+}
+
+/** Submit-gate v3 (design §3.2): blocking rules gating FF portal submission. Every rule here
  *  guards a value that gets force-unwrapped (`!`) at materialize (ff-portal.service.ts) onto a
- *  NOT NULL column — Q_WEIGHT (QuoteCargoLine.chargedWeightKg) and Q_CUSTOM_AMOUNT
- *  (ChargeLine.amount for a custom line) close the two gaps the original 6 rules left open. */
+ *  NOT NULL column — Q_WEIGHT (Quote.chargedWeightKg) and Q_CUSTOM_AMOUNT (ChargeLine.amount for
+ *  a custom line) close gaps the base currency/validity/deadline rules leave open. v3 replaces
+ *  the v2 "shared charges + one dual-rate pick" gate with a per-variant-column one: Q_RATE only
+ *  requires that submission isn't entirely empty; once a variant column has anything in it,
+ *  Q_PRICED/Q_TRANSIT require it to be fully priced (every applicable active line + its
+ *  transit-days) — untouched variant columns are left alone (a Road FF quoting only Dedicated
+ *  need not also fill Groupage). */
 export function validateQuote(
   draft: QuoteDraft,
   deadlineIso: string,
@@ -91,11 +132,11 @@ export function validateQuote(
   });
   const leg = { type: "leg", id: draft.legId } as const;
 
-  // (6) submission before the deadline
+  // submission before the deadline
   if (new Date(nowIso).getTime() > new Date(deadlineIso).getTime())
     f.push(blk("Q_DEADLINE", "The submission deadline has passed", leg));
 
-  // (1) currency + validity (validity ≥ deadline)
+  // currency + validity (validity ≥ deadline) — unchanged from v2
   if (!draft.currency)
     f.push(blk("Q_CURRENCY", "Currency is required", { type: "field", id: "currency" }));
   if (!draft.quoteValidityUntil)
@@ -113,37 +154,55 @@ export function validateQuote(
       }),
     );
 
-  // Charged Weight (kg) mandatory on every package (QuoteCargoLine.chargedWeightKg is NOT NULL)
-  for (const c of draft.cargo)
-    if (c.chargedWeightKg == null)
+  // Q_WEIGHT: one leg-level Chargeable Weight (kg) — Quote.chargedWeightKg is NOT NULL (v3: was
+  // per-package QuoteCargoLine.chargedWeightKg)
+  if (draft.chargedWeightKg == null)
+    f.push(
+      blk("Q_WEIGHT", "Charged Weight (kg) is required", { type: "field", id: "chargedWeightKg" }),
+    );
+
+  const variants = variantsForMode(draft.mode);
+  const pricedVariants = variants.filter((v) => isVariantPriced(draft, v));
+
+  // Q_RATE: the leg can't be submitted with nothing priced in any column at all
+  if (pricedVariants.length === 0)
+    f.push(blk("Q_RATE", "Enter at least one rate or charge amount for this leg", leg));
+
+  // every priced variant's column must be fully priced (Q_PRICED) and have its own transit-days
+  // (Q_TRANSIT); an untouched column is left alone.
+  for (const v of pricedVariants) {
+    const suffix = v ? ` (${rateVariantLabel(v)})` : "";
+
+    for (const line of activeLines) {
+      const c = draft.charges.find(
+        (x) => x.definitionKey === line.definitionKey && x.rateVariant === v,
+      );
+      if (line.inputType === "HEAVY_WEIGHT_CALC") {
+        if (!c || c.pieceWeightKg == null || c.airlineLimitKg == null || c.ratePerExcessKg == null)
+          f.push(
+            blk("Q_PRICED", `Heavy-Weight inputs are required for "${line.label}"${suffix}`, leg),
+          );
+        continue;
+      }
+      if (line.inputType !== "PLAIN") continue;
+      if (!c || c.amount == null)
+        f.push(blk("Q_PRICED", `Charge line "${line.label}"${suffix} must be priced`, leg));
+      else if (c.amount === 0 && !c.note?.trim())
+        f.push(blk("Q_PRICED", `A remark is required to quote "${line.label}"${suffix} at 0`, leg));
+    }
+
+    if (transitDaysFor(draft.transit, v) == null)
       f.push(
-        blk("Q_WEIGHT", "Charged Weight (kg) is required for every package", {
-          type: "cargo",
-          id: c.packageId,
+        blk("Q_TRANSIT", `Guaranteed Transit Time is required${suffix}`, {
+          type: "field",
+          id: "guaranteedTransitDays",
         }),
       );
-
-  // (2) every active charge line priced — amount present; 0 allowed ONLY with a remark
-  const byKey = new Map(
-    draft.charges.filter((c) => c.definitionKey).map((c) => [c.definitionKey!, c]),
-  );
-  for (const line of activeLines) {
-    if (line.inputType === "HEAVY_WEIGHT_CALC") {
-      const c = byKey.get(line.definitionKey);
-      if (!c || c.pieceWeightKg == null || c.airlineLimitKg == null || c.ratePerExcessKg == null)
-        f.push(blk("Q_PRICED", `Heavy-Weight inputs are required for "${line.label}"`, leg));
-      continue;
-    }
-    if (line.inputType !== "PLAIN") continue;
-    const c = byKey.get(line.definitionKey);
-    if (!c || c.amount == null)
-      f.push(blk("Q_PRICED", `Charge line "${line.label}" must be priced`, leg));
-    else if (c.amount === 0 && !c.note?.trim())
-      f.push(blk("Q_PRICED", `A remark is required to quote "${line.label}" at 0`, leg));
   }
 
-  // (3) remark + amount mandatory on every custom [+ Add Charge] line (its `amount` is
-  // force-unwrapped at materialize — ff-portal.service.ts's chargeLine.createMany)
+  // remark + amount mandatory on every custom [+ Add Charge] line (its `amount` is
+  // force-unwrapped at materialize — ff-portal.service.ts's chargeLine.createMany) — unchanged
+  // from v2; applies regardless of which variant (or none) the custom line carries
   for (const c of draft.charges)
     if (!c.definitionKey && !c.presetKey) {
       if (!c.note?.trim())
@@ -156,22 +215,7 @@ export function validateQuote(
         );
     }
 
-  // (4) Guaranteed Transit Time present on every leg
-  if (draft.transit?.guaranteedTransitDays == null)
-    f.push(
-      blk("Q_TRANSIT", "Guaranteed Transit Time is required", {
-        type: "field",
-        id: "guaranteedTransitDays",
-      }),
-    );
-
-  // (5) dual-rate — ≥1 of the two rates filled (each filled rate yields its own grand total)
-  if (draft.mode === "ROAD" && !draft.trucking.some((t) => t.amount != null))
-    f.push(blk("Q_RATE", "Enter at least one trucking rate (Dedicated or Groupage)", leg));
-  if (draft.mode === "SEA" && !draft.seaRates.some((r) => r.amount != null))
-    f.push(blk("Q_RATE", "Enter at least one sea freight rate (FCL or LCL)", leg));
-
-  // warehouse: every included warehouse line priced
+  // warehouse: every included warehouse line priced — unchanged from v2 (D4: shared, not per-variant)
   for (const w of draft.warehouse)
     if (w.amount == null) f.push(blk("Q_PRICED", `Warehousing must be priced for ${w.label}`, leg));
 
