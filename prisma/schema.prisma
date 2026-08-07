@@ -205,12 +205,16 @@ model Quote {
   termsConditions        String?
   draftJson              Json?
 
+  // v3 (FF Portal per-variant quoting): leg-level chargeable weight (was per-QuoteCargoLine) + notes.
+  chargedWeightKg Decimal? @db.Decimal(12, 3)
+  notes           String?
+
   quoteCargoLines       QuoteCargoLine[]
   chargeLines           ChargeLine[]
   truckingCharges       TruckingCharge[]
   seaFreightRates       SeaFreightRate[]
   warehouseStagingLines WarehouseStagingLine[]
-  transitPlan           TransitPlan?
+  transitPlans          TransitPlan[]
 
   @@unique([legId, freightForwarderId])
   @@index([queryId])
@@ -226,15 +230,14 @@ model RfqSequence {
 }
 
 model QuoteCargoLine {
-  id              String   @id @default(uuid()) @db.Uuid
-  tenantId        String?  @db.Uuid
-  quoteId         String   @db.Uuid
-  quote           Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  packageId       String   @db.Uuid
-  package         Package  @relation(fields: [packageId], references: [id], onDelete: Restrict)
-  chargedWeightKg Decimal  @db.Decimal(12, 3)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String?  @db.Uuid
+  quoteId   String   @db.Uuid
+  quote     Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  packageId String   @db.Uuid
+  package   Package  @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([quoteId, packageId])
   @@index([quoteId])
@@ -258,6 +261,10 @@ model ChargeLine {
   airlineLimitKg   Decimal?          @db.Decimal(12, 3)
   ratePerExcessKg  Decimal?          @db.Decimal(14, 2)
   billOfLadingType BillOfLadingType?
+  // v3 (FF Portal per-variant quoting): the matrix column this charge belongs to.
+  // NULL = Air's single implicit column (or a non-variant line); DEDICATED/GROUPAGE/FCL/LCL
+  // for Road/Sea. Mirrors TruckingCharge/SeaFreightRate/TransitPlan.rateVariant.
+  rateVariant ChargeRateVariant?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
@@ -360,8 +367,12 @@ model LegChargeLineSelection {
 model TransitPlan {
   id                    String   @id @default(uuid()) @db.Uuid
   tenantId              String?  @db.Uuid
-  quoteId               String   @unique @db.Uuid
+  quoteId               String   @db.Uuid
   quote                 Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  // v3 (FF Portal per-variant quoting): one TransitPlan row per priced variant (was one per quote).
+  // NULL = Air's single implicit column; DEDICATED/GROUPAGE/FCL/LCL for Road/Sea. The non-days
+  // schedule fields below repeat per row (each variant's row is self-contained).
+  rateVariant           ChargeRateVariant?
   carrier               String?
   flightVoyageNo        String?
   departureDate         DateTime?
@@ -380,6 +391,8 @@ model TransitPlan {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
+  @@unique([quoteId, rateVariant])
+  @@index([quoteId])
   @@index([tenantId])
 }
 
