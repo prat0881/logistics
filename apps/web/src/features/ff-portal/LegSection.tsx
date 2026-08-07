@@ -14,10 +14,7 @@ import { useSaveDraft, useSubmit } from "./useFfPortal";
 import { PortalError } from "./portalClient";
 import { CargoManifestTable } from "./CargoManifestTable";
 import { CargoWeightTable } from "./CargoWeightTable";
-import { ChargeZonePanel } from "./ChargeZonePanel";
-import { RoadChargesPanel } from "./RoadChargesPanel";
-import { TruckingBlocks } from "./TruckingBlocks";
-import { SeaChargesPanel } from "./SeaChargesPanel";
+import { ChargeMatrix } from "./ChargeMatrix";
 import { WarehouseStaging } from "./WarehouseStaging";
 import { TransitPlanForm } from "./TransitPlanForm";
 import { QuoteSummary } from "./QuoteSummary";
@@ -201,29 +198,15 @@ function LegSectionForm({
           <CargoWeightTable manifest={leg.manifest.cargo} />
         </section>
 
-        {/* Mode pricing: AIR/SEA → ChargeZonePanel, ROAD → TruckingBlocks */}
+        {/* Mode pricing: the per-variant charge matrix (design §3.1/§6 finding #3/#6) — rows are
+            the seeded charge headers + the mode's freight-rate row, columns are variantsForMode
+            (Road: Dedicated/Groupage, Sea: FCL/LCL, Air: a single column). Replaces the old
+            ChargeZonePanel/RoadChargesPanel/TruckingBlocks/SeaChargesPanel entry. */}
         <section id={sectionAnchorId(leg.legId, "charges")}>
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            {leg.mode === "ROAD" ? "Trucking" : "Charges"}
+            Charges
           </h3>
-          {leg.mode === "ROAD" ? (
-            <>
-              <TruckingBlocks endpoints={leg.endpoints} />
-              <RoadChargesPanel />
-            </>
-          ) : (
-            <>
-              <ChargeZonePanel seededCharges={leg.seededCharges} />
-              {leg.mode === "SEA" && (
-                <div className="mt-6">
-                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Sea freight (FCL / LCL)
-                  </h4>
-                  <SeaChargesPanel />
-                </div>
-              )}
-            </>
-          )}
+          <ChargeMatrix seededCharges={leg.seededCharges} mode={leg.mode} />
         </section>
 
         {/* Warehouse staging */}

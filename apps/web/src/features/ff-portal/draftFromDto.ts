@@ -4,6 +4,7 @@ import type {
   QuoteDraft,
   QuoteDraftWarehouse,
 } from "@svyft/shared";
+import { variantsForMode } from "@svyft/shared";
 import { toNumOrNull } from "./numeric";
 
 function warehouseLabel(position: QuoteDraftWarehouse["position"]): string {
@@ -25,13 +26,23 @@ export function draftFromDto(leg: FfPortalLegDto, rfq: FfPortalRfqDto): QuoteDra
     grossWtKg: toNumOrNull(c.grossWt) ?? 0,
     cbm: toNumOrNull(c.volumeCbm) ?? 0,
   }));
-  const charges = leg.seededCharges.map((s) => ({
-    zone: s.zone,
-    definitionKey: s.definitionKey,
-    presetKey: s.presetKey,
-    label: s.label,
-    amount: null,
-  }));
+  // v3 (design §3.1): fan every seeded line out across the mode's rate-variant columns — mirrors
+  // ff-portal.service.ts's seedQuoteDraft exactly, so a fresh draft (no leg.draft yet, the branch
+  // this fallback belongs to) seeds the SAME (definitionKey × variant) cross-product the server
+  // would have seeded. ChargeMatrix.tsx then always has an addressable cell for every (line,
+  // variant) pair regardless of which seed path produced this draft. Air's single implicit
+  // column seeds `rateVariant: null` for free via variantsForMode("AIR") === [null].
+  const variants = variantsForMode(leg.mode);
+  const charges = leg.seededCharges.flatMap((s) =>
+    variants.map((rateVariant) => ({
+      zone: s.zone,
+      definitionKey: s.definitionKey,
+      presetKey: s.presetKey,
+      label: s.label,
+      amount: null,
+      rateVariant,
+    })),
+  );
   const warehouse = (
     leg.warehouseIncluded ? leg.endpoints.filter((e) => e.warehousePosition != null) : []
   ).map((e) => ({
