@@ -122,6 +122,10 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         amount: 200.0,
         sortOrder: 1,
         rateVariant: "DEDICATED", // v3: the per-variant matrix column this charge belongs to
+        // Pre-existing (not v3) column, restored here after ff-portal-v2-model.e2e-spec.ts's
+        // deletion left it with zero e2e coverage — ChargeLine.billOfLadingType is written on
+        // every submit (ff-portal.service.ts's chargeLine.createMany) for a Sea B/L line.
+        billOfLadingType: "TELEX",
       },
     });
 
@@ -174,6 +178,11 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         guaranteedTransitDays: 1,
         airline: "Emirates SkyCargo",
         flightNumber: "EK9601",
+        // Pre-existing (not v3) Sea-mode columns, restored here after ff-portal-v2-model.e2e-spec.ts's
+        // deletion left them with zero e2e coverage — both are written on every submit
+        // (ff-portal.service.ts's transitPlan.create) off the FF's Sea transit-plan inputs.
+        shippingLine: "Maersk",
+        vesselVoyage: "MAERSK ESSEX / 123W",
       },
     });
 
@@ -211,6 +220,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     expect(reloadedQuote.chargeLines[0].presetKey).toBe("ORIGIN_HANDLING");
     expect(reloadedQuote.chargeLines[0].definitionKey).toBe("AIR_ORIGIN_THC");
     expect(reloadedQuote.chargeLines[0].rateVariant).toBe("DEDICATED"); // v3
+    expect(reloadedQuote.chargeLines[0].billOfLadingType).toBe("TELEX"); // pre-v3, restored coverage
 
     // TruckingCharge — v2 dual-rate: rateVariant + tonnage
     expect(reloadedQuote.truckingCharges).toHaveLength(1);
@@ -249,6 +259,9 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     expect(transitPlan.quoteId).toBe(quote.id);
     expect(transitPlan.airline).toBe("Emirates SkyCargo");
     expect(transitPlan.flightNumber).toBe("EK9601");
+    // pre-v3, restored coverage (see the shippingLine/vesselVoyage comment at the create above)
+    expect(transitPlan.shippingLine).toBe("Maersk");
+    expect(transitPlan.vesselVoyage).toBe("MAERSK ESSEX / 123W");
 
     // Point back-relations
     const reloadedOriginPoint = await prisma.point.findUniqueOrThrow({
