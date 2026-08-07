@@ -15,10 +15,7 @@ export function InvalidTokenCard(): JSX.Element {
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-muted-foreground">
           <p>This RFQ link is invalid or has expired.</p>
-          <p>
-            If you believe this is a mistake, contact your Svyft Logistics
-            representative.
-          </p>
+          <p>If you believe this is a mistake, contact your Svyft Logistics representative.</p>
         </CardContent>
       </Card>
     </div>
@@ -56,6 +53,28 @@ export function AlreadySubmittedSummary({
       <CardContent className="space-y-6">
         <CargoManifestTable cargo={leg.manifest.cargo} />
         <QuoteSummary draft={draft} currency={rfq.currency} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Displayed in place of a leg's manifest/quote UI when its frozen manifest snapshot predates the
+ *  v2 per-package model (see `isV2Manifest`, manifestGuard.ts) — an old-shape snapshot doesn't
+ *  carry the fields the v2 components below need (CargoManifestTable, ChargedWeightGrid,
+ *  draftFromDto, …) and throws if rendered directly. Degrades just that one leg instead of
+ *  white-screening the whole portal; sibling legs render normally. */
+export function ManifestUnavailableCard(): JSX.Element {
+  return (
+    <Card role="status">
+      <CardHeader className="flex flex-row items-center gap-3 pb-2">
+        <CardTitle className="text-base">Quote</CardTitle>
+        <Badge variant="warning">Unavailable</Badge>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-muted-foreground">
+          This RFQ was created before a system update and can't be shown here. Please ask us to
+          re-issue it.
+        </p>
       </CardContent>
     </Card>
   );

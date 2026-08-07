@@ -106,6 +106,31 @@ describe("LegSection QUOTED branch", () => {
   });
 });
 
+describe("LegSection legacy (pre-v2) manifest guard", () => {
+  it("shows the re-issue notice instead of crashing when the manifest predates the v2 model", () => {
+    const legacyLeg = {
+      ...leg,
+      // Pre-v2 frozen snapshot: cargo is not the per-package array the v2 UI expects.
+      manifest: { cargo: { legacy: true } },
+    } as unknown as FfPortalLegDto;
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={legacyLeg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+        />,
+      ),
+    );
+    // Degrades to the friendly notice for just this leg — no throw, no quote form.
+    expect(screen.getByText(/created before a system update/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /submit quote/i })).not.toBeInTheDocument();
+  });
+});
+
 describe("LegSection readOnly", () => {
   it("disables the Submit button when readOnly=true", () => {
     render(

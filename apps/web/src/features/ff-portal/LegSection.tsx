@@ -23,7 +23,8 @@ import { TransitPlanForm } from "./TransitPlanForm";
 import { QuoteSummary } from "./QuoteSummary";
 import { QuoteFindingsSummary } from "./QuoteFindingsSummary";
 import { SubmissionBar } from "./SubmissionBar";
-import { AlreadySubmittedSummary } from "./terminalStates";
+import { AlreadySubmittedSummary, ManifestUnavailableCard } from "./terminalStates";
+import { isV2Manifest } from "./manifestGuard";
 import { sectionAnchorId } from "./findingNav";
 import type { PortalSection } from "./findingNav";
 
@@ -44,6 +45,16 @@ export function LegSection({
   quoteValidityUntil,
   readOnly,
 }: LegSectionProps): JSX.Element {
+  // ── Guard: pre-v2 (legacy) manifest snapshot ───────────────────────────
+  // RFQs distributed before the Cargo→Package re-model can carry a frozen manifest.cargo in the
+  // old shape. Every branch below (QUOTED's AlreadySubmittedSummary, "not open for quoting", and
+  // the editable RFQ_SENT form) reads leg.manifest.cargo assuming the v2 per-package shape and
+  // will throw on the old one — check this first so a legacy leg degrades on its own instead of
+  // white-screening the whole portal. Sibling legs on the same portal are unaffected.
+  if (!isV2Manifest(leg.manifest)) {
+    return <ManifestUnavailableCard />;
+  }
+
   // ── Status branch: QUOTED ──────────────────────────────────────────────
   if (leg.status === "QUOTED") {
     return <AlreadySubmittedSummary leg={leg} rfq={rfq} />;
