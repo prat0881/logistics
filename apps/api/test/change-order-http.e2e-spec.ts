@@ -10,12 +10,20 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { LegsService } from "../src/modules/legs/legs.service";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import type { RequestUser } from "../src/modules/auth/types";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 // Task 10 (SB6): surfaces ChangeOrderStrategy's two-phase preview/apply (Tasks 7-8) at the
 // mediated-service boundary. A PATCH that lands on the change-order path (RfqDefining-or-
 // heavier field on a leg with live quotes) WITHOUT a `reason` must reject with a
 // ConflictException carrying `needsChangeOrder: true` + the blast-radius `preview`, and apply
 // NOTHING; the SAME patch WITH a `reason` must run the Task 8 saga exactly as before.
+//
+// Cargo→Package re-model (Unit 5 ripple): the leg's cargo fixture is now built via the shared
+// `createCargoWithPackages`/`assignPackagesToLeg` helper (Cargo→Package + LegPackage) instead of
+// the dropped flat CargoItem/LegCargo model. The edit under test here is still `entity: "leg"`
+// (leg.mode) — leg-level classification is unaffected by the cargo grain — but the leg's
+// re-frozen manifest (during the with-reason cascade below) now flows through the real
+// package-grain freeze, so the fixture needs a real package assigned via LegPackage.
 const PFX = "chg-order-http-";
 const CODE = `${PFX}query`;
 const FF_PREFIX = `FF-${PFX}`;
@@ -29,7 +37,8 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
   const user: RequestUser = { userId: actorId, role: Role.EXECUTIVE, tenantId: null };
 
   // Self-contained cleanup, FK-safe: quotes first (frees FF/query Restrict FKs) → rfqs (before
-  // the FF they Restrict) → query (cascades points/legs/cargo/legCargo) → FFs swept last.
+  // the FF they Restrict) → query (cascades points/legs/legPackages/cargo/packages/items) → FFs
+  // swept last.
   const cleanup = async () => {
     const q = await prisma.query.findUnique({ where: { queryCode: CODE }, select: { id: true } });
     if (q) {
@@ -38,7 +47,7 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
       await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: q.id } });
       await prisma.changeLog.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: FF_PREFIX } } });
   };
@@ -89,20 +98,9 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
     const dest = await prisma.point.create({
       data: { queryId: query.id, type: "DELIVERY", name: "Jebel Ali", city: "Dubai", country: "AE" },
     });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-1",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 100,
-        isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 100 }],
     });
     const leg = await prisma.leg.create({
       data: {
@@ -112,9 +110,9 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
         status: "PARTIALLY_QUOTED", // one QUOTED + one RFQ_SENT — a distributed, live leg
         originPointId: origin.id,
         destinationPointId: dest.id,
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     const ffQuoted = await mkFf(`${FF_PREFIX}QUOTED`);
     const ffSent = await mkFf(`${FF_PREFIX}SENT`);

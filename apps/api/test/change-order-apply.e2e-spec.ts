@@ -9,6 +9,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ChangeMediator } from "../src/modules/changes/change-mediator";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 // Task 8 (SB6): the change-order APPLY saga — a change-order-path request arriving WITH a
 // `reason` runs the full cascade (design §7): apply the field edit + re-freeze the PENDING
@@ -16,10 +17,16 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 // tx), then fire quote INVALIDATE + leg REOPEN, then notify the invalidated FF(s).
 //
 // Worked example (design §12): Leg L1 distributed to FF-A (QUOTED, with pricing children) +
-// FF-B (RFQ_SENT); cargo C1 → L1. Executive corrects C1.grossWt (RfqDefining) with a reason.
+// FF-B (RFQ_SENT); package P1 → L1. Executive corrects P1.grossWt (RfqDefining) with a reason.
 // After the saga: FF-A → INVALID (its QuoteCargoLine kept as history), FF-B manifest refreshed
 // to the new weight, L1 → READY_FOR_RFQ, one ChangeLog row (with the invalidated pricing
 // snapshot), one MessageLog to FF-A (eventKey rfq.leg.reopened).
+//
+// Cargo→Package re-model (Unit 5 ripple): fixtures now build Cargo→Package (+LegPackage) via
+// the shared `createCargoWithPackages`/`assignPackagesToLeg` helper instead of the dropped flat
+// CargoItem/LegCargo model. grossWt (RfqDefining) now lives on Package, not Cargo (see
+// package.impact.ts) — the mediated edit under test is `entity: "package"`, not `entity: "cargo"`.
+// ManifestSnapshotCargo also renamed `cargoItemId` → `packageId` (rfq.ts).
 const PFX = "chg-order-apply-";
 const CODE = `${PFX}query`; // single-leg cargo scenario
 const CODE2 = `${PFX}query2`; // query-wide (incoterms) multi-leg scenario
@@ -45,7 +52,8 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
   // Self-contained cleanup, FK-safe: quotes first (cascades their pricing children incl.
   // QuoteCargoLine, and frees the CargoItem/FF from Restrict FKs) → notification/messageLog/
   // changeLog (soft/cascade refs) → rfqs (before the FF they Restrict) → query (cascades
-  // points/legs/cargo/legCargo) → FFs (swept last, after every quote/rfq referencing them is gone).
+  // points/legs/legPackages/cargo/packages/items) → FFs (swept last, after every quote/rfq
+  // referencing them is gone).
   const cleanupQuery = async (queryCode: string, recipientUserId: string) => {
     const q = await prisma.query.findUnique({ where: { queryCode }, select: { id: true } });
     if (!q) return;
@@ -54,7 +62,7 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: q.id } });
     await prisma.changeLog.deleteMany({ where: { queryId: q.id } });
     await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-    await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+    await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
   };
 
   const cleanup = async () => {
@@ -97,10 +105,11 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
 
   // A minimal "old" manifest (as distribution would have frozen it), so we can prove the
   // refresh (FF-B) rewrites it to the new weight while the invalidated snapshot (FF-A) is kept.
-  const oldSnapshot = (legId: string, cargoItemId: string) => ({
+  // `packageId` (not `cargoItemId` — dropped with the flat model, rfq.ts's ManifestSnapshotCargo).
+  const oldSnapshot = (legId: string, packageId: string) => ({
     legId,
     frozenAt: "2020-01-01T00:00:00.000Z",
-    cargo: [{ cargoItemId, grossWt: String(OLD_GROSS_WT) }],
+    cargo: [{ packageId, grossWt: String(OLD_GROSS_WT) }],
   });
 
   it("applies the edit, invalidates the QUOTED FF, refreshes the RFQ_SENT manifest, reopens the leg, records + notifies", async () => {
@@ -114,21 +123,11 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     const dest = await prisma.point.create({
       data: { queryId: query.id, type: "DELIVERY", name: "Jebel Ali", city: "Dubai", country: "AE" },
     });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-1",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: OLD_GROSS_WT,
-        isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: OLD_GROSS_WT }],
     });
+    const packageId = packageIds[0];
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -137,9 +136,9 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
         status: "PARTIALLY_QUOTED", // one QUOTED + one RFQ_SENT — a distributed, live leg
         originPointId: origin.id,
         destinationPointId: dest.id,
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     const ffA = await mkFf(FF_A_CODE);
     const ffB = await mkFf(FF_B_CODE);
@@ -165,12 +164,12 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
         status: QuoteStatus.QUOTED,
         grandTotal: FF_A_GRAND_TOTAL,
         totalChargeableWeightT: 1.5,
-        manifestSnapshot: oldSnapshot(leg.id, cargo.id) as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: oldSnapshot(leg.id, packageId) as unknown as Prisma.InputJsonValue,
       },
     });
     // FF-A's pricing child — must SURVIVE invalidation (history is non-destructive, §11).
     await prisma.quoteCargoLine.create({
-      data: { quoteId: quoteA.id, cargoItemId: cargo.id, freightDensity: 167, chargeableWeightT: 1.5 },
+      data: { quoteId: quoteA.id, packageId, chargedWeightKg: 1500 },
     });
 
     const quoteB = await prisma.quote.create({
@@ -179,15 +178,15 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
         legId: leg.id,
         freightForwarderId: ffB.id,
         status: QuoteStatus.RFQ_SENT,
-        manifestSnapshot: oldSnapshot(leg.id, cargo.id) as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: oldSnapshot(leg.id, packageId) as unknown as Prisma.InputJsonValue,
       },
     });
 
-    // --- act: RfqDefining field (cargo.grossWt) on a distributed leg, WITH a reason → the saga ---
+    // --- act: RfqDefining field (package.grossWt) on a distributed leg, WITH a reason → the saga ---
     const res = await mediator.apply(
-      { entity: "cargo", id: cargo.id, field: "grossWt", queryId: query.id, actorId, reason: REASON },
+      { entity: "package", id: packageId, field: "grossWt", queryId: query.id, actorId, reason: REASON },
       async (tx) => {
-        await tx.cargoItem.update({ where: { id: cargo.id }, data: { grossWt: NEW_GROSS_WT } });
+        await tx.package.update({ where: { id: packageId }, data: { grossWt: NEW_GROSS_WT } });
       },
     );
 
@@ -198,8 +197,8 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     expect(res.needsConfirmation).toBeUndefined(); // apply, not preview
 
     // --- assert: the field edit was actually applied ---
-    const cargoAfter = await prisma.cargoItem.findUnique({ where: { id: cargo.id } });
-    expect(Number(cargoAfter?.grossWt)).toBe(NEW_GROSS_WT);
+    const packageAfter = await prisma.package.findUnique({ where: { id: packageId } });
+    expect(Number(packageAfter?.grossWt)).toBe(NEW_GROSS_WT);
 
     // --- assert: FF-A (QUOTED) → INVALID ---
     const quoteAAfter = await prisma.quote.findUnique({ where: { id: quoteA.id } });
@@ -221,7 +220,7 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     const ffBSnap = quoteBAfter?.manifestSnapshot as unknown as ManifestSnapshot;
     expect(ffBSnap.cargo).toHaveLength(1);
     expect(Number(ffBSnap.cargo[0].grossWt)).toBe(NEW_GROSS_WT);
-    expect(ffBSnap.cargo[0].cargoItemId).toBe(cargo.id);
+    expect(ffBSnap.cargo[0].packageId).toBe(packageId);
     expect(ffBSnap.incoterms).toBe("FOB"); // re-frozen from the live query
 
     // --- assert: the leg was reopened cleanly ---
@@ -284,19 +283,18 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     });
 
     const mkLeg = async (legCode: string) => {
-      const cargo = await prisma.cargoItem.create({
-        data: {
-          queryId: query.id, rowIndex: 0, poReference: `PO-${legCode}`, productName: "Widget",
-          packageType: "BOX", qty: 1, dimL: 10, dimW: 10, dimH: 10, grossWt: OLD_GROSS_WT, isDangerous: false,
-        },
+      const { packageIds } = await createCargoWithPackages(prisma, {
+        queryId: query.id,
+        packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: OLD_GROSS_WT }],
       });
-      return prisma.leg.create({
+      const leg = await prisma.leg.create({
         data: {
           queryId: query.id, legCode, mode: "AIR", status: "PARTIALLY_QUOTED",
           originPointId: origin.id, destinationPointId: dest.id,
-          legCargo: { create: { cargoItemId: cargo.id } },
         },
       });
+      await assignPackagesToLeg(prisma, leg.id, packageIds);
+      return leg;
     };
     // legCodes deliberately not substrings of the "...query2-RFQ00x" rfqNumber (avoids false
     // matches in the body assertions below).
@@ -424,19 +422,15 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     const query = await prisma.query.create({
       data: { queryCode: CODE3, assignedUserId: execId3, incoterms: "FOB" },
     });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id, rowIndex: 0, poReference: "PO-D", productName: "Widget",
-        packageType: "BOX", qty: 1, dimL: 10, dimW: 10, dimH: 10, grossWt: OLD_GROSS_WT, isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: OLD_GROSS_WT }],
     });
     // The distributed leg (has a live QUOTED quote) — the ONLY leg that should reopen.
     const distLeg = await prisma.leg.create({
-      data: {
-        queryId: query.id, legCode: "DISTLEG", mode: "AIR", status: "FULLY_QUOTED",
-        legCargo: { create: { cargoItemId: cargo.id } },
-      },
+      data: { queryId: query.id, legCode: "DISTLEG", mode: "AIR", status: "FULLY_QUOTED" },
     });
+    await assignPackagesToLeg(prisma, distLeg.id, packageIds);
     // The undistributed leg — fanned into scope by the query-wide edit, but carries no quote and
     // must NOT be reopened (it has no REOPEN edge from DRAFT).
     const draftLeg = await prisma.leg.create({
