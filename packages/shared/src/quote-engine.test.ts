@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { computeQuoteTotals, computeHeavyWeightAmount, validateQuote, classifyWarehousePositions } from "./quote-engine";
+import {
+  computeQuoteTotals,
+  computeHeavyWeightAmount,
+  validateQuote,
+  classifyWarehousePositions,
+} from "./quote-engine";
 import type { QuoteDraft } from "./quote";
 import { AIR_CHARGE_PRESETS } from "./quote";
 import type { ResolvedChargeLine } from "./charge-config";
@@ -7,19 +12,45 @@ import type { ResolvedChargeLine } from "./charge-config";
 // ── computeQuoteTotals / computeHeavyWeightAmount (Task 6) ──
 
 const base = (over: Partial<QuoteDraft>): QuoteDraft => ({
-  legId: "l", mode: "ROAD", currency: "USD", quoteValidityUntil: null,
+  legId: "l",
+  mode: "ROAD",
+  currency: "USD",
+  quoteValidityUntil: null,
   cargo: [{ packageId: "p", grossWtKg: 100, cbm: 1, chargedWeightKg: 250 }],
   charges: [{ zone: null, presetKey: null, label: "Tail lift", amount: 50 }],
-  trucking: [], seaRates: [], warehouse: [{ warehousePointId: "w", position: "ORIGIN", label: "WH", amount: 30 }],
-  transit: null, dgSurchargeNote: null, termsConditions: null, ...over,
+  trucking: [],
+  seaRates: [],
+  warehouse: [{ warehousePointId: "w", position: "ORIGIN", label: "WH", amount: 30 }],
+  transit: null,
+  dgSurchargeNote: null,
+  termsConditions: null,
+  ...over,
 });
 
 describe("computeQuoteTotals", () => {
   it("computes one grand total per Road rate variant over a shared subtotal", () => {
-    const t = computeQuoteTotals(base({ trucking: [
-      { legEndpointPointId: "e", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: 500, rateVariant: "DEDICATED", tonnage: "T_5" },
-      { legEndpointPointId: "e", truckingType: "GROUPAGE", basis: "PER_CBM", amount: 200, rateVariant: "GROUPAGE", tonnage: null },
-    ] }));
+    const t = computeQuoteTotals(
+      base({
+        trucking: [
+          {
+            legEndpointPointId: "e",
+            truckingType: "DEDICATED",
+            basis: "PER_TRUCK",
+            amount: 500,
+            rateVariant: "DEDICATED",
+            tonnage: "T_5",
+          },
+          {
+            legEndpointPointId: "e",
+            truckingType: "GROUPAGE",
+            basis: "PER_CBM",
+            amount: 200,
+            rateVariant: "GROUPAGE",
+            tonnage: null,
+          },
+        ],
+      }),
+    );
     expect(t.sharedSubtotal).toBe(80); // 50 + 30
     expect(t.chargeableWeightKg).toBe(250);
     expect(t.variants).toEqual([
@@ -29,18 +60,25 @@ describe("computeQuoteTotals", () => {
   });
 
   it("Air is a single AIR variant equal to the shared subtotal", () => {
-    const t = computeQuoteTotals(base({ mode: "AIR", charges: [{ zone: "MAIN_FREIGHT", presetKey: null, label: "Air Freight", amount: 900 }] }));
+    const t = computeQuoteTotals(
+      base({
+        mode: "AIR",
+        charges: [{ zone: "MAIN_FREIGHT", presetKey: null, label: "Air Freight", amount: 900 }],
+      }),
+    );
     expect(t.variants).toEqual([{ key: "AIR", rateAmount: null, grandTotal: 930 }]); // 900 + 30 (default warehouse)
   });
 
   it("Sea produces one variant per sea rate (FCL/LCL), preserving an unfilled rate as null", () => {
-    const t = computeQuoteTotals(base({
-      mode: "SEA",
-      seaRates: [
-        { rateVariant: "FCL", containerSize: "TWENTY", amount: 700 },
-        { rateVariant: "LCL", containerSize: null, amount: null },
-      ],
-    }));
+    const t = computeQuoteTotals(
+      base({
+        mode: "SEA",
+        seaRates: [
+          { rateVariant: "FCL", containerSize: "TWENTY", amount: 700 },
+          { rateVariant: "LCL", containerSize: null, amount: null },
+        ],
+      }),
+    );
     // sharedSubtotal = 50 (default charge) + 30 (default warehouse) = 80
     expect(t.sharedSubtotal).toBe(80);
     expect(t.variants).toEqual([
@@ -50,29 +88,55 @@ describe("computeQuoteTotals", () => {
   });
 
   it("sums chargedWeightKg across cargo rows, treating a missing value as 0", () => {
-    const t = computeQuoteTotals(base({
-      cargo: [
-        { packageId: "p1", grossWtKg: 50, cbm: 0.5, chargedWeightKg: 100 },
-        { packageId: "p2", grossWtKg: 20, cbm: 0.2, chargedWeightKg: null },
-      ],
-    }));
+    const t = computeQuoteTotals(
+      base({
+        cargo: [
+          { packageId: "p1", grossWtKg: 50, cbm: 0.5, chargedWeightKg: 100 },
+          { packageId: "p2", grossWtKg: 20, cbm: 0.2, chargedWeightKg: null },
+        ],
+      }),
+    );
     expect(t.chargeableWeightKg).toBe(100);
   });
 
   it("an unpriced Road variant (no row of that variant has an amount) yields rateAmount null, not 0", () => {
-    const t = computeQuoteTotals(base({
-      charges: [], warehouse: [],
-      trucking: [{ legEndpointPointId: "e", truckingType: "DEDICATED", basis: "FIXED", amount: null, rateVariant: "DEDICATED", tonnage: null }],
-    }));
+    const t = computeQuoteTotals(
+      base({
+        charges: [],
+        warehouse: [],
+        trucking: [
+          {
+            legEndpointPointId: "e",
+            truckingType: "DEDICATED",
+            basis: "FIXED",
+            amount: null,
+            rateVariant: "DEDICATED",
+            tonnage: null,
+          },
+        ],
+      }),
+    );
     expect(t.sharedSubtotal).toBe(0);
     expect(t.variants).toEqual([{ key: "DEDICATED", rateAmount: null, grandTotal: 0 }]); // grandTotal = sharedSubtotal
   });
 
   it("pricing that same variant yields its numeric rateAmount", () => {
-    const t = computeQuoteTotals(base({
-      charges: [], warehouse: [],
-      trucking: [{ legEndpointPointId: "e", truckingType: "DEDICATED", basis: "FIXED", amount: 500, rateVariant: "DEDICATED", tonnage: null }],
-    }));
+    const t = computeQuoteTotals(
+      base({
+        charges: [],
+        warehouse: [],
+        trucking: [
+          {
+            legEndpointPointId: "e",
+            truckingType: "DEDICATED",
+            basis: "FIXED",
+            amount: 500,
+            rateVariant: "DEDICATED",
+            tonnage: null,
+          },
+        ],
+      }),
+    );
     expect(t.variants).toEqual([{ key: "DEDICATED", rateAmount: 500, grandTotal: 500 }]);
   });
 
@@ -80,17 +144,24 @@ describe("computeQuoteTotals", () => {
     // The calc line's own `amount` is null (the FF prices it via piece/limit/rate, not a flat
     // figure) — computeHeavyWeightAmount(1200, 1000, 2) = (1200-1000)*2 = 400 must still be
     // folded in, same as it is at ChargeLine-materialize time (ff-portal.service.ts).
-    const t = computeQuoteTotals(base({
-      mode: "AIR",
-      charges: [
-        { zone: "MAIN_FREIGHT", presetKey: null, label: "Air Freight", amount: 100 },
-        {
-          zone: "MAIN_FREIGHT", presetKey: null, definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
-          label: "Heavy Weight Surcharge", amount: null,
-          pieceWeightKg: 1200, airlineLimitKg: 1000, ratePerExcessKg: 2,
-        },
-      ],
-    }));
+    const t = computeQuoteTotals(
+      base({
+        mode: "AIR",
+        charges: [
+          { zone: "MAIN_FREIGHT", presetKey: null, label: "Air Freight", amount: 100 },
+          {
+            zone: "MAIN_FREIGHT",
+            presetKey: null,
+            definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
+            label: "Heavy Weight Surcharge",
+            amount: null,
+            pieceWeightKg: 1200,
+            airlineLimitKg: 1000,
+            ratePerExcessKg: 2,
+          },
+        ],
+      }),
+    );
     expect(t.sharedSubtotal).toBe(530); // 100 + 400 (derived) + 30 (default warehouse)
     expect(t.variants).toEqual([{ key: "AIR", rateAmount: null, grandTotal: 530 }]);
   });
@@ -110,27 +181,68 @@ const now = "2026-08-01T00:00:00.000Z";
 
 function airOkDraft(): QuoteDraft {
   return {
-    legId: "l1", mode: "AIR", currency: "USD", quoteValidityUntil: "2026-08-20T00:00:00.000Z",
+    legId: "l1",
+    mode: "AIR",
+    currency: "USD",
+    quoteValidityUntil: "2026-08-20T00:00:00.000Z",
     cargo: [{ packageId: "c1", grossWtKg: 1000, cbm: 2, chargedWeightKg: 1000 }],
-    charges: AIR_CHARGE_PRESETS.map((p) => ({ zone: p.zone, definitionKey: p.presetKey, presetKey: p.presetKey, label: p.label, amount: 10 })),
-    trucking: [], seaRates: [], warehouse: [],
-    transit: { departureDate: "2026-08-12T00:00:00.000Z", arrivalDate: "2026-08-14T00:00:00.000Z", guaranteedTransitDays: 5 },
-    dgSurchargeNote: null, termsConditions: null,
+    charges: AIR_CHARGE_PRESETS.map((p) => ({
+      zone: p.zone,
+      definitionKey: p.presetKey,
+      presetKey: p.presetKey,
+      label: p.label,
+      amount: 10,
+    })),
+    trucking: [],
+    seaRates: [],
+    warehouse: [],
+    transit: {
+      departureDate: "2026-08-12T00:00:00.000Z",
+      arrivalDate: "2026-08-14T00:00:00.000Z",
+      guaranteedTransitDays: 5,
+    },
+    dgSurchargeNote: null,
+    termsConditions: null,
   };
 }
-const airActiveLines: ResolvedChargeLine[] = AIR_CHARGE_PRESETS.map(
-  (p): ResolvedChargeLine => ({ definitionKey: p.presetKey, role: "CORE", inputType: "PLAIN", zone: p.zone, label: p.label }),
-);
+const airActiveLines: ResolvedChargeLine[] = AIR_CHARGE_PRESETS.map((p): ResolvedChargeLine => ({
+  definitionKey: p.presetKey,
+  role: "CORE",
+  inputType: "PLAIN",
+  zone: p.zone,
+  label: p.label,
+}));
 
 function roadOkDraft(): QuoteDraft {
   return {
-    legId: "l1", mode: "ROAD", currency: "USD", quoteValidityUntil: "2026-08-20T00:00:00.000Z",
+    legId: "l1",
+    mode: "ROAD",
+    currency: "USD",
+    quoteValidityUntil: "2026-08-20T00:00:00.000Z",
     cargo: [{ packageId: "c1", grossWtKg: 1000, cbm: 2, chargedWeightKg: 1000 }],
     charges: [],
-    trucking: [{ legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: 500, rateVariant: "DEDICATED", tonnage: "T_5" }],
-    seaRates: [], warehouse: [{ warehousePointId: "w1", position: "ORIGIN", label: "Warehousing (In/Out)", amount: 100 }],
-    transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: 3, plannedPickupDate: "2026-08-11T00:00:00.000Z" },
-    dgSurchargeNote: null, termsConditions: null,
+    trucking: [
+      {
+        legEndpointPointId: "p1",
+        truckingType: "DEDICATED",
+        basis: "PER_TRUCK",
+        amount: 500,
+        rateVariant: "DEDICATED",
+        tonnage: "T_5",
+      },
+    ],
+    seaRates: [],
+    warehouse: [
+      { warehousePointId: "w1", position: "ORIGIN", label: "Warehousing (In/Out)", amount: 100 },
+    ],
+    transit: {
+      departureDate: null,
+      arrivalDate: null,
+      guaranteedTransitDays: 3,
+      plannedPickupDate: "2026-08-11T00:00:00.000Z",
+    },
+    dgSurchargeNote: null,
+    termsConditions: null,
   };
 }
 
@@ -146,13 +258,23 @@ describe("validateQuote — happy paths", () => {
 describe("validateQuote — Q_RATE (dual-rate: at least one of the two rates)", () => {
   it("blocks a Road leg with no trucking rate filled", () => {
     const d = roadOkDraft();
-    d.trucking = [{ legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: null, rateVariant: "DEDICATED", tonnage: "T_5" }];
+    d.trucking = [
+      {
+        legEndpointPointId: "p1",
+        truckingType: "DEDICATED",
+        basis: "PER_TRUCK",
+        amount: null,
+        rateVariant: "DEDICATED",
+        tonnage: "T_5",
+      },
+    ];
     const f = validateQuote(d, deadline, now, []);
     expect(f.some((x) => x.rule === "Q_RATE")).toBe(true);
   });
   it("blocks a Sea leg with neither FCL nor LCL rate filled", () => {
     const d = roadOkDraft();
-    d.mode = "SEA"; d.trucking = [];
+    d.mode = "SEA";
+    d.trucking = [];
     d.seaRates = [
       { rateVariant: "FCL", containerSize: "TWENTY", amount: null },
       { rateVariant: "LCL", containerSize: null, amount: null },
@@ -168,7 +290,13 @@ describe("validateQuote — Q_RATE (dual-rate: at least one of the two rates)", 
 
 describe("validateQuote — Q_PRICED (active-line pricing, 0-needs-remark, warehouse)", () => {
   const oneActiveLine: ResolvedChargeLine[] = [
-    { definitionKey: "ROAD_STD_INSURANCE", role: "STANDARD", inputType: "PLAIN", zone: null, label: "Insurance" },
+    {
+      definitionKey: "ROAD_STD_INSURANCE",
+      role: "STANDARD",
+      inputType: "PLAIN",
+      zone: null,
+      label: "Insurance",
+    },
   ];
   it("blocks an active PLAIN line that isn't priced at all", () => {
     const d = roadOkDraft();
@@ -178,43 +306,89 @@ describe("validateQuote — Q_PRICED (active-line pricing, 0-needs-remark, wareh
   });
   it("blocks a zero-amount active line unless it carries a remark", () => {
     const d = roadOkDraft();
-    d.charges = [{ zone: null, definitionKey: "ROAD_STD_INSURANCE", presetKey: null, label: "Insurance", amount: 0 }];
+    d.charges = [
+      {
+        zone: null,
+        definitionKey: "ROAD_STD_INSURANCE",
+        presetKey: null,
+        label: "Insurance",
+        amount: 0,
+      },
+    ];
     const f = validateQuote(d, deadline, now, oneActiveLine);
     expect(f.some((x) => x.rule === "Q_PRICED")).toBe(true);
   });
   it("passes a zero-amount active line when it carries a remark", () => {
     const d = roadOkDraft();
-    d.charges = [{ zone: null, definitionKey: "ROAD_STD_INSURANCE", presetKey: null, label: "Insurance", amount: 0, note: "Waived — bulk client" }];
+    d.charges = [
+      {
+        zone: null,
+        definitionKey: "ROAD_STD_INSURANCE",
+        presetKey: null,
+        label: "Insurance",
+        amount: 0,
+        note: "Waived — bulk client",
+      },
+    ];
     const f = validateQuote(d, deadline, now, oneActiveLine);
     expect(f.some((x) => x.rule === "Q_PRICED")).toBe(false);
   });
   it("blocks a Heavy-Weight-Calc active line missing any of its three inputs", () => {
     const heavyLine: ResolvedChargeLine[] = [
-      { definitionKey: "AIR_MAIN_HEAVY_WEIGHT", role: "CORE", inputType: "HEAVY_WEIGHT_CALC", zone: "MAIN_FREIGHT", label: "Heavy Weight Surcharge" },
+      {
+        definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
+        role: "CORE",
+        inputType: "HEAVY_WEIGHT_CALC",
+        zone: "MAIN_FREIGHT",
+        label: "Heavy Weight Surcharge",
+      },
     ];
     const d = airOkDraft();
-    d.charges = [{
-      zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_HEAVY_WEIGHT", presetKey: null, label: "Heavy Weight Surcharge", amount: null,
-      pieceWeightKg: 1200, airlineLimitKg: 1000, // ratePerExcessKg missing
-    }];
+    d.charges = [
+      {
+        zone: "MAIN_FREIGHT",
+        definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
+        presetKey: null,
+        label: "Heavy Weight Surcharge",
+        amount: null,
+        pieceWeightKg: 1200,
+        airlineLimitKg: 1000, // ratePerExcessKg missing
+      },
+    ];
     const f = validateQuote(d, deadline, now, heavyLine);
     expect(f.some((x) => x.rule === "Q_PRICED" && x.message.includes("Heavy-Weight"))).toBe(true);
   });
   it("passes a Heavy-Weight-Calc active line with all three inputs present", () => {
     const heavyLine: ResolvedChargeLine[] = [
-      { definitionKey: "AIR_MAIN_HEAVY_WEIGHT", role: "CORE", inputType: "HEAVY_WEIGHT_CALC", zone: "MAIN_FREIGHT", label: "Heavy Weight Surcharge" },
+      {
+        definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
+        role: "CORE",
+        inputType: "HEAVY_WEIGHT_CALC",
+        zone: "MAIN_FREIGHT",
+        label: "Heavy Weight Surcharge",
+      },
     ];
     const d = airOkDraft();
-    d.charges = [{
-      zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_HEAVY_WEIGHT", presetKey: null, label: "Heavy Weight Surcharge", amount: null,
-      pieceWeightKg: 1200, airlineLimitKg: 1000, ratePerExcessKg: 2,
-    }];
+    d.charges = [
+      {
+        zone: "MAIN_FREIGHT",
+        definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
+        presetKey: null,
+        label: "Heavy Weight Surcharge",
+        amount: null,
+        pieceWeightKg: 1200,
+        airlineLimitKg: 1000,
+        ratePerExcessKg: 2,
+      },
+    ];
     const f = validateQuote(d, deadline, now, heavyLine);
     expect(f.some((x) => x.rule === "Q_PRICED")).toBe(false);
   });
   it("blocks an unpriced included warehouse line", () => {
     const d = roadOkDraft();
-    d.warehouse = [{ warehousePointId: "w1", position: "ORIGIN", label: "Warehousing (In/Out)", amount: null }];
+    d.warehouse = [
+      { warehousePointId: "w1", position: "ORIGIN", label: "Warehousing (In/Out)", amount: null },
+    ];
     const f = validateQuote(d, deadline, now, []);
     expect(f.some((x) => x.rule === "Q_PRICED" && x.message.includes("Warehousing"))).toBe(true);
   });
@@ -223,13 +397,24 @@ describe("validateQuote — Q_PRICED (active-line pricing, 0-needs-remark, wareh
 describe("validateQuote — Q_CUSTOM_REMARK (custom [+ Add Charge] lines)", () => {
   it("blocks a custom line without a remark", () => {
     const d = airOkDraft();
-    d.charges = [{ zone: null, definitionKey: null, presetKey: null, label: "Ad-hoc handling", amount: 40 }];
+    d.charges = [
+      { zone: null, definitionKey: null, presetKey: null, label: "Ad-hoc handling", amount: 40 },
+    ];
     const f = validateQuote(d, deadline, now, []);
     expect(f.some((x) => x.rule === "Q_CUSTOM_REMARK")).toBe(true);
   });
   it("passes a custom line that carries a remark", () => {
     const d = airOkDraft();
-    d.charges = [{ zone: null, definitionKey: null, presetKey: null, label: "Ad-hoc handling", amount: 40, note: "Client-requested crating" }];
+    d.charges = [
+      {
+        zone: null,
+        definitionKey: null,
+        presetKey: null,
+        label: "Ad-hoc handling",
+        amount: 40,
+        note: "Client-requested crating",
+      },
+    ];
     const f = validateQuote(d, deadline, now, []);
     expect(f.some((x) => x.rule === "Q_CUSTOM_REMARK")).toBe(false);
   });
@@ -251,14 +436,32 @@ describe("validateQuote — Q_WEIGHT (Charged Weight (kg) mandatory per package)
 describe("validateQuote — Q_CUSTOM_AMOUNT (custom [+ Add Charge] amount mandatory)", () => {
   it("blocks a custom line that has a remark but no amount — force-unwrapped at materialize", () => {
     const d = airOkDraft();
-    d.charges = [{ zone: null, definitionKey: null, presetKey: null, label: "Ad-hoc handling", amount: null, note: "Client-requested crating" }];
+    d.charges = [
+      {
+        zone: null,
+        definitionKey: null,
+        presetKey: null,
+        label: "Ad-hoc handling",
+        amount: null,
+        note: "Client-requested crating",
+      },
+    ];
     const f = validateQuote(d, deadline, now, []);
     expect(f.some((x) => x.rule === "Q_CUSTOM_AMOUNT")).toBe(true);
     expect(f.some((x) => x.rule === "Q_CUSTOM_REMARK")).toBe(false); // has a note — remark rule doesn't also fire
   });
   it("passes a custom line with both a remark and an amount", () => {
     const d = airOkDraft();
-    d.charges = [{ zone: null, definitionKey: null, presetKey: null, label: "Ad-hoc handling", amount: 40, note: "Client-requested crating" }];
+    d.charges = [
+      {
+        zone: null,
+        definitionKey: null,
+        presetKey: null,
+        label: "Ad-hoc handling",
+        amount: 40,
+        note: "Client-requested crating",
+      },
+    ];
     const f = validateQuote(d, deadline, now, []);
     expect(f.some((x) => x.rule === "Q_CUSTOM_AMOUNT")).toBe(false);
   });
@@ -281,26 +484,39 @@ describe("validateQuote — Q_TRANSIT (Guaranteed Transit Time mandatory)", () =
 
 describe("validateQuote — currency / validity / deadline", () => {
   it("Q_CURRENCY: fires alone when currency is absent", () => {
-    const d = airOkDraft(); d.currency = null;
-    expect(validateQuote(d, deadline, now, airActiveLines).map((f) => f.rule)).toEqual(["Q_CURRENCY"]);
+    const d = airOkDraft();
+    d.currency = null;
+    expect(validateQuote(d, deadline, now, airActiveLines).map((f) => f.rule)).toEqual([
+      "Q_CURRENCY",
+    ]);
   });
   it("Q_VALIDITY: fires alone (with field scope) when validity is absent", () => {
-    const d = airOkDraft(); d.quoteValidityUntil = null;
+    const d = airOkDraft();
+    d.quoteValidityUntil = null;
     const f = validateQuote(d, deadline, now, airActiveLines).find((x) => x.rule === "Q_VALIDITY");
     expect(f?.scope).toEqual({ type: "field", id: "quoteValidityUntil" });
   });
   it("Q_VALIDITY: fires when validity is before the deadline", () => {
-    const d = airOkDraft(); d.quoteValidityUntil = "2026-08-05T00:00:00.000Z";
-    expect(validateQuote(d, deadline, now, airActiveLines).some((f) => f.rule === "Q_VALIDITY")).toBe(true);
+    const d = airOkDraft();
+    d.quoteValidityUntil = "2026-08-05T00:00:00.000Z";
+    expect(
+      validateQuote(d, deadline, now, airActiveLines).some((f) => f.rule === "Q_VALIDITY"),
+    ).toBe(true);
   });
   it("Q_DEADLINE: fires alone when now is past the deadline", () => {
-    expect(validateQuote(airOkDraft(), deadline, "2026-08-11T00:00:00.000Z", airActiveLines).map((f) => f.rule)).toEqual(["Q_DEADLINE"]);
+    expect(
+      validateQuote(airOkDraft(), deadline, "2026-08-11T00:00:00.000Z", airActiveLines).map(
+        (f) => f.rule,
+      ),
+    ).toEqual(["Q_DEADLINE"]);
   });
   it("Q_CURRENCY/Q_VALIDITY/Q_DEADLINE can all fire together", () => {
     const d = airOkDraft();
     d.currency = null;
     d.quoteValidityUntil = "2026-08-05T00:00:00.000Z"; // before the deadline
-    const rules = validateQuote(d, deadline, "2026-08-11T00:00:00.000Z", airActiveLines).map((f) => f.rule);
+    const rules = validateQuote(d, deadline, "2026-08-11T00:00:00.000Z", airActiveLines).map(
+      (f) => f.rule,
+    );
     expect(rules).toEqual(expect.arrayContaining(["Q_CURRENCY", "Q_VALIDITY", "Q_DEADLINE"]));
   });
 });
@@ -313,13 +529,19 @@ describe("classifyWarehousePositions (§6.4)", () => {
       { originPointId: "a1", destinationPointId: "a2", mode: "AIR" as const },
       { originPointId: "a2", destinationPointId: "w2", mode: "ROAD" as const },
     ];
-    expect(classifyWarehousePositions(legs, ["w1", "w2"])).toEqual({ w1: "ORIGIN", w2: "DESTINATION" });
+    expect(classifyWarehousePositions(legs, ["w1", "w2"])).toEqual({
+      w1: "ORIGIN",
+      w2: "DESTINATION",
+    });
   });
   it("Road-only: splits warehouses by the chain midpoint", () => {
     const legs = [
       { originPointId: "w1", destinationPointId: "m", mode: "ROAD" as const },
       { originPointId: "m", destinationPointId: "w2", mode: "ROAD" as const },
     ];
-    expect(classifyWarehousePositions(legs, ["w1", "w2"])).toEqual({ w1: "ORIGIN", w2: "DESTINATION" });
+    expect(classifyWarehousePositions(legs, ["w1", "w2"])).toEqual({
+      w1: "ORIGIN",
+      w2: "DESTINATION",
+    });
   });
 });

@@ -169,7 +169,8 @@ function makeFetchMock(
   return vi.fn((url: string, init?: RequestInit) => {
     if (url.includes("/api/auth/me"))
       return Promise.resolve({
-        ok: true, status: 200,
+        ok: true,
+        status: 200,
         json: () => Promise.resolve({ user: testUser }),
         text: () => Promise.resolve(""),
         blob: () => Promise.resolve(new Blob()),
@@ -177,7 +178,8 @@ function makeFetchMock(
 
     if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
       return Promise.resolve({
-        ok: true, status: 200,
+        ok: true,
+        status: 200,
         json: () => Promise.resolve(baseDetail),
         text: () => Promise.resolve(JSON.stringify(baseDetail)),
         blob: () => Promise.resolve(new Blob()),
@@ -189,7 +191,8 @@ function makeFetchMock(
     }
 
     return Promise.resolve({
-      ok: true, status: 200,
+      ok: true,
+      status: 200,
       json: () => Promise.resolve({}),
       text: () => Promise.resolve(""),
       blob: () => Promise.resolve(new Blob()),
@@ -216,13 +219,7 @@ describe("LegEditor", () => {
     vi.stubGlobal("fetch", makeFetchMock());
 
     renderWithProviders(
-      <LegEditor
-        open
-        detail={baseDetail}
-        queryId={QUERY_ID}
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <LegEditor open detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
@@ -232,13 +229,7 @@ describe("LegEditor", () => {
     vi.stubGlobal("fetch", makeFetchMock());
 
     renderWithProviders(
-      <LegEditor
-        open
-        detail={baseDetail}
-        queryId={QUERY_ID}
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <LegEditor open detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
     await screen.findByRole("dialog");
@@ -259,13 +250,7 @@ describe("LegEditor", () => {
     vi.stubGlobal("fetch", makeFetchMock());
 
     renderWithProviders(
-      <LegEditor
-        open
-        detail={baseDetail}
-        queryId={QUERY_ID}
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <LegEditor open detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
     await screen.findByRole("dialog");
@@ -305,13 +290,15 @@ describe("LegEditor", () => {
       "/legs": (_url, init) => {
         if (init?.method === "POST")
           return Promise.resolve({
-            ok: true, status: 201,
+            ok: true,
+            status: 201,
             json: () => Promise.resolve(legResponse),
             text: () => Promise.resolve(JSON.stringify(legResponse)),
             blob: () => Promise.resolve(new Blob()),
           } as Response);
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({}),
           text: () => Promise.resolve(""),
           blob: () => Promise.resolve(new Blob()),
@@ -322,13 +309,7 @@ describe("LegEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderWithProviders(
-      <LegEditor
-        open
-        detail={baseDetail}
-        queryId={QUERY_ID}
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <LegEditor open detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
     await screen.findByRole("dialog");
@@ -355,8 +336,7 @@ describe("LegEditor", () => {
     await waitFor(() => {
       const postCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          url === `/api/queries/${QUERY_ID}/legs` &&
-          (init as RequestInit)?.method === "POST",
+          url === `/api/queries/${QUERY_ID}/legs` && (init as RequestInit)?.method === "POST",
       );
       expect(postCall).toBeTruthy();
       const body = JSON.parse((postCall![1] as RequestInit).body as string);
@@ -380,13 +360,16 @@ describe("LegEditor", () => {
       "/legs": (_url, init) => {
         if (init?.method === "POST")
           return Promise.resolve({
-            ok: false, status: 422,
+            ok: false,
+            status: 422,
             json: () => Promise.resolve({ message: "Blocked", findings: [vmFinding] }),
-            text: () => Promise.resolve(JSON.stringify({ message: "Blocked", findings: [vmFinding] })),
+            text: () =>
+              Promise.resolve(JSON.stringify({ message: "Blocked", findings: [vmFinding] })),
             blob: () => Promise.resolve(new Blob()),
           } as Response);
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({}),
           text: () => Promise.resolve(""),
           blob: () => Promise.resolve(new Blob()),
@@ -397,13 +380,7 @@ describe("LegEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderWithProviders(
-      <LegEditor
-        open
-        detail={baseDetail}
-        queryId={QUERY_ID}
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <LegEditor open detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
     await screen.findByRole("dialog");
@@ -498,13 +475,7 @@ describe("LegEditor", () => {
     vi.stubGlobal("fetch", makeFetchMock());
 
     renderWithProviders(
-      <LegEditor
-        open
-        detail={baseDetail}
-        queryId={QUERY_ID}
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <LegEditor open detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
     await screen.findByRole("dialog");
@@ -525,7 +496,9 @@ describe("LegEditor", () => {
     // hint is display-only — the form value stays blank (proven at the ZonedDateTimeField level),
     // and C1 still requires a real value at Create.
     await waitFor(() => {
-      const dateInputs = document.querySelectorAll<HTMLInputElement>('input[type="datetime-local"]');
+      const dateInputs = document.querySelectorAll<HTMLInputElement>(
+        'input[type="datetime-local"]',
+      );
       expect(dateInputs.length).toBe(2);
       expect(dateInputs[0].value.endsWith("T12:00")).toBe(true);
       expect(dateInputs[1].value.endsWith("T12:00")).toBe(true);
@@ -557,7 +530,14 @@ describe("LegEditor", () => {
     vi.stubGlobal("fetch", makeFetchMock());
 
     renderWithProviders(
-      <LegEditor open leg={editLeg} detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
+      <LegEditor
+        open
+        leg={editLeg}
+        detail={baseDetail}
+        queryId={QUERY_ID}
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />,
     );
 
     await screen.findByRole("dialog");
@@ -630,7 +610,14 @@ describe("LegEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderWithProviders(
-      <LegEditor open leg={editLeg} detail={baseDetail} queryId={QUERY_ID} onSaved={vi.fn()} onClose={vi.fn()} />,
+      <LegEditor
+        open
+        leg={editLeg}
+        detail={baseDetail}
+        queryId={QUERY_ID}
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />,
     );
     await screen.findByRole("dialog");
 

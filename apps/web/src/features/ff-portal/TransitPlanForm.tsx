@@ -33,9 +33,7 @@ export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
           id="transit-guaranteed-days"
           aria-required="true"
           value={transit?.guaranteedTransitDays ?? null}
-          onChange={(v) =>
-            setValue("transit.guaranteedTransitDays", v, { shouldDirty: true })
-          }
+          onChange={(v) => setValue("transit.guaranteedTransitDays", v, { shouldDirty: true })}
         />
       </div>
 

@@ -46,7 +46,10 @@ export function QueryOverviewHeader({ query }: { query: QueryDetail }) {
   const statusLabel = QUERY_STATUS_LABEL[query.status as QueryStatus] ?? query.status;
 
   return (
-    <section aria-label="Query overview" className="rounded-lg border border-border bg-card p-4 sm:p-6">
+    <section
+      aria-label="Query overview"
+      className="rounded-lg border border-border bg-card p-4 sm:p-6"
+    >
       <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
         <h1 className="font-display text-xl font-semibold tracking-tight">
           <span className="font-mono tabular-nums text-primary">{query.queryCode}</span>
@@ -54,7 +57,9 @@ export function QueryOverviewHeader({ query }: { query: QueryDetail }) {
         <dl className="flex flex-1 flex-wrap items-start gap-x-8 gap-y-4">
           <Field label="Incoterms">{query.incoterms ?? "—"}</Field>
           <Field label="Totals">
-            <div>{totals.pkg} pkg · {totals.cbm} CBM · {totals.gross} kg</div>
+            <div>
+              {totals.pkg} pkg · {totals.cbm} CBM · {totals.gross} kg
+            </div>
           </Field>
           <Field label="Reference Tags">
             <CargoTagIcons cargo={query.cargos} />

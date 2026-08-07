@@ -1,6 +1,13 @@
 import { useFormContext, useWatch } from "react-hook-form";
 import type { QuoteDraft, ManifestSnapshotCargo } from "@svyft/shared";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { NumberField } from "./NumberField";
 import { fmtDecimal, fmtCbm } from "./format";
 
@@ -26,12 +33,19 @@ export function ChargedWeightGrid({ cargo }: { cargo: ManifestSnapshotCargo[] })
           {rows.map((r, i) => (
             <TableRow key={r.packageId}>
               <TableCell className="font-mono">{packageNoFor(r.packageId)}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums bg-muted/40">{fmtDecimal(r.grossWtKg, 0)}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums bg-muted/40">{fmtCbm(r.cbm)}</TableCell>
+              <TableCell className="text-right font-mono tabular-nums bg-muted/40">
+                {fmtDecimal(r.grossWtKg, 0)}
+              </TableCell>
+              <TableCell className="text-right font-mono tabular-nums bg-muted/40">
+                {fmtCbm(r.cbm)}
+              </TableCell>
               <TableCell className="text-right">
-                <NumberField aria-label={`Charged Wt for ${packageNoFor(r.packageId)}`} className="w-28 text-right"
+                <NumberField
+                  aria-label={`Charged Wt for ${packageNoFor(r.packageId)}`}
+                  className="w-28 text-right"
                   value={r.chargedWeightKg}
-                  onChange={(v) => setValue(`cargo.${i}.chargedWeightKg`, v, { shouldDirty: true })} />
+                  onChange={(v) => setValue(`cargo.${i}.chargedWeightKg`, v, { shouldDirty: true })}
+                />
               </TableCell>
             </TableRow>
           ))}

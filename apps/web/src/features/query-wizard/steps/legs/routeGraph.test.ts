@@ -5,25 +5,29 @@ import { toRouteGraph } from "./routeGraph";
 const QUERY_ID = "q-1";
 
 /** Minimal valid QueryDetail; override points/legs/cargos/query fields per test. */
-function makeDetail(over: {
-  id?: string;
-  readyDate?: string | null;
-  targetDelivery?: string | null;
-  points?: Array<Partial<QueryDetail["points"][number]> & { id: string; type: string }>;
-  cargos?: Array<
-    Partial<Omit<QueryDetail["cargos"][number], "packages">> & {
-      id: string;
-      packages?: Array<Partial<QueryDetail["cargos"][number]["packages"][number]> & { id: string }>;
-    }
-  >;
-  legs?: Array<
-    Partial<QueryDetail["legs"][number]> & {
-      id: string;
-      legCode: string;
-      assignedPackageIds: string[];
-    }
-  >;
-} = {}): QueryDetail {
+function makeDetail(
+  over: {
+    id?: string;
+    readyDate?: string | null;
+    targetDelivery?: string | null;
+    points?: Array<Partial<QueryDetail["points"][number]> & { id: string; type: string }>;
+    cargos?: Array<
+      Partial<Omit<QueryDetail["cargos"][number], "packages">> & {
+        id: string;
+        packages?: Array<
+          Partial<QueryDetail["cargos"][number]["packages"][number]> & { id: string }
+        >;
+      }
+    >;
+    legs?: Array<
+      Partial<QueryDetail["legs"][number]> & {
+        id: string;
+        legCode: string;
+        assignedPackageIds: string[];
+      }
+    >;
+  } = {},
+): QueryDetail {
   const id = over.id ?? QUERY_ID;
   const points = (over.points ?? []).map((p) => ({
     tenantId: null,

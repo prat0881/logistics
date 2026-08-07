@@ -49,7 +49,9 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: FF_PREFIX } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: FF_PREFIX } },
+    });
   };
 
   beforeAll(async () => {
@@ -93,10 +95,22 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
       data: { queryCode: CODE, assignedUserId: actorId, incoterms: "FOB" },
     });
     const origin = await prisma.point.create({
-      data: { queryId: query.id, type: "PICKUP", name: "Shenzhen Port", city: "Shenzhen", country: "CN" },
+      data: {
+        queryId: query.id,
+        type: "PICKUP",
+        name: "Shenzhen Port",
+        city: "Shenzhen",
+        country: "CN",
+      },
     });
     const dest = await prisma.point.create({
-      data: { queryId: query.id, type: "DELIVERY", name: "Jebel Ali", city: "Dubai", country: "AE" },
+      data: {
+        queryId: query.id,
+        type: "DELIVERY",
+        name: "Jebel Ali",
+        city: "Dubai",
+        country: "AE",
+      },
     });
     const { packageIds } = await createCargoWithPackages(prisma, {
       queryId: query.id,
@@ -189,14 +203,21 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
     const legAfterPreview = await prisma.leg.findUnique({ where: { id: leg.id } });
     expect(legAfterPreview?.mode).toBe("AIR");
     expect(legAfterPreview?.status).toBe("PARTIALLY_QUOTED");
-    const quoteQuotedAfterPreview = await prisma.quote.findUnique({ where: { id: quoteQuoted.id } });
+    const quoteQuotedAfterPreview = await prisma.quote.findUnique({
+      where: { id: quoteQuoted.id },
+    });
     expect(quoteQuotedAfterPreview?.status).toBe(QuoteStatus.QUOTED);
 
     // ─────────────────────────────────────────────────────────────────────────
     // (2) WITH reason: resolves normally (no throw), the edit lands, and the saga cascades —
     //     the QUOTED quote is invalidated, the RFQ_SENT one is left pending (refreshed).
     // ─────────────────────────────────────────────────────────────────────────
-    const updated = await legsService.update(query.id, leg.id, { mode: "ROAD", reason: REASON }, user);
+    const updated = await legsService.update(
+      query.id,
+      leg.id,
+      { mode: "ROAD", reason: REASON },
+      user,
+    );
     expect(updated.mode).toBe("ROAD");
 
     const legAfterApply = await prisma.leg.findUnique({ where: { id: leg.id } });
@@ -210,7 +231,9 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
     expect(quoteSentAfterApply?.status).toBe(QuoteStatus.RFQ_SENT); // still pending, not invalidated
 
     // The durable ChangeLog carries the reason (one row from the with-reason call only).
-    const logs = await prisma.changeLog.findMany({ where: { queryId: query.id, changeType: "change-order" } });
+    const logs = await prisma.changeLog.findMany({
+      where: { queryId: query.id, changeType: "change-order" },
+    });
     expect(logs).toHaveLength(1);
     expect((logs[0].payload as { reason: string }).reason).toBe(REASON);
   });

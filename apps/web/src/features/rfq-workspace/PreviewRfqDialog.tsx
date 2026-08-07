@@ -24,7 +24,10 @@ function fmtNum(v: number, decimals = 2): string {
 
 /** Every package assigned to this leg, paired with the CargoDto that owns it (needed for
  *  its dimUnit — PackageDto itself only carries canonical cm/kg values). */
-function assignedRows(cargo: CargoDto[], assignedPackageIds: string[]): { cargo: CargoDto; pkg: PackageDto }[] {
+function assignedRows(
+  cargo: CargoDto[],
+  assignedPackageIds: string[],
+): { cargo: CargoDto; pkg: PackageDto }[] {
   const rows: { cargo: CargoDto; pkg: PackageDto }[] = [];
   for (const c of cargo) {
     for (const pkg of c.packages) {
@@ -34,7 +37,13 @@ function assignedRows(cargo: CargoDto[], assignedPackageIds: string[]): { cargo:
   return rows;
 }
 
-export function PreviewRfqDialog({ open, onOpenChange, leg, points, cargo }: PreviewRfqDialogProps) {
+export function PreviewRfqDialog({
+  open,
+  onOpenChange,
+  leg,
+  points,
+  cargo,
+}: PreviewRfqDialogProps) {
   const rows = assignedRows(cargo, leg.assignedPackageIds);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -63,33 +72,43 @@ export function PreviewRfqDialog({ open, onOpenChange, leg, points, cargo }: Pre
                 </tr>
               </thead>
               <tbody>
-                {rows.length ? rows.map(({ cargo: c, pkg }) => (
-                  <tr key={pkg.id} className="border-t border-border">
-                    <td className="px-3 py-2 font-mono">{pkg.packageNo}</td>
-                    <td className="px-3 py-2">{packageTypeLabel(pkg.packageType)}</td>
-                    <td className="px-3 py-2 font-mono tabular-nums">
-                      {fmtNum(fromCanonicalDim(Number(pkg.dimL), c.dimUnit), 0)}{" "}
-                      <span className="text-xs text-muted-foreground">{c.dimUnit}</span>
+                {rows.length ? (
+                  rows.map(({ cargo: c, pkg }) => (
+                    <tr key={pkg.id} className="border-t border-border">
+                      <td className="px-3 py-2 font-mono">{pkg.packageNo}</td>
+                      <td className="px-3 py-2">{packageTypeLabel(pkg.packageType)}</td>
+                      <td className="px-3 py-2 font-mono tabular-nums">
+                        {fmtNum(fromCanonicalDim(Number(pkg.dimL), c.dimUnit), 0)}{" "}
+                        <span className="text-xs text-muted-foreground">{c.dimUnit}</span>
+                      </td>
+                      <td className="px-3 py-2 font-mono tabular-nums">
+                        {fmtNum(fromCanonicalDim(Number(pkg.dimW), c.dimUnit), 0)}{" "}
+                        <span className="text-xs text-muted-foreground">{c.dimUnit}</span>
+                      </td>
+                      <td className="px-3 py-2 font-mono tabular-nums">
+                        {fmtNum(fromCanonicalDim(Number(pkg.dimH), c.dimUnit), 0)}{" "}
+                        <span className="text-xs text-muted-foreground">{c.dimUnit}</span>
+                      </td>
+                      <td className="px-3 py-2 font-mono tabular-nums">
+                        {fmtNum(Number(pkg.grossWt))} kg
+                      </td>
+                      <td className="px-3 py-2 font-mono tabular-nums">
+                        {pkg.netWt !== null ? `${fmtNum(Number(pkg.netWt))} kg` : "—"}
+                      </td>
+                      <td className="px-3 py-2 font-mono tabular-nums">
+                        {pkg.volumeCbm !== null ? fmtNum(Number(pkg.volumeCbm), 4) : "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <ReferenceTagIcons tags={pkg.effectiveTags} />
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+                      No cargo assigned to this leg.
                     </td>
-                    <td className="px-3 py-2 font-mono tabular-nums">
-                      {fmtNum(fromCanonicalDim(Number(pkg.dimW), c.dimUnit), 0)}{" "}
-                      <span className="text-xs text-muted-foreground">{c.dimUnit}</span>
-                    </td>
-                    <td className="px-3 py-2 font-mono tabular-nums">
-                      {fmtNum(fromCanonicalDim(Number(pkg.dimH), c.dimUnit), 0)}{" "}
-                      <span className="text-xs text-muted-foreground">{c.dimUnit}</span>
-                    </td>
-                    <td className="px-3 py-2 font-mono tabular-nums">{fmtNum(Number(pkg.grossWt))} kg</td>
-                    <td className="px-3 py-2 font-mono tabular-nums">
-                      {pkg.netWt !== null ? `${fmtNum(Number(pkg.netWt))} kg` : "—"}
-                    </td>
-                    <td className="px-3 py-2 font-mono tabular-nums">
-                      {pkg.volumeCbm !== null ? fmtNum(Number(pkg.volumeCbm), 4) : "—"}
-                    </td>
-                    <td className="px-3 py-2"><ReferenceTagIcons tags={pkg.effectiveTags} /></td>
                   </tr>
-                )) : (
-                  <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">No cargo assigned to this leg.</td></tr>
                 )}
               </tbody>
             </table>

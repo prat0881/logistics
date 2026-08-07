@@ -62,17 +62,23 @@ describe(`${PREFIX} (e2e)`, () => {
     const rfqIds = rfqs.map((r) => r.id);
 
     if (rfqIds.length) {
-      await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+      await prisma.scheduledEvent.deleteMany({
+        where: { entityType: "RFQ", entityId: { in: rfqIds } },
+      });
     }
     if (queryIds.length) {
-      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: { in: queryIds } } });
+      await prisma.messageLog.deleteMany({
+        where: { entityType: "QUERY", entityId: { in: queryIds } },
+      });
     }
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -112,8 +118,12 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- fixtures: the "post-change-order" state (what Task 8's apply saga would have left) ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const { packageIds } = await createCargoWithPackages(prisma, {
       queryId: query.id,
       packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 250 }],
@@ -172,13 +182,20 @@ describe(`${PREFIX} (e2e)`, () => {
     // it could never even touch this row).
     const staleReminder = await prisma.scheduledEvent.create({
       data: {
-        entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.reminder", tier: "T24H",
+        entityType: "RFQ",
+        entityId: rfq.id,
+        eventKey: "rfq.reminder",
+        tier: "T24H",
         dueAt: new Date(oldDeadline.getTime() - 24 * 3600_000),
       },
     });
     const staleExpiry = await prisma.scheduledEvent.create({
       data: {
-        entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.expiry", tier: "DEADLINE", dueAt: oldDeadline,
+        entityType: "RFQ",
+        entityId: rfq.id,
+        eventKey: "rfq.expiry",
+        tier: "DEADLINE",
+        dueAt: oldDeadline,
         firedAt: oldDeadline,
       },
     });
@@ -201,7 +218,9 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(entry.accessToken).toBeUndefined();
 
     // --- assert: quote reactivated INVALID → RFQ_SENT, SAME row (no 2nd quote created) ---
-    const quotesForFf = await prisma.quote.findMany({ where: { legId: leg.id, freightForwarderId: ff.id } });
+    const quotesForFf = await prisma.quote.findMany({
+      where: { legId: leg.id, freightForwarderId: ff.id },
+    });
     expect(quotesForFf).toHaveLength(1);
     const quoteAfter = quotesForFf[0];
     expect(quoteAfter.id).toBe(quote.id);
@@ -247,7 +266,12 @@ describe(`${PREFIX} (e2e)`, () => {
     // --- assert: the FF was notified. The Rfq pre-existed (amend, not mint), so this reuses
     //     the SAME "RFQ Updated" path an ordinary amend uses (D3) — no new template needed. ---
     const msg = await prisma.messageLog.findFirst({
-      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.updated", toAddress: ff.email },
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.updated",
+        toAddress: ff.email,
+      },
     });
     expect(msg).not.toBeNull();
     expect(msg?.subject).toContain(rfq.rfqNumber);
@@ -256,9 +280,15 @@ describe(`${PREFIX} (e2e)`, () => {
   it("a SELECT (fresh) quote still distributes normally (unaffected by the reactivation path)", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-FRESH`, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-FRESH`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const { packageIds } = await createCargoWithPackages(prisma, {
       queryId: query.id,
       packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
@@ -293,7 +323,9 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(res.body.rfqs).toHaveLength(1);
     expect(res.body.rfqs[0].minted).toBe(true); // brand-new FF on this query → mints
 
-    const quote = await prisma.quote.findFirst({ where: { legId: leg.id, freightForwarderId: ff.id } });
+    const quote = await prisma.quote.findFirst({
+      where: { legId: leg.id, freightForwarderId: ff.id },
+    });
     expect(quote?.status).toBe("RFQ_SENT");
     expect(quote?.manifestSnapshot).toMatchObject({ legId: leg.id, mode: "AIR" });
   });
@@ -301,9 +333,15 @@ describe(`${PREFIX} (e2e)`, () => {
   it("distribute-all reactivates a reopened INVALID-only leg instead of skipping it as already-distributed", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-ALL`, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-ALL`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const { packageIds } = await createCargoWithPackages(prisma, {
       queryId: query.id,
       packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 42 }],
@@ -357,7 +395,9 @@ describe(`${PREFIX} (e2e)`, () => {
       .expect(201);
 
     // NOT skipped — actually distributed
-    expect(res.body.skipped).not.toEqual(expect.arrayContaining([expect.objectContaining({ legId: leg.id })]));
+    expect(res.body.skipped).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ legId: leg.id })]),
+    );
     expect(res.body.distributedLegIds).toContain(leg.id);
 
     const quoteAfter = await prisma.quote.findUnique({ where: { id: quote.id } });

@@ -7,17 +7,33 @@ import { ChargedWeightGrid } from "./ChargedWeightGrid";
 
 const cargo: ManifestSnapshotCargo[] = [
   {
-    packageId: "pk1", packageNo: "PK-1", packageType: "CRATE", packageCount: 1,
-    dimL: "100", dimW: "100", dimH: "100", netWt: "1400", grossWt: "1500", volumeCbm: "2.5", tags: [],
+    packageId: "pk1",
+    packageNo: "PK-1",
+    packageType: "CRATE",
+    packageCount: 1,
+    dimL: "100",
+    dimW: "100",
+    dimH: "100",
+    netWt: "1400",
+    grossWt: "1500",
+    volumeCbm: "2.5",
+    tags: [],
   },
 ];
 
 const defaultDraft: QuoteDraft = {
-  legId: "L1", mode: "AIR", currency: "USD", quoteValidityUntil: null,
+  legId: "L1",
+  mode: "AIR",
+  currency: "USD",
+  quoteValidityUntil: null,
   cargo: [{ packageId: "pk1", grossWtKg: 1500, cbm: 2.5, chargedWeightKg: null }],
-  charges: [], trucking: [], seaRates: [], warehouse: [],
+  charges: [],
+  trucking: [],
+  seaRates: [],
+  warehouse: [],
   transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
-  dgSurchargeNote: null, termsConditions: null,
+  dgSurchargeNote: null,
+  termsConditions: null,
 };
 
 function CargoDebug({ control }: { control: Control<QuoteDraft> }) {

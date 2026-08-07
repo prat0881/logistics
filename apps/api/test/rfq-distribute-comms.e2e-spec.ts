@@ -24,7 +24,11 @@ describe(`${PREFIX} (e2e)`, () => {
   const cookie = (role: Role) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: `u-${role}`, role, tenantId: null })}`;
 
-  const mkFf = (code: string, countries: string[] = ["AE"], modes: ("AIR" | "SEA" | "ROAD")[] = ["AIR"]) =>
+  const mkFf = (
+    code: string,
+    countries: string[] = ["AE"],
+    modes: ("AIR" | "SEA" | "ROAD")[] = ["AIR"],
+  ) =>
     prisma.freightForwarder.create({
       data: {
         freightForwarderCode: code,
@@ -52,17 +56,23 @@ describe(`${PREFIX} (e2e)`, () => {
     const rfqIds = rfqs.map((r) => r.id);
 
     if (rfqIds.length) {
-      await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+      await prisma.scheduledEvent.deleteMany({
+        where: { entityType: "RFQ", entityId: { in: rfqIds } },
+      });
     }
     if (queryIds.length) {
-      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: { in: queryIds } } });
+      await prisma.messageLog.deleteMany({
+        where: { entityType: "QUERY", entityId: { in: queryIds } },
+      });
     }
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -127,7 +137,9 @@ describe(`${PREFIX} (e2e)`, () => {
       .send({})
       .expect(201);
 
-    const rfq = await prisma.rfq.findFirst({ where: { queryId: query.id, freightForwarderId: ff.id } });
+    const rfq = await prisma.rfq.findFirst({
+      where: { queryId: query.id, freightForwarderId: ff.id },
+    });
     expect(rfq).not.toBeNull();
 
     const reminders = await prisma.scheduledEvent.findMany({
@@ -152,7 +164,9 @@ describe(`${PREFIX} (e2e)`, () => {
   it("amend: reuses the same Rfq (no duplicate reminders) and logs an updated email, not a 2nd invitation", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-AMD`, incoterms: "FOB" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-AMD`, incoterms: "FOB" },
+    });
     const ff = await mkFf(`FF-${PREFIX}-AMD`, ["CN", "AE"], ["AIR"]);
     const legA = await mkLeg(query.id, "L-AMD-A", "PO-AMD-A");
     const legB = await mkLeg(query.id, "L-AMD-B", "PO-AMD-B");
@@ -168,7 +182,9 @@ describe(`${PREFIX} (e2e)`, () => {
       .send({})
       .expect(201);
 
-    const rfq = await prisma.rfq.findFirst({ where: { queryId: query.id, freightForwarderId: ff.id } });
+    const rfq = await prisma.rfq.findFirst({
+      where: { queryId: query.id, freightForwarderId: ff.id },
+    });
     const remindersAfterMint = await prisma.scheduledEvent.count({
       where: { entityType: "RFQ", entityId: rfq!.id, eventKey: "rfq.reminder" },
     });

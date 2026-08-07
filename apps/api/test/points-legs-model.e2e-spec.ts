@@ -22,7 +22,9 @@ describe("Point/Leg/LegPackage model (e2e)", () => {
   });
 
   async function makeQuery() {
-    return prisma.query.create({ data: { queryCode: `${PFX}${Date.now()}`, shipmentDescription: `${PFX}q` } });
+    return prisma.query.create({
+      data: { queryCode: `${PFX}${Date.now()}`, shipmentDescription: `${PFX}q` },
+    });
   }
 
   // A Package always needs a parent Cargo grouping row — built directly via Prisma (not
@@ -31,7 +33,17 @@ describe("Point/Leg/LegPackage model (e2e)", () => {
   async function makePackage(queryId: string) {
     const cargo = await prisma.cargo.create({ data: { queryId, rowIndex: 0, poReference: "PO" } });
     return prisma.package.create({
-      data: { queryId, cargoId: cargo.id, rowIndex: 1, packageNo: "P-1", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 },
+      data: {
+        queryId,
+        cargoId: cargo.id,
+        rowIndex: 1,
+        packageNo: "P-1",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      },
     });
   }
 
@@ -41,7 +53,13 @@ describe("Point/Leg/LegPackage model (e2e)", () => {
     const de = await prisma.point.create({ data: { queryId: q.id, type: "DELIVERY", name: "DE" } });
     const pkg = await makePackage(q.id);
     const leg = await prisma.leg.create({
-      data: { queryId: q.id, legCode: "L1", originPointId: pu.id, destinationPointId: de.id, mode: "ROAD" },
+      data: {
+        queryId: q.id,
+        legCode: "L1",
+        originPointId: pu.id,
+        destinationPointId: de.id,
+        mode: "ROAD",
+      },
     });
     await prisma.legPackage.create({ data: { legId: leg.id, packageId: pkg.id } });
 
@@ -57,12 +75,16 @@ describe("Point/Leg/LegPackage model (e2e)", () => {
   it("enforces unique legCode per query and unique (legId, packageId)", async () => {
     const q = await makeQuery();
     await prisma.leg.create({ data: { queryId: q.id, legCode: "L1", mode: "ROAD" } });
-    await expect(prisma.leg.create({ data: { queryId: q.id, legCode: "L1", mode: "SEA" } })).rejects.toThrow();
+    await expect(
+      prisma.leg.create({ data: { queryId: q.id, legCode: "L1", mode: "SEA" } }),
+    ).rejects.toThrow();
 
     const pkg = await makePackage(q.id);
     const leg = await prisma.leg.create({ data: { queryId: q.id, legCode: "L2", mode: "ROAD" } });
     await prisma.legPackage.create({ data: { legId: leg.id, packageId: pkg.id } });
-    await expect(prisma.legPackage.create({ data: { legId: leg.id, packageId: pkg.id } })).rejects.toThrow();
+    await expect(
+      prisma.legPackage.create({ data: { legId: leg.id, packageId: pkg.id } }),
+    ).rejects.toThrow();
   });
 
   it("nulls a leg endpoint when its point is deleted (SetNull)", async () => {
@@ -70,7 +92,13 @@ describe("Point/Leg/LegPackage model (e2e)", () => {
     const pu = await prisma.point.create({ data: { queryId: q.id, type: "PICKUP", name: "PU" } });
     const de = await prisma.point.create({ data: { queryId: q.id, type: "DELIVERY", name: "DE" } });
     const leg = await prisma.leg.create({
-      data: { queryId: q.id, legCode: "L1", originPointId: pu.id, destinationPointId: de.id, mode: "ROAD" },
+      data: {
+        queryId: q.id,
+        legCode: "L1",
+        originPointId: pu.id,
+        destinationPointId: de.id,
+        mode: "ROAD",
+      },
     });
     await prisma.point.delete({ where: { id: pu.id } });
     const reloaded = await prisma.leg.findUnique({ where: { id: leg.id } });

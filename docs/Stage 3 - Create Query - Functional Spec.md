@@ -1,4 +1,5 @@
 # YankAlfa Logistics — Stage 3: Create Query
+
 ## Functional Specification (v2)
 
 > **Status:** Draft for review · **Date:** 15 July 2026
@@ -18,26 +19,27 @@ The **leg** is the central concept: a leg is one biddable transport segment, and
 
 These decisions shape this spec and differ from the original PRD:
 
-| # | Decision | Effect |
-|---|---|---|
-| D1 | **Manual, plug-n-play leg creation.** The Leg Generation Matrix, Multimodal Combination, and Service Type are **removed**. | The executive composes legs by hand; no auto-generated structure. |
-| D2 | **Points (locations) are first-class, reusable objects.** | A leg selects an existing point or creates a new one; route connectivity is by shared-point reference, not text matching. |
-| D3 | **Mode is a per-leg property.** Shipment-level "Freight Mode" is removed as an input. | Each leg carries its own mode (Road/Air/Sea). A read-only "Modes" summary is derived from the legs for lists/dashboards. |
-| D4 | **Freight Density and Chargeable Weight live at cargo level and are deferred to Stage 4** (FF sets each row's density; chargeable weight is calculated then — one value per row). | In Stage 3 both are empty/read-only. The leg carries the full cargo manifest + roll-ups (packages, CBM, gross, net) and a **Total Chargeable Weight** (Σ of its rows' chargeable weights, filled in Stage 4). **No density and no DG at leg level.** **Stage-4 display (post-testing fixes R1):** the per-leg net-weight roll-up (`totalNetWt`) is hidden in the workspace leg panel when its value is 0; it is shown only when a genuine positive value is present. Display-only; no model change. |
-| D5 | **Cargo rows are atomic** — each row travels a **single unbroken chain** with one start point and one end point (no forking/splitting a row across destinations). | Each cargo row's path is a simple chain of legs; start may be any point type except a Delivery, end any type (see R2, §10.2). |
-| D6 | **Divergent routing is allowed** — multiple hubs permitted; the old "single common hub" rule is dropped. | The hub effective-date (MAX) rule applies at every hub. |
-| D7 | **Cargo is attached to a leg by explicit selection** — when building a leg, the executive ticks which cargo rows ride it. | Continuity validation confirms the ticked legs actually form a row's single continuous chain (start → end). |
-| D8 | **Legs are saved individually** (leg-wise), with a stable ID from creation; partial/draft legs are allowed. | Enables per-leg validation, per-leg status, and stable downstream references. |
-| D9 | **Change handling is query-wide and impact-aware** (not leg-only). | Any field can be changed at any time; the system checks impact and either applies freely or runs a change-order (see §11). |
-| D10 | **Cargo tracking model defined now; tracking UI deferred to Stage 8–9.** | Legs carry an execution status; a cargo row's live position is derived from its leg chain. |
-| D11 | **UI is a stepped wizard** (not a single sticky form). | `Cancel · Back · Save · Next` per step; `Create Query` on the final step. |
-| D12 | Emails (follow-up, acknowledgement) are **composed & logged, not sent** in this phase. | Templates render and are recorded; no live mail transmission. |
+| #   | Decision                                                                                                                                                                          | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | **Manual, plug-n-play leg creation.** The Leg Generation Matrix, Multimodal Combination, and Service Type are **removed**.                                                        | The executive composes legs by hand; no auto-generated structure.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| D2  | **Points (locations) are first-class, reusable objects.**                                                                                                                         | A leg selects an existing point or creates a new one; route connectivity is by shared-point reference, not text matching.                                                                                                                                                                                                                                                                                                                                                                           |
+| D3  | **Mode is a per-leg property.** Shipment-level "Freight Mode" is removed as an input.                                                                                             | Each leg carries its own mode (Road/Air/Sea). A read-only "Modes" summary is derived from the legs for lists/dashboards.                                                                                                                                                                                                                                                                                                                                                                            |
+| D4  | **Freight Density and Chargeable Weight live at cargo level and are deferred to Stage 4** (FF sets each row's density; chargeable weight is calculated then — one value per row). | In Stage 3 both are empty/read-only. The leg carries the full cargo manifest + roll-ups (packages, CBM, gross, net) and a **Total Chargeable Weight** (Σ of its rows' chargeable weights, filled in Stage 4). **No density and no DG at leg level.** **Stage-4 display (post-testing fixes R1):** the per-leg net-weight roll-up (`totalNetWt`) is hidden in the workspace leg panel when its value is 0; it is shown only when a genuine positive value is present. Display-only; no model change. |
+| D5  | **Cargo rows are atomic** — each row travels a **single unbroken chain** with one start point and one end point (no forking/splitting a row across destinations).                 | Each cargo row's path is a simple chain of legs; start may be any point type except a Delivery, end any type (see R2, §10.2).                                                                                                                                                                                                                                                                                                                                                                       |
+| D6  | **Divergent routing is allowed** — multiple hubs permitted; the old "single common hub" rule is dropped.                                                                          | The hub effective-date (MAX) rule applies at every hub.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| D7  | **Cargo is attached to a leg by explicit selection** — when building a leg, the executive ticks which cargo rows ride it.                                                         | Continuity validation confirms the ticked legs actually form a row's single continuous chain (start → end).                                                                                                                                                                                                                                                                                                                                                                                         |
+| D8  | **Legs are saved individually** (leg-wise), with a stable ID from creation; partial/draft legs are allowed.                                                                       | Enables per-leg validation, per-leg status, and stable downstream references.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| D9  | **Change handling is query-wide and impact-aware** (not leg-only).                                                                                                                | Any field can be changed at any time; the system checks impact and either applies freely or runs a change-order (see §11).                                                                                                                                                                                                                                                                                                                                                                          |
+| D10 | **Cargo tracking model defined now; tracking UI deferred to Stage 8–9.**                                                                                                          | Legs carry an execution status; a cargo row's live position is derived from its leg chain.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| D11 | **UI is a stepped wizard** (not a single sticky form).                                                                                                                            | `Cancel · Back · Save · Next` per step; `Create Query` on the final step.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| D12 | Emails (follow-up, acknowledgement) are **composed & logged, not sent** in this phase.                                                                                            | Templates render and are recorded; no live mail transmission.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ---
 
 ## 3. Scope
 
 **In scope (this build):**
+
 - Manual query creation via the wizard (all sections below).
 - Client Master and Vessel Master (the lookup sources for Section 1).
 - The Query List (All Records) landing page — for manually created queries.
@@ -49,6 +51,7 @@ These decisions shape this spec and differ from the original PRD:
 - The **leg execution-status field and derived cargo-position logic** (model only).
 
 **Out of scope (this build / this phase):**
+
 - Stage 2 email extraction & AI parsing (all fields are **manual entry** here).
 - Live outbound email transmission (compose & log only).
 - The **cargo tracking screen** (deferred to Stage 8–9; model is defined here).
@@ -62,11 +65,11 @@ These decisions shape this spec and differ from the original PRD:
 
 ## 4. User Roles
 
-| Role | Functional responsibilities in Stage 3 |
-|---|---|
-| **Logistics Executive** | Creates and edits queries; builds legs; manages cargo, addresses, notes; triggers follow-up/acknowledgement emails; runs Create Query. |
-| **Logistics Manager** | All Executive abilities; receives 2-hour escalation notifications; oversight/visibility across queries. |
-| **Administrator** | All abilities; receives 6-hour escalation notifications; may edit protected fields (e.g., backdated Query Date); maintains reference/config data (density factors, master data governance). |
+| Role                    | Functional responsibilities in Stage 3                                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Logistics Executive** | Creates and edits queries; builds legs; manages cargo, addresses, notes; triggers follow-up/acknowledgement emails; runs Create Query.                                                      |
+| **Logistics Manager**   | All Executive abilities; receives 2-hour escalation notifications; oversight/visibility across queries.                                                                                     |
+| **Administrator**       | All abilities; receives 6-hour escalation notifications; may edit protected fields (e.g., backdated Query Date); maintains reference/config data (density factors, master data governance). |
 
 Permission notes referenced elsewhere: only **authorised users** (Admin) may backdate the Query Date; reference data (freight density factors, checklist definition) is Admin-maintained.
 
@@ -98,6 +101,7 @@ Create Query Wizard (stepped):
 ```
 
 **Wizard behaviour:**
+
 - **Save** persists current progress as a **Draft**. On the **first Save**, the system creates the record and mints the **Query ID**; the record then appears in the Query List. Save may be clicked from any step and does not require completeness.
 - **Next / Back** move between steps. A **step indicator (stepper)** is shown; once the record exists (Draft), the user may also jump directly to any step.
 - **Cancel** discards unsaved changes since the last Save. On a brand-new query never saved, Cancel clears everything and returns to the Query List. On an existing record, Cancel reverts to the last saved state.
@@ -112,6 +116,7 @@ Create Query Wizard (stepped):
 The landing page after login. Lists every query the user is entitled to see; the entry point for creating and opening queries.
 
 ### 6.1 Page elements
+
 - **[ + Create Query ]** button — top of page; opens a blank wizard.
 - **Search** — free-text across Query ID, Customer Name, Contact Person, Shipment Description.
 - **Filters** — Status, Priority, Assigned User, Freight Mode (derived), Date range (Query Date / Last Updated), Country (origin/destination).
@@ -120,21 +125,21 @@ The landing page after login. Lists every query the user is entitled to see; the
 
 ### 6.2 Columns
 
-| Column | Description |
-|---|---|
-| Query ID | `YAL[YY]-[NNNN]` — clickable. |
-| Query Date | Creation timestamp (DD-MM-YYYY HH:mm). |
-| Customer Name | From the linked client. |
-| Contact Person | Primary POC. |
-| Shipment Description | Short text from Shipment Details. |
-| Freight Mode | **Derived** from legs (distinct modes, e.g. "Road + Sea"). Blank until legs exist. |
-| Origin | Derived — pickup point(s) location. |
-| Destination | Derived — delivery point(s) location. |
-| Response Deadline | Target date for client response. |
-| Priority | Low / Medium / High / Urgent. |
-| Status | Lifecycle status (§9). |
-| Assigned User | Executive owning the query. |
-| Last Updated | Most recent save timestamp. |
+| Column               | Description                                                                        |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| Query ID             | `YAL[YY]-[NNNN]` — clickable.                                                      |
+| Query Date           | Creation timestamp (DD-MM-YYYY HH:mm).                                             |
+| Customer Name        | From the linked client.                                                            |
+| Contact Person       | Primary POC.                                                                       |
+| Shipment Description | Short text from Shipment Details.                                                  |
+| Freight Mode         | **Derived** from legs (distinct modes, e.g. "Road + Sea"). Blank until legs exist. |
+| Origin               | Derived — pickup point(s) location.                                                |
+| Destination          | Derived — delivery point(s) location.                                              |
+| Response Deadline    | Target date for client response.                                                   |
+| Priority             | Low / Medium / High / Urgent.                                                      |
+| Status               | Lifecycle status (§9).                                                             |
+| Assigned User        | Executive owning the query.                                                        |
+| Last Updated         | Most recent save timestamp.                                                        |
 
 ---
 
@@ -144,24 +149,24 @@ The landing page after login. Lists every query the user is entitled to see; the
 
 Primary business reference for the query. All values are **manual entry** in this build (no email auto-population). Client/contact fields link to **Client Master**; vessel fields link to **Vessel Master**. Editing a value here never changes the master record.
 
-| Field | Type | Mandatory | Read-only | Rules / Notes |
-|---|---|---|---|---|
-| Query ID | Text | Auto | Yes | System-generated on first Save. Format `YAL[YY]-[NNNN]` (YY = 2-digit year, NNNN = 4-digit zero-padded, resets yearly). Immutable. |
-| Query Date | DateTime | Auto | Yes* | Set at creation. Format DD-MM-YYYY HH:mm. *Editable only by Administrator (backdated entries). |
-| Priority | Dropdown | Optional | No | Low / Medium / High / Urgent. Default **Medium** (assumption — confirm). Also editable from the persistent header after creation. |
-| Response Deadline | Date | Optional | No | Target date for client quotation/acknowledgement. Past dates blocked. Optional remarks field (e.g. "Quote within 24 hrs"). |
-| Company / Client Name | Lookup (Client Master) | **Mandatory** | No | Autocomplete; prevents duplicates. No inline create in this build (v2). |
-| Contact Person (POC) | Lookup (client's contacts) | **Mandatory** | No | Populated from the selected client's contacts; editable at query level. |
-| Designation | Text | Optional | No | Contact's role/title; may prefill from contact; does not update master. |
-| Email Address | Email | **Mandatory** | No | Regex validation. |
-| Phone / WhatsApp | Phone (country code) | **Mandatory** | No | E.164 format; country-code selector; WhatsApp-enabled flag. |
-| Fax Number | Text | Optional | No | International format. |
-| Vessel Name | Lookup (Vessel Master) / Text | Optional | No | Autocomplete; standardised vessel identity. |
-| IMO Number | Numeric | Optional | No | 7-digit validation; duplicate cross-check. |
-| ETA | DateTime | Optional | No | Must be earlier than ETB. |
-| ETB | DateTime | Optional | No | After ETA, before ETD. |
-| ETD | DateTime | Optional | No | After ETB. |
-| Port of Call | Text / Lookup | Optional | No | Intermediate stop where the vessel loads/unloads. |
+| Field                 | Type                          | Mandatory     | Read-only | Rules / Notes                                                                                                                      |
+| --------------------- | ----------------------------- | ------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Query ID              | Text                          | Auto          | Yes       | System-generated on first Save. Format `YAL[YY]-[NNNN]` (YY = 2-digit year, NNNN = 4-digit zero-padded, resets yearly). Immutable. |
+| Query Date            | DateTime                      | Auto          | Yes*      | Set at creation. Format DD-MM-YYYY HH:mm. *Editable only by Administrator (backdated entries).                                     |
+| Priority              | Dropdown                      | Optional      | No        | Low / Medium / High / Urgent. Default **Medium** (assumption — confirm). Also editable from the persistent header after creation.  |
+| Response Deadline     | Date                          | Optional      | No        | Target date for client quotation/acknowledgement. Past dates blocked. Optional remarks field (e.g. "Quote within 24 hrs").         |
+| Company / Client Name | Lookup (Client Master)        | **Mandatory** | No        | Autocomplete; prevents duplicates. No inline create in this build (v2).                                                            |
+| Contact Person (POC)  | Lookup (client's contacts)    | **Mandatory** | No        | Populated from the selected client's contacts; editable at query level.                                                            |
+| Designation           | Text                          | Optional      | No        | Contact's role/title; may prefill from contact; does not update master.                                                            |
+| Email Address         | Email                         | **Mandatory** | No        | Regex validation.                                                                                                                  |
+| Phone / WhatsApp      | Phone (country code)          | **Mandatory** | No        | E.164 format; country-code selector; WhatsApp-enabled flag.                                                                        |
+| Fax Number            | Text                          | Optional      | No        | International format.                                                                                                              |
+| Vessel Name           | Lookup (Vessel Master) / Text | Optional      | No        | Autocomplete; standardised vessel identity.                                                                                        |
+| IMO Number            | Numeric                       | Optional      | No        | 7-digit validation; duplicate cross-check.                                                                                         |
+| ETA                   | DateTime                      | Optional      | No        | Must be earlier than ETB.                                                                                                          |
+| ETB                   | DateTime                      | Optional      | No        | After ETA, before ETD.                                                                                                             |
+| ETD                   | DateTime                      | Optional      | No        | After ETB.                                                                                                                         |
+| Port of Call          | Text / Lookup                 | Optional      | No        | Intermediate stop where the vessel loads/unloads.                                                                                  |
 
 > **Round 3 rename (UI labels only):** the Step-1 form section previously labelled **"Delivery"** is now labelled **"Shipment Dates"**. The field previously labelled **"Ready Date"** is now labelled **"Target Pickup"** (internal field name `readyDate` and its DB column are **unchanged** — this is a display-label change only).
 
@@ -174,11 +179,11 @@ Primary business reference for the query. All values are **manual entry** in thi
 
 Foundational shipment parameters. **Simplified from the original PRD**: Freight Mode, Multimodal Combination, Service Type, and the Leg Generation Matrix are all removed (mode is now per-leg — D3).
 
-| Field | Type | Mandatory | Rules / Notes |
-|---|---|---|---|
-| Incoterms | Dropdown | **Mandatory** | One of EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU, DDP, **N/A**. Default **N/A** (a valid value; stored as `NA`, displayed "N/A"). Stored with the query. |
-| Shipment Description | Free text | Optional | Plain text, 200-char limit, HTML/script sanitised. |
-| DG Indicator | Checkbox | Optional | Shipment-level dangerous-goods flag. **Auto-set** when any package or item carries the **DG tag** (§7.3 — a package's *effective* tags are its own ∪ its items'; the union, not a per-row checkbox, now drives this); never auto-cleared once set; may also be set manually. When set, MSDS is expected per effectively-DG package. |
+| Field                | Type      | Mandatory     | Rules / Notes                                                                                                                                                                                                                                                                                                                       |
+| -------------------- | --------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Incoterms            | Dropdown  | **Mandatory** | One of EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU, DDP, **N/A**. Default **N/A** (a valid value; stored as `NA`, displayed "N/A"). Stored with the query.                                                                                                                                                                     |
+| Shipment Description | Free text | Optional      | Plain text, 200-char limit, HTML/script sanitised.                                                                                                                                                                                                                                                                                  |
+| DG Indicator         | Checkbox  | Optional      | Shipment-level dangerous-goods flag. **Auto-set** when any package or item carries the **DG tag** (§7.3 — a package's _effective_ tags are its own ∪ its items'; the union, not a per-row checkbox, now drives this); never auto-cleared once set; may also be set manually. When set, MSDS is expected per effectively-DG package. |
 
 ---
 
@@ -187,6 +192,7 @@ Foundational shipment parameters. **Simplified from the original PRD**: Freight 
 > **Re-modelled.** Cargo is now a **three-level hierarchy** — `Cargo → Package → Item` — entered through a nested popup, not an inline row grid. Full rationale/decisions in `docs/superpowers/specs/2026-08-05-stage3-cargo-packing-list-design.md` (cited below as C1–C14).
 
 Cargo is captured as **`Cargo → Package → Item`** (C1):
+
 - **Cargo** — a PO/reference **grouping** row (what the main table shows). Owns the entry-unit selectors for everything under it. Carries no dims/weight/DG of its own.
 - **Package** — the physical **freight unit** (Box, Pallet, Crate, …). This is the level every downstream stage (legs, RFQ, quotes) actually operates on, and the sole source of weight/volume (C2/C3).
 - **Item** — the commercial/customs line inside a package (product, qty, HS code). A package may hold many items (many HS codes) or none.
@@ -197,17 +203,17 @@ The system auto-computes each package's **Volume (CBM)**; **chargeable weight st
 
 One row per **Cargo**, aggregated over its packages:
 
-| Column | Mandatory | Notes |
-|---|---|---|
-| # | Auto | Sequential cargo order. |
-| PO / Reference | Optional | Falls back to **Label**, then `Row N`, when blank. |
-| Package Count | Auto | Derived: count of packages under this cargo. |
-| Contents | Auto | Product × Qty summary across every item in the cargo. |
-| Σ Gross | Auto | Derived: sum of package Gross Wt, shown in the cargo's Weight Unit. |
-| Σ Volume (CBM) | Auto | Derived: sum of package Volume (CBM), in m³. |
-| Tags | Auto | Derived: union of every package's *effective* tags (own ∪ its items'), incl. DG. |
-| Chargeable Wt | Auto | Always blank at Stage 3 (Stage-4 Freight Forwarder value). |
-| Actions | — | **Edit** / **Remove** — opens the nested popup below; Remove cascades to the cargo's packages and items. |
+| Column         | Mandatory | Notes                                                                                                    |
+| -------------- | --------- | -------------------------------------------------------------------------------------------------------- |
+| #              | Auto      | Sequential cargo order.                                                                                  |
+| PO / Reference | Optional  | Falls back to **Label**, then `Row N`, when blank.                                                       |
+| Package Count  | Auto      | Derived: count of packages under this cargo.                                                             |
+| Contents       | Auto      | Product × Qty summary across every item in the cargo.                                                    |
+| Σ Gross        | Auto      | Derived: sum of package Gross Wt, shown in the cargo's Weight Unit.                                      |
+| Σ Volume (CBM) | Auto      | Derived: sum of package Volume (CBM), in m³.                                                             |
+| Tags           | Auto      | Derived: union of every package's _effective_ tags (own ∪ its items'), incl. DG.                         |
+| Chargeable Wt  | Auto      | Always blank at Stage 3 (Stage-4 Freight Forwarder value).                                               |
+| Actions        | —         | **Edit** / **Remove** — opens the nested popup below; Remove cascades to the cargo's packages and items. |
 
 **Two-level expansion:** expanding a Cargo row reveals its **packages** (Package No, Type, L/W/H, Gross, Net, Volume, Tags, Contents); expanding a package reveals its **items** (SN, Product, Qty, UoM, HSN, Tags). No inline editing anywhere — entry and edits both go through the popup.
 
@@ -215,39 +221,39 @@ One row per **Cargo**, aggregated over its packages:
 
 **A · Cargo — the grouping**
 
-| Field | Type | Mandatory | Notes |
-|---|---|---|---|
-| PO / Reference | Text | Optional | The cargo's identity/label; one reference per grouping (no mixed references within a package, C11). |
-| Label | Text | Optional | Human label; used as the display-name fallback when PO/Reference is blank. |
-| Dimension Unit | Dropdown | Selected | CM / MM, default CM. Applies to **every package under this cargo** — entry/display only, storage is canonical cm (V-6). |
-| Weight Unit | Dropdown | Selected | **kg / tonne / g**, default kg. Applies to every package under this cargo — entry/display only, storage is canonical kg (V-6). |
+| Field          | Type     | Mandatory | Notes                                                                                                                          |
+| -------------- | -------- | --------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| PO / Reference | Text     | Optional  | The cargo's identity/label; one reference per grouping (no mixed references within a package, C11).                            |
+| Label          | Text     | Optional  | Human label; used as the display-name fallback when PO/Reference is blank.                                                     |
+| Dimension Unit | Dropdown | Selected  | CM / MM, default CM. Applies to **every package under this cargo** — entry/display only, storage is canonical cm (V-6).        |
+| Weight Unit    | Dropdown | Selected  | **kg / tonne / g**, default kg. Applies to every package under this cargo — entry/display only, storage is canonical kg (V-6). |
 
 **B · Package — the freight unit**
 
-| Field | Type | Mandatory | Notes |
-|---|---|---|---|
-| Package No | Text | **Mandatory** | Auto-numbered, editable; must be **unique within the query**, case-insensitive/trimmed (V-5). |
-| Package Type | Dropdown | **Mandatory** | Box / Pallet / Crate / Carton / Drum / Bundle. |
-| Dim L / W / H | Numeric ×3 | **Mandatory** | All three > 0 (V-1). Entered in the cargo's Dimension Unit; converted to canonical cm on save. |
-| Gross Wt | Numeric | **Mandatory** | > 0 (V-1). Entered in the cargo's Weight Unit; converted to canonical kg on save. Total incl. packaging. |
-| Net Wt | Numeric | Optional | Same entry unit as Gross Wt. Must be ≤ Gross Wt if provided (V-2). |
-| Volume (CBM) | Calculated | Auto | `Dim L × Dim W × Dim H / 1,000,000` from the package's canonical-cm dims — always m³. One package = one physical unit, so there is no ×Qty multiplier (C4) and no unit branching (storage is canonical). Read-only. |
-| Tags | Multi-badge | Optional | Heavy / Fragile / Non-Stackable / Out of Gauge Cargo / **Dangerous Goods (DG)** — DG is now a **tag**, not a separate checkbox (multiple allowed). A package's *effective* tags = its own ∪ its items' (union, derived on read); a tag set by a child item can't be unchecked at the package (V-7, UI-enforced). |
-| MSDS | File (PDF) | Conditional | Visible/required only when the package is **effectively DG** — its own DG tag, or any of its items' (F6). PDF only, magic-byte validated; shows filename with remove option. |
+| Field         | Type        | Mandatory     | Notes                                                                                                                                                                                                                                                                                                            |
+| ------------- | ----------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Package No    | Text        | **Mandatory** | Auto-numbered, editable; must be **unique within the query**, case-insensitive/trimmed (V-5).                                                                                                                                                                                                                    |
+| Package Type  | Dropdown    | **Mandatory** | Box / Pallet / Crate / Carton / Drum / Bundle.                                                                                                                                                                                                                                                                   |
+| Dim L / W / H | Numeric ×3  | **Mandatory** | All three > 0 (V-1). Entered in the cargo's Dimension Unit; converted to canonical cm on save.                                                                                                                                                                                                                   |
+| Gross Wt      | Numeric     | **Mandatory** | > 0 (V-1). Entered in the cargo's Weight Unit; converted to canonical kg on save. Total incl. packaging.                                                                                                                                                                                                         |
+| Net Wt        | Numeric     | Optional      | Same entry unit as Gross Wt. Must be ≤ Gross Wt if provided (V-2).                                                                                                                                                                                                                                               |
+| Volume (CBM)  | Calculated  | Auto          | `Dim L × Dim W × Dim H / 1,000,000` from the package's canonical-cm dims — always m³. One package = one physical unit, so there is no ×Qty multiplier (C4) and no unit branching (storage is canonical). Read-only.                                                                                              |
+| Tags          | Multi-badge | Optional      | Heavy / Fragile / Non-Stackable / Out of Gauge Cargo / **Dangerous Goods (DG)** — DG is now a **tag**, not a separate checkbox (multiple allowed). A package's _effective_ tags = its own ∪ its items' (union, derived on read); a tag set by a child item can't be unchecked at the package (V-7, UI-enforced). |
+| MSDS          | File (PDF)  | Conditional   | Visible/required only when the package is **effectively DG** — its own DG tag, or any of its items' (F6). PDF only, magic-byte validated; shows filename with remove option.                                                                                                                                     |
 
-*(A `packageCount` column exists in the data model, default 1 — reserved for a possible future "N identical packages" multiplier. Not calculated, not shown in this UI, C5.)*
+_(A `packageCount` column exists in the data model, default 1 — reserved for a possible future "N identical packages" multiplier. Not calculated, not shown in this UI, C5.)_
 
 **Add N copies:** on a saved package, clones it **2–50** times into discrete new package records, each auto-numbered with its own fresh Package No and a copy of its items (C4). There is no stored quantity multiplier — one record per physical package.
 
 **C · Item — commercial/customs line**
 
-| Field | Type | Mandatory | Notes |
-|---|---|---|---|
-| Product | Text | Optional | — |
-| Qty | Numeric | Optional | If entered, must be > 0; **UoM becomes mandatory** once Qty is present (V-4). |
-| UoM | Dropdown | Conditional | PC / Set / Box / Kg / M / Roll — required only when Qty is entered (V-4). |
-| HS / HSN Code | Text | Optional | Per item; captured for customs reference — no separate customs-form output is generated (C12). |
-| Tags | Multi-badge | Optional | Same tag set as Package, incl. DG. An item's DG tag makes its **parent package** effectively DG (triggers that package's MSDS requirement). |
+| Field         | Type        | Mandatory   | Notes                                                                                                                                       |
+| ------------- | ----------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Product       | Text        | Optional    | —                                                                                                                                           |
+| Qty           | Numeric     | Optional    | If entered, must be > 0; **UoM becomes mandatory** once Qty is present (V-4).                                                               |
+| UoM           | Dropdown    | Conditional | PC / Set / Box / Kg / M / Roll — required only when Qty is entered (V-4).                                                                   |
+| HS / HSN Code | Text        | Optional    | Per item; captured for customs reference — no separate customs-form output is generated (C12).                                              |
+| Tags          | Multi-badge | Optional    | Same tag set as Package, incl. DG. An item's DG tag makes its **parent package** effectively DG (triggers that package's MSDS requirement). |
 
 An item with **neither Product nor Qty is discarded on save** (V-4).
 
@@ -271,68 +277,68 @@ A point is created once and can be referenced as an endpoint by multiple legs (t
 
 **A · Pickup point**
 
-| Field | Type | Mandatory | Notes |
-|---|---|---|---|
-| Company Name | Text | **Mandatory** | — |
-| Street Address | Text | **Mandatory** | — |
-| City / Postal Code | Text | **Mandatory** | — |
-| Country | Dropdown | **Mandatory** | Drives FF filtering downstream. |
-| Contact Name | Text | **Mandatory** | — |
-| Contact Phone | Text | **Mandatory** | Format validated. |
-| Email | Text | **Mandatory** | — |
+| Field              | Type     | Mandatory     | Notes                           |
+| ------------------ | -------- | ------------- | ------------------------------- |
+| Company Name       | Text     | **Mandatory** | —                               |
+| Street Address     | Text     | **Mandatory** | —                               |
+| City / Postal Code | Text     | **Mandatory** | —                               |
+| Country            | Dropdown | **Mandatory** | Drives FF filtering downstream. |
+| Contact Name       | Text     | **Mandatory** | —                               |
+| Contact Phone      | Text     | **Mandatory** | Format validated.               |
+| Email              | Text     | **Mandatory** | —                               |
 
 **B · Delivery point** — same fields as Pickup; **Email is Optional**. Company Name blocking if blank at Create Query.
 
 **C · Warehouse point (optional staging)**
 
-| Field | Type | Mandatory | Notes |
-|---|---|---|---|
-| Company Name | Text | **Mandatory** | — |
-| Street Address | Text | **Mandatory** | — |
-| City / Postal Code | Text | **Mandatory** | — |
-| Country | Dropdown | **Mandatory** | — |
-| Warehouse Type | Dropdown | Optional | Consolidation / Cross-Dock / Temporary Storage / Other. |
-| Contact Name / Phone / Email | Text | Optional | — |
+| Field                        | Type     | Mandatory     | Notes                                                   |
+| ---------------------------- | -------- | ------------- | ------------------------------------------------------- |
+| Company Name                 | Text     | **Mandatory** | —                                                       |
+| Street Address               | Text     | **Mandatory** | —                                                       |
+| City / Postal Code           | Text     | **Mandatory** | —                                                       |
+| Country                      | Dropdown | **Mandatory** | —                                                       |
+| Warehouse Type               | Dropdown | Optional      | Consolidation / Cross-Dock / Temporary Storage / Other. |
+| Contact Name / Phone / Email | Text     | Optional      | —                                                       |
 
 **D · Airport point (hub)**
 
-| Field | Type | Mandatory | Notes |
-|---|---|---|---|
-| Airport Name | Text | **Mandatory** | — |
-| IATA Code | Text | **Mandatory** | 3-letter, validated. |
-| ICAO Code | Text | Optional | 4-letter, validated. |
-| Terminal / Address | Text | Optional | — |
-| City / Postal Code | Text | **Mandatory** | — |
-| Country | Dropdown | **Mandatory** | — |
-| Contact / Phone / Email | Text | Optional | — |
+| Field                   | Type     | Mandatory     | Notes                |
+| ----------------------- | -------- | ------------- | -------------------- |
+| Airport Name            | Text     | **Mandatory** | —                    |
+| IATA Code               | Text     | **Mandatory** | 3-letter, validated. |
+| ICAO Code               | Text     | Optional      | 4-letter, validated. |
+| Terminal / Address      | Text     | Optional      | —                    |
+| City / Postal Code      | Text     | **Mandatory** | —                    |
+| Country                 | Dropdown | **Mandatory** | —                    |
+| Contact / Phone / Email | Text     | Optional      | —                    |
 
 **E · Seaport point (hub)**
 
-| Field | Type | Mandatory | Notes |
-|---|---|---|---|
-| Port Name | Text | **Mandatory** | — |
-| UN/LOCODE | Text | **Mandatory** | 5-character, validated. |
-| Terminal / Berth | Text | Optional | — |
-| City / Postal Code | Text | **Mandatory** | — |
-| Country | Dropdown | **Mandatory** | — |
-| Contact / Phone / Email | Text | Optional | — |
+| Field                   | Type     | Mandatory     | Notes                   |
+| ----------------------- | -------- | ------------- | ----------------------- |
+| Port Name               | Text     | **Mandatory** | —                       |
+| UN/LOCODE               | Text     | **Mandatory** | 5-character, validated. |
+| Terminal / Berth        | Text     | Optional      | —                       |
+| City / Postal Code      | Text     | **Mandatory** | —                       |
+| Country                 | Dropdown | **Mandatory** | —                       |
+| Contact / Phone / Email | Text     | Optional      | —                       |
 
 #### 7.4.2 Leg specification
 
-| Field | Type | Mandatory | Notes |
-|---|---|---|---|
-| Leg ID | Text (auto) | Auto | Sequential, stable, never reused within a query. Persists across edits (downstream reference). |
-| Leg Name | Text | Optional | Free label (e.g. "Origin trucking"); may be blank. |
-| Origin Point | Point ref | **Mandatory** | Select an existing point or create a new one. |
-| Destination Point | Point ref | **Mandatory** | Select an existing point or create a new one. |
-| Mode | Dropdown | **Mandatory** | Road / Air / Sea. Determines valid endpoint types and the density factor for chargeable weight. |
-| Assigned Cargo | Multi-select | **Mandatory (≥1)** | Ticked from the full cargo list (D7). |
-| Ready Date | DateTime | **Mandatory** | Set per leg (operational plan), anchored to the **origin point's** timezone; **independent of the query Ready Date** — query and leg dates are decoupled (Round 2, §8.5). Ready ≤ Target. |
-| Target Delivery | DateTime | **Mandatory** | Set per leg, anchored to the **destination point's** timezone; **independent of the query Target Delivery** (decoupled, Round 2). A hub's effective ready date = MAX of feeding legs (§8.5, T3). |
-| Cargo Manifest | Reference | — | The **complete cargo object** for every attached row (all fields from §7.3). This is what the FF sees per leg in Stage 4. |
-| Total Packages / Total CBM / Total Gross Wt / Total Net Wt | Calculated | Auto | Leg-level roll-ups from the attached cargo (Stage 3). |
-| Total Chargeable Weight (T) | Read-only | — | Σ of the attached rows' cargo-level chargeable weights. **Empty in Stage 3**; populated in Stage 4 once FFs set density (§8.6). No Freight Density and no DG at leg level. |
-| Leg Status | Badge (auto) | Auto | Draft → Ready for RFQ (this build). Later: RFQ Sent → Quoted → Awarded → In transit → Delivered (§9, §12). |
+| Field                                                      | Type         | Mandatory          | Notes                                                                                                                                                                                            |
+| ---------------------------------------------------------- | ------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Leg ID                                                     | Text (auto)  | Auto               | Sequential, stable, never reused within a query. Persists across edits (downstream reference).                                                                                                   |
+| Leg Name                                                   | Text         | Optional           | Free label (e.g. "Origin trucking"); may be blank.                                                                                                                                               |
+| Origin Point                                               | Point ref    | **Mandatory**      | Select an existing point or create a new one.                                                                                                                                                    |
+| Destination Point                                          | Point ref    | **Mandatory**      | Select an existing point or create a new one.                                                                                                                                                    |
+| Mode                                                       | Dropdown     | **Mandatory**      | Road / Air / Sea. Determines valid endpoint types and the density factor for chargeable weight.                                                                                                  |
+| Assigned Cargo                                             | Multi-select | **Mandatory (≥1)** | Ticked from the full cargo list (D7).                                                                                                                                                            |
+| Ready Date                                                 | DateTime     | **Mandatory**      | Set per leg (operational plan), anchored to the **origin point's** timezone; **independent of the query Ready Date** — query and leg dates are decoupled (Round 2, §8.5). Ready ≤ Target.        |
+| Target Delivery                                            | DateTime     | **Mandatory**      | Set per leg, anchored to the **destination point's** timezone; **independent of the query Target Delivery** (decoupled, Round 2). A hub's effective ready date = MAX of feeding legs (§8.5, T3). |
+| Cargo Manifest                                             | Reference    | —                  | The **complete cargo object** for every attached row (all fields from §7.3). This is what the FF sees per leg in Stage 4.                                                                        |
+| Total Packages / Total CBM / Total Gross Wt / Total Net Wt | Calculated   | Auto               | Leg-level roll-ups from the attached cargo (Stage 3).                                                                                                                                            |
+| Total Chargeable Weight (T)                                | Read-only    | —                  | Σ of the attached rows' cargo-level chargeable weights. **Empty in Stage 3**; populated in Stage 4 once FFs set density (§8.6). No Freight Density and no DG at leg level.                       |
+| Leg Status                                                 | Badge (auto) | Auto               | Draft → Ready for RFQ (this build). Later: RFQ Sent → Quoted → Awarded → In transit → Delivered (§9, §12).                                                                                       |
 
 #### 7.4.3 Route builder behaviour
 
@@ -350,23 +356,23 @@ A point is created once and can be referenced as an endpoint by multiple legs (t
 
 Internal coordination layer — never exposed to client-facing views.
 
-| Field | Type | Mandatory | Notes |
-|---|---|---|---|
-| Internal Notes | Free-text area | Optional | Team observations/instructions. 500-char limit. Not client-facing. |
+| Field          | Type           | Mandatory | Notes                                                              |
+| -------------- | -------------- | --------- | ------------------------------------------------------------------ |
+| Internal Notes | Free-text area | Optional  | Team observations/instructions. 500-char limit. Not client-facing. |
 
 **Completeness checklist** — nine checkboxes, all start unchecked; all Optional. Any unchecked item contributes to an "incomplete" state and enables the follow-up trigger.
 
-| # | Checklist item | Notes |
-|---|---|---|
-| 1 | Weight confirmed | |
-| 2 | Dimensions confirmed | |
-| 3 | HS / HSN code received | |
-| 4 | DG / Non-DG confirmed | |
-| 5 | MSDS received | Applicable when DG indicator is set. |
-| 6 | Commercial invoice received | |
-| 7 | Packing list received | |
-| 8 | Pickup address confirmed | |
-| 9 | Delivery address confirmed | |
+| #   | Checklist item              | Notes                                |
+| --- | --------------------------- | ------------------------------------ |
+| 1   | Weight confirmed            |                                      |
+| 2   | Dimensions confirmed        |                                      |
+| 3   | HS / HSN code received      |                                      |
+| 4   | DG / Non-DG confirmed       |                                      |
+| 5   | MSDS received               | Applicable when DG indicator is set. |
+| 6   | Commercial invoice received |                                      |
+| 7   | Packing list received       |                                      |
+| 8   | Pickup address confirmed    |                                      |
+| 9   | Delivery address confirmed  |                                      |
 
 - **Send Follow-up Email** button — available here and in the action bar; enabled only if **at least one** item is unchecked. Clicking it compiles the unchecked items into the missing-fields list and **composes & logs** a follow-up email (no live send — D12). Auto-trigger on save is deferred to a future phase.
 
@@ -382,11 +388,13 @@ Internal coordination layer — never exposed to client-facing views.
 - **L6 · Divergent routing allowed (D6):** multiple pickups/hubs/deliveries are permitted; there is no single-common-hub requirement.
 
 ### 8.5 Leg dates & hub convergence
-- **Query dates and leg dates are decoupled** (Round 2 — T2 retired): the query-level **Ready Date / Target Delivery** are the *client-agreed window* (each in its own explicit timezone); a cargo row's **leg** dates are the *operational plan*. Every leg's Ready/Target is set independently by the executive — **not** inherited from the query.
+
+- **Query dates and leg dates are decoupled** (Round 2 — T2 retired): the query-level **Ready Date / Target Delivery** are the _client-agreed window_ (each in its own explicit timezone); a cargo row's **leg** dates are the _operational plan_. Every leg's Ready/Target is set independently by the executive — **not** inherited from the query.
 - **Ready ≤ Target** holds at both the query and the leg level, compared as real UTC instants (leg Ready anchors to the origin point's zone, leg Target to the destination's).
 - **Hub effective date (MAX):** where several legs feed one hub/point, the onward leg cannot depart before the **latest** arriving leg — the point's effective ready date = **MAX** of the feeding legs' Target Delivery dates. Applied at **every** hub (D6, rule T3).
 
 ### 8.6 Weights — cargo level vs leg level (D4)
+
 - **Cargo level:** each cargo row has a **Freight Density** and a **Chargeable Weight**, both **empty/read-only in Stage 3**. In Stage 4 the FF sets that row's density and the system computes chargeable weight = greater of (a) gross weight (t) and (b) volumetric weight = CBM × density (t). **One chargeable weight per cargo row.**
 - **Leg level:** the leg rolls up **Total Packages, Total CBM, Total Gross Weight, Total Net Weight** in **Stage 3**, and a **Total Chargeable Weight** = the sum of its attached rows' chargeable weights (**empty in Stage 3**, populated once Stage 4 fills the rows). **No Freight Density and no DG at leg level** — those are cargo-row attributes.
 - Industry default densities (Air ≈ 167, Sea ≈ 1,000, Road ≈ 333 kg/CBM) may **seed** the FF's per-row density field in Stage 4 but are **not applied in Stage 3**.
@@ -397,13 +405,13 @@ Internal coordination layer — never exposed to client-facing views.
 
 **Query statuses used in this build:**
 
-| Status | Meaning | Set by | Trigger |
-|---|---|---|---|
-| Draft | Record created; one or more mandatory fields incomplete. | System | First Save. |
-| Created | All mandatory fields complete and validated. | System | Successful Create Query. |
+| Status    | Meaning                                                  | Set by | Trigger                  |
+| --------- | -------------------------------------------------------- | ------ | ------------------------ |
+| Draft     | Record created; one or more mandatory fields incomplete. | System | First Save.              |
+| Created   | All mandatory fields complete and validated.             | System | Successful Create Query. |
 | RFQ Ready | Ready to distribute RFQ (terminal state for this build). | System | Successful Create Query. |
 
-*(Downstream statuses — RFQ Sent, Quoted, Awaiting Client Decision, Won/Lost, Closed — are defined at the module level and not set within this build.)*
+_(Downstream statuses — RFQ Sent, Quoted, Awaiting Client Decision, Won/Lost, Closed — are defined at the module level and not set within this build.)_
 
 ### 9.1 Query status vs leg status
 
@@ -411,33 +419,33 @@ Internal coordination layer — never exposed to client-facing views.
 
 **Rollup rule:** the query advances to a stage only when **all legs** have reached it (least-advanced gates), with partial progress shown (e.g. "2 of 3 legs quoted"). Client milestones are query-level events layered on top.
 
-| Query status | Derived when |
-|---|---|
-| Draft | Any mandatory field incomplete |
-| Created / RFQ Ready | All valid; **all** legs = Ready for RFQ |
-| RFQ Sent | RFQ distributed; **not all** legs quoted |
-| Quoted | **All** legs have quotes |
-| Awaiting Client Decision | Client quotation sent *(query-level event)* |
-| Won — PO Received / Lost | Client decision *(query-level event)* |
-| Closed | All legs delivered / query closed |
+| Query status             | Derived when                                |
+| ------------------------ | ------------------------------------------- |
+| Draft                    | Any mandatory field incomplete              |
+| Created / RFQ Ready      | All valid; **all** legs = Ready for RFQ     |
+| RFQ Sent                 | RFQ distributed; **not all** legs quoted    |
+| Quoted                   | **All** legs have quotes                    |
+| Awaiting Client Decision | Client quotation sent _(query-level event)_ |
+| Won — PO Received / Lost | Client decision _(query-level event)_       |
+| Closed                   | All legs delivered / query closed           |
 
-*(This build exercises Draft → Created → RFQ Ready at query level and Draft → Ready for RFQ at leg level; the rest is defined for later stages.)*
+_(This build exercises Draft → Created → RFQ Ready at query level and Draft → Ready for RFQ at leg level; the rest is defined for later stages.)_
 
 ### 9.2 Leg statuses & transitions
 
 **Leg statuses & transitions** (system-managed; not user-edited). This build owns **Draft ↔ Ready for RFQ**; the rest are defined here but driven by later stages.
 
-| Status | Meaning | Set by | Trigger | Stage |
-|---|---|---|---|---|
-| Draft | Leg created; incomplete or failing validation | System | Leg added / saved partial | 3 |
-| Ready for RFQ | Leg complete and valid | System | Leg passes validation / Create Query succeeds | 3 |
-| RFQ Sent | RFQ distributed to FFs for this leg | System | Executive distributes RFQ | 4 |
-| Partially Quoted | Some invited FFs have quoted | System | First quote received (window open) | 4 |
-| Fully Quoted | Quote window closed / all quoted | System | RFQ window closes | 4–5 |
-| Awarded | Best FF selected & awarded for the leg | User | Award on client PO | 5–8 |
-| In Transit | Execution started for the leg | System / FF | Pickup / departure milestone | 8–9 |
-| Delivered | Leg cargo delivered to its destination | System / FF | Delivery milestone | 9 |
-| Closed | Leg closed | System | Query closure | 9 |
+| Status           | Meaning                                       | Set by      | Trigger                                       | Stage |
+| ---------------- | --------------------------------------------- | ----------- | --------------------------------------------- | ----- |
+| Draft            | Leg created; incomplete or failing validation | System      | Leg added / saved partial                     | 3     |
+| Ready for RFQ    | Leg complete and valid                        | System      | Leg passes validation / Create Query succeeds | 3     |
+| RFQ Sent         | RFQ distributed to FFs for this leg           | System      | Executive distributes RFQ                     | 4     |
+| Partially Quoted | Some invited FFs have quoted                  | System      | First quote received (window open)            | 4     |
+| Fully Quoted     | Quote window closed / all quoted              | System      | RFQ window closes                             | 4–5   |
+| Awarded          | Best FF selected & awarded for the leg        | User        | Award on client PO                            | 5–8   |
+| In Transit       | Execution started for the leg                 | System / FF | Pickup / departure milestone                  | 8–9   |
+| Delivered        | Leg cargo delivered to its destination        | System / FF | Delivery milestone                            | 9     |
+| Closed           | Leg closed                                    | System      | Query closure                                 | 9     |
 
 **Reopen (reverse) transitions:** a change-order (§11) can move a leg from RFQ Sent / Partially Quoted / Fully Quoted / Awarded **back to Ready for RFQ** — invalidating the affected quotes and re-opening the leg for re-distribution.
 
@@ -445,32 +453,32 @@ Internal coordination layer — never exposed to client-facing views.
 
 ## 10. Validation Catalogue
 
-Severity: **Blocking** (prevents progression) or **Warning** (advisory). Trigger points: *save* (leg/field save), *create* (Create Query), *RFQ* (RFQ generation, later stage). During Draft, structural issues are shown as **warnings**; at **Create Query** they become **blocking**.
+Severity: **Blocking** (prevents progression) or **Warning** (advisory). Trigger points: _save_ (leg/field save), _create_ (Create Query), _RFQ_ (RFQ generation, later stage). During Draft, structural issues are shown as **warnings**; at **Create Query** they become **blocking**.
 
 > **Currency (kept in lockstep with the engine):** this catalogue is the source of truth for the rules; the shared `validateRoute(graph, phase)` engine (`packages/shared/src/route.ts`) and its tests (`route.test.ts`) implement exactly it. Recent business changes are folded in below — **R2** and **R5** relaxed and **T2** retired (Req & Issues rounds). On any conflict, spec + code win over older notes.
 
 ### 10.1 Field-level
 
-| # | Rule | Severity | Trigger |
-|---|---|---|---|
-| F1 | Query mandatory fields present (client, POC, email, phone, Target Pickup / `readyDate`, Target Delivery, Incoterms). PO / Reference is **not** in the mandatory set (Round 3 — now optional). | Blocking | create |
-| F2 | Email regex valid; phone E.164 valid; IMO 7-digit; IATA 3-char; ICAO 4-char; UN/LOCODE 5-char. | Blocking | save |
-| F3 | ETA < ETB < ETD (when provided). | Blocking | save |
-| F4 | Response Deadline not in the past. | Blocking | save |
-| F5 | Package: L/W/H and Gross Wt present and > 0; if Net Wt provided, Net ≤ Gross. Item: if Qty is entered, UoM is required; an item with neither Product nor Qty is discarded on save. `dimUnit`/`weightUnit` are recorded once per **Cargo** grouping (the entry unit for every package under it), not per package. PO / Reference (on the Cargo) is **not** required (Round 3 — optional). | Blocking (Net ≤ Gross = Warning inline) | save |
-| F6 | A **package** whose effective tags include DG (its own tag, or any of its items') requires an MSDS (PDF) file. | Blocking | create |
+| #   | Rule                                                                                                                                                                                                                                                                                                                                                                                     | Severity                                | Trigger |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ------- |
+| F1  | Query mandatory fields present (client, POC, email, phone, Target Pickup / `readyDate`, Target Delivery, Incoterms). PO / Reference is **not** in the mandatory set (Round 3 — now optional).                                                                                                                                                                                            | Blocking                                | create  |
+| F2  | Email regex valid; phone E.164 valid; IMO 7-digit; IATA 3-char; ICAO 4-char; UN/LOCODE 5-char.                                                                                                                                                                                                                                                                                           | Blocking                                | save    |
+| F3  | ETA < ETB < ETD (when provided).                                                                                                                                                                                                                                                                                                                                                         | Blocking                                | save    |
+| F4  | Response Deadline not in the past.                                                                                                                                                                                                                                                                                                                                                       | Blocking                                | save    |
+| F5  | Package: L/W/H and Gross Wt present and > 0; if Net Wt provided, Net ≤ Gross. Item: if Qty is entered, UoM is required; an item with neither Product nor Qty is discarded on save. `dimUnit`/`weightUnit` are recorded once per **Cargo** grouping (the entry unit for every package under it), not per package. PO / Reference (on the Cargo) is **not** required (Round 3 — optional). | Blocking (Net ≤ Gross = Warning inline) | save    |
+| F6  | A **package** whose effective tags include DG (its own tag, or any of its items') requires an MSDS (PDF) file.                                                                                                                                                                                                                                                                           | Blocking                                | create  |
 
 > **Note — datetime minute default (Round 3):** all datetime inputs across all screens (Step-1 Target Pickup / Target Delivery / ETA / ETB / ETD / Response Deadline; leg Ready Date / Target Delivery; ETA / ETB / ETD) **default the minute component to `:00`** when a fresh value is entered. The minute field remains fully editable — this is a soft default, not a lock.
 
 ### 10.2 Route — connectivity & continuity
 
-| # | Rule | Severity | Trigger |
-|---|---|---|---|
-| R1 | Each cargo row's assigned legs form an **unbroken chain** (each leg's destination = next leg's origin). | Blocking | create |
-| R2 | Each chain **starts at any point type _except_ a Delivery** (a Delivery is where cargo arrives, never where it begins) and may **end at any point type**. | Blocking | create |
-| R3 | **No orphans:** no leg without cargo, no cargo row without legs, no point unused by any leg. | Blocking | create |
-| R4 | **No cycles;** each cargo row's path is a **simple path** (no point revisited). | Blocking | create |
-| R5 | **Minimum route:** the query has **at least one saved leg**, and **every leg connects two _different_ points** (no self-loop). | Blocking | create |
+| #   | Rule                                                                                                                                                      | Severity | Trigger |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------- |
+| R1  | Each cargo row's assigned legs form an **unbroken chain** (each leg's destination = next leg's origin).                                                   | Blocking | create  |
+| R2  | Each chain **starts at any point type _except_ a Delivery** (a Delivery is where cargo arrives, never where it begins) and may **end at any point type**. | Blocking | create  |
+| R3  | **No orphans:** no leg without cargo, no cargo row without legs, no point unused by any leg.                                                              | Blocking | create  |
+| R4  | **No cycles;** each cargo row's path is a **simple path** (no point revisited).                                                                           | Blocking | create  |
+| R5  | **Minimum route:** the query has **at least one saved leg**, and **every leg connects two _different_ points** (no self-loop).                            | Blocking | create  |
 
 > **On parallel legs:** continuity (R1) is checked **per cargo row**, along that row's own simple path — not as one global sequence over all legs. The route is a **graph**: a point can have several incoming and several outgoing legs (e.g. two pickups feeding one hub, or one hub fanning to two deliveries). Parallel legs belong to **different cargo rows** and meet at shared points; each row's own chain still reads destination → next origin.
 >
@@ -478,46 +486,46 @@ Severity: **Blocking** (prevents progression) or **Warning** (advisory). Trigger
 
 ### 10.3 Route — cargo mass-balance
 
-| # | Rule | Severity | Trigger |
-|---|---|---|---|
-| R6 | For each cargo row, at every intermediate point, what **enters** must **leave** — nothing stuck, nothing appearing from nowhere. | Blocking | create |
+| #   | Rule                                                                                                                             | Severity | Trigger |
+| --- | -------------------------------------------------------------------------------------------------------------------------------- | -------- | ------- |
+| R6  | For each cargo row, at every intermediate point, what **enters** must **leave** — nothing stuck, nothing appearing from nowhere. | Blocking | create  |
 
 ### 10.4 Route — mode ↔ endpoint compatibility
 
-| # | Rule | Severity | Trigger |
-|---|---|---|---|
+| #    | Rule                                                                                                                                                                                                                                                         | Severity | Trigger  |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | -------- |
 | V-M1 | A leg's mode must match its endpoint types: **Air** → airport endpoint(s); **Sea** → seaport endpoint(s); **Road** → pickup / warehouse / delivery / port-drayage. Impossible combos (e.g. a Sea leg from a street address to a street address) are blocked. | Blocking | leg save |
 
 ### 10.5 Route — downstream readiness
 
-| # | Rule | Severity | Trigger |
-|---|---|---|---|
-| R7 | **Both endpoints of every leg carry a Country** (drives FF filtering downstream). | Blocking | create / RFQ |
-| R8 | All mandatory point fields present per endpoint. | Blocking | create |
-| R9 | If a cargo row is DG, **every leg carrying it** is DG-aware and MSDS is present. | Blocking | create / RFQ |
+| #   | Rule                                                                              | Severity | Trigger      |
+| --- | --------------------------------------------------------------------------------- | -------- | ------------ |
+| R7  | **Both endpoints of every leg carry a Country** (drives FF filtering downstream). | Blocking | create / RFQ |
+| R8  | All mandatory point fields present per endpoint.                                  | Blocking | create       |
+| R9  | If a cargo row is DG, **every leg carrying it** is DG-aware and MSDS is present.  | Blocking | create / RFQ |
 
 ### 10.6 Route — temporal continuity
 
-| # | Rule | Severity | Trigger |
-|---|---|---|---|
-| T1 | A leg cannot depart before the previous leg on a cargo row's chain arrives. | Warning (draft) / Blocking (create) | save / create |
-| T3 | A hub's onward-leg Ready Date ≥ MAX of feeding legs' Target Delivery (§8.5). | Warning (draft) / Blocking (create) | save / create |
+| #   | Rule                                                                         | Severity                            | Trigger       |
+| --- | ---------------------------------------------------------------------------- | ----------------------------------- | ------------- |
+| T1  | A leg cannot depart before the previous leg on a cargo row's chain arrives.  | Warning (draft) / Blocking (create) | save / create |
+| T3  | A hub's onward-leg Ready Date ≥ MAX of feeding legs' Target Delivery (§8.5). | Warning (draft) / Blocking (create) | save / create |
 
 > **T2 retired (Round 2):** the old "first/last leg date = query date" equality was removed. Query Ready/Target (the client-agreed window, each with its own explicit timezone) and leg dates (the operational plan) are **decoupled**. `Ready ≤ Target` still holds at both the query and leg level, and hub timing stays with T1/T3 — all compared as real UTC instants.
 
 ### 10.7 Completeness
 
-| # | Rule | Severity | Trigger |
-|---|---|---|---|
-| C1 | Every leg has origin, destination, mode, ≥1 cargo, and dates. | Blocking | create |
-| C2 | Every cargo row is covered by a continuous leg chain (see R1). | Blocking | create |
-| C3 | Per-leg CBM + gross-weight roll-up computes for every leg. (Chargeable weight is a Stage 4 value — not required here.) | Blocking | create |
+| #   | Rule                                                                                                                   | Severity | Trigger |
+| --- | ---------------------------------------------------------------------------------------------------------------------- | -------- | ------- |
+| C1  | Every leg has origin, destination, mode, ≥1 cargo, and dates.                                                          | Blocking | create  |
+| C2  | Every cargo row is covered by a continuous leg chain (see R1).                                                         | Blocking | create  |
+| C3  | Per-leg CBM + gross-weight roll-up computes for every leg. (Chargeable weight is a Stage 4 value — not required here.) | Blocking | create  |
 
 ### 10.8 Edit-time integrity
 
-| # | Rule | Severity | Trigger |
-|---|---|---|---|
-| E1 | Deleting a point/leg, or changing an endpoint/mode/cargo, re-runs the full catalogue and flags what broke — never silently corrupts the route. | Live | any edit |
+| #   | Rule                                                                                                                                           | Severity | Trigger  |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------- |
+| E1  | Deleting a point/leg, or changing an endpoint/mode/cargo, re-runs the full catalogue and flags what broke — never silently corrupts the route. | Live     | any edit |
 
 ---
 
@@ -526,31 +534,34 @@ Severity: **Blocking** (prevents progression) or **Warning** (advisory). Trigger
 Change handling applies to **any field or entity** at **any point** in the query's life — not only legs. The system **never hard-locks** a field; instead every edit runs an **impact check** and is routed down one of two paths.
 
 ### 11.1 Impact classes
+
 Every editable field carries an impact class:
 
-| Class | Examples | Downstream cost |
-|---|---|---|
-| Internal | Internal notes, priority, response deadline | None |
-| Corrective | Typo in a name, designation | None (cosmetic) |
-| RFQ-defining | Leg origin/destination/mode, cargo weight/dims, address + country, Incoterms | High — FFs quote against these |
-| Pricing/award-defining | FF selection, margin (later stages) | High |
-| Structural | Add/remove a leg or a cargo row | High — recomputes route + coverage |
+| Class                  | Examples                                                                     | Downstream cost                    |
+| ---------------------- | ---------------------------------------------------------------------------- | ---------------------------------- |
+| Internal               | Internal notes, priority, response deadline                                  | None                               |
+| Corrective             | Typo in a name, designation                                                  | None (cosmetic)                    |
+| RFQ-defining           | Leg origin/destination/mode, cargo weight/dims, address + country, Incoterms | High — FFs quote against these     |
+| Pricing/award-defining | FF selection, margin (later stages)                                          | High                               |
+| Structural             | Add/remove a leg or a cargo row                                              | High — recomputes route + coverage |
 
 ### 11.2 The two paths
 
-| Condition | Path |
-|---|---|
-| No downstream work depends on the changed scope (Internal/Corrective, **or** RFQ-defining while still pre-RFQ) | **Free path:** apply the edit + re-validate the route. |
+| Condition                                                                                                       | Path                                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No downstream work depends on the changed scope (Internal/Corrective, **or** RFQ-defining while still pre-RFQ)  | **Free path:** apply the edit + re-validate the route.                                                                                                                       |
 | An RFQ-defining-or-heavier change **to a scope that already has downstream work** (RFQ Sent / Quoted / Awarded) | **Change-order path:** impact preview → confirm + reason → cascade invalidation to the **minimal affected scope** → reopen those artifacts to the correct state → record it. |
 
 ### 11.3 Principles
+
 - **Minimal blast radius:** a change reopens only what it actually touched (e.g., editing Leg 4's cargo reopens **Leg 4's** RFQ only). This is why the leg is the atomic unit.
 - **Shared-point edits ripple:** editing a reused point updates it on every leg that references it (it is one object); to route cargo elsewhere, pick/create a different point.
 - **Non-destructive:** the system warns and blocks on breakage; it never silently deletes or "auto-fixes".
 
 ### 11.4 Scope for this build
+
 Pre-RFQ there is no downstream work, so **every change takes the Free path** (apply + re-validate). This build implements the free path and the **impact classification + impact-check hook**; the change-order cascade is realised when Stage 4+ come online.
-**Caveat:** a change-order needs a small record of *what/why*, which touches the deferred audit trail. This build (free path only) is unaffected, but a lightweight change-log will be needed when the cascade is built.
+**Caveat:** a change-order needs a small record of _what/why_, which touches the deferred audit trail. This build (free path only) is unaffected, but a lightweight change-log will be needed when the cascade is built.
 
 ---
 
@@ -566,15 +577,15 @@ Pre-RFQ there is no downstream work, so **every change takes the Free path** (ap
 
 ## 13. Form Actions
 
-| Action | Availability | Behaviour |
-|---|---|---|
-| **Cancel** | Every step | Confirmation prompt. Discards changes since the last Save. Brand-new unsaved query → clears and returns to Query List. Existing record → reverts to last saved state. |
-| **Back** | Steps 2–5 | Returns to the previous step (state retained). |
-| **Save** | Every step | Persists progress as **Draft** (no completeness validation). First Save creates the record + Query ID and lists it in the Query List. Silent save indicator (no disruptive dialog). If two users edit the same record, the latest save wins (no record locking). |
-| **Next** | Steps 1–4 | Advances to the next step (retains progress; light per-step validation as warnings). |
-| **Create Query** | Final step | Runs full validation (§10). **Mandatory gaps hard-block** creation (flagged inline). If only optional/checklist items are missing, prompts with **Cancel / Save Draft / Send Anyway**. On success: status → **RFQ Ready**, success banner "Query `YAL[YY]-[NNNN]` created successfully." (In the full product, hands off to Stage 4.) |
-| **Send Follow-up Email** | Notes/checklist step + action bar | Enabled only if ≥1 checklist item is unchecked. Compiles missing items and **composes & logs** the follow-up email (no live send). |
-| **Send Acknowledgement** | Action bar | Available regardless of completeness. **Composes & logs** the acknowledgement email. |
+| Action                   | Availability                      | Behaviour                                                                                                                                                                                                                                                                                                                             |
+| ------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Cancel**               | Every step                        | Confirmation prompt. Discards changes since the last Save. Brand-new unsaved query → clears and returns to Query List. Existing record → reverts to last saved state.                                                                                                                                                                 |
+| **Back**                 | Steps 2–5                         | Returns to the previous step (state retained).                                                                                                                                                                                                                                                                                        |
+| **Save**                 | Every step                        | Persists progress as **Draft** (no completeness validation). First Save creates the record + Query ID and lists it in the Query List. Silent save indicator (no disruptive dialog). If two users edit the same record, the latest save wins (no record locking).                                                                      |
+| **Next**                 | Steps 1–4                         | Advances to the next step (retains progress; light per-step validation as warnings).                                                                                                                                                                                                                                                  |
+| **Create Query**         | Final step                        | Runs full validation (§10). **Mandatory gaps hard-block** creation (flagged inline). If only optional/checklist items are missing, prompts with **Cancel / Save Draft / Send Anyway**. On success: status → **RFQ Ready**, success banner "Query `YAL[YY]-[NNNN]` created successfully." (In the full product, hands off to Stage 4.) |
+| **Send Follow-up Email** | Notes/checklist step + action bar | Enabled only if ≥1 checklist item is unchecked. Compiles missing items and **composes & logs** the follow-up email (no live send).                                                                                                                                                                                                    |
+| **Send Acknowledgement** | Action bar                        | Available regardless of completeness. **Composes & logs** the acknowledgement email.                                                                                                                                                                                                                                                  |
 
 ---
 
@@ -582,11 +593,11 @@ Pre-RFQ there is no downstream work, so **every change takes the Free path** (ap
 
 Creation (the first Save) starts the escalation clock. If a query is created but not progressed toward RFQ Ready within the window (no further activity), a tiered, **informational** sequence fires:
 
-| Elapsed since creation | Recipient | Action |
-|---|---|---|
-| 30 minutes | Logistics Executive | Reminder to begin processing. |
-| 2 hours | Logistics Manager | Escalation for oversight. |
-| 6 hours | Administrator | Escalation for final intervention. |
+| Elapsed since creation | Recipient           | Action                             |
+| ---------------------- | ------------------- | ---------------------------------- |
+| 30 minutes             | Logistics Executive | Reminder to begin processing.      |
+| 2 hours                | Logistics Manager   | Escalation for oversight.          |
+| 6 hours                | Administrator       | Escalation for final intervention. |
 
 - Channel: **in-app notification** (+ email compose-&-log).
 - Escalation is **informational only** — no automatic reassignment or status change.
@@ -597,11 +608,13 @@ Creation (the first Save) starts the escalation clock. If a query is created but
 ## 15. Email Templates (compose & log)
 
 **15.1 Missing-information follow-up** (manual trigger)
+
 - **From:** logistics@yankalfa.com · **To:** {Client_Email}
 - **Subject:** "Action Required: Missing Information for Your Shipment Request – {Query_ID}"
 - **Body:** acknowledges {Query_ID}, lists **Missing information: {Missing_Fields_List}** (comma-separated unchecked checklist items, generated at trigger time), requests a reply.
 
 **15.2 Query acknowledgement** (manual trigger)
+
 - **From:** logistics@yankalfa.com · **To:** {Client_Email}
 - **Subject:** "Acknowledgement: Shipment Query Received – Query ID: {Query_ID}"
 - **Body:** thanks the client, confirms a record with {Query_ID} has been created, states an expected response within {Expected_Response_Timeline} (default 24 hrs from send), and asks the client to reply on the same thread with any additional documents.
@@ -612,15 +625,15 @@ Creation (the first Save) starts the escalation clock. If a query is created but
 
 ## 16. Open Items / Assumptions
 
-| # | Item | Current assumption |
-|---|---|---|
-| O1 | Priority default value | **Medium** (confirm). |
-| O2 | Wizard step order | Client → Shipment → **Cargo → Legs** → Notes (cargo before legs, since legs pick cargo). |
-| O3 | Chargeable weight & freight density | **Resolved:** cargo-level, one value per row, filled by FF in Stage 4. Leg shows **Total Chargeable Weight** (Σ). No density/DG at leg level. |
-| O4 | Freight density factors | Admin-configurable reference data (not hardcoded). |
-| O5 | Change-order record vs deferred audit | Free path this build; lightweight change-log needed when cascade is built. |
-| O6 | Tracking UI | Deferred to Stage 8–9; model only here. |
+| #   | Item                                  | Current assumption                                                                                                                            |
+| --- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| O1  | Priority default value                | **Medium** (confirm).                                                                                                                         |
+| O2  | Wizard step order                     | Client → Shipment → **Cargo → Legs** → Notes (cargo before legs, since legs pick cargo).                                                      |
+| O3  | Chargeable weight & freight density   | **Resolved:** cargo-level, one value per row, filled by FF in Stage 4. Leg shows **Total Chargeable Weight** (Σ). No density/DG at leg level. |
+| O4  | Freight density factors               | Admin-configurable reference data (not hardcoded).                                                                                            |
+| O5  | Change-order record vs deferred audit | Free path this build; lightweight change-log needed when cascade is built.                                                                    |
+| O6  | Tracking UI                           | Deferred to Stage 8–9; model only here.                                                                                                       |
 
 ---
 
-*End of functional specification.*
+_End of functional specification._

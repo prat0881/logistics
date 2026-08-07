@@ -38,7 +38,12 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
               {/* Tonnage — Dedicated only */}
               {rateVariant === "DEDICATED" && (
                 <div className="space-y-1">
-                  <label htmlFor={`trk-tonnage-${i}`} className="text-xs font-medium text-muted-foreground">Tonnage</label>
+                  <label
+                    htmlFor={`trk-tonnage-${i}`}
+                    className="text-xs font-medium text-muted-foreground"
+                  >
+                    Tonnage
+                  </label>
                   <Select
                     value={row?.tonnage ?? ""}
                     onValueChange={(v) =>
@@ -52,7 +57,9 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
                     </SelectTrigger>
                     <SelectContent>
                       {TRUCK_TONNAGES.map((t) => (
-                        <SelectItem key={t} value={t}>{truckTonnageLabel(t)}</SelectItem>
+                        <SelectItem key={t} value={t}>
+                          {truckTonnageLabel(t)}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -61,7 +68,12 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
 
               {/* Basis */}
               <div className="space-y-1">
-                <label htmlFor={`trk-basis-${i}`} className="text-xs font-medium text-muted-foreground">Basis</label>
+                <label
+                  htmlFor={`trk-basis-${i}`}
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  Basis
+                </label>
                 <Select
                   value={row?.basis ?? "PER_TRUCK"}
                   onValueChange={(v) =>
@@ -85,20 +97,28 @@ export function TruckingBlocks({ endpoints }: { endpoints: FfPortalEndpoint[] })
 
             {/* Amount */}
             <div className="space-y-1">
-              <label htmlFor={`trk-amount-${i}`} className="text-xs font-medium text-muted-foreground">Amount</label>
+              <label
+                htmlFor={`trk-amount-${i}`}
+                className="text-xs font-medium text-muted-foreground"
+              >
+                Amount
+              </label>
               <NumberField
                 id={`trk-amount-${i}`}
                 aria-label={`Amount for ${heading}`}
                 value={row?.amount ?? null}
-                onChange={(v) =>
-                  setValue(`trucking.${i}.amount`, v, { shouldDirty: true })
-                }
+                onChange={(v) => setValue(`trucking.${i}.amount`, v, { shouldDirty: true })}
               />
             </div>
 
             {/* Remarks */}
             <div className="space-y-1">
-              <label htmlFor={`trk-remarks-${i}`} className="text-xs font-medium text-muted-foreground">Remarks</label>
+              <label
+                htmlFor={`trk-remarks-${i}`}
+                className="text-xs font-medium text-muted-foreground"
+              >
+                Remarks
+              </label>
               <Textarea
                 id={`trk-remarks-${i}`}
                 aria-label={`Remarks for ${heading}`}

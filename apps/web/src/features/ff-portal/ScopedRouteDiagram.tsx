@@ -177,8 +177,7 @@ export function ScopedRouteDiagram({ legs, className }: ScopedRouteDiagramProps)
   const svgHeight = height + LEGEND_H;
   const selected = graph.nodes.find((n) => n.pointId === selectedId) ?? null;
 
-  const toggle = (pointId: string) =>
-    setSelectedId((cur) => (cur === pointId ? null : pointId));
+  const toggle = (pointId: string) => setSelectedId((cur) => (cur === pointId ? null : pointId));
 
   return (
     <figure

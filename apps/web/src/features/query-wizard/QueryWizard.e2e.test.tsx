@@ -231,7 +231,12 @@ const mintedDraft = {
 
 const rfqReadyDetail = { ...fullDraftDetail, status: "RFQ_READY" };
 
-const testUser = { id: "u1", name: "Alice Exec", email: "alice@svyft.ai", role: "EXECUTIVE" as const };
+const testUser = {
+  id: "u1",
+  name: "Alice Exec",
+  email: "alice@svyft.ai",
+  role: "EXECUTIVE" as const,
+};
 
 // ── Scenario 1: Happy path — mint → navigate to final step → Create → RFQ_READY ────
 describe("QueryWizard e2e — happy path", () => {
@@ -243,8 +248,7 @@ describe("QueryWizard e2e — happy path", () => {
       "fetch",
       mockFetch((url, init) => {
         // Auth
-        if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: testUser } };
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
 
         // POST /api/queries → mint
         if (url === "/api/queries" && init?.method === "POST")
@@ -283,9 +287,7 @@ describe("QueryWizard e2e — happy path", () => {
     await user.click(saveBtn);
 
     // Assert query code appears (mint succeeded)
-    await waitFor(() =>
-      expect(screen.getByText("YAL26-0042")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("YAL26-0042")).toBeInTheDocument());
 
     // ── Jump to the final step (step=4) — stepper jump is available now ──────
     // After mint, we navigate to /queries/:id?step=0. Navigate directly to step 4.
@@ -312,9 +314,7 @@ describe("QueryWizard e2e — happy path", () => {
     );
 
     // Assert header badge flips to RFQ_READY
-    await waitFor(() =>
-      expect(screen.getByText("RFQ_READY")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("RFQ_READY")).toBeInTheDocument());
   });
 });
 
@@ -328,21 +328,20 @@ describe("QueryWizard e2e — 422 server block", () => {
         rule: "R2",
         severity: "blocking",
         scope: { type: "cargo", id: CARGO_ID },
-        message: "Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins",
+        message:
+          "Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins",
       },
     ];
 
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
-        if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: testUser } };
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
 
         if (url.includes(`/api/queries/${Q_ID}/create`) && init?.method === "POST")
           return { status: 422, body: { findings: serverFindings } };
 
-        if (url.includes(`/api/queries/${Q_ID}`))
-          return { status: 200, body: fullDraftDetail };
+        if (url.includes(`/api/queries/${Q_ID}`)) return { status: 200, body: fullDraftDetail };
 
         return { status: 200, body: {} };
       }),
@@ -366,7 +365,9 @@ describe("QueryWizard e2e — 422 server block", () => {
     // The server 422 finding should render
     await waitFor(() =>
       expect(
-        screen.getByText("Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins"),
+        screen.getByText(
+          "Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins",
+        ),
       ).toBeInTheDocument(),
     );
 
@@ -394,16 +395,14 @@ describe("QueryWizard e2e — client preview blocks missing fields", () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
-        if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: testUser } };
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
 
         if (url.includes(`/api/queries/${Q_ID}/create`) && init?.method === "POST") {
           createCalls.push(url);
           return { status: 201, body: { id: Q_ID, status: "RFQ_READY" } };
         }
 
-        if (url.includes(`/api/queries/${Q_ID}`))
-          return { status: 200, body: incompleteDraft };
+        if (url.includes(`/api/queries/${Q_ID}`)) return { status: 200, body: incompleteDraft };
 
         return { status: 200, body: {} };
       }),
@@ -422,9 +421,7 @@ describe("QueryWizard e2e — client preview blocks missing fields", () => {
     await user.click(createBtn);
 
     // Client-side blocking finding should appear (F1 — Client is required)
-    await waitFor(() =>
-      expect(screen.getByText("Client is required")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("Client is required")).toBeInTheDocument());
 
     // /create should NOT have been called
     expect(createCalls.length).toBe(0);
@@ -433,4 +430,3 @@ describe("QueryWizard e2e — client preview blocks missing fields", () => {
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
   });
 });
-

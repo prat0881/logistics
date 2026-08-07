@@ -30,19 +30,13 @@ export function useLegs(queryId: string) {
 
   return {
     add: async (input: LegSaveInput): Promise<LegDto> => {
-      const r = await postJson<LegDto>(
-        `/api/queries/${queryId}/legs`,
-        input,
-      );
+      const r = await postJson<LegDto>(`/api/queries/${queryId}/legs`, input);
       await bust();
       return r;
     },
 
     update: async (legId: string, input: LegSaveInput): Promise<LegDto> => {
-      const r = await patchJson<LegDto>(
-        `/api/queries/${queryId}/legs/${legId}`,
-        input,
-      );
+      const r = await patchJson<LegDto>(`/api/queries/${queryId}/legs/${legId}`, input);
       await bust();
       return r;
     },

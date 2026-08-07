@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
 import { useForm, FormProvider, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { FfPortalLegDto, FfPortalRfqDto, QuoteDraft, Finding, ResolvedChargeLine } from "@svyft/shared";
+import type {
+  FfPortalLegDto,
+  FfPortalRfqDto,
+  QuoteDraft,
+  Finding,
+  ResolvedChargeLine,
+} from "@svyft/shared";
 import { quoteDraftSchema, validateQuote, computeQuoteTotals } from "@svyft/shared";
 import { draftFromDto } from "./draftFromDto";
 import { useSaveDraft, useSubmit } from "./useFfPortal";
@@ -25,9 +31,9 @@ export interface LegSectionProps {
   token: string;
   rfq: FfPortalRfqDto;
   leg: FfPortalLegDto;
-  currency: string | null;            // page-level (source of truth)
-  quoteValidityUntil: string | null;  // page-level (source of truth)
-  readOnly: boolean;                   // deadline passed OR leg not RFQ_SENT
+  currency: string | null; // page-level (source of truth)
+  quoteValidityUntil: string | null; // page-level (source of truth)
+  readOnly: boolean; // deadline passed OR leg not RFQ_SENT
 }
 
 export function LegSection({
@@ -48,9 +54,7 @@ export function LegSection({
     return (
       <div className="space-y-4">
         <CargoManifestTable cargo={leg.manifest.cargo} />
-        <p className="text-sm text-muted-foreground">
-          This leg is not open for quoting.
-        </p>
+        <p className="text-sm text-muted-foreground">This leg is not open for quoting.</p>
       </div>
     );
   }
@@ -147,8 +151,8 @@ function LegSectionForm({
     if (f.length > 0) return; // client-invalid: show findings, do NOT hit network
 
     try {
-      await saved.mutateAsync(d);   // save first
-      await submit.mutateAsync();   // then submit (server reads stored draft)
+      await saved.mutateAsync(d); // save first
+      await submit.mutateAsync(); // then submit (server reads stored draft)
       // on success: query invalidation in hooks triggers refetch → leg becomes QUOTED
     } catch (e) {
       if (e instanceof PortalError && e.status === 422) {

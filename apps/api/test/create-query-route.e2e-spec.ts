@@ -21,7 +21,8 @@ describe("Create Query route gating (e2e)", () => {
   let prisma: PrismaService;
   let jwt: JwtService;
   let clientId: string;
-  const cookie = () => `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: EXEC_ID, role: Role.EXECUTIVE, tenantId: null })}`;
+  const cookie = () =>
+    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: EXEC_ID, role: Role.EXECUTIVE, tenantId: null })}`;
   const api = () => request(app.getHttpServer());
 
   beforeAll(async () => {
@@ -36,7 +37,9 @@ describe("Create Query route gating (e2e)", () => {
     await seedReferenceData(prisma);
     await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } });
     await prisma.client.deleteMany({ where: { companyName: { startsWith: PFX } } });
-    const client = await prisma.client.create({ data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN" } });
+    const client = await prisma.client.create({
+      data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN" },
+    });
     clientId = client.id;
   });
   afterAll(async () => {
@@ -64,8 +67,35 @@ describe("Create Query route gating (e2e)", () => {
         clientId,
       },
     });
-    const pu = await prisma.point.create({ data: { queryId: q.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", timezone: "Asia/Kolkata" } });
-    const de = await prisma.point.create({ data: { queryId: q.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" } });
+    const pu = await prisma.point.create({
+      data: {
+        queryId: q.id,
+        type: "PICKUP",
+        name: "PU",
+        streetAddress: "1",
+        city: "Mumbai",
+        postalCode: "400001",
+        country: "IN",
+        contactName: "A",
+        contactPhone: "+911234567",
+        contactEmail: "a@x.com",
+        timezone: "Asia/Kolkata",
+      },
+    });
+    const de = await prisma.point.create({
+      data: {
+        queryId: q.id,
+        type: "DELIVERY",
+        name: "DE",
+        streetAddress: "9",
+        city: "Pune",
+        postalCode: "411001",
+        country: "IN",
+        contactName: "B",
+        contactPhone: "+915555555",
+        timezone: "Asia/Kolkata",
+      },
+    });
     const { packageIds } = await createCargoWithPackages(prisma, {
       queryId: q.id,
       packages: [
@@ -74,14 +104,27 @@ describe("Create Query route gating (e2e)", () => {
         { packageNo: "PO-3", dimL: 100, dimW: 100, dimH: 100, grossWt: 50 },
       ],
     });
-    const leg = await prisma.leg.create({ data: { queryId: q.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: READY, targetDelivery: TARGET } });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: q.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: pu.id,
+        destinationPointId: de.id,
+        readyDate: READY,
+        targetDelivery: TARGET,
+      },
+    });
     await assignPackagesToLeg(prisma, leg.id, packageIds);
     return { queryId: q.id, legId: leg.id };
   }
 
   it("gates on the full catalogue then rolls up to RFQ_READY, firing each leg", async () => {
     const { queryId, legId } = await validQuery();
-    const res = await api().post(`/api/queries/${queryId}/create`).set("Cookie", cookie()).expect(201);
+    const res = await api()
+      .post(`/api/queries/${queryId}/create`)
+      .set("Cookie", cookie())
+      .expect(201);
     expect(res.body.status).toBe(QueryStatus.RFQ_READY);
     const leg = await prisma.leg.findUnique({ where: { id: legId } });
     expect(leg?.status).toBe(LegStatus.READY_FOR_RFQ);
@@ -89,12 +132,18 @@ describe("Create Query route gating (e2e)", () => {
 
   it("is idempotent: a second /create on an already-RFQ_READY query returns 201 RFQ_READY, not 500", async () => {
     const { queryId, legId } = await validQuery();
-    const first = await api().post(`/api/queries/${queryId}/create`).set("Cookie", cookie()).expect(201);
+    const first = await api()
+      .post(`/api/queries/${queryId}/create`)
+      .set("Cookie", cookie())
+      .expect(201);
     expect(first.body.status).toBe(QueryStatus.RFQ_READY);
 
     // Re-submit (double-click / retry / refresh-reclick): every leg is already READY_FOR_RFQ,
     // so this must fire nothing and just re-project RFQ_READY — not 500 on IllegalTransitionError.
-    const second = await api().post(`/api/queries/${queryId}/create`).set("Cookie", cookie()).expect(201);
+    const second = await api()
+      .post(`/api/queries/${queryId}/create`)
+      .set("Cookie", cookie())
+      .expect(201);
     expect(second.body.status).toBe(QueryStatus.RFQ_READY);
 
     const leg = await prisma.leg.findUnique({ where: { id: legId } });
@@ -106,7 +155,10 @@ describe("Create Query route gating (e2e)", () => {
     // Break it: delete the delivery point → the leg into it is left with a null endpoint
     // (SetNull FK), so the route no longer completes and Create still hard-blocks (422).
     await prisma.point.deleteMany({ where: { queryId, type: "DELIVERY" } });
-    const res = await api().post(`/api/queries/${queryId}/create`).set("Cookie", cookie()).expect(422);
+    const res = await api()
+      .post(`/api/queries/${queryId}/create`)
+      .set("Cookie", cookie())
+      .expect(422);
     expect(res.body.findings.length).toBeGreaterThan(0);
     const q = await prisma.query.findUnique({ where: { id: queryId }, select: { status: true } });
     expect(q?.status).toBe(QueryStatus.DRAFT);
@@ -143,13 +195,43 @@ describe("Create Query route gating (e2e)", () => {
       },
     });
     const pu = await prisma.point.create({
-      data: { queryId: q.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", timezone: "Asia/Kolkata" },
+      data: {
+        queryId: q.id,
+        type: "PICKUP",
+        name: "PU",
+        streetAddress: "1",
+        city: "Mumbai",
+        postalCode: "400001",
+        country: "IN",
+        contactName: "A",
+        contactPhone: "+911234567",
+        timezone: "Asia/Kolkata",
+      },
     });
     const de = await prisma.point.create({
-      data: { queryId: q.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" },
+      data: {
+        queryId: q.id,
+        type: "DELIVERY",
+        name: "DE",
+        streetAddress: "9",
+        city: "Pune",
+        postalCode: "411001",
+        country: "IN",
+        contactName: "B",
+        contactPhone: "+915555555",
+        timezone: "Asia/Kolkata",
+      },
     });
     const leg = await prisma.leg.create({
-      data: { queryId: q.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: READY, targetDelivery: TARGET },
+      data: {
+        queryId: q.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: pu.id,
+        destinationPointId: de.id,
+        readyDate: READY,
+        targetDelivery: TARGET,
+      },
     });
 
     const cargo1 = await api()
@@ -160,7 +242,14 @@ describe("Create Query route gating (e2e)", () => {
     const pkg1 = await api()
       .post(`/api/queries/${q.id}/cargo/${cargo1.body.id}/packages`)
       .set("Cookie", cookie())
-      .send({ packageNo: "PO1-P1", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: c1.grossWt })
+      .send({
+        packageNo: "PO1-P1",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: c1.grossWt,
+      })
       .expect(201);
 
     const cargo2 = await api()
@@ -171,7 +260,14 @@ describe("Create Query route gating (e2e)", () => {
     const pkg2 = await api()
       .post(`/api/queries/${q.id}/cargo/${cargo2.body.id}/packages`)
       .set("Cookie", cookie())
-      .send({ packageNo: "PO2-P1", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: c2.grossWt })
+      .send({
+        packageNo: "PO2-P1",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: c2.grossWt,
+      })
       .expect(201);
 
     await assignPackagesToLeg(prisma, leg.id, [pkg1.body.id, pkg2.body.id]);

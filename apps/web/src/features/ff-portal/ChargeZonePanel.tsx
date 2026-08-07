@@ -24,7 +24,8 @@ const ZONES: { key: ChargeZone; title: string }[] = [
 // definitionKey, not presetKey (catalogue lines always carry definitionKey; presetKey is null).
 const BILL_OF_LADING_KEY = "SEA_ORIGIN_BILL_OF_LADING";
 const BILL_OF_LADING_LABELS: Record<BillOfLadingType, string> = {
-  ORIGINAL: "Original", TELEX: "Telex Release",
+  ORIGINAL: "Original",
+  TELEX: "Telex Release",
 };
 
 export interface ChargeZonePanelProps {
@@ -49,7 +50,10 @@ export function ChargeZonePanel({ seededCharges }: ChargeZonePanelProps) {
         // newly-appended rows that haven't yet reflected into draft.charges still render.
         const rows = fields
           .map((f, idx) => ({ f, idx }))
-          .filter(({ f, idx }) => (draft.charges?.[idx]?.zone ?? (f as { zone?: ChargeZone }).zone) === key);
+          .filter(
+            ({ f, idx }) =>
+              (draft.charges?.[idx]?.zone ?? (f as { zone?: ChargeZone }).zone) === key,
+          );
 
         // Zone subtotal computed LOCALLY from this zone's rows' effective amounts (QuoteTotals
         // no longer exposes zoneSubtotals). A HEAVY_WEIGHT_CALC line's amount is derived from its
@@ -58,7 +62,9 @@ export function ChargeZonePanel({ seededCharges }: ChargeZonePanelProps) {
           const c = draft.charges?.[idx];
           if (!c) return s;
           if (c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null)
-            return s + computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg);
+            return (
+              s + computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg)
+            );
           return s + (c.amount ?? 0);
         }, 0);
 
@@ -68,10 +74,7 @@ export function ChargeZonePanel({ seededCharges }: ChargeZonePanelProps) {
               <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {title}
               </h4>
-              <div
-                data-testid={`zone-subtotal-${key}`}
-                className="font-mono tabular-nums text-sm"
-              >
+              <div data-testid={`zone-subtotal-${key}`} className="font-mono tabular-nums text-sm">
                 {fmtAmount(subtotalValue)}
               </div>
             </div>
@@ -81,7 +84,9 @@ export function ChargeZonePanel({ seededCharges }: ChargeZonePanelProps) {
                 const chargeAtIdx = draft.charges?.[idx];
                 const label = chargeAtIdx?.label ?? (f as { label?: string }).label ?? "charge";
                 const definitionKey =
-                  chargeAtIdx?.definitionKey ?? (f as { definitionKey?: string | null }).definitionKey ?? undefined;
+                  chargeAtIdx?.definitionKey ??
+                  (f as { definitionKey?: string | null }).definitionKey ??
+                  undefined;
 
                 if (inputTypeByKey.get(definitionKey) === "HEAVY_WEIGHT_CALC") {
                   return <HeavyWeightCalcRow key={f.id} index={idx} label={label} />;
@@ -122,7 +127,10 @@ export function ChargeZonePanel({ seededCharges }: ChargeZonePanelProps) {
 
                     {definitionKey === BILL_OF_LADING_KEY && (
                       <div className="w-48 space-y-1">
-                        <label htmlFor={`bl-type-${idx}`} className="text-xs font-medium text-muted-foreground">
+                        <label
+                          htmlFor={`bl-type-${idx}`}
+                          className="text-xs font-medium text-muted-foreground"
+                        >
                           Bill of Lading type
                         </label>
                         <Select
@@ -133,12 +141,17 @@ export function ChargeZonePanel({ seededCharges }: ChargeZonePanelProps) {
                             })
                           }
                         >
-                          <SelectTrigger id={`bl-type-${idx}`} aria-label={`Bill of Lading type for ${label}`}>
+                          <SelectTrigger
+                            id={`bl-type-${idx}`}
+                            aria-label={`Bill of Lading type for ${label}`}
+                          >
                             <SelectValue placeholder="Select type" />
                           </SelectTrigger>
                           <SelectContent>
                             {BILL_OF_LADING_TYPES.map((b) => (
-                              <SelectItem key={b} value={b}>{BILL_OF_LADING_LABELS[b]}</SelectItem>
+                              <SelectItem key={b} value={b}>
+                                {BILL_OF_LADING_LABELS[b]}
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>

@@ -47,7 +47,10 @@ describe("Cargo grouping (e2e)", () => {
   async function freshQuery(): Promise<{ queryId: string }> {
     seq += 1;
     const q = await prisma.query.create({
-      data: { queryCode: `Z4${Date.now()}${seq}`.slice(0, 24), shipmentDescription: `${PFX}${seq}` },
+      data: {
+        queryCode: `Z4${Date.now()}${seq}`.slice(0, 24),
+        shipmentDescription: `${PFX}${seq}`,
+      },
     });
     return { queryId: q.id };
   }
@@ -67,7 +70,10 @@ describe("Cargo grouping (e2e)", () => {
     expect(cargo.body.packageCount).toBe(0);
     expect(Number(cargo.body.grossWeightKg)).toBe(0);
     expect(cargo.body.chargeableWeight).toBeNull(); // H7 blank at Stage 3
-    const list = await api().get(`/api/queries/${queryId}/cargo`).set("Cookie", cookie()).expect(200);
+    const list = await api()
+      .get(`/api/queries/${queryId}/cargo`)
+      .set("Cookie", cookie())
+      .expect(200);
     expect(list.body.find((x: { id: string }) => x.id === cargo.body.id).poReference).toBe("PO-1");
   });
   // The POPULATED header (Σ gross/volume, packageCount, unioned tags over real packages) is

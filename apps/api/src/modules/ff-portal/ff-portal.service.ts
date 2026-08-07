@@ -1,4 +1,10 @@
-import { ConflictException, ForbiddenException, Injectable, Logger, UnprocessableEntityException } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  UnprocessableEntityException,
+} from "@nestjs/common";
 import {
   classifyWarehousePositions,
   validateQuote,
@@ -62,7 +68,10 @@ export class FfPortalService {
     const legs: FfPortalLegDto[] = scope.quotes.map((q) => {
       const manifest = q.manifestSnapshot as ManifestSnapshot;
       const mode = q.leg.mode;
-      const snap = (q.chargeConfigSnapshot as ChargeConfigSnapshot | null) ?? { lines: [], warehouseIncluded: false };
+      const snap = (q.chargeConfigSnapshot as ChargeConfigSnapshot | null) ?? {
+        lines: [],
+        warehouseIncluded: false,
+      };
       const endpoints = [q.leg.originPoint, q.leg.destinationPoint]
         .filter((p): p is NonNullable<typeof p> => !!p)
         .map((p) => ({
@@ -118,12 +127,17 @@ export class FfPortalService {
     const q = this.quoteForLeg(scope, legId);
     const now = new Date();
     await this.prisma.$transaction([
-      this.prisma.quote.update({ where: { id: q.id }, data: { draftJson: draft as unknown as object } }),
+      this.prisma.quote.update({
+        where: { id: q.id },
+        data: { draftJson: draft as unknown as object },
+      }),
       this.prisma.rfq.update({
         where: { id: scope.rfq.id },
         data: {
           currency: draft.currency ?? undefined,
-          quoteValidityUntil: draft.quoteValidityUntil ? new Date(draft.quoteValidityUntil) : undefined,
+          quoteValidityUntil: draft.quoteValidityUntil
+            ? new Date(draft.quoteValidityUntil)
+            : undefined,
         },
       }),
     ]);
@@ -137,10 +151,13 @@ export class FfPortalService {
     }
 
     const manifest = q.manifestSnapshot as ManifestSnapshot;
-    const snap = (q.chargeConfigSnapshot as ChargeConfigSnapshot | null) ?? { lines: [], warehouseIncluded: false };
-    const stored = (
-      (await this.prisma.quote.findUnique({ where: { id: q.id }, select: { draftJson: true } }))?.draftJson ?? {}
-    ) as Partial<QuoteDraft>;
+    const snap = (q.chargeConfigSnapshot as ChargeConfigSnapshot | null) ?? {
+      lines: [],
+      warehouseIncluded: false,
+    };
+    const stored = ((
+      await this.prisma.quote.findUnique({ where: { id: q.id }, select: { draftJson: true } })
+    )?.draftJson ?? {}) as Partial<QuoteDraft>;
 
     // ── re-derive the AUTHORITATIVE draft: immutables from the manifest/classifier, editable from the stored draft ──
     const whLegs = scope.quotes.map((x) => ({
@@ -164,7 +181,8 @@ export class FfPortalService {
         packageId: c.packageId,
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
-        chargedWeightKg: stored.cargo?.find((s) => s.packageId === c.packageId)?.chargedWeightKg ?? null,
+        chargedWeightKg:
+          stored.cargo?.find((s) => s.packageId === c.packageId)?.chargedWeightKg ?? null,
       })),
       charges: (stored.charges ?? []).map((c) => ({ ...c })),
       trucking: (stored.trucking ?? []).map((t) => ({ ...t })),
@@ -300,15 +318,23 @@ export class FfPortalService {
               quoteId: q.id,
               carrier: draft.transit.carrier ?? null,
               flightVoyageNo: draft.transit.flightVoyageNo ?? null,
-              departureDate: draft.transit.departureDate ? new Date(draft.transit.departureDate) : null,
+              departureDate: draft.transit.departureDate
+                ? new Date(draft.transit.departureDate)
+                : null,
               arrivalDate: draft.transit.arrivalDate ? new Date(draft.transit.arrivalDate) : null,
               carrierSurcharge: draft.transit.carrierSurcharge ?? null,
               guaranteedTransitDays: draft.transit.guaranteedTransitDays ?? null,
-              plannedPickupDate: draft.transit.plannedPickupDate ? new Date(draft.transit.plannedPickupDate) : null,
+              plannedPickupDate: draft.transit.plannedPickupDate
+                ? new Date(draft.transit.plannedPickupDate)
+                : null,
               airline: draft.transit.airline ?? null,
               flightNumber: draft.transit.flightNumber ?? null,
-              plannedDeparture: draft.transit.plannedDeparture ? new Date(draft.transit.plannedDeparture) : null,
-              plannedArrival: draft.transit.plannedArrival ? new Date(draft.transit.plannedArrival) : null,
+              plannedDeparture: draft.transit.plannedDeparture
+                ? new Date(draft.transit.plannedDeparture)
+                : null,
+              plannedArrival: draft.transit.plannedArrival
+                ? new Date(draft.transit.plannedArrival)
+                : null,
               shippingLine: draft.transit.shippingLine ?? null,
               vesselVoyage: draft.transit.vesselVoyage ?? null,
               etd: draft.transit.etd ? new Date(draft.transit.etd) : null,
@@ -354,7 +380,11 @@ export class FfPortalService {
     try {
       const rfq = await this.prisma.rfq.findUnique({
         where: { id: scope.rfq.id },
-        select: { rfqNumber: true, tenantId: true, freightForwarder: { select: { companyName: true, email: true } } },
+        select: {
+          rfqNumber: true,
+          tenantId: true,
+          freightForwarder: { select: { companyName: true, email: true } },
+        },
       });
       const query = await this.prisma.query.findUnique({
         where: { id: scope.rfq.queryId },

@@ -34,7 +34,9 @@ describe("seedReferenceData", () => {
   it("seeds AIR_MAIN_FSC / AIR_MAIN_PEAK_SEASON cores and flips AIR_MAIN_HEAVY_WEIGHT to HEAVY_WEIGHT_CALC", async () => {
     await seedReferenceData(prisma);
 
-    const fsc = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "AIR_MAIN_FSC" } });
+    const fsc = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "AIR_MAIN_FSC" },
+    });
     expect(fsc.mode).toBe("AIR");
     expect(fsc.role).toBe("CORE");
     expect(fsc.isActive).toBe(true);

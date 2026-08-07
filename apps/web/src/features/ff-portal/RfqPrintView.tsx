@@ -1,4 +1,9 @@
-import type { ChargeZone, FfPortalLegDto, FfPortalRfqDto, FfPortalSeededCharge } from "@svyft/shared";
+import type {
+  ChargeZone,
+  FfPortalLegDto,
+  FfPortalRfqDto,
+  FfPortalSeededCharge,
+} from "@svyft/shared";
 import { formatDate, formatDateTime } from "@/lib/dates";
 import { CargoManifestTable } from "./CargoManifestTable";
 
@@ -118,7 +123,9 @@ function LegPrintSection({ leg }: { leg: FfPortalLegDto }) {
  *  form, not this component). */
 function ChargeStructureTable({ seededCharges }: { seededCharges: FfPortalSeededCharge[] }) {
   if (seededCharges.length === 0) {
-    return <p className="text-sm text-muted-foreground">No preset charge lines seeded for this leg.</p>;
+    return (
+      <p className="text-sm text-muted-foreground">No preset charge lines seeded for this leg.</p>
+    );
   }
   return (
     <div className="overflow-x-auto rounded-md border border-border">
@@ -132,10 +139,17 @@ function ChargeStructureTable({ seededCharges }: { seededCharges: FfPortalSeeded
         </thead>
         <tbody>
           {seededCharges.map((c, i) => (
-            <tr key={`${c.definitionKey ?? c.label}-${i}`} className="border-b border-border/60 last:border-b-0">
-              <td className="px-3 py-2 text-muted-foreground">{c.zone ? ZONE_LABELS[c.zone] : "—"}</td>
+            <tr
+              key={`${c.definitionKey ?? c.label}-${i}`}
+              className="border-b border-border/60 last:border-b-0"
+            >
+              <td className="px-3 py-2 text-muted-foreground">
+                {c.zone ? ZONE_LABELS[c.zone] : "—"}
+              </td>
               <td className="px-3 py-2">{c.label}</td>
-              <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">—</td>
+              <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
+                —
+              </td>
             </tr>
           ))}
         </tbody>
@@ -147,13 +161,16 @@ function ChargeStructureTable({ seededCharges }: { seededCharges: FfPortalSeeded
 function TermsAndConditions() {
   return (
     <section className="space-y-2 border-t border-border pt-4 text-xs text-muted-foreground">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground">Terms &amp; Conditions</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground">
+        Terms &amp; Conditions
+      </h3>
       <p>
-        This document is a request for quote (RFQ) and does not itself constitute a binding agreement. Rates
-        submitted through the Svyft Logistics portal are subject to review and confirmation. Quotes must remain
-        valid through the &ldquo;Quote validity until&rdquo; date shown above and be denominated in the stated
-        currency. Charges must reflect the cargo, route and terms described in this document; Svyft Logistics
-        reserves the right to amend or withdraw this RFQ prior to award.
+        This document is a request for quote (RFQ) and does not itself constitute a binding
+        agreement. Rates submitted through the Svyft Logistics portal are subject to review and
+        confirmation. Quotes must remain valid through the &ldquo;Quote validity until&rdquo; date
+        shown above and be denominated in the stated currency. Charges must reflect the cargo, route
+        and terms described in this document; Svyft Logistics reserves the right to amend or
+        withdraw this RFQ prior to award.
       </p>
     </section>
   );

@@ -45,10 +45,7 @@ describe("useLegs", () => {
             blob: () => Promise.resolve(new Blob()),
           } as Response);
 
-        if (
-          url === `/api/queries/${QUERY_ID}/legs` &&
-          init?.method === "POST"
-        )
+        if (url === `/api/queries/${QUERY_ID}/legs` && init?.method === "POST")
           return Promise.resolve({
             ok: true,
             status: 201,
@@ -82,8 +79,7 @@ describe("useLegs", () => {
 
       const postCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          url === `/api/queries/${QUERY_ID}/legs` &&
-          (init as RequestInit)?.method === "POST",
+          url === `/api/queries/${QUERY_ID}/legs` && (init as RequestInit)?.method === "POST",
       );
       expect(postCall).toBeTruthy();
       const sentBody = JSON.parse((postCall![1] as RequestInit).body as string);
@@ -101,10 +97,7 @@ describe("useLegs", () => {
       };
 
       const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-        if (
-          url === `/api/queries/${QUERY_ID}/legs` &&
-          init?.method === "POST"
-        )
+        if (url === `/api/queries/${QUERY_ID}/legs` && init?.method === "POST")
           return Promise.resolve({
             ok: false,
             status: 422,

@@ -37,8 +37,8 @@ export interface DistributeRfqEntry {
   freightForwarderId: string;
   rfqId: string;
   rfqNumber: string;
-  minted: boolean;          // true = new RFQ (invitation); false = amended (D3 "RFQ Updated")
-  accessToken?: string;     // raw 256-bit token, present ONLY when minted (goes into the link, SB5)
+  minted: boolean; // true = new RFQ (invitation); false = amended (D3 "RFQ Updated")
+  accessToken?: string; // raw 256-bit token, present ONLY when minted (goes into the link, SB5)
   legIds: string[];
 }
 

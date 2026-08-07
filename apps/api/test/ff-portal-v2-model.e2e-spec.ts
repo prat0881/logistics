@@ -28,8 +28,12 @@ describe("FF Portal v2 schema (e2e)", () => {
     const query = await prisma.query.create({
       data: { queryCode: `${PFX}${n}`, shipmentDescription: `${PFX}fixture-${n}` },
     });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
     const pkg = await prisma.package.create({
       data: {
@@ -87,7 +91,9 @@ describe("FF Portal v2 schema (e2e)", () => {
     for (const id of queryIds) {
       await prisma.query.delete({ where: { id } }); // cascades points/legs/cargo/packages
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: PFX } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: PFX } },
+    });
   };
 
   beforeAll(async () => {

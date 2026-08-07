@@ -218,7 +218,11 @@ export class ChangeOrderStrategy {
       freightForwarderId,
       legIds: [...legs],
     }));
-    const event: ChangeOrderReopenedEvent = { queryId: req.queryId!, reason: req.reason ?? "", perFf };
+    const event: ChangeOrderReopenedEvent = {
+      queryId: req.queryId!,
+      reason: req.reason ?? "",
+      perFf,
+    };
     try {
       await this.events.emitAsync("changeorder.leg.reopened", event);
     } catch (err) {

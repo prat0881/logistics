@@ -3,9 +3,19 @@ import { render, screen } from "@testing-library/react";
 import type { QueryLegDto, QueryPointDto, CargoDto, PackageDto } from "@svyft/shared";
 import { PreviewRfqDialog } from "./PreviewRfqDialog";
 
-const leg = { id: "l1", legCode: "L1", legName: "Air leg", mode: "AIR",
-  originPointId: "p1", destinationPointId: "p2", assignedPackageIds: ["pk1"] } as unknown as QueryLegDto;
-const points = [{ id: "p1", name: "PVG", country: "CN" }, { id: "p2", name: "DXB", country: "AE" }] as unknown as QueryPointDto[];
+const leg = {
+  id: "l1",
+  legCode: "L1",
+  legName: "Air leg",
+  mode: "AIR",
+  originPointId: "p1",
+  destinationPointId: "p2",
+  assignedPackageIds: ["pk1"],
+} as unknown as QueryLegDto;
+const points = [
+  { id: "p1", name: "PVG", country: "CN" },
+  { id: "p2", name: "DXB", country: "AE" },
+] as unknown as QueryPointDto[];
 
 const makePackage = (over: Partial<PackageDto>): PackageDto => ({
   id: "pk1",
@@ -43,12 +53,18 @@ const makeCargo = (over: Partial<CargoDto>): CargoDto => ({
 
 const cargo: CargoDto[] = [
   makeCargo({ id: "c1", packages: [makePackage({ id: "pk1", packageNo: "PKG-1" })] }),
-  makeCargo({ id: "c2", poReference: "PO-2", packages: [makePackage({ id: "pk2", packageNo: "PKG-2" })] }),
+  makeCargo({
+    id: "c2",
+    poReference: "PO-2",
+    packages: [makePackage({ id: "pk2", packageNo: "PKG-2" })],
+  }),
 ];
 
 describe("PreviewRfqDialog", () => {
   it("renders only the leg's assigned packages", () => {
-    render(<PreviewRfqDialog open onOpenChange={() => {}} leg={leg} points={points} cargo={cargo} />);
+    render(
+      <PreviewRfqDialog open onOpenChange={() => {}} leg={leg} points={points} cargo={cargo} />,
+    );
     expect(screen.getByText("PKG-1")).toBeInTheDocument();
     expect(screen.queryByText("PKG-2")).not.toBeInTheDocument();
     expect(screen.getByText(/PVG/)).toBeInTheDocument();
@@ -61,13 +77,22 @@ describe("PreviewRfqDialog", () => {
         dimUnit: "MM",
         packages: [
           makePackage({
-            id: "pk1", packageNo: "PKG-1", packageType: "CRATE",
-            dimL: "100", dimW: "50", dimH: "40", grossWt: "12.5", netWt: "10", volumeCbm: "0.2",
+            id: "pk1",
+            packageNo: "PKG-1",
+            packageType: "CRATE",
+            dimL: "100",
+            dimW: "50",
+            dimH: "40",
+            grossWt: "12.5",
+            netWt: "10",
+            volumeCbm: "0.2",
           }),
         ],
       }),
     ];
-    render(<PreviewRfqDialog open onOpenChange={() => {}} leg={leg} points={points} cargo={mmCargo} />);
+    render(
+      <PreviewRfqDialog open onOpenChange={() => {}} leg={leg} points={points} cargo={mmCargo} />,
+    );
     const row = screen.getByText("PKG-1").closest("tr")!;
     expect(row).toHaveTextContent("Crate");
     // canonical cm -> MM display is x10 (fromCanonicalDim)
@@ -83,13 +108,23 @@ describe("PreviewRfqDialog", () => {
     const dgCargo: CargoDto[] = [
       makeCargo({ id: "c1", packages: [makePackage({ id: "pk1", effectiveTags: ["DG"] })] }),
     ];
-    render(<PreviewRfqDialog open onOpenChange={() => {}} leg={leg} points={points} cargo={dgCargo} />);
+    render(
+      <PreviewRfqDialog open onOpenChange={() => {}} leg={leg} points={points} cargo={dgCargo} />,
+    );
     expect(screen.getByLabelText(/dangerous goods/i)).toBeInTheDocument();
   });
 
   it("shows an empty state when no packages are assigned to the leg", () => {
     const legNoAssign = { ...leg, assignedPackageIds: [] } as unknown as QueryLegDto;
-    render(<PreviewRfqDialog open onOpenChange={() => {}} leg={legNoAssign} points={points} cargo={cargo} />);
+    render(
+      <PreviewRfqDialog
+        open
+        onOpenChange={() => {}}
+        leg={legNoAssign}
+        points={points}
+        cargo={cargo}
+      />,
+    );
     expect(screen.getByText(/no cargo assigned/i)).toBeInTheDocument();
   });
 });

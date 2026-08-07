@@ -10,7 +10,14 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
-import { checkModeEndpoints, formatLegCode, LegEvent, type Finding, type FreightMode, type LegSaveInput } from "@svyft/shared";
+import {
+  checkModeEndpoints,
+  formatLegCode,
+  LegEvent,
+  type Finding,
+  type FreightMode,
+  type LegSaveInput,
+} from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
@@ -34,7 +41,10 @@ export class LegsService {
 
   private load(queryId: string, legId: string) {
     return this.prisma.leg
-      .findFirst({ where: { id: legId, queryId }, include: { legPackages: { select: { packageId: true } } } })
+      .findFirst({
+        where: { id: legId, queryId },
+        include: { legPackages: { select: { packageId: true } } },
+      })
       .then((l) => {
         if (!l) throw new NotFoundException("Leg not found");
         return l;
@@ -43,7 +53,10 @@ export class LegsService {
 
   private async assertPointRef(queryId: string, pointId: string | null | undefined): Promise<void> {
     if (!pointId) return;
-    const p = await this.prisma.point.findFirst({ where: { id: pointId, queryId }, select: { id: true } });
+    const p = await this.prisma.point.findFirst({
+      where: { id: pointId, queryId },
+      select: { id: true },
+    });
     if (!p) throw new BadRequestException(`Point ${pointId} does not belong to this query`);
   }
 
@@ -92,7 +105,11 @@ export class LegsService {
       },
     });
     const whIds = warehousePointIds([leg?.originPoint, leg?.destinationPoint]);
-    const conflict = await findWarehouseYesConflict(this.prisma, { queryId, legId, warehousePointIds: whIds });
+    const conflict = await findWarehouseYesConflict(this.prisma, {
+      queryId,
+      legId,
+      warehousePointIds: whIds,
+    });
     if (conflict)
       throw new UnprocessableEntityException({
         findings: [
@@ -112,7 +129,12 @@ export class LegsService {
     await this.assertPointRef(queryId, input.destinationPointId);
     const packageIds = input.assignedPackageIds ?? [];
     await this.assertPackageRefs(queryId, packageIds);
-    await this.assertModeEndpoints(queryId, input.mode, input.originPointId, input.destinationPointId);
+    await this.assertModeEndpoints(
+      queryId,
+      input.mode,
+      input.originPointId,
+      input.destinationPointId,
+    );
 
     const id = randomUUID();
     const result = await this.mediator.apply(
@@ -156,12 +178,18 @@ export class LegsService {
   async update(queryId: string, legId: string, input: LegSaveInput, user: RequestUser) {
     const existing = await this.load(queryId, legId);
     if (input.originPointId !== undefined) await this.assertPointRef(queryId, input.originPointId);
-    if (input.destinationPointId !== undefined) await this.assertPointRef(queryId, input.destinationPointId);
-    if (input.assignedPackageIds !== undefined) await this.assertPackageRefs(queryId, input.assignedPackageIds);
+    if (input.destinationPointId !== undefined)
+      await this.assertPointRef(queryId, input.destinationPointId);
+    if (input.assignedPackageIds !== undefined)
+      await this.assertPackageRefs(queryId, input.assignedPackageIds);
 
     const effMode = input.mode !== undefined ? input.mode : existing.mode;
-    const effOrigin = input.originPointId !== undefined ? input.originPointId : existing.originPointId;
-    const effDest = input.destinationPointId !== undefined ? input.destinationPointId : existing.destinationPointId;
+    const effOrigin =
+      input.originPointId !== undefined ? input.originPointId : existing.originPointId;
+    const effDest =
+      input.destinationPointId !== undefined
+        ? input.destinationPointId
+        : existing.destinationPointId;
     await this.assertModeEndpoints(queryId, effMode, effOrigin, effDest, legId);
 
     // `reason` is ChangeRequest metadata, not a leg column — strip it before it can reach
@@ -173,9 +201,11 @@ export class LegsService {
     // Task 11: turning the warehouse toggle ON must not collide with a sibling leg that
     // already carries Yes for the same warehouse point (F8) — checked eagerly, before the
     // mediator runs, so a conflict never even reaches the free/change-order fork.
-    if (input.warehouseHandlingIncluded === true) await this.assertWarehouseExclusivity(queryId, legId);
+    if (input.warehouseHandlingIncluded === true)
+      await this.assertWarehouseExclusivity(queryId, legId);
 
-    const { assignedPackageIds, chargeLineDefinitionIds, readyDate, targetDelivery, ...rest } = fieldsInput;
+    const { assignedPackageIds, chargeLineDefinitionIds, readyDate, targetDelivery, ...rest } =
+      fieldsInput;
     const result = await this.mediator.apply(
       {
         entity: "leg",
@@ -191,15 +221,23 @@ export class LegsService {
           where: { id: legId },
           data: {
             ...rest,
-            ...(readyDate !== undefined ? { readyDate: readyDate ? new Date(readyDate) : null } : {}),
-            ...(targetDelivery !== undefined ? { targetDelivery: targetDelivery ? new Date(targetDelivery) : null } : {}),
+            ...(readyDate !== undefined
+              ? { readyDate: readyDate ? new Date(readyDate) : null }
+              : {}),
+            ...(targetDelivery !== undefined
+              ? { targetDelivery: targetDelivery ? new Date(targetDelivery) : null }
+              : {}),
           } as Prisma.LegUncheckedUpdateInput,
         });
         if (assignedPackageIds !== undefined) {
           await tx.legPackage.deleteMany({ where: { legId } });
           if (assignedPackageIds.length)
             await tx.legPackage.createMany({
-              data: assignedPackageIds.map((pid) => ({ legId, packageId: pid, tenantId: user.tenantId })),
+              data: assignedPackageIds.map((pid) => ({
+                legId,
+                packageId: pid,
+                tenantId: user.tenantId,
+              })),
             });
         }
         // chargeLineDefinitionIds is not a Leg column (LegChargeLineSelection is its own
@@ -208,7 +246,11 @@ export class LegsService {
           await tx.legChargeLineSelection.deleteMany({ where: { legId } });
           if (chargeLineDefinitionIds.length)
             await tx.legChargeLineSelection.createMany({
-              data: chargeLineDefinitionIds.map((definitionId) => ({ legId, definitionId, tenantId: user.tenantId })),
+              data: chargeLineDefinitionIds.map((definitionId) => ({
+                legId,
+                definitionId,
+                tenantId: user.tenantId,
+              })),
             });
         }
       },
@@ -242,7 +284,10 @@ export class LegsService {
 
   // Fire the leg machine forward. THE caller (Create Query) must have validated the whole route
   // first (validateRoute phase='create' clean) — we pass routeValid:true so the guard passes.
-  async markReadyForRfq(legId: string, ctx: { queryId: string; actorId?: string | null; tenantId?: string | null }) {
+  async markReadyForRfq(
+    legId: string,
+    ctx: { queryId: string; actorId?: string | null; tenantId?: string | null },
+  ) {
     await this.status.fire("leg", legId, LegEvent.VALIDATE_PASS, {
       routeValid: true,
       queryId: ctx.queryId,

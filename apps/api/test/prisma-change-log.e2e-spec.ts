@@ -88,7 +88,14 @@ describe("PrismaChangeLog + ChangeLogPolicy (integration)", () => {
       });
 
       const res = await mediator.apply(
-        { entity: "cargo", id: cargo.id, field: "poReference", patch: { poReference: "PO-2" }, queryId, actorId: null },
+        {
+          entity: "cargo",
+          id: cargo.id,
+          field: "poReference",
+          patch: { poReference: "PO-2" },
+          queryId,
+          actorId: null,
+        },
         async (tx) => {
           await tx.cargo.update({ where: { id: cargo.id }, data: { poReference: "PO-2" } });
         },

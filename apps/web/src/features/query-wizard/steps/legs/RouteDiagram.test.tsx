@@ -15,11 +15,39 @@ afterEach(() => {
  * `id` is the package id referenced by a leg's `assignedPackageIds`, wrapped in a
  * synthetic single-package Cargo group so callers don't need to double-nest.
  */
-function makeDetail(over: {
-  points?: Array<{ id: string; type: string; name?: string | null; city?: string | null; country?: string | null; unLocode?: string | null; iataCode?: string | null; streetAddress?: string | null; postalCode?: string | null; contactName?: string | null; contactPhone?: string | null; contactEmail?: string | null }>;
-  legs?: Array<{ id: string; legCode: string; mode?: string | null; originPointId?: string | null; destinationPointId?: string | null; assignedPackageIds?: string[]; rollup?: { totalPackages: number; totalCbm: number; totalGrossWt: number; totalNetWt: number } }>;
-  cargos?: Array<{ id: string; poReference?: string }>;
-} = {}): QueryDetail {
+function makeDetail(
+  over: {
+    points?: Array<{
+      id: string;
+      type: string;
+      name?: string | null;
+      city?: string | null;
+      country?: string | null;
+      unLocode?: string | null;
+      iataCode?: string | null;
+      streetAddress?: string | null;
+      postalCode?: string | null;
+      contactName?: string | null;
+      contactPhone?: string | null;
+      contactEmail?: string | null;
+    }>;
+    legs?: Array<{
+      id: string;
+      legCode: string;
+      mode?: string | null;
+      originPointId?: string | null;
+      destinationPointId?: string | null;
+      assignedPackageIds?: string[];
+      rollup?: {
+        totalPackages: number;
+        totalCbm: number;
+        totalGrossWt: number;
+        totalNetWt: number;
+      };
+    }>;
+    cargos?: Array<{ id: string; poReference?: string }>;
+  } = {},
+): QueryDetail {
   const points = (over.points ?? []).map((p) => ({
     tenantId: null,
     queryId: "q1",
@@ -148,12 +176,31 @@ describe("RouteDiagram", () => {
         { id: "p5", type: "DELIVERY", name: "Orphan Dock" },
       ],
       legs: [
-        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "p1", destinationPointId: "p2", assignedPackageIds: [] },
-        { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "p3", destinationPointId: "p4", assignedPackageIds: [] },
+        {
+          id: "l1",
+          legCode: "L1",
+          mode: "ROAD",
+          originPointId: "p1",
+          destinationPointId: "p2",
+          assignedPackageIds: [],
+        },
+        {
+          id: "l2",
+          legCode: "L2",
+          mode: "ROAD",
+          originPointId: "p3",
+          destinationPointId: "p4",
+          assignedPackageIds: [],
+        },
       ],
     });
     const findings: Finding[] = [
-      { rule: "R1", severity: "blocking", scope: { type: "leg", id: "l2" }, message: "broken chain" },
+      {
+        rule: "R1",
+        severity: "blocking",
+        scope: { type: "leg", id: "l2" },
+        message: "broken chain",
+      },
     ];
 
     const { container } = render(<RouteDiagram detail={detail} findings={findings} />);
@@ -179,7 +226,14 @@ describe("RouteDiagram", () => {
         { id: "p2", type: "SEAPORT", name: "Rotterdam", unLocode: "NLRTM" },
       ],
       legs: [
-        { id: "l1", legCode: "SEA-1", mode: "SEA", originPointId: "p1", destinationPointId: "p2", assignedPackageIds: [] },
+        {
+          id: "l1",
+          legCode: "SEA-1",
+          mode: "SEA",
+          originPointId: "p1",
+          destinationPointId: "p2",
+          assignedPackageIds: [],
+        },
       ],
     });
     const { container, getByText } = render(<RouteDiagram detail={detail} findings={[]} />);
@@ -199,12 +253,31 @@ describe("RouteDiagram", () => {
       ],
       cargos: [{ id: "c1", poReference: "PO1" }],
       legs: [
-        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "p1", destinationPointId: "p2", assignedPackageIds: ["c1"] },
-        { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "p2", destinationPointId: "p3", assignedPackageIds: ["c1"] },
+        {
+          id: "l1",
+          legCode: "L1",
+          mode: "ROAD",
+          originPointId: "p1",
+          destinationPointId: "p2",
+          assignedPackageIds: ["c1"],
+        },
+        {
+          id: "l2",
+          legCode: "L2",
+          mode: "ROAD",
+          originPointId: "p2",
+          destinationPointId: "p3",
+          assignedPackageIds: ["c1"],
+        },
       ],
     });
     const findings: Finding[] = [
-      { rule: "R1", severity: "warning", scope: { type: "cargo", id: "c1" }, message: "cargo chain issue" },
+      {
+        rule: "R1",
+        severity: "warning",
+        scope: { type: "cargo", id: "c1" },
+        message: "cargo chain issue",
+      },
     ];
     const { container } = render(<RouteDiagram detail={detail} findings={findings} />);
     // Both legs carry c1 → both edges get a warning finding marker.
@@ -253,9 +326,30 @@ describe("RouteDiagram", () => {
         { id: "dl", type: "DELIVERY", name: "Delivery" },
       ],
       legs: [
-        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "ap", destinationPointId: "wh", assignedPackageIds: [] },
-        { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "wh", destinationPointId: "ap", assignedPackageIds: [] },
-        { id: "l3", legCode: "L3", mode: "ROAD", originPointId: "ap", destinationPointId: "dl", assignedPackageIds: [] },
+        {
+          id: "l1",
+          legCode: "L1",
+          mode: "ROAD",
+          originPointId: "ap",
+          destinationPointId: "wh",
+          assignedPackageIds: [],
+        },
+        {
+          id: "l2",
+          legCode: "L2",
+          mode: "ROAD",
+          originPointId: "wh",
+          destinationPointId: "ap",
+          assignedPackageIds: [],
+        },
+        {
+          id: "l3",
+          legCode: "L3",
+          mode: "ROAD",
+          originPointId: "ap",
+          destinationPointId: "dl",
+          assignedPackageIds: [],
+        },
       ],
     });
     const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
@@ -267,7 +361,9 @@ describe("RouteDiagram", () => {
     const nodes = Array.from(container.querySelectorAll("[data-point-id]")) as SVGGElement[];
     expect(nodes.length).toBe(4);
     for (const n of nodes) {
-      const m = /translate\(\s*([-\d.]+)[ ,]+([-\d.]+)\s*\)/.exec(n.getAttribute("transform") ?? "");
+      const m = /translate\(\s*([-\d.]+)[ ,]+([-\d.]+)\s*\)/.exec(
+        n.getAttribute("transform") ?? "",
+      );
       expect(m).not.toBeNull();
       const x = Number(m![1]);
       // The node's full box (x .. x+NODE_W) must fit within the viewBox width.
@@ -287,9 +383,30 @@ describe("RouteDiagram", () => {
         { id: "dl", type: "DELIVERY", name: "Delivery" },
       ],
       legs: [
-        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "pk", destinationPointId: "dl", assignedPackageIds: [] },
-        { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "pk", destinationPointId: "dl", assignedPackageIds: [] },
-        { id: "l3", legCode: "L3", mode: "ROAD", originPointId: "pk", destinationPointId: "dl", assignedPackageIds: [] },
+        {
+          id: "l1",
+          legCode: "L1",
+          mode: "ROAD",
+          originPointId: "pk",
+          destinationPointId: "dl",
+          assignedPackageIds: [],
+        },
+        {
+          id: "l2",
+          legCode: "L2",
+          mode: "ROAD",
+          originPointId: "pk",
+          destinationPointId: "dl",
+          assignedPackageIds: [],
+        },
+        {
+          id: "l3",
+          legCode: "L3",
+          mode: "ROAD",
+          originPointId: "pk",
+          destinationPointId: "dl",
+          assignedPackageIds: [],
+        },
       ],
     });
     const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
@@ -314,8 +431,22 @@ describe("RouteDiagram", () => {
         { id: "b", type: "AIRPORT", name: "B", iataCode: "BBB" },
       ],
       legs: [
-        { id: "l1", legCode: "L1", mode: "ROAD", originPointId: "a", destinationPointId: "b", assignedPackageIds: [] },
-        { id: "l2", legCode: "L2", mode: "ROAD", originPointId: "b", destinationPointId: "a", assignedPackageIds: [] },
+        {
+          id: "l1",
+          legCode: "L1",
+          mode: "ROAD",
+          originPointId: "a",
+          destinationPointId: "b",
+          assignedPackageIds: [],
+        },
+        {
+          id: "l2",
+          legCode: "L2",
+          mode: "ROAD",
+          originPointId: "b",
+          destinationPointId: "a",
+          assignedPackageIds: [],
+        },
       ],
     });
     const { container } = render(<RouteDiagram detail={detail} findings={[]} />);
@@ -356,16 +487,30 @@ describe("RouteDiagram", () => {
 
   it("clicking a point box calls onEditPoint with the point id", async () => {
     const onEditPoint = vi.fn();
-    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={onEditPoint} onEditLeg={() => {}} />);
-    const node = document.querySelector('[data-point-id]') as SVGGElement;
+    render(
+      <RouteDiagram
+        detail={detailWithRoute}
+        findings={[]}
+        onEditPoint={onEditPoint}
+        onEditLeg={() => {}}
+      />,
+    );
+    const node = document.querySelector("[data-point-id]") as SVGGElement;
     await userEvent.click(node);
     expect(onEditPoint).toHaveBeenCalledWith(node.getAttribute("data-point-id"));
   });
 
   it("clicking a leg line calls onEditLeg with the leg id", async () => {
     const onEditLeg = vi.fn();
-    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={onEditLeg} />);
-    const edge = document.querySelector('[data-leg-id]') as SVGGElement;
+    render(
+      <RouteDiagram
+        detail={detailWithRoute}
+        findings={[]}
+        onEditPoint={() => {}}
+        onEditLeg={onEditLeg}
+      />,
+    );
+    const edge = document.querySelector("[data-leg-id]") as SVGGElement;
     await userEvent.click(edge);
     expect(onEditLeg).toHaveBeenCalledWith(edge.getAttribute("data-leg-id"));
   });
@@ -373,7 +518,14 @@ describe("RouteDiagram", () => {
   // ── Task 3: hover tooltip ────────────────────────────────────────────────────
 
   it("hovering a point box shows its full address in a tooltip", async () => {
-    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    render(
+      <RouteDiagram
+        detail={detailWithRoute}
+        findings={[]}
+        onEditPoint={() => {}}
+        onEditLeg={() => {}}
+      />,
+    );
     const node = document.querySelector('[data-point-id="p1"]') as SVGGElement;
     fireEvent.mouseEnter(node);
     const tip = await screen.findByRole("tooltip");
@@ -383,7 +535,14 @@ describe("RouteDiagram", () => {
   });
 
   it("hovering a leg line shows its rollup pkg / CBM / kg", async () => {
-    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    render(
+      <RouteDiagram
+        detail={detailWithRoute}
+        findings={[]}
+        onEditPoint={() => {}}
+        onEditLeg={() => {}}
+      />,
+    );
     const edge = document.querySelector('[data-leg-id="l1"]') as SVGGElement;
     fireEvent.mouseEnter(edge);
     const tip = await screen.findByRole("tooltip");
@@ -397,9 +556,21 @@ describe("RouteDiagram", () => {
 
   it("tooltip shows red finding messages for a point with blocking findings", async () => {
     const blockingFindings: Finding[] = [
-      { rule: "R1", severity: "blocking", scope: { type: "point", id: "p1" }, message: "Missing contact email" },
+      {
+        rule: "R1",
+        severity: "blocking",
+        scope: { type: "point", id: "p1" },
+        message: "Missing contact email",
+      },
     ];
-    render(<RouteDiagram detail={detailWithRoute} findings={blockingFindings} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    render(
+      <RouteDiagram
+        detail={detailWithRoute}
+        findings={blockingFindings}
+        onEditPoint={() => {}}
+        onEditLeg={() => {}}
+      />,
+    );
     const node = document.querySelector('[data-point-id="p1"]') as SVGGElement;
     fireEvent.mouseEnter(node);
     const tip = await screen.findByRole("tooltip");
@@ -407,7 +578,14 @@ describe("RouteDiagram", () => {
   });
 
   it("tooltip disappears when mouse leaves the node", async () => {
-    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    render(
+      <RouteDiagram
+        detail={detailWithRoute}
+        findings={[]}
+        onEditPoint={() => {}}
+        onEditLeg={() => {}}
+      />,
+    );
     const node = document.querySelector('[data-point-id="p1"]') as SVGGElement;
     fireEvent.mouseEnter(node);
     await screen.findByRole("tooltip");
@@ -416,7 +594,14 @@ describe("RouteDiagram", () => {
   });
 
   it("tooltip is pointer-events-none so it never blocks underlying click", async () => {
-    render(<RouteDiagram detail={detailWithRoute} findings={[]} onEditPoint={() => {}} onEditLeg={() => {}} />);
+    render(
+      <RouteDiagram
+        detail={detailWithRoute}
+        findings={[]}
+        onEditPoint={() => {}}
+        onEditLeg={() => {}}
+      />,
+    );
     const node = document.querySelector('[data-point-id="p1"]') as SVGGElement;
     fireEvent.mouseEnter(node);
     const tip = await screen.findByRole("tooltip");
@@ -429,7 +614,10 @@ describe("RouteDiagram", () => {
         { id: "p1", type: "PICKUP", name: "Sender" },
         { id: "p2", type: "DELIVERY", name: "Receiver" },
       ],
-      cargos: [{ id: "pkg1", poReference: "PO1" }, { id: "pkg2", poReference: "PO2" }],
+      cargos: [
+        { id: "pkg1", poReference: "PO1" },
+        { id: "pkg2", poReference: "PO2" },
+      ],
       legs: [
         {
           id: "l1",

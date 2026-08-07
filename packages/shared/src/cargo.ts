@@ -9,19 +9,35 @@ export type WeightUnit = (typeof WeightUnit)[keyof typeof WeightUnit];
 export const WEIGHT_UNITS = Object.values(WeightUnit) as [WeightUnit, ...WeightUnit[]];
 
 export const PackageType = {
-  BOX: "BOX", PALLET: "PALLET", CRATE: "CRATE", CARTON: "CARTON", DRUM: "DRUM", BUNDLE: "BUNDLE",
+  BOX: "BOX",
+  PALLET: "PALLET",
+  CRATE: "CRATE",
+  CARTON: "CARTON",
+  DRUM: "DRUM",
+  BUNDLE: "BUNDLE",
 } as const;
 export type PackageType = (typeof PackageType)[keyof typeof PackageType];
 export const PACKAGE_TYPES = Object.values(PackageType) as [PackageType, ...PackageType[]];
 
 export const UnitOfMeasure = {
-  PC: "PC", SET: "SET", BOX: "BOX", KG: "KG", M: "M", ROLL: "ROLL",
+  PC: "PC",
+  SET: "SET",
+  BOX: "BOX",
+  KG: "KG",
+  M: "M",
+  ROLL: "ROLL",
 } as const;
 export type UnitOfMeasure = (typeof UnitOfMeasure)[keyof typeof UnitOfMeasure];
 export const UOMS = Object.values(UnitOfMeasure) as [UnitOfMeasure, ...UnitOfMeasure[]];
 
 /** Volume in cubic metres from dims in the chosen unit. cm³/1e6 = m³; mm³/1e9 = m³. */
-export function cbmFromDims(dimL: number, dimW: number, dimH: number, qty: number, dimUnit: DimUnit): number {
+export function cbmFromDims(
+  dimL: number,
+  dimW: number,
+  dimH: number,
+  qty: number,
+  dimUnit: DimUnit,
+): number {
   const div = dimUnit === "MM" ? 1e9 : 1e6;
   return (dimL * dimW * dimH * qty) / div;
 }
@@ -98,14 +114,28 @@ export function referenceTagLabel(tag: ReferenceTag): string {
 }
 
 const PACKAGE_TYPE_LABELS: Record<PackageType, string> = {
-  BOX: "Box", PALLET: "Pallet", CRATE: "Crate", CARTON: "Carton", DRUM: "Drum", BUNDLE: "Bundle",
+  BOX: "Box",
+  PALLET: "Pallet",
+  CRATE: "Crate",
+  CARTON: "Carton",
+  DRUM: "Drum",
+  BUNDLE: "Bundle",
 };
-export function packageTypeLabel(t: PackageType): string { return PACKAGE_TYPE_LABELS[t] ?? t; }
+export function packageTypeLabel(t: PackageType): string {
+  return PACKAGE_TYPE_LABELS[t] ?? t;
+}
 
 const UOM_LABELS: Record<UnitOfMeasure, string> = {
-  PC: "pc", SET: "set", BOX: "box", KG: "kg", M: "m", ROLL: "roll",
+  PC: "pc",
+  SET: "set",
+  BOX: "box",
+  KG: "kg",
+  M: "m",
+  ROLL: "roll",
 };
-export function uomLabel(u: UnitOfMeasure): string { return UOM_LABELS[u] ?? u; }
+export function uomLabel(u: UnitOfMeasure): string {
+  return UOM_LABELS[u] ?? u;
+}
 
 export function weightUnitLabel(u: WeightUnit): string {
   return u === "GM" ? "g" : u === "TONNE" ? "tonne" : "kg";
@@ -237,7 +267,10 @@ export interface CargoDto {
 }
 
 /** BL-3: a package's effective tags = its own tags ∪ every item's tags, deduped, order-stable. */
-export function effectiveTags(pkg: { tags: ReferenceTag[]; items: { tags: ReferenceTag[] }[] }): ReferenceTag[] {
+export function effectiveTags(pkg: {
+  tags: ReferenceTag[];
+  items: { tags: ReferenceTag[] }[];
+}): ReferenceTag[] {
   const seen = new Set<ReferenceTag>();
   const out: ReferenceTag[] = [];
   for (const t of [...pkg.tags, ...pkg.items.flatMap((i) => i.tags)]) {

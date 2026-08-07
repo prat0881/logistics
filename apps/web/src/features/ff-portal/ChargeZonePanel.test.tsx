@@ -8,8 +8,20 @@ import { ChargeZonePanel } from "./ChargeZonePanel";
 // Shaped like real seeded lines (ff-portal.service.ts's resolveScope): definitionKey set,
 // presetKey always null — isPreset is definitionKey-based (ChargeZonePanel.tsx), not presetKey.
 const baseCharges: QuoteDraftCharge[] = [
-  { zone: "ORIGIN", definitionKey: "AIR_ORIGIN_THC", presetKey: null, label: "Origin THC", amount: null },
-  { zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_FREIGHT", presetKey: null, label: "Air Freight", amount: null },
+  {
+    zone: "ORIGIN",
+    definitionKey: "AIR_ORIGIN_THC",
+    presetKey: null,
+    label: "Origin THC",
+    amount: null,
+  },
+  {
+    zone: "MAIN_FREIGHT",
+    definitionKey: "AIR_MAIN_FREIGHT",
+    presetKey: null,
+    label: "Air Freight",
+    amount: null,
+  },
 ];
 
 function Harness({
@@ -19,11 +31,26 @@ function Harness({
   charges?: QuoteDraftCharge[];
   seededCharges?: FfPortalSeededCharge[];
 }) {
-  const form = useForm<QuoteDraft>({ defaultValues: {
-    legId: "L1", mode: "AIR", currency: "USD", quoteValidityUntil: null, cargo: [],
-    charges,
-    trucking: [], warehouse: [], transit: null, dgSurchargeNote: null, termsConditions: null } });
-  return <FormProvider {...form}><ChargeZonePanel seededCharges={seededCharges} /></FormProvider>;
+  const form = useForm<QuoteDraft>({
+    defaultValues: {
+      legId: "L1",
+      mode: "AIR",
+      currency: "USD",
+      quoteValidityUntil: null,
+      cargo: [],
+      charges,
+      trucking: [],
+      warehouse: [],
+      transit: null,
+      dgSurchargeNote: null,
+      termsConditions: null,
+    },
+  });
+  return (
+    <FormProvider {...form}>
+      <ChargeZonePanel seededCharges={seededCharges} />
+    </FormProvider>
+  );
 }
 
 describe("ChargeZonePanel", () => {
@@ -53,21 +80,62 @@ describe("ChargeZonePanel", () => {
 
 // ── Task 14: seeded-line rendering routed by inputType (Air FSC/Peak + Heavy-Weight calc) ──
 const airMainCharges: QuoteDraftCharge[] = [
-  { zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_FSC", presetKey: null, label: "Fuel Surcharge (FSC)", amount: null },
-  { zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_PEAK_SEASON", presetKey: null, label: "Peak Season Surcharge", amount: null },
   {
-    zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_HEAVY_WEIGHT", presetKey: null,
-    label: "Heavy Weight Surcharge", amount: null,
-    pieceWeightKg: null, airlineLimitKg: null, ratePerExcessKg: null,
+    zone: "MAIN_FREIGHT",
+    definitionKey: "AIR_MAIN_FSC",
+    presetKey: null,
+    label: "Fuel Surcharge (FSC)",
+    amount: null,
+  },
+  {
+    zone: "MAIN_FREIGHT",
+    definitionKey: "AIR_MAIN_PEAK_SEASON",
+    presetKey: null,
+    label: "Peak Season Surcharge",
+    amount: null,
+  },
+  {
+    zone: "MAIN_FREIGHT",
+    definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
+    presetKey: null,
+    label: "Heavy Weight Surcharge",
+    amount: null,
+    pieceWeightKg: null,
+    airlineLimitKg: null,
+    ratePerExcessKg: null,
   },
 ];
 
 // Mirrors what ff-portal.service.ts's resolveScope actually seeds (definitionKey + inputType;
 // presetKey is always null on catalogue lines — kept only for shape compatibility).
 const airMainSeeded: FfPortalSeededCharge[] = [
-  { zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_FSC", inputType: "PLAIN", presetKey: null, label: "Fuel Surcharge (FSC)", isPreset: true, amount: null },
-  { zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_PEAK_SEASON", inputType: "PLAIN", presetKey: null, label: "Peak Season Surcharge", isPreset: true, amount: null },
-  { zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_HEAVY_WEIGHT", inputType: "HEAVY_WEIGHT_CALC", presetKey: null, label: "Heavy Weight Surcharge", isPreset: true, amount: null },
+  {
+    zone: "MAIN_FREIGHT",
+    definitionKey: "AIR_MAIN_FSC",
+    inputType: "PLAIN",
+    presetKey: null,
+    label: "Fuel Surcharge (FSC)",
+    isPreset: true,
+    amount: null,
+  },
+  {
+    zone: "MAIN_FREIGHT",
+    definitionKey: "AIR_MAIN_PEAK_SEASON",
+    inputType: "PLAIN",
+    presetKey: null,
+    label: "Peak Season Surcharge",
+    isPreset: true,
+    amount: null,
+  },
+  {
+    zone: "MAIN_FREIGHT",
+    definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
+    inputType: "HEAVY_WEIGHT_CALC",
+    presetKey: null,
+    label: "Heavy Weight Surcharge",
+    isPreset: true,
+    amount: null,
+  },
 ];
 
 describe("ChargeZonePanel — seeded inputType routing (Task 14)", () => {
@@ -81,7 +149,9 @@ describe("ChargeZonePanel — seeded inputType routing (Task 14)", () => {
     render(<Harness charges={airMainCharges} seededCharges={airMainSeeded} />);
     expect(screen.getByLabelText(/piece weight.*heavy weight surcharge/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/airline limit.*heavy weight surcharge/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/rate per excess kg.*heavy weight surcharge/i)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/rate per excess kg.*heavy weight surcharge/i),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText(/^amount for heavy weight surcharge$/i)).toBeNull();
   });
 
@@ -117,30 +187,66 @@ describe("ChargeZonePanel — seeded inputType routing (Task 14)", () => {
 
 // ── Task 15: Sea Zone-1 Bill of Lading line gets a billOfLadingType dropdown ──
 const seaOriginCharges: QuoteDraftCharge[] = [
-  { zone: "ORIGIN", definitionKey: "SEA_ORIGIN_THC", presetKey: null, label: "Origin THC", amount: null },
-  { zone: "ORIGIN", definitionKey: "SEA_ORIGIN_BILL_OF_LADING", presetKey: null, label: "Bill of Lading", amount: null },
+  {
+    zone: "ORIGIN",
+    definitionKey: "SEA_ORIGIN_THC",
+    presetKey: null,
+    label: "Origin THC",
+    amount: null,
+  },
+  {
+    zone: "ORIGIN",
+    definitionKey: "SEA_ORIGIN_BILL_OF_LADING",
+    presetKey: null,
+    label: "Bill of Lading",
+    amount: null,
+  },
 ];
 const seaOriginSeeded: FfPortalSeededCharge[] = [
-  { zone: "ORIGIN", definitionKey: "SEA_ORIGIN_THC", inputType: "PLAIN", presetKey: null, label: "Origin THC", isPreset: true, amount: null },
-  { zone: "ORIGIN", definitionKey: "SEA_ORIGIN_BILL_OF_LADING", inputType: "PLAIN", presetKey: null, label: "Bill of Lading", isPreset: true, amount: null },
+  {
+    zone: "ORIGIN",
+    definitionKey: "SEA_ORIGIN_THC",
+    inputType: "PLAIN",
+    presetKey: null,
+    label: "Origin THC",
+    isPreset: true,
+    amount: null,
+  },
+  {
+    zone: "ORIGIN",
+    definitionKey: "SEA_ORIGIN_BILL_OF_LADING",
+    inputType: "PLAIN",
+    presetKey: null,
+    label: "Bill of Lading",
+    isPreset: true,
+    amount: null,
+  },
 ];
 
 describe("ChargeZonePanel — Sea Bill of Lading dropdown (Task 15)", () => {
   it("renders a billOfLadingType Select only on the SEA_ORIGIN_BILL_OF_LADING line, alongside its amount input", () => {
     render(<Harness charges={seaOriginCharges} seededCharges={seaOriginSeeded} />);
     expect(screen.getByLabelText(/amount for bill of lading/i)).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: /bill of lading type for bill of lading/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: /bill of lading type for bill of lading/i }),
+    ).toBeInTheDocument();
     // The other Origin line (THC) gets no B/L dropdown
-    expect(screen.queryByRole("combobox", { name: /bill of lading type for origin thc/i })).toBeNull();
+    expect(
+      screen.queryByRole("combobox", { name: /bill of lading type for origin thc/i }),
+    ).toBeNull();
   });
 
   it("selecting a Bill of Lading type writes charges[idx].billOfLadingType", async () => {
     render(<Harness charges={seaOriginCharges} seededCharges={seaOriginSeeded} />);
-    const trigger = screen.getByRole("combobox", { name: /bill of lading type for bill of lading/i });
+    const trigger = screen.getByRole("combobox", {
+      name: /bill of lading type for bill of lading/i,
+    });
     await userEvent.click(trigger);
     const option = screen.getByRole("option", { name: "Telex Release" });
     await userEvent.click(option);
     // charges[1] is the SEA_ORIGIN_BILL_OF_LADING line (absolute index within `charges`)
-    expect(screen.getByRole("combobox", { name: /bill of lading type for bill of lading/i })).toHaveTextContent("Telex Release");
+    expect(
+      screen.getByRole("combobox", { name: /bill of lading type for bill of lading/i }),
+    ).toHaveTextContent("Telex Release");
   });
 });

@@ -188,7 +188,8 @@ describe("WizardShell", () => {
           };
         if (url.includes("/api/queries/q1/create") && init?.method === "POST")
           return { status: 422, body: { findings: [] } };
-        if (url.includes("/api/queries/q1")) return { status: 200, body: detailWithClientAndNotesFindings };
+        if (url.includes("/api/queries/q1"))
+          return { status: 200, body: detailWithClientAndNotesFindings };
         return { status: 200, body: {} };
       }),
     );
@@ -230,7 +231,8 @@ describe("WizardShell", () => {
           };
         if (url.includes("/api/queries/q1/create") && init?.method === "POST")
           return { status: 422, body: { findings: [] } };
-        if (url.includes("/api/queries/q1")) return { status: 200, body: detailWithClientAndNotesFindings };
+        if (url.includes("/api/queries/q1"))
+          return { status: 200, body: detailWithClientAndNotesFindings };
         return { status: 200, body: {} };
       }),
     );

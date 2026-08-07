@@ -4,7 +4,13 @@
 // standalone functions (not private CargoService methods) so Package/Item services (Tasks 5/7)
 // can shape their own create/update responses without depending on CargoService.
 import type { Cargo, Item, Package } from "@prisma/client";
-import { effectiveTags, type CargoDto, type ItemDto, type PackageDto, type ReferenceTag } from "@svyft/shared";
+import {
+  effectiveTags,
+  type CargoDto,
+  type ItemDto,
+  type PackageDto,
+  type ReferenceTag,
+} from "@svyft/shared";
 
 export type ItemRow = Item;
 export type PackageRow = Package & { items: ItemRow[] };

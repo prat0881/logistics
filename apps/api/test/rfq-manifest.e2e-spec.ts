@@ -51,7 +51,9 @@ describe(`${PFX}rfq-manifest (e2e)`, () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PFX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PFX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -77,8 +79,12 @@ describe(`${PFX}rfq-manifest (e2e)`, () => {
 
     // --- query → cargo → 2 packages (one carrying a DG-tagged item) ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
     const pkg1 = await prisma.package.create({
@@ -157,7 +163,10 @@ describe(`${PFX}rfq-manifest (e2e)`, () => {
 
     const snap: ManifestSnapshot = buildManifestSnapshot(ctx, { incoterms: "FOB" }, new Date());
     expect(snap.cargo).toHaveLength(2);
-    expect(snap.cargo[0]).toMatchObject({ packageId: expect.any(String), packageNo: expect.any(String) });
+    expect(snap.cargo[0]).toMatchObject({
+      packageId: expect.any(String),
+      packageNo: expect.any(String),
+    });
     expect(snap.cargo.some((c) => c.tags.includes("DG"))).toBe(true);
     expect(snap.cargo[0]).not.toHaveProperty("cargoItemId");
     expect(Number(snap.cargo[0].grossWt)).toBeGreaterThan(0); // canonical kg

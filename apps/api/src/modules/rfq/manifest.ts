@@ -19,7 +19,11 @@ export function buildManifestSnapshot(
       ? { country: leg.originPoint.country, name: leg.originPoint.name, city: leg.originPoint.city }
       : null,
     destination: leg.destinationPoint
-      ? { country: leg.destinationPoint.country, name: leg.destinationPoint.name, city: leg.destinationPoint.city }
+      ? {
+          country: leg.destinationPoint.country,
+          name: leg.destinationPoint.name,
+          city: leg.destinationPoint.city,
+        }
       : null,
     readyDate: leg.readyDate ? leg.readyDate.toISOString() : null,
     targetDelivery: leg.targetDelivery ? leg.targetDelivery.toISOString() : null,

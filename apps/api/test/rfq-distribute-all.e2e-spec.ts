@@ -53,7 +53,9 @@ describe(`${PREFIX} (e2e)`, () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -87,8 +89,12 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // Helper to build a ready leg with cargo
     const mkReadyLeg = async (legCode: string) => {
-      const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-      const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+      const origin = await prisma.point.create({
+        data: { queryId: query.id, type: "PICKUP", country: "CN" },
+      });
+      const dest = await prisma.point.create({
+        data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+      });
       const { packageIds } = await createCargoWithPackages(prisma, {
         queryId: query.id,
         packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 1 }], // non-DG
@@ -113,8 +119,12 @@ describe(`${PREFIX} (e2e)`, () => {
     const l2 = await mkReadyLeg("L-DALL-2");
 
     // L3: READY_FOR_RFQ with NO selection — exercises the "nothing-selected" skip
-    const originL3 = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const destL3 = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const originL3 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const destL3 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const { packageIds: packageIdsL3 } = await createCargoWithPackages(prisma, {
       queryId: query.id,
       rowIndex: 1,
@@ -135,8 +145,12 @@ describe(`${PREFIX} (e2e)`, () => {
     await assignPackagesToLeg(prisma, legL3.id, packageIdsL3);
 
     // L4: DRAFT + FF selected → reaches validateLegForDistribution, fails F4 — exercises the gate-skip branch
-    const originL4 = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const destL4 = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const originL4 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const destL4 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const { packageIds: packageIdsL4 } = await createCargoWithPackages(prisma, {
       queryId: query.id,
       rowIndex: 2,

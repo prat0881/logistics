@@ -1,10 +1,23 @@
 import { describe, it, expect } from "vitest";
 import {
-  REFERENCE_TAGS, referenceTagLabel, cargoCreateSchema, cargoUpdateSchema, cargoLabel,
-  PACKAGE_TYPES, UOMS,
-  toCanonicalDim, fromCanonicalDim, toCanonicalWeight, fromCanonicalWeight,
-  cbmFromCanonical, weightUnitLabel,
-  packageCreateSchema, packageUpdateSchema, itemCreateSchema, itemUpdateSchema, effectiveTags,
+  REFERENCE_TAGS,
+  referenceTagLabel,
+  cargoCreateSchema,
+  cargoUpdateSchema,
+  cargoLabel,
+  PACKAGE_TYPES,
+  UOMS,
+  toCanonicalDim,
+  fromCanonicalDim,
+  toCanonicalWeight,
+  fromCanonicalWeight,
+  cbmFromCanonical,
+  weightUnitLabel,
+  packageCreateSchema,
+  packageUpdateSchema,
+  itemCreateSchema,
+  itemUpdateSchema,
+  effectiveTags,
 } from "./cargo";
 import { DIM_UNITS, WEIGHT_UNITS, cbmFromDims, toKg } from "./cargo";
 
@@ -37,14 +50,21 @@ describe("packing-list schemas", () => {
     expect(r.weightUnit).toBe("KG");
   });
   it("package requires packageNo + type + dims + gross", () => {
-    const base = { packageNo: "P-1", packageType: "PALLET", dimL: 120, dimW: 100, dimH: 140, grossWt: 420 };
+    const base = {
+      packageNo: "P-1",
+      packageType: "PALLET",
+      dimL: 120,
+      dimW: 100,
+      dimH: 140,
+      grossWt: 420,
+    };
     expect(packageCreateSchema.safeParse(base).success).toBe(true);
     expect(packageCreateSchema.safeParse({ ...base, packageType: "NUCLEAR" }).success).toBe(false);
     expect(packageCreateSchema.safeParse({ ...base, dimL: 0 }).success).toBe(false); // V-1
     expect(packageCreateSchema.safeParse({ ...base, netWt: 500 }).success).toBe(false); // V-2 net>gross
   });
   it("item requires UoM only when qty present (V-4)", () => {
-    expect(itemCreateSchema.safeParse({ product: "Paint" }).success).toBe(true);        // qty absent → ok
+    expect(itemCreateSchema.safeParse({ product: "Paint" }).success).toBe(true); // qty absent → ok
     expect(itemCreateSchema.safeParse({ product: "Paint", qty: 8 }).success).toBe(false); // qty w/o uom
     expect(itemCreateSchema.safeParse({ product: "Paint", qty: 8, uom: "PC" }).success).toBe(true);
   });
@@ -52,15 +72,23 @@ describe("packing-list schemas", () => {
 
 describe("effectiveTags (BL-3 union)", () => {
   it("unions package + item tags, deduped, order-stable", () => {
-    expect(effectiveTags({ tags: ["HEAVY"], items: [{ tags: ["DG"] }, { tags: ["HEAVY", "FRAGILE"] }] }))
-      .toEqual(["HEAVY", "DG", "FRAGILE"]);
+    expect(
+      effectiveTags({ tags: ["HEAVY"], items: [{ tags: ["DG"] }, { tags: ["HEAVY", "FRAGILE"] }] }),
+    ).toEqual(["HEAVY", "DG", "FRAGILE"]);
   });
 });
 
 // Migrated coverage: assertions the old flat cargoCreateSchema made (bounds/enum/whitespace
 // guards) that now belong on packageCreateSchema/itemCreateSchema instead.
 describe("packageCreateSchema / itemCreateSchema — migrated coverage from the old flat cargoCreateSchema", () => {
-  const base = { packageNo: "P-1", packageType: "PALLET", dimL: 120, dimW: 100, dimH: 140, grossWt: 420 };
+  const base = {
+    packageNo: "P-1",
+    packageType: "PALLET",
+    dimL: 120,
+    dimW: 100,
+    dimH: 140,
+    grossWt: 420,
+  };
   it("rejects a dim beyond the max bound (DECIMAL(14,6) overflow guard)", () => {
     expect(packageCreateSchema.safeParse({ ...base, dimL: 200000 }).success).toBe(false);
   });
@@ -128,10 +156,12 @@ describe("cargoLabel", () => {
     expect(
       cargoLabel({ poReference: null, label: "Engine Parts", productName: "Steel", rowIndex: 0 }),
     ).toBe("Engine Parts");
-    expect(cargoLabel({ poReference: "", label: "", productName: "Steel", rowIndex: 0 })).toBe("Steel");
-    expect(cargoLabel({ poReference: undefined, label: "  ", productName: undefined, rowIndex: 4 })).toBe(
-      "Row 5",
+    expect(cargoLabel({ poReference: "", label: "", productName: "Steel", rowIndex: 0 })).toBe(
+      "Steel",
     );
+    expect(
+      cargoLabel({ poReference: undefined, label: "  ", productName: undefined, rowIndex: 4 }),
+    ).toBe("Row 5");
   });
 });
 
@@ -166,8 +196,8 @@ describe("packing-list vocabularies", () => {
 describe("canonical unit helpers", () => {
   it("dims round-trip cm/mm to canonical cm", () => {
     expect(toCanonicalDim(100, "CM")).toBe(100);
-    expect(toCanonicalDim(1000, "MM")).toBe(100);          // 1000 mm = 100 cm
-    expect(fromCanonicalDim(100, "MM")).toBe(1000);        // 100 cm shown as 1000 mm
+    expect(toCanonicalDim(1000, "MM")).toBe(100); // 1000 mm = 100 cm
+    expect(fromCanonicalDim(100, "MM")).toBe(1000); // 100 cm shown as 1000 mm
     expect(fromCanonicalDim(toCanonicalDim(37, "MM"), "MM")).toBeCloseTo(37, 9); // V-6 round-trip
   });
   it("weights round-trip kg/tonne/g to canonical kg", () => {

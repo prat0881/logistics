@@ -133,9 +133,7 @@ describe("terminalStates", () => {
           warehousePosition: "ORIGIN",
         },
       ],
-      seededCharges: [
-        { zone: "MAIN_FREIGHT", presetKey: "air_freight", label: "Air Freight" },
-      ],
+      seededCharges: [{ zone: "MAIN_FREIGHT", presetKey: "air_freight", label: "Air Freight" }],
       draft: null,
     } as never;
 

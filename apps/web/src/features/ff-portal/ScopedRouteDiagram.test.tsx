@@ -74,8 +74,20 @@ describe("ScopedRouteDiagram", () => {
   it("renders one node box per distinct endpoint, deduped, and one edge per fully-formed leg", () => {
     // L1: p1 -> p2, L2: p2 -> p3. p2 is shared, so 3 distinct nodes, 2 edges.
     const legs = [
-      leg({ legId: "L1", legCode: "LEG-1", origin: { country: "IN", name: "Origin WH", city: "Mumbai" }, destination: { country: "AE", name: "Hub Airport", city: "Dubai" }, endpoints: [p1, p2] }),
-      leg({ legId: "L2", legCode: "LEG-2", origin: { country: "AE", name: "Hub Airport", city: "Dubai" }, destination: { country: "US", name: "Final Delivery", city: "Newark" }, endpoints: [p2, p3] }),
+      leg({
+        legId: "L1",
+        legCode: "LEG-1",
+        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
+        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        endpoints: [p1, p2],
+      }),
+      leg({
+        legId: "L2",
+        legCode: "LEG-2",
+        origin: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        destination: { country: "US", name: "Final Delivery", city: "Newark" },
+        endpoints: [p2, p3],
+      }),
     ];
     const { container } = render(<ScopedRouteDiagram legs={legs} />);
 
@@ -97,7 +109,12 @@ describe("ScopedRouteDiagram", () => {
 
   it("reveals a node's masked detail (type, name, country) on click, and hides it on a second click", () => {
     const legs = [
-      leg({ legId: "L1", origin: { country: "IN", name: "Origin WH", city: "Mumbai" }, destination: { country: "AE", name: "Hub Airport", city: "Dubai" }, endpoints: [p1, p2] }),
+      leg({
+        legId: "L1",
+        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
+        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        endpoints: [p1, p2],
+      }),
     ];
     const { container } = render(<ScopedRouteDiagram legs={legs} />);
 
@@ -118,15 +135,24 @@ describe("ScopedRouteDiagram", () => {
 
   it("switches the detail to the newly clicked node", () => {
     const legs = [
-      leg({ legId: "L1", origin: { country: "IN", name: "Origin WH", city: "Mumbai" }, destination: { country: "AE", name: "Hub Airport", city: "Dubai" }, endpoints: [p1, p2] }),
+      leg({
+        legId: "L1",
+        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
+        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        endpoints: [p1, p2],
+      }),
     ];
     const { container } = render(<ScopedRouteDiagram legs={legs} />);
 
     fireEvent.click(container.querySelector('[data-point-id="p1"]') as SVGGElement);
-    expect(within(screen.getByTestId("scoped-route-node-detail")).getByText("Origin WH")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("scoped-route-node-detail")).getByText("Origin WH"),
+    ).toBeInTheDocument();
 
     fireEvent.click(container.querySelector('[data-point-id="p2"]') as SVGGElement);
-    expect(within(screen.getByTestId("scoped-route-node-detail")).getByText("Hub Airport")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("scoped-route-node-detail")).getByText("Hub Airport"),
+    ).toBeInTheDocument();
   });
 
   it("never renders a street address or contact detail, even if a future DTO leaked one onto an endpoint", () => {
@@ -146,7 +172,12 @@ describe("ScopedRouteDiagram", () => {
     } as unknown as FfPortalEndpoint;
 
     const legs = [
-      leg({ legId: "L1", origin: { country: "IN", name: "Origin WH", city: "Mumbai" }, destination: { country: "AE", name: "Hub Airport", city: "Dubai" }, endpoints: [leakyEndpoint, p2] }),
+      leg({
+        legId: "L1",
+        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
+        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        endpoints: [leakyEndpoint, p2],
+      }),
     ];
     const { container } = render(<ScopedRouteDiagram legs={legs} />);
 
@@ -163,9 +194,7 @@ describe("ScopedRouteDiagram", () => {
   });
 
   it("mode-colors and dashes edges, and labels each with its legCode", () => {
-    const legs = [
-      leg({ legId: "L1", legCode: "SEA-1", mode: "SEA", endpoints: [p1, p2] }),
-    ];
+    const legs = [leg({ legId: "L1", legCode: "SEA-1", mode: "SEA", endpoints: [p1, p2] })];
     const { container } = render(<ScopedRouteDiagram legs={legs} />);
     const edge = container.querySelector('[data-leg-id="L1"]') as SVGGElement;
     expect(edge.getAttribute("data-mode")).toBe("SEA");

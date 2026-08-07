@@ -2,7 +2,13 @@ import type { QuoteDraft, ChargeRateVariant } from "@svyft/shared";
 import { computeQuoteTotals, rateVariantLabel } from "@svyft/shared";
 import { fmtAmount } from "./format";
 
-export function QuoteSummary({ draft, currency }: { draft: QuoteDraft; currency: string | null }): JSX.Element {
+export function QuoteSummary({
+  draft,
+  currency,
+}: {
+  draft: QuoteDraft;
+  currency: string | null;
+}): JSX.Element {
   const totals = computeQuoteTotals(draft);
   return (
     <dl className="space-y-2 text-sm">
@@ -22,7 +28,14 @@ export function QuoteSummary({ draft, currency }: { draft: QuoteDraft; currency:
             <div key={v.key} className="flex justify-between" data-testid={`grand-total-${v.key}`}>
               <dt className="font-display font-semibold">{label} total</dt>
               <dd className="font-mono tabular-nums text-lg font-bold">
-                {blank ? "–" : <>{fmtAmount(v.grandTotal)}{currency && <span className="ml-1 text-sm font-normal">{currency}</span>}</>}
+                {blank ? (
+                  "–"
+                ) : (
+                  <>
+                    {fmtAmount(v.grandTotal)}
+                    {currency && <span className="ml-1 text-sm font-normal">{currency}</span>}
+                  </>
+                )}
               </dd>
             </div>
           );

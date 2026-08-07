@@ -1,11 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import {
-  legSaveSchema,
-  FREIGHT_MODES,
-  checkModeEndpoints,
-} from "@svyft/shared";
+import { legSaveSchema, FREIGHT_MODES, checkModeEndpoints } from "@svyft/shared";
 import type {
   LegSaveInput,
   QueryDetail,
@@ -75,14 +71,7 @@ function pointLabel(p: QueryPointDto): string {
  *
  * On save: catches ApiError 422 → surfaces findings inside dialog (keeps it open).
  */
-export function LegEditor({
-  open,
-  leg,
-  detail,
-  queryId,
-  onSaved,
-  onClose,
-}: LegEditorProps) {
+export function LegEditor({ open, leg, detail, queryId, onSaved, onClose }: LegEditorProps) {
   const isEdit = Boolean(leg);
   const { add, update, remove } = useLegs(queryId);
   const { orgZone } = useOrgTimezone();
@@ -196,10 +185,7 @@ export function LegEditor({
   });
 
   // When a new point is saved from PointEditor, select it in the relevant field
-  const handlePointSaved = (
-    role: "origin" | "destination",
-    saved: Record<string, unknown>,
-  ) => {
+  const handlePointSaved = (role: "origin" | "destination", saved: Record<string, unknown>) => {
     const id = saved.id as string;
     if (role === "origin") {
       form.setValue("originPointId", id, { shouldValidate: true });
@@ -211,7 +197,12 @@ export function LegEditor({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (!o) onClose();
+        }}
+      >
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{isEdit ? "Edit Leg" : "Add Leg"}</DialogTitle>
@@ -228,10 +219,7 @@ export function LegEditor({
                     <FormLabel>Origin</FormLabel>
                     <div className="flex gap-2">
                       <FormControl>
-                        <Select
-                          value={field.value ?? ""}
-                          onValueChange={field.onChange}
-                        >
+                        <Select value={field.value ?? ""} onValueChange={field.onChange}>
                           <SelectTrigger className="flex-1">
                             <SelectValue placeholder="Select origin point" />
                           </SelectTrigger>
@@ -267,10 +255,7 @@ export function LegEditor({
                     <FormLabel>Destination</FormLabel>
                     <div className="flex gap-2">
                       <FormControl>
-                        <Select
-                          value={field.value ?? ""}
-                          onValueChange={field.onChange}
-                        >
+                        <Select value={field.value ?? ""} onValueChange={field.onChange}>
                           <SelectTrigger className="flex-1">
                             <SelectValue placeholder="Select destination point" />
                           </SelectTrigger>
@@ -305,10 +290,7 @@ export function LegEditor({
                   <FormItem>
                     <FormLabel>Mode</FormLabel>
                     <FormControl>
-                      <Select
-                        value={field.value ?? ""}
-                        onValueChange={field.onChange}
-                      >
+                      <Select value={field.value ?? ""} onValueChange={field.onChange}>
                         <SelectTrigger>
                           <SelectValue placeholder="Select freight mode" />
                         </SelectTrigger>
@@ -336,9 +318,10 @@ export function LegEditor({
                   {watchedMode === "AIR"
                     ? "An Air leg needs airport endpoints."
                     : watchedMode === "SEA"
-                    ? "A Sea leg needs seaport endpoints."
-                    : "Endpoint types are incompatible with the selected mode."}
-                  {" "}This is a warning — you can save, but the server will block if the constraint is violated.
+                      ? "A Sea leg needs seaport endpoints."
+                      : "Endpoint types are incompatible with the selected mode."}{" "}
+                  This is a warning — you can save, but the server will block if the constraint is
+                  violated.
                 </div>
               )}
 
@@ -398,7 +381,12 @@ export function LegEditor({
 
               <DialogFooter>
                 {isEdit && (
-                  <Button type="button" variant="destructive" onClick={handleDelete} className="mr-auto">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={handleDelete}
+                    className="mr-auto"
+                  >
                     Delete
                   </Button>
                 )}

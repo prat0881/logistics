@@ -133,7 +133,13 @@ describe("Change Mediator (integration)", () => {
     await assignPackagesToLeg(prisma, legB.id, [packageId]);
 
     const res = await mediator.apply(
-      { entity: "cargo", id: cargoId, field: "poReference", patch: { poReference: "PO-CHANGED" }, queryId },
+      {
+        entity: "cargo",
+        id: cargoId,
+        field: "poReference",
+        patch: { poReference: "PO-CHANGED" },
+        queryId,
+      },
       async (tx) => {
         await tx.cargo.update({ where: { id: cargoId }, data: { poReference: "PO-CHANGED" } });
       },
@@ -148,7 +154,13 @@ describe("Change Mediator (integration)", () => {
     const { queryId, cargoId } = await createCargoRow("unassigned");
 
     const res = await mediator.apply(
-      { entity: "cargo", id: cargoId, field: "poReference", patch: { poReference: "PO-CHANGED" }, queryId },
+      {
+        entity: "cargo",
+        id: cargoId,
+        field: "poReference",
+        patch: { poReference: "PO-CHANGED" },
+        queryId,
+      },
       async (tx) => {
         await tx.cargo.update({ where: { id: cargoId }, data: { poReference: "PO-CHANGED" } });
       },

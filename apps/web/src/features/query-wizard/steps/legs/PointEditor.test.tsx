@@ -34,23 +34,24 @@ afterEach(() => {
 
 describe("PointEditor", () => {
   it("renders an open dialog", () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
-      ok: true, status: 200,
-      json: () => Promise.resolve({ user: testUser }),
-      text: () => Promise.resolve(""),
-      blob: () => Promise.resolve(new Blob()),
-    } as Response)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ user: testUser }),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response),
+      ),
+    );
 
     const onSaved = vi.fn();
     const onClose = vi.fn();
 
     renderWithProviders(
-      <PointEditor
-        queryId={QUERY_ID}
-        open
-        onSaved={onSaved}
-        onClose={onClose}
-      />,
+      <PointEditor queryId={QUERY_ID} open onSaved={onSaved} onClose={onClose} />,
       { user: testUser },
     );
 
@@ -63,13 +64,15 @@ describe("PointEditor", () => {
       vi.fn((url: string) => {
         if (url.includes("/api/auth/me"))
           return Promise.resolve({
-            ok: true, status: 200,
+            ok: true,
+            status: 200,
             json: () => Promise.resolve({ user: testUser }),
             text: () => Promise.resolve(""),
             blob: () => Promise.resolve(new Blob()),
           } as Response);
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({}),
           text: () => Promise.resolve(""),
           blob: () => Promise.resolve(new Blob()),
@@ -78,13 +81,7 @@ describe("PointEditor", () => {
     );
 
     renderWithProviders(
-      <PointEditor
-        queryId={QUERY_ID}
-        open
-        type="AIRPORT"
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <PointEditor queryId={QUERY_ID} open type="AIRPORT" onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
     // IATA Code input should be visible
@@ -102,13 +99,15 @@ describe("PointEditor", () => {
       vi.fn((url: string) => {
         if (url.includes("/api/auth/me"))
           return Promise.resolve({
-            ok: true, status: 200,
+            ok: true,
+            status: 200,
             json: () => Promise.resolve({ user: testUser }),
             text: () => Promise.resolve(""),
             blob: () => Promise.resolve(new Blob()),
           } as Response);
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({}),
           text: () => Promise.resolve(""),
           blob: () => Promise.resolve(new Blob()),
@@ -117,13 +116,7 @@ describe("PointEditor", () => {
     );
 
     renderWithProviders(
-      <PointEditor
-        queryId={QUERY_ID}
-        open
-        type="SEAPORT"
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <PointEditor queryId={QUERY_ID} open type="SEAPORT" onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
     await waitFor(() => {
@@ -137,13 +130,15 @@ describe("PointEditor", () => {
     const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
       if (url.includes("/api/auth/me"))
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({ user: testUser }),
           text: () => Promise.resolve(""),
           blob: () => Promise.resolve(new Blob()),
         } as Response);
       return Promise.resolve({
-        ok: true, status: 201,
+        ok: true,
+        status: 201,
         json: () => Promise.resolve(makePointResponse()),
         text: () => Promise.resolve(JSON.stringify(makePointResponse())),
         blob: () => Promise.resolve(new Blob()),
@@ -152,13 +147,7 @@ describe("PointEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderWithProviders(
-      <PointEditor
-        queryId={QUERY_ID}
-        open
-        type="AIRPORT"
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <PointEditor queryId={QUERY_ID} open type="AIRPORT" onSaved={vi.fn()} onClose={vi.fn()} />,
     );
 
     // Fill in the IATA field with an invalid value (2 chars, not 3)
@@ -183,8 +172,7 @@ describe("PointEditor", () => {
     // POST should NOT have been called
     const postCall = fetchMock.mock.calls.find(
       ([url, init]) =>
-        url === `/api/queries/${QUERY_ID}/points` &&
-        (init as RequestInit)?.method === "POST",
+        url === `/api/queries/${QUERY_ID}/points` && (init as RequestInit)?.method === "POST",
     );
     expect(postCall).toBeFalsy();
   });
@@ -202,25 +190,25 @@ describe("PointEditor", () => {
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       if (url.includes("/api/auth/me"))
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({ user: testUser }),
           text: () => Promise.resolve(""),
           blob: () => Promise.resolve(new Blob()),
         } as Response);
 
-      if (
-        url === `/api/queries/${QUERY_ID}/points` &&
-        init?.method === "POST"
-      )
+      if (url === `/api/queries/${QUERY_ID}/points` && init?.method === "POST")
         return Promise.resolve({
-          ok: true, status: 201,
+          ok: true,
+          status: 201,
           json: () => Promise.resolve(pointResponse),
           text: () => Promise.resolve(JSON.stringify(pointResponse)),
           blob: () => Promise.resolve(new Blob()),
         } as Response);
 
       return Promise.resolve({
-        ok: true, status: 200,
+        ok: true,
+        status: 200,
         json: () => Promise.resolve({}),
         text: () => Promise.resolve(""),
         blob: () => Promise.resolve(new Blob()),
@@ -231,13 +219,7 @@ describe("PointEditor", () => {
     const onSaved = vi.fn();
 
     renderWithProviders(
-      <PointEditor
-        queryId={QUERY_ID}
-        open
-        type="AIRPORT"
-        onSaved={onSaved}
-        onClose={vi.fn()}
-      />,
+      <PointEditor queryId={QUERY_ID} open type="AIRPORT" onSaved={onSaved} onClose={vi.fn()} />,
     );
 
     // Fill the name field (use airport-specific placeholder to disambiguate from Contact Name)
@@ -274,8 +256,7 @@ describe("PointEditor", () => {
     await waitFor(() => {
       const postCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          url === `/api/queries/${QUERY_ID}/points` &&
-          (init as RequestInit)?.method === "POST",
+          url === `/api/queries/${QUERY_ID}/points` && (init as RequestInit)?.method === "POST",
       );
       expect(postCall).toBeTruthy();
       const body = JSON.parse((postCall![1] as RequestInit).body as string);
@@ -345,13 +326,15 @@ describe("PointEditor", () => {
     const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
       if (url.includes("/api/auth/me"))
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({ user: testUser }),
           text: () => Promise.resolve(""),
           blob: () => Promise.resolve(new Blob()),
         } as Response);
       return Promise.resolve({
-        ok: true, status: 200,
+        ok: true,
+        status: 200,
         json: () => Promise.resolve({}),
         text: () => Promise.resolve(""),
         blob: () => Promise.resolve(new Blob()),
@@ -363,13 +346,7 @@ describe("PointEditor", () => {
     const onClose = vi.fn();
 
     renderWithProviders(
-      <PointEditor
-        queryId={QUERY_ID}
-        open
-        point={editPoint}
-        onSaved={onSaved}
-        onClose={onClose}
-      />,
+      <PointEditor queryId={QUERY_ID} open point={editPoint} onSaved={onSaved} onClose={onClose} />,
       { user: testUser },
     );
 
@@ -387,22 +364,21 @@ describe("PointEditor", () => {
   });
 
   it("add mode shows no Delete button", () => {
-    vi.stubGlobal("fetch", vi.fn((url: string) =>
-      Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response),
-    ));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
+          text: () => Promise.resolve(""),
+          blob: () => Promise.resolve(new Blob()),
+        } as Response),
+      ),
+    );
 
     renderWithProviders(
-      <PointEditor
-        queryId={QUERY_ID}
-        open
-        onSaved={vi.fn()}
-        onClose={vi.fn()}
-      />,
+      <PointEditor queryId={QUERY_ID} open onSaved={vi.fn()} onClose={vi.fn()} />,
       { user: testUser },
     );
 
@@ -458,7 +434,8 @@ describe("PointEditor", () => {
 
     const fetchMock = vi.fn((url: string, _init?: RequestInit) =>
       Promise.resolve({
-        ok: true, status: 200,
+        ok: true,
+        status: 200,
         json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
         text: () => Promise.resolve(""),
         blob: () => Promise.resolve(new Blob()),
@@ -467,7 +444,14 @@ describe("PointEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderWithProviders(
-      <PointEditor queryId={QUERY_ID} open point={refPoint} legs={legs} onSaved={vi.fn()} onClose={vi.fn()} />,
+      <PointEditor
+        queryId={QUERY_ID}
+        open
+        point={refPoint}
+        legs={legs}
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />,
       { user: testUser },
     );
 
@@ -532,7 +516,8 @@ describe("PointEditor", () => {
 
     const fetchMock = vi.fn((url: string, _init?: RequestInit) =>
       Promise.resolve({
-        ok: true, status: 200,
+        ok: true,
+        status: 200,
         json: () => Promise.resolve(url.includes("/api/auth/me") ? { user: testUser } : {}),
         text: () => Promise.resolve(""),
         blob: () => Promise.resolve(new Blob()),
@@ -541,7 +526,14 @@ describe("PointEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     renderWithProviders(
-      <PointEditor queryId={QUERY_ID} open point={freePoint} legs={legs} onSaved={vi.fn()} onClose={vi.fn()} />,
+      <PointEditor
+        queryId={QUERY_ID}
+        open
+        point={freePoint}
+        legs={legs}
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />,
       { user: testUser },
     );
 
@@ -563,20 +555,23 @@ describe("PointEditor", () => {
       vi.fn((url: string, _init?: RequestInit) => {
         if (url.includes("/api/auth/me"))
           return Promise.resolve({
-            ok: true, status: 200,
+            ok: true,
+            status: 200,
             json: () => Promise.resolve({ user: testUser }),
             text: () => Promise.resolve(""),
             blob: () => Promise.resolve(new Blob()),
           } as Response);
         if (url.includes("/api/config/org-timezone"))
           return Promise.resolve({
-            ok: true, status: 200,
+            ok: true,
+            status: 200,
             json: () => Promise.resolve({ timezone: orgZone }),
             text: () => Promise.resolve(JSON.stringify({ timezone: orgZone })),
             blob: () => Promise.resolve(new Blob()),
           } as Response);
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({}),
           text: () => Promise.resolve(""),
           blob: () => Promise.resolve(new Blob()),
@@ -588,13 +583,7 @@ describe("PointEditor", () => {
       vi.stubGlobal("fetch", makeFetch("Asia/Singapore"));
 
       renderWithProviders(
-        <PointEditor
-          queryId={QUERY_ID}
-          open
-          type="PICKUP"
-          onSaved={vi.fn()}
-          onClose={vi.fn()}
-        />,
+        <PointEditor queryId={QUERY_ID} open type="PICKUP" onSaved={vi.fn()} onClose={vi.fn()} />,
         { user: testUser },
       );
 
@@ -654,13 +643,7 @@ describe("PointEditor", () => {
       vi.stubGlobal("fetch", makeFetch("Asia/Singapore"));
 
       renderWithProviders(
-        <PointEditor
-          queryId={QUERY_ID}
-          open
-          type="PICKUP"
-          onSaved={vi.fn()}
-          onClose={vi.fn()}
-        />,
+        <PointEditor queryId={QUERY_ID} open type="PICKUP" onSaved={vi.fn()} onClose={vi.fn()} />,
         { user: testUser },
       );
 
@@ -680,13 +663,7 @@ describe("PointEditor", () => {
       vi.stubGlobal("fetch", makeFetch("Asia/Kolkata"));
 
       renderWithProviders(
-        <PointEditor
-          queryId={QUERY_ID}
-          open
-          type="PICKUP"
-          onSaved={vi.fn()}
-          onClose={vi.fn()}
-        />,
+        <PointEditor queryId={QUERY_ID} open type="PICKUP" onSaved={vi.fn()} onClose={vi.fn()} />,
         { user: testUser },
       );
 

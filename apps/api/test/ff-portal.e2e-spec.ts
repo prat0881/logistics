@@ -38,10 +38,14 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     const rfqIds = rfqs.map((r) => r.id);
 
     if (rfqIds.length) {
-      await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+      await prisma.scheduledEvent.deleteMany({
+        where: { entityType: "RFQ", entityId: { in: rfqIds } },
+      });
     }
     if (queryIds.length) {
-      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: { in: queryIds } } });
+      await prisma.messageLog.deleteMany({
+        where: { entityType: "QUERY", entityId: { in: queryIds } },
+      });
     }
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
@@ -51,7 +55,9 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     await prisma.freightForwarder.deleteMany({
       where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
     });
-    await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX.toLowerCase()}-exec-` } } });
+    await prisma.user.deleteMany({
+      where: { email: { startsWith: `${PREFIX.toLowerCase()}-exec-` } },
+    });
   };
 
   beforeAll(async () => {
@@ -148,7 +154,12 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
     const entry = res.body.rfqs[0];
     expect(entry.accessToken).toBeDefined();
-    return { token: entry.accessToken as string, legId: leg.id, queryId: query.id, rfqId: entry.rfqId as string };
+    return {
+      token: entry.accessToken as string,
+      legId: leg.id,
+      queryId: query.id,
+      rfqId: entry.rfqId as string,
+    };
   }
 
   /**
@@ -170,7 +181,9 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     legId: string,
     getBody: {
       legs: Array<{
-        manifest: { cargo: Array<{ packageId: string; grossWt: string; volumeCbm: string | null }> };
+        manifest: {
+          cargo: Array<{ packageId: string; grossWt: string; volumeCbm: string | null }>;
+        };
         seededCharges: Array<{
           zone: string | null;
           definitionKey?: string;
@@ -231,9 +244,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   it("GET resolves the scoped RFQ with seeded charges + the per-package manifest (no auth cookie)", async () => {
     const { token, legId } = await distributeFixture();
 
-    const res = await request(app.getHttpServer())
-      .get(`/api/ff/rfq/${token}`)
-      .expect(200); // NO cookie
+    const res = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200); // NO cookie
 
     expect(res.body.rfqNumber).toMatch(/-RFQ/);
     expect(res.body.currency).toBe("USD"); // Rfq.currency ?? FF.defaultCurrency
@@ -424,7 +435,13 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     // proves the later "0 live reminders" assertion actually exercises the cancel(), not
     // vacuously true because none were ever scheduled.
     const remindersBefore = await prisma.scheduledEvent.count({
-      where: { entityType: "RFQ", entityId: rfqId, eventKey: "rfq.reminder", firedAt: null, cancelledAt: null },
+      where: {
+        entityType: "RFQ",
+        entityId: rfqId,
+        eventKey: "rfq.reminder",
+        firedAt: null,
+        cancelledAt: null,
+      },
     });
     expect(remindersBefore).toBeGreaterThan(0);
 
@@ -450,7 +467,13 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     expect(notif).toBeGreaterThanOrEqual(1);
 
     const liveReminders = await prisma.scheduledEvent.count({
-      where: { entityType: "RFQ", entityId: rfqId, eventKey: "rfq.reminder", firedAt: null, cancelledAt: null },
+      where: {
+        entityType: "RFQ",
+        entityId: rfqId,
+        eventKey: "rfq.reminder",
+        firedAt: null,
+        cancelledAt: null,
+      },
     });
     expect(liveReminders).toBe(0);
   });
@@ -510,8 +533,12 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-GM-${seq}`, incoterms: "FOB" },
     });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     const cargoRes = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/cargo`)
@@ -523,7 +550,14 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     const pkgRes = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/cargo/${cargoId}/packages`)
       .set("Cookie", admin)
-      .send({ packageNo: `PK-GM-${seq}`, packageType: "BOX", dimL: 10, dimW: 10, dimH: 10, grossWt: 5000 }) // 5000 GM = 5 kg
+      .send({
+        packageNo: `PK-GM-${seq}`,
+        packageType: "BOX",
+        dimL: 10,
+        dimW: 10,
+        dimH: 10,
+        grossWt: 5000,
+      }) // 5000 GM = 5 kg
       .expect(201);
     const packageId = pkgRes.body.id as string;
 
@@ -567,9 +601,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     const token = distRes.body.rfqs[0].accessToken as string;
 
     // Act: resolve the FF portal — manifest.cargo[].grossWt should be kg-normalized
-    const portalRes = await request(app.getHttpServer())
-      .get(`/api/ff/rfq/${token}`)
-      .expect(200);
+    const portalRes = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
 
     // The frozen manifest grossWt must be kg-normalised (5000 GM → 5 kg)
     const manifestCargo = portalRes.body.legs[0].manifest.cargo;
@@ -635,9 +667,15 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   it("submit: SEA dual-rate — only the priced rate variant materializes as a SeaFreightRate row", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
     const seq = ++fixtureSeq;
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-SEA-${seq}`, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-SEA-${seq}`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const { packageIds } = await createCargoWithPackages(prisma, {
       queryId: query.id,
       packages: [{ packageNo: `PK-SEA-${seq}`, dimL: 100, dimW: 100, dimH: 100, grossWt: 500 }],
@@ -701,13 +739,15 @@ describe("GET /ff/rfq/:token (e2e)", () => {
           chargedWeightKg: 520,
         }),
       ),
-      charges: legDto.seededCharges.map((c: { zone: string | null; definitionKey: string; label: string }) => ({
-        zone: c.zone,
-        definitionKey: c.definitionKey,
-        presetKey: null,
-        label: c.label,
-        amount: 10,
-      })),
+      charges: legDto.seededCharges.map(
+        (c: { zone: string | null; definitionKey: string; label: string }) => ({
+          zone: c.zone,
+          definitionKey: c.definitionKey,
+          presetKey: null,
+          label: c.label,
+          amount: 10,
+        }),
+      ),
       trucking: [],
       seaRates: [
         { rateVariant: "FCL", containerSize: "FORTY", amount: 1800, remarks: "FCL priced" },
@@ -723,7 +763,10 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       termsConditions: null,
     };
 
-    await request(app.getHttpServer()).patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draft).expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${leg.id}`)
+      .send(draft)
+      .expect(200);
     // Before Task 9's post-review fix: `seaFreightRate.create`'s `amount: r.amount!` force-
     // unwraps null onto a NOT NULL column for the (legitimately blank) LCL row — this would crash
     // instead of succeeding, even though the draft is fully valid per Q_RATE (>=1 of the two
@@ -735,7 +778,9 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
     // Exactly ONE SeaFreightRate persisted — the unpriced LCL row is dropped entirely rather than
     // written with a null (or 0-substituted) amount.
-    const rates = await prisma.seaFreightRate.findMany({ where: { quoteId: submitRes.body.quoteId } });
+    const rates = await prisma.seaFreightRate.findMany({
+      where: { quoteId: submitRes.body.quoteId },
+    });
     expect(rates).toHaveLength(1);
     expect(rates[0]!.rateVariant).toBe("FCL");
     expect(Number(rates[0]!.amount)).toBe(1800);

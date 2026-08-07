@@ -59,17 +59,24 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
   // Self-clean comms rows too (ScheduledEvent/MessageLog key off entityId as a plain string, not
   // a Prisma relation, so they don't cascade off a Query/Rfq delete) -- mirrors ff-portal.e2e-spec.ts.
   const cleanup = async () => {
-    const qs = await prisma.query.findMany({ where: { queryCode: { startsWith: PFX } }, select: { id: true } });
+    const qs = await prisma.query.findMany({
+      where: { queryCode: { startsWith: PFX } },
+      select: { id: true },
+    });
     const queryIds = qs.map((q) => q.id);
     const rfqs = queryIds.length
       ? await prisma.rfq.findMany({ where: { queryId: { in: queryIds } }, select: { id: true } })
       : [];
     const rfqIds = rfqs.map((r) => r.id);
     if (rfqIds.length) {
-      await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+      await prisma.scheduledEvent.deleteMany({
+        where: { entityType: "RFQ", entityId: { in: rfqIds } },
+      });
     }
     if (queryIds.length) {
-      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: { in: queryIds } } });
+      await prisma.messageLog.deleteMany({
+        where: { entityType: "QUERY", entityId: { in: queryIds } },
+      });
     }
     for (const q of qs) {
       // order matters: quotes/rfqs reference the FF (Restrict) and the query (Cascade)
@@ -77,7 +84,9 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PFX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PFX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -104,8 +113,12 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
 
     // --- query → cargo → 2 packages (one carrying a DG-tagged item) ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
     const pkg1 = await prisma.package.create({
@@ -269,7 +282,10 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     expect(byPackage.get(pkg2.id)).toBe(48.2);
 
     // --- two TruckingCharge rows, distinct rateVariant, dual-rate fields carried through ---
-    const trucking = await prisma.truckingCharge.findMany({ where: { quoteId }, orderBy: { amount: "desc" } });
+    const trucking = await prisma.truckingCharge.findMany({
+      where: { quoteId },
+      orderBy: { amount: "desc" },
+    });
     expect(trucking).toHaveLength(2);
     expect(trucking.map((t) => t.rateVariant).sort()).toEqual(["DEDICATED", "GROUPAGE"]);
     const dedicated = trucking.find((t) => t.rateVariant === "DEDICATED")!;
@@ -295,8 +311,12 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     const CODE = `${PFX}2`;
 
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
     const pkg = await prisma.package.create({
@@ -375,10 +395,22 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       charges: legDto.seededCharges.map((c) =>
         c.inputType === "HEAVY_WEIGHT_CALC"
           ? {
-              zone: c.zone, definitionKey: c.definitionKey, presetKey: c.presetKey, label: c.label,
-              amount: null, pieceWeightKg: 180, airlineLimitKg: 100, ratePerExcessKg: 2.5,
+              zone: c.zone,
+              definitionKey: c.definitionKey,
+              presetKey: c.presetKey,
+              label: c.label,
+              amount: null,
+              pieceWeightKg: 180,
+              airlineLimitKg: 100,
+              ratePerExcessKg: 2.5,
             }
-          : { zone: c.zone, definitionKey: c.definitionKey, presetKey: c.presetKey, label: c.label, amount: 50 },
+          : {
+              zone: c.zone,
+              definitionKey: c.definitionKey,
+              presetKey: c.presetKey,
+              label: c.label,
+              amount: 50,
+            },
       ),
       trucking: [],
       seaRates: [],
@@ -429,20 +461,38 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     const CODE = `${PFX}3`;
 
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
     const pkg1 = await prisma.package.create({
       data: {
-        queryId: query.id, cargoId: cargo.id, rowIndex: 0, packageNo: "PK-1", packageType: "BOX",
-        dimL: 100, dimW: 50, dimH: 40, grossWt: 120,
+        queryId: query.id,
+        cargoId: cargo.id,
+        rowIndex: 0,
+        packageNo: "PK-1",
+        packageType: "BOX",
+        dimL: 100,
+        dimW: 50,
+        dimH: 40,
+        grossWt: 120,
       },
     });
     const pkg2 = await prisma.package.create({
       data: {
-        queryId: query.id, cargoId: cargo.id, rowIndex: 1, packageNo: "PK-2", packageType: "DRUM",
-        dimL: 60, dimW: 60, dimH: 60, grossWt: 45,
+        queryId: query.id,
+        cargoId: cargo.id,
+        rowIndex: 1,
+        packageNo: "PK-2",
+        packageType: "DRUM",
+        dimL: 60,
+        dimW: 60,
+        dimH: 60,
+        grossWt: 45,
       },
     });
 
@@ -506,14 +556,20 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       charges: [],
       trucking: [
         {
-          legEndpointPointId: origin.id, truckingType: "DEDICATED", basis: "PER_TRUCK",
-          amount: 500, remarks: "Dedicated ex-origin", rateVariant: "DEDICATED", tonnage: "T_5",
+          legEndpointPointId: origin.id,
+          truckingType: "DEDICATED",
+          basis: "PER_TRUCK",
+          amount: 500,
+          remarks: "Dedicated ex-origin",
+          rateVariant: "DEDICATED",
+          tonnage: "T_5",
         },
       ],
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-08-12T00:00:00.000Z", arrivalDate: "2026-08-14T00:00:00.000Z",
+        departureDate: "2026-08-12T00:00:00.000Z",
+        arrivalDate: "2026-08-14T00:00:00.000Z",
         guaranteedTransitDays: 3,
       },
       dgSurchargeNote: null,
@@ -527,9 +583,9 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     // past the submit gate with zero diagnostic info for the FF), not this proper, specific 422
     // Q_WEIGHT finding. `.expect(422)` fails loudly (with the real status) if that regresses.
     const res = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(422);
-    const weightFinding = (res.body.findings as { rule: string; scope: { type: string; id?: string } }[]).find(
-      (f) => f.rule === "Q_WEIGHT",
-    );
+    const weightFinding = (
+      res.body.findings as { rule: string; scope: { type: string; id?: string } }[]
+    ).find((f) => f.rule === "Q_WEIGHT");
     expect(weightFinding).toBeDefined();
     expect(weightFinding?.scope).toEqual({ type: "cargo", id: pkg2.id });
   });
@@ -539,14 +595,25 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     const CODE = `${PFX}4`;
 
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
     const pkg = await prisma.package.create({
       data: {
-        queryId: query.id, cargoId: cargo.id, rowIndex: 0, packageNo: "PK-1", packageType: "BOX",
-        dimL: 100, dimW: 50, dimH: 40, grossWt: 120,
+        queryId: query.id,
+        cargoId: cargo.id,
+        rowIndex: 0,
+        packageNo: "PK-1",
+        packageType: "BOX",
+        dimL: 100,
+        dimW: 50,
+        dimH: 40,
+        grossWt: 120,
       },
     });
 
@@ -602,23 +669,36 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
       cargo: legDto.manifest.cargo.map((c) => ({
-        packageId: c.packageId, grossWtKg: Number(c.grossWt), cbm: Number(c.volumeCbm ?? 0), chargedWeightKg: 130,
+        packageId: c.packageId,
+        grossWtKg: Number(c.grossWt),
+        cbm: Number(c.volumeCbm ?? 0),
+        chargedWeightKg: 130,
       })),
       charges: [],
       trucking: [
         {
-          legEndpointPointId: origin.id, truckingType: "DEDICATED", basis: "PER_TRUCK",
-          amount: 500, remarks: "Dedicated priced", rateVariant: "DEDICATED", tonnage: "T_5",
+          legEndpointPointId: origin.id,
+          truckingType: "DEDICATED",
+          basis: "PER_TRUCK",
+          amount: 500,
+          remarks: "Dedicated priced",
+          rateVariant: "DEDICATED",
+          tonnage: "T_5",
         },
         {
-          legEndpointPointId: dest.id, truckingType: "GROUPAGE", basis: "PER_CBM",
-          amount: null, rateVariant: "GROUPAGE", tonnage: null,
+          legEndpointPointId: dest.id,
+          truckingType: "GROUPAGE",
+          basis: "PER_CBM",
+          amount: null,
+          rateVariant: "GROUPAGE",
+          tonnage: null,
         },
       ],
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-08-12T00:00:00.000Z", arrivalDate: "2026-08-14T00:00:00.000Z",
+        departureDate: "2026-08-12T00:00:00.000Z",
+        arrivalDate: "2026-08-14T00:00:00.000Z",
         guaranteedTransitDays: 4,
       },
       dgSurchargeNote: null,
@@ -636,7 +716,9 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
 
     // Exactly ONE TruckingCharge persisted — the unpriced Groupage row is dropped entirely
     // rather than written with a null (or 0-substituted) amount.
-    const trucking = await prisma.truckingCharge.findMany({ where: { quoteId: submitRes.body.quoteId } });
+    const trucking = await prisma.truckingCharge.findMany({
+      where: { quoteId: submitRes.body.quoteId },
+    });
     expect(trucking).toHaveLength(1);
     expect(trucking[0]!.rateVariant).toBe("DEDICATED");
     expect(Number(trucking[0]!.amount)).toBe(500);
@@ -647,14 +729,25 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     const CODE = `${PFX}5`;
 
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
     const pkg = await prisma.package.create({
       data: {
-        queryId: query.id, cargoId: cargo.id, rowIndex: 0, packageNo: "PK-1", packageType: "BOX",
-        dimL: 100, dimW: 50, dimH: 40, grossWt: 120,
+        queryId: query.id,
+        cargoId: cargo.id,
+        rowIndex: 0,
+        packageNo: "PK-1",
+        packageType: "BOX",
+        dimL: 100,
+        dimW: 50,
+        dimH: 40,
+        grossWt: 120,
       },
     });
 
@@ -712,13 +805,21 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
       cargo: legDto.manifest.cargo.map((c) => ({
-        packageId: c.packageId, grossWtKg: Number(c.grossWt), cbm: Number(c.volumeCbm ?? 0), chargedWeightKg: 130,
+        packageId: c.packageId,
+        grossWtKg: Number(c.grossWt),
+        cbm: Number(c.volumeCbm ?? 0),
+        chargedWeightKg: 130,
       })),
       charges: [],
       trucking: [
         {
-          legEndpointPointId: origin.id, truckingType: "DEDICATED", basis: "PER_TRUCK",
-          amount: 500, remarks: "Dedicated", rateVariant: "DEDICATED", tonnage: "T_5",
+          legEndpointPointId: origin.id,
+          truckingType: "DEDICATED",
+          basis: "PER_TRUCK",
+          amount: 500,
+          remarks: "Dedicated",
+          rateVariant: "DEDICATED",
+          tonnage: "T_5",
         },
       ],
       seaRates: [],

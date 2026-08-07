@@ -253,9 +253,7 @@ describe("LegsStep", () => {
       expect(document.querySelector(`[data-point-id="${PICKUP_POINT_ID}"]`)).toBeInTheDocument();
     });
 
-    const pointNode = document.querySelector(
-      `[data-point-id="${PICKUP_POINT_ID}"]`,
-    ) as SVGGElement;
+    const pointNode = document.querySelector(`[data-point-id="${PICKUP_POINT_ID}"]`) as SVGGElement;
     await userEvent.click(pointNode);
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
@@ -338,8 +336,7 @@ describe("LegsStep", () => {
       const calls: unknown[][] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
       const mintCall = calls.find(
         (args) =>
-          (args[0] as string) === "/api/queries" &&
-          (args[1] as RequestInit)?.method === "POST",
+          (args[0] as string) === "/api/queries" && (args[1] as RequestInit)?.method === "POST",
       );
       expect(mintCall).toBeTruthy();
     });
@@ -362,7 +359,9 @@ describe("LegsStep", () => {
       { route: `/queries/${QUERY_ID}?step=3` },
     );
     await navigateToStep4();
-    await waitFor(() => expect(document.querySelector('[data-slot="route-diagram"]')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="route-diagram"]')).toBeInTheDocument(),
+    );
     expect(screen.queryByText(/hover the highlighted boxes/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/issues? to resolve/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: /incomplete legs/i })).not.toBeInTheDocument();
@@ -388,7 +387,9 @@ describe("LegsStep", () => {
       { route: `/queries/${QUERY_ID}?step=3` },
     );
     await navigateToStep4();
-    await waitFor(() => expect(document.querySelector(`[data-leg-id="${LEG_ID}"]`)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(document.querySelector(`[data-leg-id="${LEG_ID}"]`)).toBeInTheDocument(),
+    );
     expect(document.querySelector("[data-leg-id][data-finding]")).toBeNull();
   });
 
@@ -444,9 +445,7 @@ describe("LegsStep", () => {
     await navigateToStep4();
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/add a point or leg to start the route/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/add a point or leg to start the route/i)).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Leg & Route" })).toBeInTheDocument();
     });
   });
@@ -475,7 +474,11 @@ describe("LegsStep", () => {
             <>
               <QueryWizardPage />
               {/* Location probe: captures current search string on every render */}
-              <LocationProbe onSearch={(s) => { capturedSearch = s; }} />
+              <LocationProbe
+                onSearch={(s) => {
+                  capturedSearch = s;
+                }}
+              />
             </>
           }
         />
@@ -514,7 +517,11 @@ describe("LegsStep", () => {
           element={
             <>
               <QueryWizardPage />
-              <LocationProbe onSearch={(s) => { capturedSearch = s; }} />
+              <LocationProbe
+                onSearch={(s) => {
+                  capturedSearch = s;
+                }}
+              />
             </>
           }
         />

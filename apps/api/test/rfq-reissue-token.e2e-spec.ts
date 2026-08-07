@@ -139,7 +139,9 @@ describe(`${PREFIX} (e2e)`, () => {
     const after = await prisma.rfq.findUnique({ where: { id: entry.rfqId } });
     // hash rotated to sha256 of the new token
     expect(after!.accessTokenHash).not.toBe(originalHash);
-    expect(createHash("sha256").update(res.body.accessToken).digest("hex")).toBe(after!.accessTokenHash);
+    expect(createHash("sha256").update(res.body.accessToken).digest("hex")).toBe(
+      after!.accessTokenHash,
+    );
     // deadline + number untouched
     expect(after!.submissionDeadline.getTime()).toBe(originalDeadline);
     expect(after!.rfqNumber).toBe(entry.rfqNumber);

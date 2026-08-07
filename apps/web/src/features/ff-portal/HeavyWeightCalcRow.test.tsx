@@ -8,18 +8,29 @@ import { HeavyWeightCalcRow } from "./HeavyWeightCalcRow";
 const LABEL = "Heavy Weight Surcharge";
 
 const defaultDraft: QuoteDraft = {
-  legId: "L1", mode: "AIR", currency: "USD", quoteValidityUntil: null,
+  legId: "L1",
+  mode: "AIR",
+  currency: "USD",
+  quoteValidityUntil: null,
   cargo: [],
   charges: [
     {
-      zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_HEAVY_WEIGHT", presetKey: null,
-      label: LABEL, amount: null,
-      pieceWeightKg: null, airlineLimitKg: null, ratePerExcessKg: null,
+      zone: "MAIN_FREIGHT",
+      definitionKey: "AIR_MAIN_HEAVY_WEIGHT",
+      presetKey: null,
+      label: LABEL,
+      amount: null,
+      pieceWeightKg: null,
+      airlineLimitKg: null,
+      ratePerExcessKg: null,
     },
   ],
-  trucking: [], seaRates: [], warehouse: [],
+  trucking: [],
+  seaRates: [],
+  warehouse: [],
   transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
-  dgSurchargeNote: null, termsConditions: null,
+  dgSurchargeNote: null,
+  termsConditions: null,
 };
 
 // Debug probe on RHF form state — mirrors the pattern in ChargedWeightGrid.test.tsx.

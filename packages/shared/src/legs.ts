@@ -49,9 +49,7 @@ export const legSaveSchema = z
   )
   // G12: a leg's origin and destination must be different points (no self-loop).
   .refine(
-    (l) =>
-      !(l.originPointId && l.destinationPointId) ||
-      l.originPointId !== l.destinationPointId,
+    (l) => !(l.originPointId && l.destinationPointId) || l.originPointId !== l.destinationPointId,
     {
       message: "A leg's origin and destination must be different points",
       path: ["destinationPointId"],

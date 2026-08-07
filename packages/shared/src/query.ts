@@ -91,8 +91,12 @@ export const querySaveSchema = z
     dgIndicator: z.boolean(),
     readyDate: isoDate,
     targetDelivery: isoDate,
-    readyDateTimezone: z.string().refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
-    targetDeliveryTimezone: z.string().refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
+    readyDateTimezone: z
+      .string()
+      .refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
+    targetDeliveryTimezone: z
+      .string()
+      .refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
     internalNotes: z.string().max(500),
     assignedUserId: z.string().uuid(),
     // Stage 4 (SB6 §7.2): justification for a mediated PATCH that lands on the change-order
@@ -270,38 +274,39 @@ export interface QueryDto {
 
 // ── Plan-6 list & detail types ────────────────────────────────────────────────
 
-export const queryListQuerySchema = z.object({
-  q: z.string().trim().min(1).optional(),
-  status: z.enum(QUERY_STATUSES).optional(),
-  priority: z.enum(PRIORITIES).optional(),
-  assignedUserId: z.string().uuid().optional(),
-  freightMode: z
-    .string()
-    .optional()
-    .refine(
-      (v) =>
-        v === undefined ||
-        v
-          .split(",")
-          .map((t) => t.trim())
-          .every((t) => (FREIGHT_MODES as readonly string[]).includes(t)),
-      {
-        message: `freightMode must be a single or comma-separated list of: ${FREIGHT_MODES.join(", ")}`,
-      },
-    ),       // single value or CSV, each token validated against FREIGHT_MODES
-  dateField: z.enum(["queryDate", "updatedAt"]).optional(),
-  dateFrom: z.string().datetime({ offset: true }).optional(),
-  dateTo: z.string().datetime({ offset: true }).optional(),
-  sort: z.string().optional(),             // "<column>:<asc|desc>"
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(10),
-}).refine(
-  // G11: dateFrom must be on or before dateTo (when both are present).
-  (p) =>
-    !(p.dateFrom && p.dateTo) ||
-    new Date(p.dateFrom).getTime() <= new Date(p.dateTo).getTime(),
-  { message: "dateFrom must be on or before dateTo", path: ["dateTo"] },
-);
+export const queryListQuerySchema = z
+  .object({
+    q: z.string().trim().min(1).optional(),
+    status: z.enum(QUERY_STATUSES).optional(),
+    priority: z.enum(PRIORITIES).optional(),
+    assignedUserId: z.string().uuid().optional(),
+    freightMode: z
+      .string()
+      .optional()
+      .refine(
+        (v) =>
+          v === undefined ||
+          v
+            .split(",")
+            .map((t) => t.trim())
+            .every((t) => (FREIGHT_MODES as readonly string[]).includes(t)),
+        {
+          message: `freightMode must be a single or comma-separated list of: ${FREIGHT_MODES.join(", ")}`,
+        },
+      ), // single value or CSV, each token validated against FREIGHT_MODES
+    dateField: z.enum(["queryDate", "updatedAt"]).optional(),
+    dateFrom: z.string().datetime({ offset: true }).optional(),
+    dateTo: z.string().datetime({ offset: true }).optional(),
+    sort: z.string().optional(), // "<column>:<asc|desc>"
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(10),
+  })
+  .refine(
+    // G11: dateFrom must be on or before dateTo (when both are present).
+    (p) =>
+      !(p.dateFrom && p.dateTo) || new Date(p.dateFrom).getTime() <= new Date(p.dateTo).getTime(),
+    { message: "dateFrom must be on or before dateTo", path: ["dateTo"] },
+  );
 export type QueryListParams = z.infer<typeof queryListQuerySchema>;
 
 export type QueryListRow = {
@@ -346,8 +351,8 @@ export type QueryLegDto = {
   originPointId: string | null;
   destinationPointId: string | null;
   mode: FreightMode | null;
-  readyDate: string | null;       // DateTime → ISO string in JSON
-  targetDelivery: string | null;  // DateTime → ISO string in JSON
+  readyDate: string | null; // DateTime → ISO string in JSON
+  targetDelivery: string | null; // DateTime → ISO string in JSON
   status: LegStatus;
   executionStatus: LegExecutionStatus;
   createdAt: string;

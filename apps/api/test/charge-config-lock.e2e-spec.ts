@@ -40,7 +40,9 @@ describe(`${PREFIX} (e2e)`, () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items/chargeSelections
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -72,8 +74,12 @@ describe(`${PREFIX} (e2e)`, () => {
     //     endpoint-type constraint, so PICKUP/DELIVERY doesn't trip the V-M1 guard in
     //     legs.service.ts `update()` (assertModeEndpoints), which is unrelated to Task 11 ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -93,7 +99,9 @@ describe(`${PREFIX} (e2e)`, () => {
       packages: [{ packageNo: "PO-CHG-LOCK-1", dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
     });
     await assignPackagesToLeg(prisma, leg.id, packageIds);
-    const roadInsurance = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "ROAD_STD_INSURANCE" } });
+    const roadInsurance = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "ROAD_STD_INSURANCE" },
+    });
 
     // --- pre-distribute: PATCH selection applies freely (200) ---
     await request(server)
@@ -103,7 +111,10 @@ describe(`${PREFIX} (e2e)`, () => {
       .expect(200);
 
     // --- reflected in GET /api/queries/:id's leg DTO ---
-    const afterPatch = await request(server).get(`/api/queries/${query.id}`).set("Cookie", admin).expect(200);
+    const afterPatch = await request(server)
+      .get(`/api/queries/${query.id}`)
+      .set("Cookie", admin)
+      .expect(200);
     const legDtoBefore = afterPatch.body.legs.find((l: { id: string }) => l.id === leg.id);
     expect(legDtoBefore.chargeLineDefinitionIds).toEqual([roadInsurance.id]);
     expect(legDtoBefore.warehouseHandlingIncluded).toBeNull(); // untouched, non-warehouse leg
@@ -141,7 +152,10 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(res.body.needsChangeOrder).toBe(true);
 
     // --- the selection is untouched by the rejected change (still the pre-distribute value) ---
-    const afterReject = await request(server).get(`/api/queries/${query.id}`).set("Cookie", admin).expect(200);
+    const afterReject = await request(server)
+      .get(`/api/queries/${query.id}`)
+      .set("Cookie", admin)
+      .expect(200);
     const legDtoAfter = afterReject.body.legs.find((l: { id: string }) => l.id === leg.id);
     expect(legDtoAfter.chargeLineDefinitionIds).toEqual([roadInsurance.id]);
   });
@@ -162,9 +176,15 @@ describe(`${PREFIX} (e2e)`, () => {
     const server = app.getHttpServer();
 
     // --- a non-warehouse ROAD leg so F7/F8 never engage (same rationale as the lock test) ---
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-REFREEZE`, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-REFREEZE`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -185,8 +205,12 @@ describe(`${PREFIX} (e2e)`, () => {
     });
     await assignPackagesToLeg(prisma, leg.id, packageIds);
     // Two ROAD STANDARD (PLAIN) lines to swap between; ROAD_CORE_TRUCKING is always a core.
-    const tailLift = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "ROAD_STD_TAIL_LIFT" } });
-    const insurance = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "ROAD_STD_INSURANCE" } });
+    const tailLift = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "ROAD_STD_TAIL_LIFT" },
+    });
+    const insurance = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "ROAD_STD_INSURANCE" },
+    });
 
     // --- initial selection (pre-distribute, free): TAIL_LIFT ---
     await request(server)

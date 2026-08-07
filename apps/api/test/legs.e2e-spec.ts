@@ -23,7 +23,8 @@ describe("Legs (e2e)", () => {
   let seaport2Id: string;
   let pkg1Id: string;
   let pkg2Id: string;
-  const cookie = () => `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: EXEC_ID, role: Role.EXECUTIVE, tenantId: null })}`;
+  const cookie = () =>
+    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: EXEC_ID, role: Role.EXECUTIVE, tenantId: null })}`;
   const api = () => request(app.getHttpServer());
 
   beforeAll(async () => {
@@ -36,21 +37,51 @@ describe("Legs (e2e)", () => {
     prisma = moduleRef.get(PrismaService);
     jwt = moduleRef.get(JwtService);
     await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } });
-    const q = await prisma.query.create({ data: { queryCode: `${PFX}${Date.now()}`, shipmentDescription: `${PFX}q` } });
+    const q = await prisma.query.create({
+      data: { queryCode: `${PFX}${Date.now()}`, shipmentDescription: `${PFX}q` },
+    });
     queryId = q.id;
-    pickupId = (await prisma.point.create({ data: { queryId, type: "PICKUP", name: "PU", country: "IN" } })).id;
-    deliveryId = (await prisma.point.create({ data: { queryId, type: "DELIVERY", name: "DE", country: "DE" } })).id;
-    seaportId = (await prisma.point.create({ data: { queryId, type: "SEAPORT", name: "SP", country: "IN" } })).id;
-    seaport2Id = (await prisma.point.create({ data: { queryId, type: "SEAPORT", name: "SP2", country: "SG" } })).id;
+    pickupId = (
+      await prisma.point.create({ data: { queryId, type: "PICKUP", name: "PU", country: "IN" } })
+    ).id;
+    deliveryId = (
+      await prisma.point.create({ data: { queryId, type: "DELIVERY", name: "DE", country: "DE" } })
+    ).id;
+    seaportId = (
+      await prisma.point.create({ data: { queryId, type: "SEAPORT", name: "SP", country: "IN" } })
+    ).id;
+    seaport2Id = (
+      await prisma.point.create({ data: { queryId, type: "SEAPORT", name: "SP2", country: "SG" } })
+    ).id;
     const cargo = await prisma.cargo.create({ data: { queryId, rowIndex: 0 } });
     pkg1Id = (
       await prisma.package.create({
-        data: { queryId, cargoId: cargo.id, rowIndex: 0, packageNo: "P-1", packageType: "BOX", dimL: 100, dimW: 50, dimH: 40, grossWt: 5 },
+        data: {
+          queryId,
+          cargoId: cargo.id,
+          rowIndex: 0,
+          packageNo: "P-1",
+          packageType: "BOX",
+          dimL: 100,
+          dimW: 50,
+          dimH: 40,
+          grossWt: 5,
+        },
       })
     ).id;
     pkg2Id = (
       await prisma.package.create({
-        data: { queryId, cargoId: cargo.id, rowIndex: 1, packageNo: "P-2", packageType: "BOX", dimL: 100, dimW: 50, dimH: 40, grossWt: 10 },
+        data: {
+          queryId,
+          cargoId: cargo.id,
+          rowIndex: 1,
+          packageNo: "P-2",
+          packageType: "BOX",
+          dimL: 100,
+          dimW: 50,
+          dimH: 40,
+          grossWt: 10,
+        },
       })
     ).id;
   });
@@ -63,7 +94,12 @@ describe("Legs (e2e)", () => {
     const l1 = await api()
       .post(`/api/queries/${queryId}/legs`)
       .set("Cookie", cookie())
-      .send({ mode: "ROAD", originPointId: pickupId, destinationPointId: seaportId, assignedPackageIds: [pkg1Id] })
+      .send({
+        mode: "ROAD",
+        originPointId: pickupId,
+        destinationPointId: seaportId,
+        assignedPackageIds: [pkg1Id],
+      })
       .expect(201);
     expect(l1.body.legCode).toBe("L1");
     expect(l1.body.legPackages).toHaveLength(1);
@@ -113,13 +149,21 @@ describe("Legs (e2e)", () => {
     const leg = await api()
       .post(`/api/queries/${queryId}/legs`)
       .set("Cookie", cookie())
-      .send({ mode: "ROAD", originPointId: pickupId, destinationPointId: deliveryId, assignedPackageIds: [pkg1Id, pkg2Id] })
+      .send({
+        mode: "ROAD",
+        originPointId: pickupId,
+        destinationPointId: deliveryId,
+        assignedPackageIds: [pkg1Id, pkg2Id],
+      })
       .expect(201);
     const res = await api().get(`/api/queries/${queryId}`).set("Cookie", cookie()).expect(200);
     const shaped = res.body.legs.find((l: { id: string }) => l.id === leg.body.id);
     expect(shaped.assignedPackageIds).toEqual(expect.arrayContaining([pkg1Id, pkg2Id]));
     expect(shaped.rollup.totalPackages).toBe(2); // count — Package IS the freight unit
     expect(shaped.rollup.totalGrossWt).toBeCloseTo(15, 3); // 5 + 10 kg, direct canonical Σ (no toKg)
-    await api().delete(`/api/queries/${queryId}/legs/${leg.body.id}`).set("Cookie", cookie()).expect(204);
+    await api()
+      .delete(`/api/queries/${queryId}/legs/${leg.body.id}`)
+      .set("Cookie", cookie())
+      .expect(204);
   });
 });

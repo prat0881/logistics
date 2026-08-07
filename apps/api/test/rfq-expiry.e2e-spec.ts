@@ -27,7 +27,11 @@ describe(`${PREFIX} (e2e)`, () => {
   const cookie = (role: Role) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: `u-${role}`, role, tenantId: null })}`;
 
-  const mkFf = (code: string, countries: string[] = ["AE"], modes: ("AIR" | "SEA" | "ROAD")[] = ["AIR"]) =>
+  const mkFf = (
+    code: string,
+    countries: string[] = ["AE"],
+    modes: ("AIR" | "SEA" | "ROAD")[] = ["AIR"],
+  ) =>
     prisma.freightForwarder.create({
       data: {
         freightForwarderCode: code,
@@ -56,17 +60,23 @@ describe(`${PREFIX} (e2e)`, () => {
     const rfqIds = rfqs.map((r) => r.id);
 
     if (rfqIds.length) {
-      await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+      await prisma.scheduledEvent.deleteMany({
+        where: { entityType: "RFQ", entityId: { in: rfqIds } },
+      });
     }
     if (queryIds.length) {
-      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: { in: queryIds } } });
+      await prisma.messageLog.deleteMany({
+        where: { entityType: "QUERY", entityId: { in: queryIds } },
+      });
     }
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items/notifications
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
     await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX}-` } } });
   };
 
@@ -118,7 +128,12 @@ describe(`${PREFIX} (e2e)`, () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
     const exec = await prisma.user.create({
-      data: { name: "Exec", email: `${PREFIX}-exec@e2e.test`, passwordHash: "x", role: "EXECUTIVE" },
+      data: {
+        name: "Exec",
+        email: `${PREFIX}-exec@e2e.test`,
+        passwordHash: "x",
+        role: "EXECUTIVE",
+      },
     });
 
     const query = await prisma.query.create({
@@ -139,11 +154,15 @@ describe(`${PREFIX} (e2e)`, () => {
       .send({})
       .expect(201);
 
-    const rfq = await prisma.rfq.findFirst({ where: { queryId: query.id, freightForwarderId: ff.id } });
+    const rfq = await prisma.rfq.findFirst({
+      where: { queryId: query.id, freightForwarderId: ff.id },
+    });
     expect(rfq).not.toBeNull();
     const rfqId = rfq!.id;
 
-    const quote = await prisma.quote.findFirst({ where: { legId: leg.id, freightForwarderId: ff.id } });
+    const quote = await prisma.quote.findFirst({
+      where: { legId: leg.id, freightForwarderId: ff.id },
+    });
     expect(quote?.status).toBe("RFQ_SENT");
     const quoteId = quote!.id;
 
@@ -156,7 +175,13 @@ describe(`${PREFIX} (e2e)`, () => {
     // sanity: distribute already seeded live future-tier reminders anchored to this RFQ —
     // proves the later "0 live reminders" assertion is really exercising the cancel(), not vacuous
     const remindersBefore = await prisma.scheduledEvent.count({
-      where: { entityType: "RFQ", entityId: rfqId, eventKey: "rfq.reminder", firedAt: null, cancelledAt: null },
+      where: {
+        entityType: "RFQ",
+        entityId: rfqId,
+        eventKey: "rfq.reminder",
+        firedAt: null,
+        cancelledAt: null,
+      },
     });
     expect(remindersBefore).toBeGreaterThan(0);
 
@@ -191,7 +216,13 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(execNotif).toBeGreaterThanOrEqual(1);
 
     const liveReminders = await prisma.scheduledEvent.count({
-      where: { entityType: "RFQ", entityId: rfqId, eventKey: "rfq.reminder", firedAt: null, cancelledAt: null },
+      where: {
+        entityType: "RFQ",
+        entityId: rfqId,
+        eventKey: "rfq.reminder",
+        firedAt: null,
+        cancelledAt: null,
+      },
     });
     expect(liveReminders).toBe(0);
   });

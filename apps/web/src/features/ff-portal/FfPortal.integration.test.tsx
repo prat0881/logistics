@@ -42,7 +42,7 @@ const renderAt = (token: string) =>
 const sentDraft: QuoteDraft = {
   legId: "L1",
   mode: "AIR",
-  currency: null,           // will be merged from rfq.currency by LegSectionForm
+  currency: null, // will be merged from rfq.currency by LegSectionForm
   quoteValidityUntil: null, // will be merged from rfq.quoteValidityUntil by LegSectionForm
   cargo: [
     {
@@ -54,19 +54,85 @@ const sentDraft: QuoteDraft = {
   ],
   charges: [
     // 12 pre-priced at 0; only Air Freight (AIR_MAIN_FREIGHT) left unpriced → one input to fill
-    { zone: "ORIGIN", presetKey: "AIR_ORIGIN_EXPORT_CLEARANCE", label: "Export Customs Clearance", amount: 0 },
-    { zone: "ORIGIN", presetKey: "AIR_ORIGIN_DOCUMENTATION", label: "Documentation Charges", amount: 0 },
-    { zone: "ORIGIN", presetKey: "AIR_ORIGIN_THC", label: "Origin THC / Airport Handling", amount: 0 },
-    { zone: "ORIGIN", presetKey: "AIR_ORIGIN_SECURITY", label: "Security / Screening Charges", amount: 0 },
-    { zone: "ORIGIN", presetKey: "AIR_ORIGIN_WAREHOUSE_PRESTORAGE", label: "Warehouse / Pre-storage at OAP", amount: 0 },
-    { zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_FREIGHT", presetKey: "AIR_MAIN_FREIGHT", label: "Air Freight", amount: null }, // ← the one to price
-    { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_SEC", label: "Security Exchange (SEC)", amount: 0 },
-    { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_CARRIER_SURCHARGE", label: "Airline / Carrier Surcharge", amount: 0 },
-    { zone: "MAIN_FREIGHT", presetKey: "AIR_MAIN_HEAVY_WEIGHT", label: "Heavy Weight Surcharge", amount: 0 },
-    { zone: "DESTINATION", presetKey: "AIR_DEST_THC", label: "Destination THC / Airport Handling", amount: 0 },
-    { zone: "DESTINATION", presetKey: "AIR_DEST_IMPORT_CLEARANCE", label: "Import Customs Clearance", amount: 0 },
-    { zone: "DESTINATION", presetKey: "AIR_DEST_LAST_MILE", label: "Last Mile Handling / Lift Gate", amount: 0 },
-    { zone: "DESTINATION", presetKey: "AIR_DEST_STORAGE", label: "Storage 1 Free Day Charges", amount: 0 },
+    {
+      zone: "ORIGIN",
+      presetKey: "AIR_ORIGIN_EXPORT_CLEARANCE",
+      label: "Export Customs Clearance",
+      amount: 0,
+    },
+    {
+      zone: "ORIGIN",
+      presetKey: "AIR_ORIGIN_DOCUMENTATION",
+      label: "Documentation Charges",
+      amount: 0,
+    },
+    {
+      zone: "ORIGIN",
+      presetKey: "AIR_ORIGIN_THC",
+      label: "Origin THC / Airport Handling",
+      amount: 0,
+    },
+    {
+      zone: "ORIGIN",
+      presetKey: "AIR_ORIGIN_SECURITY",
+      label: "Security / Screening Charges",
+      amount: 0,
+    },
+    {
+      zone: "ORIGIN",
+      presetKey: "AIR_ORIGIN_WAREHOUSE_PRESTORAGE",
+      label: "Warehouse / Pre-storage at OAP",
+      amount: 0,
+    },
+    {
+      zone: "MAIN_FREIGHT",
+      definitionKey: "AIR_MAIN_FREIGHT",
+      presetKey: "AIR_MAIN_FREIGHT",
+      label: "Air Freight",
+      amount: null,
+    }, // ← the one to price
+    {
+      zone: "MAIN_FREIGHT",
+      presetKey: "AIR_MAIN_SEC",
+      label: "Security Exchange (SEC)",
+      amount: 0,
+    },
+    {
+      zone: "MAIN_FREIGHT",
+      presetKey: "AIR_MAIN_CARRIER_SURCHARGE",
+      label: "Airline / Carrier Surcharge",
+      amount: 0,
+    },
+    {
+      zone: "MAIN_FREIGHT",
+      presetKey: "AIR_MAIN_HEAVY_WEIGHT",
+      label: "Heavy Weight Surcharge",
+      amount: 0,
+    },
+    {
+      zone: "DESTINATION",
+      presetKey: "AIR_DEST_THC",
+      label: "Destination THC / Airport Handling",
+      amount: 0,
+    },
+    {
+      zone: "DESTINATION",
+      presetKey: "AIR_DEST_IMPORT_CLEARANCE",
+      label: "Import Customs Clearance",
+      amount: 0,
+    },
+    {
+      zone: "DESTINATION",
+      presetKey: "AIR_DEST_LAST_MILE",
+      label: "Last Mile Handling / Lift Gate",
+      amount: 0,
+    },
+    {
+      zone: "DESTINATION",
+      presetKey: "AIR_DEST_STORAGE",
+      label: "Storage 1 Free Day Charges",
+      amount: 0,
+    },
   ],
   trucking: [],
   seaRates: [],
@@ -197,8 +263,7 @@ describe("FfPortal integration — happy path", () => {
       "fetch",
       vi.fn((url: string, init?: RequestInit) => {
         const method = init?.method ?? "GET";
-        const body =
-          init?.body ? JSON.parse(init.body as string) : undefined;
+        const body = init?.body ? JSON.parse(init.body as string) : undefined;
 
         // Record all /api/ff/rfq/tok calls for assertion
         if (url.includes("/api/ff/rfq/tok")) {
@@ -264,9 +329,7 @@ describe("FfPortal integration — happy path", () => {
     await screen.findByText(/quote submitted/i);
 
     // Assert: a PATCH occurred BEFORE a POST (ordering)
-    const patchIdx = calls.findIndex(
-      (c) => c.url.includes("/quotes/L1") && c.method === "PATCH",
-    );
+    const patchIdx = calls.findIndex((c) => c.url.includes("/quotes/L1") && c.method === "PATCH");
     const postIdx = calls.findIndex(
       (c) => c.url.includes("/quotes/L1/submit") && c.method === "POST",
     );
@@ -279,9 +342,7 @@ describe("FfPortal integration — happy path", () => {
     const patchCall = calls[patchIdx];
     const patchBody = patchCall.body as Record<string, unknown>;
     expect(patchBody?.currency).toBe("USD");
-    expect(patchBody?.quoteValidityUntil).toBe(
-      "2999-02-01T00:00:00.000Z",
-    );
+    expect(patchBody?.quoteValidityUntil).toBe("2999-02-01T00:00:00.000Z");
 
     // Assert: the user-typed amount (2000) for "Air Freight" serialized into PATCH body charges
     const patchCharges = patchBody?.charges as Array<Record<string, unknown>> | undefined;
@@ -399,7 +460,9 @@ describe("FfPortal integration — client gate", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeInTheDocument();
     });
-    expect(screen.getByRole("alert").textContent).toMatch(/charge line.*air freight.*must be priced/i);
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /charge line.*air freight.*must be priced/i,
+    );
 
     // Assert zero calls to any /quotes/ URL
     const quotesCalls = fetchMock.mock.calls.filter(

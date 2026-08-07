@@ -45,19 +45,11 @@ const CARGO_B = makeCargo("dddddddd-dddd-dddd-dddd-dddddddddddd", "PO-002", [PAC
 describe("CargoAssignmentControl", () => {
   it("shows an empty-state message when no cargo/packages exist", () => {
     render(<CargoAssignmentControl cargo={[]} value={[]} onChange={vi.fn()} />);
-    expect(
-      screen.getByText(/no packages yet — add them in step 3/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/no packages yet — add them in step 3/i)).toBeInTheDocument();
   });
 
   it("renders packages grouped under their cargo's PO/Ref, with label = packageNo", () => {
-    render(
-      <CargoAssignmentControl
-        cargo={[CARGO_A, CARGO_B]}
-        value={[]}
-        onChange={vi.fn()}
-      />,
-    );
+    render(<CargoAssignmentControl cargo={[CARGO_A, CARGO_B]} value={[]} onChange={vi.fn()} />);
     // Both group headers visible
     expect(screen.getByText("PO-001")).toBeInTheDocument();
     expect(screen.getByText("PO-002")).toBeInTheDocument();
@@ -74,13 +66,7 @@ describe("CargoAssignmentControl", () => {
       PACKAGE_A,
       makePackage("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", "PKG-003"),
     ]);
-    render(
-      <CargoAssignmentControl
-        cargo={[multiPackageCargo]}
-        value={[]}
-        onChange={vi.fn()}
-      />,
-    );
+    render(<CargoAssignmentControl cargo={[multiPackageCargo]} value={[]} onChange={vi.fn()} />);
     // Exactly one group header for the one cargo row
     expect(screen.getAllByText("PO-001")).toHaveLength(1);
     // Both of its packages render as separate checkbox rows
@@ -96,9 +82,7 @@ describe("CargoAssignmentControl", () => {
     ]);
     labelledCargo.poReference = null;
     labelledCargo.label = "Machinery batch";
-    render(
-      <CargoAssignmentControl cargo={[labelledCargo]} value={[]} onChange={vi.fn()} />,
-    );
+    render(<CargoAssignmentControl cargo={[labelledCargo]} value={[]} onChange={vi.fn()} />);
     expect(screen.getByText("Machinery batch")).toBeInTheDocument();
   });
 
@@ -121,13 +105,7 @@ describe("CargoAssignmentControl", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
 
-    render(
-      <CargoAssignmentControl
-        cargo={[CARGO_A, CARGO_B]}
-        value={[]}
-        onChange={onChange}
-      />,
-    );
+    render(<CargoAssignmentControl cargo={[CARGO_A, CARGO_B]} value={[]} onChange={onChange} />);
 
     const checkboxes = screen.getAllByRole("checkbox");
     await user.click(checkboxes[0]);
@@ -154,13 +132,7 @@ describe("CargoAssignmentControl", () => {
   });
 
   it("shows the D7 hint about assigning at least one package", () => {
-    render(
-      <CargoAssignmentControl
-        cargo={[CARGO_A]}
-        value={[]}
-        onChange={vi.fn()}
-      />,
-    );
+    render(<CargoAssignmentControl cargo={[CARGO_A]} value={[]} onChange={vi.fn()} />);
     expect(screen.getByText(/assign at least one package/i)).toBeInTheDocument();
   });
 
@@ -208,9 +180,7 @@ describe("CargoAssignmentControl", () => {
 
   it("does not render a group header/checkboxes for a cargo row with zero packages", () => {
     const emptyCargo = makeCargo("22222222-2222-2222-2222-222222222222", "PO-EMPTY", []);
-    render(
-      <CargoAssignmentControl cargo={[CARGO_A, emptyCargo]} value={[]} onChange={vi.fn()} />,
-    );
+    render(<CargoAssignmentControl cargo={[CARGO_A, emptyCargo]} value={[]} onChange={vi.fn()} />);
     expect(screen.queryByText("PO-EMPTY")).not.toBeInTheDocument();
     expect(screen.getAllByRole("checkbox")).toHaveLength(1);
   });

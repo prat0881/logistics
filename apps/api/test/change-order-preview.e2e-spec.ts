@@ -32,7 +32,9 @@ describe("ChangeOrderStrategy preview phase (e2e)", () => {
     if (q) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: FF_PREFIX } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: FF_PREFIX } },
+    });
     if (q) {
       await prisma.query.delete({ where: { id: q.id } }); // cascades legs/legPackages/cargo/packages/items
     }
@@ -87,10 +89,20 @@ describe("ChangeOrderStrategy preview phase (e2e)", () => {
     const ffSent = await mkFf(`${FF_PREFIX}SENT`);
 
     const quotedQuote = await prisma.quote.create({
-      data: { queryId: query.id, legId: leg.id, freightForwarderId: ffQuoted.id, status: QuoteStatus.QUOTED },
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffQuoted.id,
+        status: QuoteStatus.QUOTED,
+      },
     });
     const sentQuote = await prisma.quote.create({
-      data: { queryId: query.id, legId: leg.id, freightForwarderId: ffSent.id, status: QuoteStatus.RFQ_SENT },
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffSent.id,
+        status: QuoteStatus.RFQ_SENT,
+      },
     });
 
     // --- act: RfqDefining field (package.grossWt) on a leg with live quotes, no `reason` ---
@@ -98,7 +110,13 @@ describe("ChangeOrderStrategy preview phase (e2e)", () => {
       await tx.package.update({ where: { id: packageId }, data: { grossWt: 999 } });
     });
     const res = await mediator.apply(
-      { entity: "package", id: packageId, field: "grossWt", queryId: query.id, patch: { grossWt: 999 } },
+      {
+        entity: "package",
+        id: packageId,
+        field: "grossWt",
+        queryId: query.id,
+        patch: { grossWt: 999 },
+      },
       uow,
     );
 

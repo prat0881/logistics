@@ -41,9 +41,7 @@ export function CargoAssignmentControl({
   if (groups.length === 0) {
     return (
       <div className="space-y-2">
-        <p className="text-sm text-muted-foreground">
-          No packages yet — add them in Step 3.
-        </p>
+        <p className="text-sm text-muted-foreground">No packages yet — add them in Step 3.</p>
         <p className="text-xs text-muted-foreground">
           Assign at least one package before Create Query (D7).
         </p>

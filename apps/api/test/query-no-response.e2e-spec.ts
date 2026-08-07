@@ -31,7 +31,11 @@ describe(`${PREFIX} (e2e)`, () => {
   const cookie = (role: Role) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: `u-${role}`, role, tenantId: null })}`;
 
-  const mkFf = (code: string, countries: string[] = ["AE"], modes: ("AIR" | "SEA" | "ROAD")[] = ["AIR"]) =>
+  const mkFf = (
+    code: string,
+    countries: string[] = ["AE"],
+    modes: ("AIR" | "SEA" | "ROAD")[] = ["AIR"],
+  ) =>
     prisma.freightForwarder.create({
       data: {
         freightForwarderCode: code,
@@ -59,17 +63,23 @@ describe(`${PREFIX} (e2e)`, () => {
     const rfqIds = rfqs.map((r) => r.id);
 
     if (rfqIds.length) {
-      await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+      await prisma.scheduledEvent.deleteMany({
+        where: { entityType: "RFQ", entityId: { in: rfqIds } },
+      });
     }
     if (queryIds.length) {
-      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: { in: queryIds } } });
+      await prisma.messageLog.deleteMany({
+        where: { entityType: "QUERY", entityId: { in: queryIds } },
+      });
     }
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items/notifications
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -136,11 +146,15 @@ describe(`${PREFIX} (e2e)`, () => {
       .send({})
       .expect(201);
 
-    const rfq = await prisma.rfq.findFirst({ where: { queryId: query.id, freightForwarderId: ff.id } });
+    const rfq = await prisma.rfq.findFirst({
+      where: { queryId: query.id, freightForwarderId: ff.id },
+    });
     expect(rfq).not.toBeNull();
     const rfqId = rfq!.id;
 
-    const quote = await prisma.quote.findFirst({ where: { legId: leg.id, freightForwarderId: ff.id } });
+    const quote = await prisma.quote.findFirst({
+      where: { legId: leg.id, freightForwarderId: ff.id },
+    });
     expect(quote?.status).toBe("RFQ_SENT");
     const quoteId = quote!.id;
 

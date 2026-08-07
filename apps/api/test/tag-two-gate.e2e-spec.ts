@@ -41,17 +41,24 @@ describe(`${PFX}tag-two-gate (e2e)`, () => {
   // Self-clean comms rows too (ScheduledEvent/MessageLog key off entityId as a plain string, not
   // a Prisma relation, so they don't cascade off a Query/Rfq delete) — mirrors ff-portal-grain.e2e-spec.ts.
   const cleanup = async () => {
-    const qs = await prisma.query.findMany({ where: { queryCode: { startsWith: PFX } }, select: { id: true } });
+    const qs = await prisma.query.findMany({
+      where: { queryCode: { startsWith: PFX } },
+      select: { id: true },
+    });
     const queryIds = qs.map((q) => q.id);
     const rfqs = queryIds.length
       ? await prisma.rfq.findMany({ where: { queryId: { in: queryIds } }, select: { id: true } })
       : [];
     const rfqIds = rfqs.map((r) => r.id);
     if (rfqIds.length) {
-      await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+      await prisma.scheduledEvent.deleteMany({
+        where: { entityType: "RFQ", entityId: { in: rfqIds } },
+      });
     }
     if (queryIds.length) {
-      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: { in: queryIds } } });
+      await prisma.messageLog.deleteMany({
+        where: { entityType: "QUERY", entityId: { in: queryIds } },
+      });
     }
     for (const q of qs) {
       // order matters: quotes/rfqs reference the FF (Restrict) and the query (Cascade)
@@ -59,7 +66,9 @@ describe(`${PFX}tag-two-gate (e2e)`, () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PFX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PFX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -86,8 +95,12 @@ describe(`${PFX}tag-two-gate (e2e)`, () => {
 
     // --- query -> cargo -> 1 package carrying a DG-tagged item (no FRAGILE anywhere) ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
     const pkg = await prisma.package.create({
@@ -125,10 +138,16 @@ describe(`${PFX}tag-two-gate (e2e)`, () => {
     });
 
     // --- Executive selects BOTH tag-driven lines on the popover; only DG is actually carried ---
-    const dgDef = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "AIR_TAG_DG" } });
-    const fragileDef = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "AIR_TAG_FRAGILE" } });
+    const dgDef = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "AIR_TAG_DG" },
+    });
+    const fragileDef = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "AIR_TAG_FRAGILE" },
+    });
     await prisma.legChargeLineSelection.create({ data: { legId: leg.id, definitionId: dgDef.id } });
-    await prisma.legChargeLineSelection.create({ data: { legId: leg.id, definitionId: fragileDef.id } });
+    await prisma.legChargeLineSelection.create({
+      data: { legId: leg.id, definitionId: fragileDef.id },
+    });
 
     // --- ACTIVE, DG-handling FF (F5 requires every selected FF to handle DG) ---
     const ff = await prisma.freightForwarder.create({
@@ -162,7 +181,10 @@ describe(`${PFX}tag-two-gate (e2e)`, () => {
 
     // --- the frozen chargeConfigSnapshot: two-gate resolved against the per-package manifest ---
     const quote = await prisma.quote.findFirstOrThrow({ where: { legId: leg.id } });
-    const snap = quote.chargeConfigSnapshot as { lines: { definitionKey: string }[]; warehouseIncluded: boolean };
+    const snap = quote.chargeConfigSnapshot as {
+      lines: { definitionKey: string }[];
+      warehouseIncluded: boolean;
+    };
     const keys = snap.lines.map((l) => l.definitionKey);
     expect(keys).toContain("AIR_ORIGIN_THC"); // sanity: a CORE line always freezes
     expect(keys).toContain("AIR_TAG_DG"); // selected AND the assigned package's effectiveTags carries DG

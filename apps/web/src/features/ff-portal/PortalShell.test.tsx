@@ -88,9 +88,7 @@ describe("PortalShell interactions", () => {
     const input = screen.getByLabelText(/validity/i);
 
     fireEvent.change(input, { target: { value: "2026-09-15" } });
-    expect(onValidityChange).toHaveBeenCalledWith(
-      expect.stringMatching(/^2026-09-15T/),
-    );
+    expect(onValidityChange).toHaveBeenCalledWith(expect.stringMatching(/^2026-09-15T/));
   });
 
   it("calls onValidityChange with null when the date is cleared", () => {

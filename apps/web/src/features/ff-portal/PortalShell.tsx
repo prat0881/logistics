@@ -54,9 +54,7 @@ export function PortalShell({
 }: PortalShellProps): JSX.Element {
   const cd = useCountdown(rfq.submissionDeadline);
 
-  const validityDateValue = quoteValidityUntil
-    ? quoteValidityUntil.slice(0, 10)
-    : "";
+  const validityDateValue = quoteValidityUntil ? quoteValidityUntil.slice(0, 10) : "";
 
   function handleValidityChange(e: React.ChangeEvent<HTMLInputElement>) {
     const val = e.target.value;
@@ -109,25 +107,23 @@ export function PortalShell({
             </span>
             <p className="text-xs text-muted-foreground">Request for quote</p>
             <p className="text-sm">
-              Prepared for{" "}
-              <span className="font-medium">
-                {rfq.freightForwarder.companyName}
-              </span>
+              Prepared for <span className="font-medium">{rfq.freightForwarder.companyName}</span>
             </p>
             <div className="flex items-center gap-2">
-              <span className="font-mono tabular-nums text-sm">
-                {rfq.rfqNumber}
-              </span>
-              {rfq.incoterms && (
-                <Badge variant="outline">{rfq.incoterms}</Badge>
-              )}
+              <span className="font-mono tabular-nums text-sm">{rfq.rfqNumber}</span>
+              {rfq.incoterms && <Badge variant="outline">{rfq.incoterms}</Badge>}
             </div>
           </div>
 
           {/* Right: RFQ document actions + signature deadline countdown */}
           <div className="flex flex-col items-end gap-2">
             <div className="flex items-center gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setPreviewOpen(true)}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setPreviewOpen(true)}
+              >
                 Preview
               </Button>
               <Button type="button" variant="outline" size="sm" onClick={handleDownloadPdf}>

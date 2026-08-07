@@ -12,9 +12,10 @@
 
 ## Global Constraints
 
-*Every task's requirements implicitly include this section. These are the non-negotiable protocols carried from the Stage-3/Stage-4 SDD ledger — copied verbatim.*
+_Every task's requirements implicitly include this section. These are the non-negotiable protocols carried from the Stage-3/Stage-4 SDD ledger — copied verbatim._
 
 ### Git protocol (SHARED-checkout drift hazard — CONFIRMED live)
+
 - A background pull / another Claude session intermittently `git checkout main`s this shared checkout → a naive commit lands on `main`.
 - **Implementers NEVER touch git** (no checkout/add/commit/stash). They edit + test, then report the exact files to stage and a suggested commit message.
 - **The controller commits atomically:** start EVERY commit with `git checkout feat/stage-3-cargo-packing-list`, then `git add <specific files>`, `git commit`, then verify parent == the previous feat tip (`git log --oneline -2`). Record each task's BASE (feat tip before dispatch) for `review-package` — never `HEAD~1`.
@@ -22,6 +23,7 @@
 - Branch tip at plan start: **`89a6c06`** (design commit). This plan's commit sits on top; Task 1's BASE = this plan's commit.
 
 ### Build / test / typecheck reality
+
 - **`@svyft/shared` compiles to `dist/` (gitignored). Run `pnpm --filter @svyft/shared build` after EVERY shared edit** or api-tsc / web / vitest see stale types. (api jest maps `@svyft/shared`→`src`; tsc/web read `dist`.)
 - **vitest (shared + web) and esbuild do NOT type-check.** A green suite can hide type errors. Run `pnpm --filter @svyft/shared typecheck` + `pnpm --filter @svyft/web typecheck` explicitly per task on touched files.
 - **`apps/api` will not fully `typecheck` until Unit 5** (the ~25 legacy specs are on the old model). Two gates instead:
@@ -32,21 +34,25 @@
 - CI has no seed: any e2e needing catalogue rows calls `seedReferenceData(prisma)` in `beforeAll`. Self-clean by a per-file unique prefix (`const PFX = "..."`).
 
 ### Database / migrations
+
 - Dev Postgres UP: container `svyft-postgres-task4` on **:5433**. `apps/api/.env` present (DATABASE_URL / DIRECT_URL / JWT). Export it for the Prisma CLI: `set -a; . apps/api/.env; set +a`.
 - **Migrations: hand-author `prisma/migrations/<timestamp>_<name>/migration.sql`, then `pnpm --filter @svyft/api exec prisma migrate deploy --schema ../../prisma/schema.prisma`, then `prisma generate`. NEVER `prisma migrate dev`** (it drifts on the generated `volumeCbm` column → PG 42601, and may propose a destructive RESET of the shared dev DB). **If Prisma proposes RESET/DROP unexpectedly → STOP.** Do NOT run `prisma format` (reformats unrelated models → churn).
 - Schema lives at the **repo root** `prisma/schema.prisma`, not under `apps/api`. Always pass `--schema ../../prisma/schema.prisma` from `apps/api` (or `--schema prisma/schema.prisma` from root).
 - Verification psql: `docker exec -e PGPASSWORD=$DBPASS svyft-postgres-task4 psql -U $DBUSER -d svyft -Atc "…"` (parse DBUSER/DBPASS from DATABASE_URL).
 
 ### RBAC
+
 - Quote/RFQ/portal writes are **workflow writes → auth-only (no `@Roles`)**. The FF portal routes are `@Public()` + token-scoped. Only master-data/`/admin/config` writes gate to ADMINISTRATOR/MANAGER. Match this; prefer spec + existing code over any handoff doc on conflict.
 
 ### 🔴 GO-LIVE GATE (destructive migration — read before merge)
+
 - The Stage-3 migration already on this branch is **destructive** (`DROP CargoItem`/`LegCargo`, `DELETE FROM QuoteCargoLine`) and **CD auto-runs `prisma migrate deploy` on merge to `main`.**
 - **Do NOT merge until the whole branch is green (`pnpm run ci`), opus-reviewed, and the user explicitly approves.** DB migrations do NOT auto-rollback with the app image.
 - Business-approved test path: deploy this branch to the prod droplet pointed at a **staging Neon-branch DB** (branched off prod) via the Deploy workflow (`workflow_dispatch`); **quantify prod loss** (`count(*)` on `CargoItem`/`LegCargo`/`QuoteCargoLine`) before the real cutover. Add this to the PR body + go-live checklist.
 
 ### How to read Units 1–3 vs 4–6
-Units 1–3 (shared + api) carry **complete, real code** — write it as shown. Units 4–5 (≈40 web components, ≈25 e2e specs) are **mechanical re-points of existing files**: each task gives the exact files, the DTO fields to consume, the test pattern, acceptance criteria, and real code for every *new* pure helper — but for existing component JSX / spec bodies the implementer reads the live file and applies the described change (verbatim reproduction of 40 components would be noise). This is deliberate and called out per task.
+
+Units 1–3 (shared + api) carry **complete, real code** — write it as shown. Units 4–5 (≈40 web components, ≈25 e2e specs) are **mechanical re-points of existing files**: each task gives the exact files, the DTO fields to consume, the test pattern, acceptance criteria, and real code for every _new_ pure helper — but for existing component JSX / spec bodies the implementer reads the live file and applies the described change (verbatim reproduction of 40 components would be noise). This is deliberate and called out per task.
 
 ---
 
@@ -57,10 +63,12 @@ Units 1–3 (shared + api) carry **complete, real code** — write it as shown. 
 ### Task 1: Shared `ManifestSnapshotCargo` → per-package shape
 
 **Files:**
+
 - Modify: `packages/shared/src/rfq.ts:7-21` (the `ManifestSnapshotCargo` interface)
 - Test: `packages/shared/src/rfq.test.ts` (create if absent — a type-shape pin)
 
 **Interfaces:**
+
 - Produces: `ManifestSnapshotCargo = { packageId, packageNo, packageType, packageCount, dimL, dimW, dimH, netWt, grossWt, volumeCbm, tags }` — dims canonical cm (string), gross/net canonical kg (string|null), `tags: ReferenceTag[]` (= `effectiveTags`, incl. DG). Consumed by Task 2 (`buildManifestSnapshot`), Task 3 (portal), Unit 4 web, Unit 5 specs.
 
 - [ ] **Step 1: Write the failing test** — pin the new shape so any drift is a compile error.
@@ -73,9 +81,17 @@ import type { ManifestSnapshotCargo } from "./rfq";
 describe("ManifestSnapshotCargo (per-package)", () => {
   it("has the package-grain fields and no flat cargo-item fields", () => {
     const c: ManifestSnapshotCargo = {
-      packageId: "p1", packageNo: "V-1", packageType: "PALLET", packageCount: 1,
-      dimL: "120", dimW: "80", dimH: "100", netWt: "90", grossWt: "100",
-      volumeCbm: "0.96", tags: ["DG"],
+      packageId: "p1",
+      packageNo: "V-1",
+      packageType: "PALLET",
+      packageCount: 1,
+      dimL: "120",
+      dimW: "80",
+      dimH: "100",
+      netWt: "90",
+      grossWt: "100",
+      volumeCbm: "0.96",
+      tags: ["DG"],
     };
     expect(c.tags).toContain("DG");
     // @ts-expect-error — flat CargoItem fields are gone
@@ -113,18 +129,20 @@ export interface ManifestSnapshotCargo {
 
 Run: `pnpm --filter @svyft/shared build && pnpm --filter @svyft/shared test -- src/rfq.test.ts && pnpm --filter @svyft/shared typecheck`
 
-- [ ] **Step 5: Report to controller** — files: `packages/shared/src/rfq.ts`, `packages/shared/src/rfq.test.ts`. Message: `refactor(shared): ManifestSnapshotCargo → per-package grain (Cargo→Package ripple)`. *(Note: shared consumers in api break until Task 2/3 — expected; do not chase them here.)*
+- [ ] **Step 5: Report to controller** — files: `packages/shared/src/rfq.ts`, `packages/shared/src/rfq.test.ts`. Message: `refactor(shared): ManifestSnapshotCargo → per-package grain (Cargo→Package ripple)`. _(Note: shared consumers in api break until Task 2/3 — expected; do not chase them here.)_
 
 ---
 
 ### Task 2: `leg-context` include + `manifest` builder → package grain
 
 **Files:**
+
 - Modify: `apps/api/src/modules/rfq/leg-context.ts:9` (`LEG_RFQ_INCLUDE`), `:54` (`hasDg`)
 - Modify: `apps/api/src/modules/rfq/manifest.ts` (whole `buildManifestSnapshot`)
 - Test: `apps/api/test/rfq-manifest.e2e-spec.ts` (create)
 
 **Interfaces:**
+
 - Consumes: `ManifestSnapshotCargo` (Task 1); `effectiveTags` from `@svyft/shared` (`cargo.ts`).
 - Produces: `LEG_RFQ_INCLUDE.legPackages` include (leg → LegPackage → Package → Item[]); `buildManifestSnapshot(ctx, query, frozenAt)` builds per-package `cargo[]`. Consumed by Task 3, `rfq.service`, Unit 5.
 
@@ -136,10 +154,16 @@ Run: `pnpm --filter @svyft/shared build && pnpm --filter @svyft/shared test -- s
 // (one package with an Item tagged ["DG"]) → 1 leg → assign both packages → select an ACTIVE,
 // DG-handling FF → POST /queries/:id/legs/:legId/distribute → read the quote's manifestSnapshot.
 it("freezes a per-package manifest with canonical kg and effective DG tag", async () => {
-  const quote = await prisma.quote.findFirstOrThrow({ where: { legId }, select: { manifestSnapshot: true } });
+  const quote = await prisma.quote.findFirstOrThrow({
+    where: { legId },
+    select: { manifestSnapshot: true },
+  });
   const snap = quote.manifestSnapshot as ManifestSnapshot;
   expect(snap.cargo).toHaveLength(2);
-  expect(snap.cargo[0]).toMatchObject({ packageId: expect.any(String), packageNo: expect.any(String) });
+  expect(snap.cargo[0]).toMatchObject({
+    packageId: expect.any(String),
+    packageNo: expect.any(String),
+  });
   expect(snap.cargo.some((c) => c.tags.includes("DG"))).toBe(true);
   expect(snap.cargo[0]).not.toHaveProperty("cargoItemId");
   expect(Number(snap.cargo[0].grossWt)).toBeGreaterThan(0); // canonical kg
@@ -194,7 +218,11 @@ export function buildManifestSnapshot(
       ? { country: leg.originPoint.country, name: leg.originPoint.name, city: leg.originPoint.city }
       : null,
     destination: leg.destinationPoint
-      ? { country: leg.destinationPoint.country, name: leg.destinationPoint.name, city: leg.destinationPoint.city }
+      ? {
+          country: leg.destinationPoint.country,
+          name: leg.destinationPoint.name,
+          city: leg.destinationPoint.city,
+        }
       : null,
     readyDate: leg.readyDate ? leg.readyDate.toISOString() : null,
     targetDelivery: leg.targetDelivery ? leg.targetDelivery.toISOString() : null,
@@ -228,12 +256,14 @@ export function buildManifestSnapshot(
 ### Task 3: `rfq.service` eligibility + `ff-portal.service` re-point (grain only; density intact)
 
 **Files:**
+
 - Modify: `apps/api/src/modules/rfq/rfq.service.ts:267` (F1: `leg.legCargo.length` → `leg.legPackages.length`)
 - Modify: `apps/api/src/modules/ff-portal/ff-portal.service.ts` (`resolveScope` seededDensity/manifest reads; `submit` draft rebuild + `quoteCargoLine` write)
 - Modify: `packages/shared/src/ff-portal.ts:26` (`FfPortalSeededDensity.cargoItemId` stays as the field name this unit — see note)
 - Test: extend `apps/api/test/ff-portal.e2e-spec.ts` is Unit 5; here use a focused new `apps/api/test/ff-portal-grain.e2e-spec.ts`
 
 **Interfaces:**
+
 - Consumes: per-package `ManifestSnapshot` (Task 2). `QuoteDraftCargo.cargoItemId` (unchanged this unit) **holds a packageId** — the field is renamed to `packageId` in Unit 2 Task 6.
 - Produces: a compiling `ff-portal.service`; `pnpm --filter @svyft/api build` green.
 
@@ -315,11 +345,13 @@ Additive schema (kg rename + dual-rate models/enums + calc columns), the shared 
 ### Task 4: Prisma migration — kg rename, dual-rate models, calc columns
 
 **Files:**
+
 - Create: `prisma/migrations/<timestamp>_ff_portal_v2/migration.sql` (hand-authored)
 - Modify: `prisma/schema.prisma` (models/enums below)
 - Test: `apps/api/test/ff-portal-v2-model.e2e-spec.ts` (create)
 
 **Interfaces:**
+
 - Produces: `QuoteCargoLine.chargedWeightKg Decimal(12,3)` (was `freightDensity`; `chargeableWeightT` dropped); enums `ChargeRateVariant{DEDICATED,GROUPAGE,FCL,LCL}`, `TruckTonnage`(11 values), `ContainerSize{TWENTY,FORTY,FORTY_FIVE_HC}`, `BillOfLadingType{ORIGINAL,TELEX}`, `WarehouseSide{DROP,PICKUP}`, `HEAVY_WEIGHT_CALC` on `ChargeLineInputType`; `TruckingCharge.rateVariant`/`tonnage`; new `SeaFreightRate`; `ChargeLine.pieceWeightKg`/`airlineLimitKg`/`ratePerExcessKg`/`billOfLadingType`; `WarehouseStagingLine.cfsCode`/`side`; `TransitPlan` mode-specific columns. Consumed by Tasks 5–11, Unit 3, Unit 5.
 
 - [ ] **Step 1: Write the failing model e2e** — assert the new columns/enum labels exist via a round-trip insert.
@@ -330,8 +362,15 @@ it("stores chargedWeightKg, a dual-rate trucking row, and a SeaFreightRate", asy
   // ...create query/leg/package/quote (helper)...
   await prisma.quoteCargoLine.create({ data: { quoteId, packageId, chargedWeightKg: "123.5" } });
   await prisma.truckingCharge.create({
-    data: { quoteId, legEndpointPointId: pid, truckingType: "DEDICATED", basis: "PER_TRUCK",
-      amount: "500", rateVariant: "DEDICATED", tonnage: "TRAILER_30_40T" },
+    data: {
+      quoteId,
+      legEndpointPointId: pid,
+      truckingType: "DEDICATED",
+      basis: "PER_TRUCK",
+      amount: "500",
+      rateVariant: "DEDICATED",
+      tonnage: "TRAILER_30_40T",
+    },
   });
   await prisma.seaFreightRate.create({
     data: { quoteId, rateVariant: "FCL", containerSize: "FORTY", amount: "1800" },
@@ -546,11 +585,13 @@ Run: `set -a; . apps/api/.env; set +a && pnpm --filter @svyft/api exec prisma mi
 ### Task 5: Shared enums + dual-rate/calc types (`charge-config.ts`, `quote.ts`)
 
 **Files:**
+
 - Modify: `packages/shared/src/charge-config.ts` (`ChargeLineInputType` += `HEAVY_WEIGHT_CALC`; `ResolvedChargeLine` calc fields)
 - Modify: `packages/shared/src/quote.ts` (new const-enums; `QuoteDraft*` v2 shapes)
 - Test: `packages/shared/src/quote.test.ts` (extend — enum-value pins)
 
 **Interfaces:**
+
 - Produces (const-enums, in `quote.ts`): `ChargeRateVariant{DEDICATED,GROUPAGE,FCL,LCL}` + `CHARGE_RATE_VARIANTS`; `TruckTonnage` (11) + `TRUCK_TONNAGES` + `truckTonnageLabel`; `ContainerSize{TWENTY,FORTY,FORTY_FIVE_HC}` + `CONTAINER_SIZES` + `containerSizeLabel`; `BillOfLadingType{ORIGINAL,TELEX}` + `BILL_OF_LADING_TYPES`; `WarehouseSide{DROP,PICKUP}` + `WAREHOUSE_SIDES`.
 - Produces (draft shapes): `QuoteDraftCargo = { packageId, grossWtKg, cbm, chargedWeightKg: number|null }`; `QuoteDraftCharge += { billOfLadingType?, pieceWeightKg?, airlineLimitKg?, ratePerExcessKg? }`; `QuoteDraftTrucking += { rateVariant, tonnage: TruckTonnage|null }`; new `QuoteDraftSeaRate = { rateVariant, containerSize: ContainerSize|null, amount: number|null, remarks? }`; `QuoteDraftWarehouse += { cfsCode?, side?: WarehouseSide|null }`; `QuoteDraftTransit` += mode-specific optional fields; `QuoteDraft += seaRates: QuoteDraftSeaRate[]`. Consumed by Tasks 6–11, Unit 3, Unit 4.
 
@@ -558,7 +599,12 @@ Run: `set -a; . apps/api/.env; set +a && pnpm --filter @svyft/api exec prisma mi
 
 ```ts
 // packages/shared/src/quote.test.ts
-import { CHARGE_RATE_VARIANTS, TRUCK_TONNAGES, CONTAINER_SIZES, type QuoteDraftCargo } from "./quote";
+import {
+  CHARGE_RATE_VARIANTS,
+  TRUCK_TONNAGES,
+  CONTAINER_SIZES,
+  type QuoteDraftCargo,
+} from "./quote";
 it("exposes dual-rate option-sets", () => {
   expect(CHARGE_RATE_VARIANTS).toEqual(["DEDICATED", "GROUPAGE", "FCL", "LCL"]);
   expect(TRUCK_TONNAGES).toContain("TRAILER_30_40T");
@@ -573,33 +619,72 @@ it("exposes dual-rate option-sets", () => {
 - [ ] **Step 3: Add const-enums to `quote.ts`** (mirror the existing `TruckingType` idiom) + label maps:
 
 ```ts
-export const ChargeRateVariant = { DEDICATED: "DEDICATED", GROUPAGE: "GROUPAGE", FCL: "FCL", LCL: "LCL" } as const;
+export const ChargeRateVariant = {
+  DEDICATED: "DEDICATED",
+  GROUPAGE: "GROUPAGE",
+  FCL: "FCL",
+  LCL: "LCL",
+} as const;
 export type ChargeRateVariant = (typeof ChargeRateVariant)[keyof typeof ChargeRateVariant];
-export const CHARGE_RATE_VARIANTS = Object.values(ChargeRateVariant) as [ChargeRateVariant, ...ChargeRateVariant[]];
+export const CHARGE_RATE_VARIANTS = Object.values(ChargeRateVariant) as [
+  ChargeRateVariant,
+  ...ChargeRateVariant[],
+];
 
 export const TruckTonnage = {
-  T_1: "T_1", T_2: "T_2", T_3_5: "T_3_5", T_5: "T_5", T_7: "T_7", T_9: "T_9",
-  T_12: "T_12", T_16: "T_16", T_20: "T_20", T_25: "T_25", TRAILER_30_40T: "TRAILER_30_40T",
+  T_1: "T_1",
+  T_2: "T_2",
+  T_3_5: "T_3_5",
+  T_5: "T_5",
+  T_7: "T_7",
+  T_9: "T_9",
+  T_12: "T_12",
+  T_16: "T_16",
+  T_20: "T_20",
+  T_25: "T_25",
+  TRAILER_30_40T: "TRAILER_30_40T",
 } as const;
 export type TruckTonnage = (typeof TruckTonnage)[keyof typeof TruckTonnage];
 export const TRUCK_TONNAGES = Object.values(TruckTonnage) as [TruckTonnage, ...TruckTonnage[]];
 const TRUCK_TONNAGE_LABELS: Record<TruckTonnage, string> = {
-  T_1: "1 T", T_2: "2 T", T_3_5: "3.5 T", T_5: "5 T", T_7: "7 T", T_9: "9 T",
-  T_12: "12 T", T_16: "16 T", T_20: "20 T", T_25: "25 T", TRAILER_30_40T: "Trailer 30–40 T",
+  T_1: "1 T",
+  T_2: "2 T",
+  T_3_5: "3.5 T",
+  T_5: "5 T",
+  T_7: "7 T",
+  T_9: "9 T",
+  T_12: "12 T",
+  T_16: "16 T",
+  T_20: "20 T",
+  T_25: "25 T",
+  TRAILER_30_40T: "Trailer 30–40 T",
 };
-export function truckTonnageLabel(t: TruckTonnage): string { return TRUCK_TONNAGE_LABELS[t] ?? t; }
+export function truckTonnageLabel(t: TruckTonnage): string {
+  return TRUCK_TONNAGE_LABELS[t] ?? t;
+}
 
-export const ContainerSize = { TWENTY: "TWENTY", FORTY: "FORTY", FORTY_FIVE_HC: "FORTY_FIVE_HC" } as const;
+export const ContainerSize = {
+  TWENTY: "TWENTY",
+  FORTY: "FORTY",
+  FORTY_FIVE_HC: "FORTY_FIVE_HC",
+} as const;
 export type ContainerSize = (typeof ContainerSize)[keyof typeof ContainerSize];
 export const CONTAINER_SIZES = Object.values(ContainerSize) as [ContainerSize, ...ContainerSize[]];
 const CONTAINER_SIZE_LABELS: Record<ContainerSize, string> = {
-  TWENTY: `20'`, FORTY: `40'`, FORTY_FIVE_HC: `45' HC`,
+  TWENTY: `20'`,
+  FORTY: `40'`,
+  FORTY_FIVE_HC: `45' HC`,
 };
-export function containerSizeLabel(c: ContainerSize): string { return CONTAINER_SIZE_LABELS[c] ?? c; }
+export function containerSizeLabel(c: ContainerSize): string {
+  return CONTAINER_SIZE_LABELS[c] ?? c;
+}
 
 export const BillOfLadingType = { ORIGINAL: "ORIGINAL", TELEX: "TELEX" } as const;
 export type BillOfLadingType = (typeof BillOfLadingType)[keyof typeof BillOfLadingType];
-export const BILL_OF_LADING_TYPES = Object.values(BillOfLadingType) as [BillOfLadingType, ...BillOfLadingType[]];
+export const BILL_OF_LADING_TYPES = Object.values(BillOfLadingType) as [
+  BillOfLadingType,
+  ...BillOfLadingType[],
+];
 
 export const WarehouseSide = { DROP: "DROP", PICKUP: "PICKUP" } as const;
 export type WarehouseSide = (typeof WarehouseSide)[keyof typeof WarehouseSide];
@@ -611,48 +696,72 @@ export const WAREHOUSE_SIDES = Object.values(WarehouseSide) as [WarehouseSide, .
 ```ts
 export interface QuoteDraftCargo {
   packageId: string;
-  grossWtKg: number;             // display only (canonical kg from the manifest)
-  cbm: number;                   // m³ (display only)
+  grossWtKg: number; // display only (canonical kg from the manifest)
+  cbm: number; // m³ (display only)
   chargedWeightKg: number | null; // FF-entered chargeable weight (kg)
 }
 export interface QuoteDraftCharge {
-  zone: ChargeZone | null; definitionKey?: string | null; presetKey: string | null;
-  label: string; amount: number | null; note?: string;
-  billOfLadingType?: BillOfLadingType | null;            // Sea B/L line
-  pieceWeightKg?: number | null;                         // HEAVY_WEIGHT_CALC inputs
+  zone: ChargeZone | null;
+  definitionKey?: string | null;
+  presetKey: string | null;
+  label: string;
+  amount: number | null;
+  note?: string;
+  billOfLadingType?: BillOfLadingType | null; // Sea B/L line
+  pieceWeightKg?: number | null; // HEAVY_WEIGHT_CALC inputs
   airlineLimitKg?: number | null;
   ratePerExcessKg?: number | null;
 }
 export interface QuoteDraftTrucking {
-  legEndpointPointId: string; truckingType: TruckingType; basis: TruckingBasis;
-  amount: number | null; remarks?: string;
-  rateVariant: ChargeRateVariant;        // DEDICATED | GROUPAGE
-  tonnage: TruckTonnage | null;          // Dedicated only
+  legEndpointPointId: string;
+  truckingType: TruckingType;
+  basis: TruckingBasis;
+  amount: number | null;
+  remarks?: string;
+  rateVariant: ChargeRateVariant; // DEDICATED | GROUPAGE
+  tonnage: TruckTonnage | null; // Dedicated only
 }
 export interface QuoteDraftSeaRate {
-  rateVariant: ChargeRateVariant;        // FCL | LCL
-  containerSize: ContainerSize | null;   // FCL only
-  amount: number | null; remarks?: string;
+  rateVariant: ChargeRateVariant; // FCL | LCL
+  containerSize: ContainerSize | null; // FCL only
+  amount: number | null;
+  remarks?: string;
 }
 export interface QuoteDraftWarehouse {
-  warehousePointId: string; position: WarehousePosition; label: string;
-  amount: number | null; cargoAcceptanceWindow?: string;
-  cfsCode?: string | null; side?: WarehouseSide | null;
+  warehousePointId: string;
+  position: WarehousePosition;
+  label: string;
+  amount: number | null;
+  cargoAcceptanceWindow?: string;
+  cfsCode?: string | null;
+  side?: WarehouseSide | null;
 }
 export interface QuoteDraftTransit {
-  departureDate: string | null; arrivalDate: string | null;
-  carrier?: string | null; flightVoyageNo?: string | null;
-  carrierSurcharge?: number | null; guaranteedTransitDays: number | null; // now mandatory (gate)
-  plannedPickupDate?: string | null;                                       // Road
-  airline?: string | null; flightNumber?: string | null; plannedDeparture?: string | null; plannedArrival?: string | null; // Air
-  shippingLine?: string | null; vesselVoyage?: string | null; etd?: string | null; eta?: string | null; // Sea
+  departureDate: string | null;
+  arrivalDate: string | null;
+  carrier?: string | null;
+  flightVoyageNo?: string | null;
+  carrierSurcharge?: number | null;
+  guaranteedTransitDays: number | null; // now mandatory (gate)
+  plannedPickupDate?: string | null; // Road
+  airline?: string | null;
+  flightNumber?: string | null;
+  plannedDeparture?: string | null;
+  plannedArrival?: string | null; // Air
+  shippingLine?: string | null;
+  vesselVoyage?: string | null;
+  etd?: string | null;
+  eta?: string | null; // Sea
 }
 export interface QuoteDraft {
-  legId: string; mode: FreightMode | null; currency: string | null; quoteValidityUntil: string | null;
+  legId: string;
+  mode: FreightMode | null;
+  currency: string | null;
+  quoteValidityUntil: string | null;
   cargo: QuoteDraftCargo[];
   charges: QuoteDraftCharge[];
   trucking: QuoteDraftTrucking[];
-  seaRates: QuoteDraftSeaRate[];   // NEW
+  seaRates: QuoteDraftSeaRate[]; // NEW
   warehouse: QuoteDraftWarehouse[];
   transit: QuoteDraftTransit | null;
   dgSurchargeNote: string | null;
@@ -664,7 +773,9 @@ export interface QuoteDraft {
 
 ```ts
 export const ChargeLineInputType = {
-  PLAIN: "PLAIN", TRUCKING: "TRUCKING", WAREHOUSE_STAGING: "WAREHOUSE_STAGING",
+  PLAIN: "PLAIN",
+  TRUCKING: "TRUCKING",
+  WAREHOUSE_STAGING: "WAREHOUSE_STAGING",
   HEAVY_WEIGHT_CALC: "HEAVY_WEIGHT_CALC",
 } as const;
 // ResolvedChargeLine already carries `inputType`; no field add needed — the portal reads it to render the calc widget.
@@ -679,10 +790,12 @@ export const ChargeLineInputType = {
 ### Task 6: Engine — per-variant totals + Heavy-Weight calc
 
 **Files:**
+
 - Modify: `packages/shared/src/quote-engine.ts` (`computeQuoteTotals`; remove `computeChargeableWeight`; add `computeHeavyWeightAmount`)
 - Test: `packages/shared/src/quote-engine.test.ts` (extend)
 
 **Interfaces:**
+
 - Consumes: `QuoteDraft` v2 (Task 5).
 - Produces: `computeHeavyWeightAmount(pieceWeightKg: number, airlineLimitKg: number, ratePerExcessKg: number): number` = `max(0, pieceWt − limit) × rate`; `computeQuoteTotals(draft): QuoteTotals` where `QuoteTotals = { variants: { key: string; rateAmount: number | null; grandTotal: number }[]; sharedSubtotal: number; chargeableWeightKg: number }`. Consumed by Task 8 (portal submit), Unit 4 (live totals), Unit 5.
 
@@ -692,17 +805,43 @@ export const ChargeLineInputType = {
 import { computeQuoteTotals, computeHeavyWeightAmount } from "./quote-engine";
 import type { QuoteDraft } from "./quote";
 const base = (over: Partial<QuoteDraft>): QuoteDraft => ({
-  legId: "l", mode: "ROAD", currency: "USD", quoteValidityUntil: null,
+  legId: "l",
+  mode: "ROAD",
+  currency: "USD",
+  quoteValidityUntil: null,
   cargo: [{ packageId: "p", grossWtKg: 100, cbm: 1, chargedWeightKg: 250 }],
   charges: [{ zone: null, presetKey: null, label: "Tail lift", amount: 50 }],
-  trucking: [], seaRates: [], warehouse: [{ warehousePointId: "w", position: "ORIGIN", label: "WH", amount: 30 }],
-  transit: null, dgSurchargeNote: null, termsConditions: null, ...over,
+  trucking: [],
+  seaRates: [],
+  warehouse: [{ warehousePointId: "w", position: "ORIGIN", label: "WH", amount: 30 }],
+  transit: null,
+  dgSurchargeNote: null,
+  termsConditions: null,
+  ...over,
 });
 it("computes one grand total per Road rate variant over a shared subtotal", () => {
-  const t = computeQuoteTotals(base({ trucking: [
-    { legEndpointPointId: "e", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: 500, rateVariant: "DEDICATED", tonnage: "T_5" },
-    { legEndpointPointId: "e", truckingType: "GROUPAGE", basis: "PER_CBM", amount: 200, rateVariant: "GROUPAGE", tonnage: null },
-  ] }));
+  const t = computeQuoteTotals(
+    base({
+      trucking: [
+        {
+          legEndpointPointId: "e",
+          truckingType: "DEDICATED",
+          basis: "PER_TRUCK",
+          amount: 500,
+          rateVariant: "DEDICATED",
+          tonnage: "T_5",
+        },
+        {
+          legEndpointPointId: "e",
+          truckingType: "GROUPAGE",
+          basis: "PER_CBM",
+          amount: 200,
+          rateVariant: "GROUPAGE",
+          tonnage: null,
+        },
+      ],
+    }),
+  );
   expect(t.sharedSubtotal).toBe(80); // 50 + 30
   expect(t.chargeableWeightKg).toBe(250);
   expect(t.variants).toEqual([
@@ -711,7 +850,12 @@ it("computes one grand total per Road rate variant over a shared subtotal", () =
   ]);
 });
 it("Air is a single AIR variant equal to the shared subtotal", () => {
-  const t = computeQuoteTotals(base({ mode: "AIR", charges: [{ zone: "MAIN_FREIGHT", presetKey: null, label: "Air Freight", amount: 900 }] }));
+  const t = computeQuoteTotals(
+    base({
+      mode: "AIR",
+      charges: [{ zone: "MAIN_FREIGHT", presetKey: null, label: "Air Freight", amount: 900 }],
+    }),
+  );
   expect(t.variants).toEqual([{ key: "AIR", rateAmount: null, grandTotal: 930 }]);
 });
 it("computes the Heavy-Weight excess amount", () => {
@@ -725,11 +869,19 @@ it("computes the Heavy-Weight excess amount", () => {
 - [ ] **Step 3: Rewrite the engine top** (delete `computeChargeableWeight` + the old `QuoteTotals`):
 
 ```ts
-export function computeHeavyWeightAmount(pieceWeightKg: number, airlineLimitKg: number, ratePerExcessKg: number): number {
+export function computeHeavyWeightAmount(
+  pieceWeightKg: number,
+  airlineLimitKg: number,
+  ratePerExcessKg: number,
+): number {
   return Math.max(0, pieceWeightKg - airlineLimitKg) * ratePerExcessKg;
 }
 
-export interface QuoteVariantTotal { key: string; rateAmount: number | null; grandTotal: number; }
+export interface QuoteVariantTotal {
+  key: string;
+  rateAmount: number | null;
+  grandTotal: number;
+}
 export interface QuoteTotals {
   variants: QuoteVariantTotal[];
   sharedSubtotal: number;
@@ -759,7 +911,11 @@ export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
       variants.push({ key, rateAmount, grandTotal: rateAmount + sharedSubtotal });
   } else if (draft.mode === "SEA") {
     for (const r of draft.seaRates)
-      variants.push({ key: r.rateVariant, rateAmount: r.amount, grandTotal: (r.amount ?? 0) + sharedSubtotal });
+      variants.push({
+        key: r.rateVariant,
+        rateAmount: r.amount,
+        grandTotal: (r.amount ?? 0) + sharedSubtotal,
+      });
   } else {
     variants.push({ key: "AIR", rateAmount: null, grandTotal: sharedSubtotal });
   }
@@ -767,7 +923,7 @@ export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
 }
 ```
 
-- [ ] **Step 4: Rebuild shared, run test + typecheck — expect PASS.** *(The submit-gate `validateQuote` below still lives in this file; Task 7 rewrites it — expect its old body to have compile errors against the new draft until Task 7. Run this task's engine tests in isolation via `-t`.)*
+- [ ] **Step 4: Rebuild shared, run test + typecheck — expect PASS.** _(The submit-gate `validateQuote` below still lives in this file; Task 7 rewrites it — expect its old body to have compile errors against the new draft until Task 7. Run this task's engine tests in isolation via `-t`.)_
 
 - [ ] **Step 5: Report to controller** — files: `packages/shared/src/quote-engine.ts`, `packages/shared/src/quote-engine.test.ts`. Message: `feat(shared): per-variant quote totals + heavy-weight calc; drop density`.
 
@@ -776,10 +932,12 @@ export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
 ### Task 7: Submit-gate v2 (`validateQuote`)
 
 **Files:**
+
 - Modify: `packages/shared/src/quote-engine.ts` (`validateQuote`)
 - Test: `packages/shared/src/quote-engine.test.ts` (extend — one case per rule)
 
 **Interfaces:**
+
 - Consumes: `QuoteDraft` v2, `ResolvedChargeLine[]` (the frozen active lines).
 - Produces: `validateQuote(draft: QuoteDraft, deadlineIso: string, nowIso: string, activeLines?: ResolvedChargeLine[]): Finding[]` — the 6 blocking rules from design §7. Consumed by Task 8 (portal submit), Unit 4 (live findings), Unit 5.
 
@@ -790,10 +948,18 @@ it("blocks when a Road leg has no rate filled", () => {
   const f = validateQuote(draftRoadNoRates(), future, now, activeLines);
   expect(f.some((x) => x.rule === "Q_RATE")).toBe(true);
 });
-it("blocks a zero-amount active line unless it carries a remark", () => { /* amount:0, note undefined → Q_PRICED */ });
-it("blocks a custom [+Add] line without a remark", () => { /* definitionKey null & presetKey null & note '' → Q_CUSTOM_REMARK */ });
-it("blocks a leg missing Guaranteed Transit Time", () => { /* transit.guaranteedTransitDays null → Q_TRANSIT */ });
-it("passes a fully-priced single-variant Air quote", () => { expect(validateQuote(airOk, future, now, air)).toHaveLength(0); });
+it("blocks a zero-amount active line unless it carries a remark", () => {
+  /* amount:0, note undefined → Q_PRICED */
+});
+it("blocks a custom [+Add] line without a remark", () => {
+  /* definitionKey null & presetKey null & note '' → Q_CUSTOM_REMARK */
+});
+it("blocks a leg missing Guaranteed Transit Time", () => {
+  /* transit.guaranteedTransitDays null → Q_TRANSIT */
+});
+it("passes a fully-priced single-variant Air quote", () => {
+  expect(validateQuote(airOk, future, now, air)).toHaveLength(0);
+});
 ```
 
 - [ ] **Step 2: Run — expect FAIL.**
@@ -802,10 +968,18 @@ it("passes a fully-priced single-variant Air quote", () => { expect(validateQuot
 
 ```ts
 export function validateQuote(
-  draft: QuoteDraft, deadlineIso: string, nowIso: string, activeLines: ResolvedChargeLine[] = [],
+  draft: QuoteDraft,
+  deadlineIso: string,
+  nowIso: string,
+  activeLines: ResolvedChargeLine[] = [],
 ): Finding[] {
   const f: Finding[] = [];
-  const blk = (rule: string, message: string, scope: Finding["scope"]): Finding => ({ rule, severity: "blocking", scope, message });
+  const blk = (rule: string, message: string, scope: Finding["scope"]): Finding => ({
+    rule,
+    severity: "blocking",
+    scope,
+    message,
+  });
   const leg = { type: "leg", id: draft.legId } as const;
 
   // (6) submission before the deadline
@@ -813,13 +987,27 @@ export function validateQuote(
     f.push(blk("Q_DEADLINE", "The submission deadline has passed", leg));
 
   // (1) currency + validity (validity ≥ deadline)
-  if (!draft.currency) f.push(blk("Q_CURRENCY", "Currency is required", { type: "field", id: "currency" }));
-  if (!draft.quoteValidityUntil) f.push(blk("Q_VALIDITY", "Quote Validity Until is required", { type: "field", id: "quoteValidityUntil" }));
+  if (!draft.currency)
+    f.push(blk("Q_CURRENCY", "Currency is required", { type: "field", id: "currency" }));
+  if (!draft.quoteValidityUntil)
+    f.push(
+      blk("Q_VALIDITY", "Quote Validity Until is required", {
+        type: "field",
+        id: "quoteValidityUntil",
+      }),
+    );
   else if (new Date(draft.quoteValidityUntil).getTime() < new Date(deadlineIso).getTime())
-    f.push(blk("Q_VALIDITY", "Quote Validity Until must be on or after the submission deadline", { type: "field", id: "quoteValidityUntil" }));
+    f.push(
+      blk("Q_VALIDITY", "Quote Validity Until must be on or after the submission deadline", {
+        type: "field",
+        id: "quoteValidityUntil",
+      }),
+    );
 
   // (2) every active charge line priced — amount present; 0 allowed ONLY with a remark
-  const byKey = new Map(draft.charges.filter((c) => c.definitionKey).map((c) => [c.definitionKey!, c]));
+  const byKey = new Map(
+    draft.charges.filter((c) => c.definitionKey).map((c) => [c.definitionKey!, c]),
+  );
   for (const line of activeLines) {
     if (line.inputType === "HEAVY_WEIGHT_CALC") {
       const c = byKey.get(line.definitionKey);
@@ -829,7 +1017,8 @@ export function validateQuote(
     }
     if (line.inputType !== "PLAIN") continue;
     const c = byKey.get(line.definitionKey);
-    if (!c || c.amount == null) f.push(blk("Q_PRICED", `Charge line "${line.label}" must be priced`, leg));
+    if (!c || c.amount == null)
+      f.push(blk("Q_PRICED", `Charge line "${line.label}" must be priced`, leg));
     else if (c.amount === 0 && !c.note?.trim())
       f.push(blk("Q_PRICED", `A remark is required to quote "${line.label}" at 0`, leg));
   }
@@ -838,18 +1027,34 @@ export function validateQuote(
   //     unwrapped at materialize; the column is NOT NULL, so an ungated null → 500 not 422)
   for (const c of draft.charges)
     if (!c.definitionKey && !c.presetKey) {
-      if (!c.note?.trim()) f.push(blk("Q_CUSTOM_REMARK", `A remark is required on the custom charge "${c.label}"`, leg));
-      if (c.amount == null) f.push(blk("Q_CUSTOM_AMOUNT", `An amount is required on the custom charge "${c.label}"`, leg));
+      if (!c.note?.trim())
+        f.push(
+          blk("Q_CUSTOM_REMARK", `A remark is required on the custom charge "${c.label}"`, leg),
+        );
+      if (c.amount == null)
+        f.push(
+          blk("Q_CUSTOM_AMOUNT", `An amount is required on the custom charge "${c.label}"`, leg),
+        );
     }
 
   // (3b) Charged Weight (kg) mandatory on every package — QuoteCargoLine.chargedWeightKg is NOT NULL
   for (const c of draft.cargo)
     if (c.chargedWeightKg == null)
-      f.push(blk("Q_WEIGHT", "Charged Weight (kg) is required for every package", { type: "cargo", id: c.packageId }));
+      f.push(
+        blk("Q_WEIGHT", "Charged Weight (kg) is required for every package", {
+          type: "cargo",
+          id: c.packageId,
+        }),
+      );
 
   // (4) Guaranteed Transit Time present on every leg
   if (draft.transit?.guaranteedTransitDays == null)
-    f.push(blk("Q_TRANSIT", "Guaranteed Transit Time is required", { type: "field", id: "guaranteedTransitDays" }));
+    f.push(
+      blk("Q_TRANSIT", "Guaranteed Transit Time is required", {
+        type: "field",
+        id: "guaranteedTransitDays",
+      }),
+    );
 
   // (5) dual-rate — ≥1 of the two rates filled (each filled rate yields its own grand total)
   if (draft.mode === "ROAD" && !draft.trucking.some((t) => t.amount != null))
@@ -874,11 +1079,13 @@ export function validateQuote(
 ### Task 8: Tag two-gate resolver + catalogue seed additions
 
 **Files:**
+
 - Modify: `packages/shared/src/charge-config.ts` (`resolveChargeConfig` → tag-gated; include `HEAVY_WEIGHT_CALC`)
 - Modify: `apps/api/src/seed/reference-seed.ts` (add FSC/Peak cores; flip Heavy-Weight to `HEAVY_WEIGHT_CALC`)
 - Test: `packages/shared/src/charge-config.test.ts` (extend); `apps/api/test/reference-seed.e2e-spec.ts` (extend)
 
 **Interfaces:**
+
 - Consumes: `ChargeLineDefinitionDto[]`, `ReferenceTag[]` (the leg's union of package `effectiveTags`).
 - Produces: `resolveChargeConfig(defs, selectedKeys, warehouseIncluded, packageTags: ReferenceTag[]): ChargeConfigSnapshot` — CORE always; STANDARD when selected; **TAG_DRIVEN when selected AND `tagKey ∈ packageTags`**; `lines` include `PLAIN` and `HEAVY_WEIGHT_CALC` inputTypes. Consumed by Unit 3 Task 12.
 
@@ -888,14 +1095,49 @@ export function validateQuote(
 // charge-config.test.ts
 it("activates a tag-driven line only when selected AND a package carries the tag", () => {
   const defs = [
-    { key: "AIR_TAG_DG", role: "TAG_DRIVEN", inputType: "PLAIN", tagKey: "DG", isActive: true, zone: "DESTINATION", label: "DG handling", mode: "AIR", id: "1", sortOrder: 16 },
-    { key: "AIR_TAG_FRAGILE", role: "TAG_DRIVEN", inputType: "PLAIN", tagKey: "FRAGILE", isActive: true, zone: "DESTINATION", label: "Fragile", mode: "AIR", id: "2", sortOrder: 15 },
+    {
+      key: "AIR_TAG_DG",
+      role: "TAG_DRIVEN",
+      inputType: "PLAIN",
+      tagKey: "DG",
+      isActive: true,
+      zone: "DESTINATION",
+      label: "DG handling",
+      mode: "AIR",
+      id: "1",
+      sortOrder: 16,
+    },
+    {
+      key: "AIR_TAG_FRAGILE",
+      role: "TAG_DRIVEN",
+      inputType: "PLAIN",
+      tagKey: "FRAGILE",
+      isActive: true,
+      zone: "DESTINATION",
+      label: "Fragile",
+      mode: "AIR",
+      id: "2",
+      sortOrder: 15,
+    },
   ] as ChargeLineDefinitionDto[];
   const snap = resolveChargeConfig(defs, ["AIR_TAG_DG", "AIR_TAG_FRAGILE"], false, ["DG"]);
   expect(snap.lines.map((l) => l.definitionKey)).toEqual(["AIR_TAG_DG"]); // FRAGILE selected but no package carries it
 });
 it("includes a HEAVY_WEIGHT_CALC core line", () => {
-  const defs = [{ key: "AIR_MAIN_HEAVY_WEIGHT", role: "CORE", inputType: "HEAVY_WEIGHT_CALC", tagKey: null, isActive: true, zone: "MAIN_FREIGHT", label: "Heavy Weight", mode: "AIR", id: "3", sortOrder: 9 }] as ChargeLineDefinitionDto[];
+  const defs = [
+    {
+      key: "AIR_MAIN_HEAVY_WEIGHT",
+      role: "CORE",
+      inputType: "HEAVY_WEIGHT_CALC",
+      tagKey: null,
+      isActive: true,
+      zone: "MAIN_FREIGHT",
+      label: "Heavy Weight",
+      mode: "AIR",
+      id: "3",
+      sortOrder: 9,
+    },
+  ] as ChargeLineDefinitionDto[];
   expect(resolveChargeConfig(defs, [], false, []).lines).toHaveLength(1);
 });
 ```
@@ -920,11 +1162,18 @@ export function resolveChargeConfig(
     .filter((d) => {
       if (d.role === "CORE") return true;
       if (d.role === "STANDARD") return selected.has(d.key);
-      if (d.role === "TAG_DRIVEN") return selected.has(d.key) && d.tagKey != null && tagSet.has(d.tagKey);
+      if (d.role === "TAG_DRIVEN")
+        return selected.has(d.key) && d.tagKey != null && tagSet.has(d.tagKey);
       return false;
     })
     .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map((d) => ({ definitionKey: d.key, role: d.role, inputType: d.inputType, zone: d.zone, label: d.label }));
+    .map((d) => ({
+      definitionKey: d.key,
+      role: d.role,
+      inputType: d.inputType,
+      zone: d.zone,
+      label: d.label,
+    }));
   return { lines, warehouseIncluded };
 }
 ```
@@ -939,9 +1188,9 @@ export function resolveChargeConfig(
 
 > **`sortOrder` is an `Int` column** — do NOT use fractional values (`9.1` truncates to `9` → a tie). FSC/Peak take `10`/`11` and the downstream Air lines (old `10`–`18`: `AIR_DEST_*` + `AIR_TAG_*`) renumber **+2** (→ `12`–`20`) to keep the sequence distinct and monotonic. Because `seedReferenceData` is create-only, a paired data migration (`20260806030000_air_surcharge_sortorder`) must UPDATE those already-seeded rows on :5433/prod.
 
-*(Sea B/L `SEA_ORIGIN_BILL_OF_LADING` already exists as a CORE line — no seed change; the B/L dropdown is a portal-side attribute on that line's `ChargeLine.billOfLadingType`.)*
+_(Sea B/L `SEA_ORIGIN_BILL_OF_LADING` already exists as a CORE line — no seed change; the B/L dropdown is a portal-side attribute on that line's `ChargeLine.billOfLadingType`.)_
 
-- [ ] **Step 4b (review finding — retire the flat sea-freight line): deactivate `SEA_MAIN_FREIGHT`.** Design §5.2 makes sea freight the structured `seaRates[]` dual-rate that *replaces* the old flat `SEA_MAIN_FREIGHT` CORE/PLAIN charge line. If left active it would be priced twice (via `draft.charges` AND `seaRates`) and double-counted by `computeQuoteTotals`. Set `isActive: false` on `SEA_MAIN_FREIGHT` in the seed def (line 56) so fresh DBs seed it inactive **and** add a tiny data migration (create-only seed can't update the existing :5433/prod row):
+- [ ] **Step 4b (review finding — retire the flat sea-freight line): deactivate `SEA_MAIN_FREIGHT`.** Design §5.2 makes sea freight the structured `seaRates[]` dual-rate that _replaces_ the old flat `SEA_MAIN_FREIGHT` CORE/PLAIN charge line. If left active it would be priced twice (via `draft.charges` AND `seaRates`) and double-counted by `computeQuoteTotals`. Set `isActive: false` on `SEA_MAIN_FREIGHT` in the seed def (line 56) so fresh DBs seed it inactive **and** add a tiny data migration (create-only seed can't update the existing :5433/prod row):
 
 ```sql
 -- prisma/migrations/<timestamp>_retire_sea_main_freight/migration.sql
@@ -963,11 +1212,13 @@ Apply via `migrate deploy` (never `migrate dev`). (Road/Air unaffected: `ROAD_CO
 ### Task 9: FF portal service v2 — kg, dual-rate, calc, per-variant totals
 
 **Files:**
+
 - Modify: `apps/api/src/modules/ff-portal/ff-portal.service.ts` (`resolveScope` seeds; `submit` draft rebuild + materialize)
 - Modify: `packages/shared/src/ff-portal.ts` (`FfPortalLegDto` seeds → `chargedWeightKg`; `quoteDraftSchema` v2; drop `FfPortalSeededDensity`)
 - Test: `apps/api/test/ff-portal.e2e-spec.ts` is rewritten in Unit 5; here add `apps/api/test/ff-portal-v2.e2e-spec.ts`
 
 **Interfaces:**
+
 - Consumes: v2 `QuoteDraft`, `computeQuoteTotals`, `computeHeavyWeightAmount`, `validateQuote` (Unit 2).
 - Produces: portal serves per-package manifest + seeded lines (no density); submit materializes `QuoteCargoLine.chargedWeightKg`, dual `TruckingCharge`(rateVariant/tonnage) + `SeaFreightRate`, calc `ChargeLine` columns, and writes the per-variant `grandTotal` (persist the max variant as `Quote.grandTotal` for the Stage-4 grid; carry all variants in `draftJson`-free columns is out of scope — Stage-5 owns comparison). Consumed by Unit 4, Unit 5.
 
@@ -1003,34 +1254,66 @@ seaRates: (stored.seaRates ?? []).map((r) => ({ ...r })),
 const totals = computeQuoteTotals(draft);
 // ...inside tx, after deleting child rows (add seaFreightRate.deleteMany):
 await tx.quoteCargoLine.createMany({
-  data: draft.cargo.map((c) => ({ quoteId: q.id, packageId: c.packageId, chargedWeightKg: c.chargedWeightKg! })),
+  data: draft.cargo.map((c) => ({
+    quoteId: q.id,
+    packageId: c.packageId,
+    chargedWeightKg: c.chargedWeightKg!,
+  })),
 });
 await tx.chargeLine.createMany({
   data: draft.charges.map((c, i) => ({
-    quoteId: q.id, zone: c.zone, definitionKey: c.definitionKey ?? null, label: c.label,
-    isPreset: c.presetKey != null, presetKey: c.presetKey,
+    quoteId: q.id,
+    zone: c.zone,
+    definitionKey: c.definitionKey ?? null,
+    label: c.label,
+    isPreset: c.presetKey != null,
+    presetKey: c.presetKey,
     amount: chargeAmount(c), // computeHeavyWeightAmount(...) for calc lines, else c.amount!
-    note: c.note, sortOrder: i,
-    pieceWeightKg: c.pieceWeightKg ?? null, airlineLimitKg: c.airlineLimitKg ?? null,
-    ratePerExcessKg: c.ratePerExcessKg ?? null, billOfLadingType: c.billOfLadingType ?? null,
+    note: c.note,
+    sortOrder: i,
+    pieceWeightKg: c.pieceWeightKg ?? null,
+    airlineLimitKg: c.airlineLimitKg ?? null,
+    ratePerExcessKg: c.ratePerExcessKg ?? null,
+    billOfLadingType: c.billOfLadingType ?? null,
   })),
 });
 // Only priced rate rows are persisted — the gate allows ≥1 variant filled, so an unpriced
 // (amount=null) variant row is legitimate and must be dropped (its column is NOT NULL).
 for (const t of draft.trucking.filter((t) => t.amount != null))
-  await tx.truckingCharge.create({ data: { quoteId: q.id, legEndpointPointId: t.legEndpointPointId,
-    truckingType: t.truckingType, basis: t.basis, amount: t.amount!, remarks: t.remarks,
-    rateVariant: t.rateVariant, tonnage: t.tonnage } });
+  await tx.truckingCharge.create({
+    data: {
+      quoteId: q.id,
+      legEndpointPointId: t.legEndpointPointId,
+      truckingType: t.truckingType,
+      basis: t.basis,
+      amount: t.amount!,
+      remarks: t.remarks,
+      rateVariant: t.rateVariant,
+      tonnage: t.tonnage,
+    },
+  });
 for (const r of draft.seaRates.filter((r) => r.amount != null))
-  await tx.seaFreightRate.create({ data: { quoteId: q.id, rateVariant: r.rateVariant,
-    containerSize: r.containerSize, amount: r.amount!, remarks: r.remarks } });
+  await tx.seaFreightRate.create({
+    data: {
+      quoteId: q.id,
+      rateVariant: r.rateVariant,
+      containerSize: r.containerSize,
+      amount: r.amount!,
+      remarks: r.remarks,
+    },
+  });
 // warehouse rows: add cfsCode/side
-await tx.quote.update({ where: { id: q.id }, data: {
-  grandTotal: Math.max(...totals.variants.map((v) => v.grandTotal), 0),
-  totalChargeableWeightT: null, // column kept for now; kg lives on QuoteCargoLine
-  dgSurchargeNote: draft.dgSurchargeNote, termsConditions: draft.termsConditions,
-  submittedAt: new Date(), draftJson: Prisma.DbNull,
-} });
+await tx.quote.update({
+  where: { id: q.id },
+  data: {
+    grandTotal: Math.max(...totals.variants.map((v) => v.grandTotal), 0),
+    totalChargeableWeightT: null, // column kept for now; kg lives on QuoteCargoLine
+    dgSurchargeNote: draft.dgSurchargeNote,
+    termsConditions: draft.termsConditions,
+    submittedAt: new Date(),
+    draftJson: Prisma.DbNull,
+  },
+});
 ```
 
 where `chargeAmount(c)` computes the calc line’s amount:
@@ -1053,11 +1336,13 @@ Also add `TransitPlan` mode-specific fields to its `create`. Remove the `compute
 ### Task 10: Distribute freeze — resolve the tag two-gate against the frozen manifest
 
 **Files:**
+
 - Modify: `apps/api/src/modules/rfq/charge-config.snapshot.ts` (`buildChargeConfigSnapshot` takes the manifest cargo → passes `packageTags`)
 - Modify: `apps/api/src/modules/rfq/rfq.service.ts:373-374` (pass `snapshot.cargo` into the snapshot builder)
 - Test: `apps/api/test/charge-config-distribute.e2e-spec.ts` is rewritten in Unit 5; here add a focused `apps/api/test/tag-two-gate.e2e-spec.ts`
 
 **Interfaces:**
+
 - Consumes: `ManifestSnapshotCargo[]` (Task 2), `resolveChargeConfig` v2 (Task 8).
 - Produces: `buildChargeConfigSnapshot(prisma, leg, manifestCargo: ManifestSnapshotCargo[])` — freezes the tag-gated active lines. Consumed by Unit 5 change-order/charge-config specs.
 
@@ -1075,11 +1360,18 @@ export async function buildChargeConfigSnapshot(
   leg: LegRfqRow,
   manifestCargo: ManifestSnapshotCargo[],
 ): Promise<ChargeConfigSnapshot> {
-  const defs = await prisma.chargeLineDefinition.findMany({ where: { mode: leg.mode ?? undefined, isActive: true } });
-  const dtos: ChargeLineDefinitionDto[] = defs.map((d) => ({ /* …unchanged map… */ }));
+  const defs = await prisma.chargeLineDefinition.findMany({
+    where: { mode: leg.mode ?? undefined, isActive: true },
+  });
+  const dtos: ChargeLineDefinitionDto[] = defs.map((d) => ({/* …unchanged map… */}));
   const selectedKeys = leg.chargeSelections.map((s) => s.definition.key);
   const packageTags = [...new Set(manifestCargo.flatMap((c) => c.tags))];
-  return resolveChargeConfig(dtos, selectedKeys, leg.warehouseHandlingIncluded === true, packageTags);
+  return resolveChargeConfig(
+    dtos,
+    selectedKeys,
+    leg.warehouseHandlingIncluded === true,
+    packageTags,
+  );
 }
 ```
 
@@ -1248,6 +1540,7 @@ The legacy specs build cargo via `prisma.cargoItem` / `legCargo.create` / old fi
 ## Self-Review (spec coverage · placeholders · type consistency)
 
 **Spec coverage** (design §5–§16 → task):
+
 - §5.1 chargedWeightKg / drop density → Tasks 4, 5, 6, 9 ✓
 - §5.2 dual-rate (TruckingCharge.rateVariant/tonnage, SeaFreightRate, enums) → Tasks 4, 5, 6, 9, 13, 15 ✓
 - §5.3 catalogue (FSC/Peak, HEAVY_WEIGHT_CALC, Sea B/L) → Tasks 4, 8, 14, 15 ✓
@@ -1264,8 +1557,8 @@ The legacy specs build cargo via `prisma.cargoItem` / `legCargo.create` / old fi
 - §15 build sequence → Units 1–6 map 1:1 ✓
 - §16 go-live → Global Constraints + Task 25 ✓
 
-**Gap found + fixed:** §5.5 warehouse **web** rendering (cfsCode read-only + side-specific lines) had no explicit web task. → **Fold into Task 13 (Road panel) and Task 16**, and add the WarehouseStaging component to their file lists. *(Editing inline: Task 13 file list += `WarehouseStaging.tsx`; Task 13 Step 1 += "render `cfsCode` read-only + the side-specific seeded warehouse lines when `warehouseIncluded`.")*
+**Gap found + fixed:** §5.5 warehouse **web** rendering (cfsCode read-only + side-specific lines) had no explicit web task. → **Fold into Task 13 (Road panel) and Task 16**, and add the WarehouseStaging component to their file lists. _(Editing inline: Task 13 file list += `WarehouseStaging.tsx`; Task 13 Step 1 += "render `cfsCode` read-only + the side-specific seeded warehouse lines when `warehouseIncluded`.")_
 
-**Placeholder scan:** no "TBD/TODO/handle edge cases". Units 4–5 intentionally describe edits to existing files rather than reproducing 40 components verbatim — flagged explicitly in each unit header and the Global Constraints "How to read" note; every *new* helper carries full code.
+**Placeholder scan:** no "TBD/TODO/handle edge cases". Units 4–5 intentionally describe edits to existing files rather than reproducing 40 components verbatim — flagged explicitly in each unit header and the Global Constraints "How to read" note; every _new_ helper carries full code.
 
 **Type consistency:** `chargedWeightKg` (not `chargeWeightKg`), `rateVariant`/`ChargeRateVariant`, `QuoteVariantTotal.{key,rateAmount,grandTotal}`, `computeHeavyWeightAmount(pieceWeightKg, airlineLimitKg, ratePerExcessKg)`, `resolveChargeConfig(defs, selectedKeys, warehouseIncluded, packageTags)`, `ManifestSnapshotCargo.{packageId,tags}`, `buildChargeConfigSnapshot(prisma, leg, manifestCargo)` — all used identically across Tasks 4→25. Unit 1 deliberately keeps `QuoteDraftCargo.cargoItemId` (holding a packageId) and renames it to `packageId` in Task 5 — the one intentional two-step, flagged in Task 3's churn note.

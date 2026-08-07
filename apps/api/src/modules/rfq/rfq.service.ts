@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import type { Prisma, Incoterms } from "@prisma/client";
 import {
   QuoteStatus,
@@ -45,7 +51,10 @@ export class RfqService {
     ffIds: string[],
     user: RequestUser,
   ): Promise<{ selected: string[] }> {
-    const leg = await this.prisma.leg.findFirst({ where: { id: legId, queryId }, select: { id: true } });
+    const leg = await this.prisma.leg.findFirst({
+      where: { id: legId, queryId },
+      select: { id: true },
+    });
     if (!leg) throw new NotFoundException("Leg not found");
 
     const wanted = [...new Set(ffIds)];
@@ -74,7 +83,9 @@ export class RfqService {
       .map((q) => q.id);
 
     await this.prisma.$transaction([
-      ...(toRemove.length ? [this.prisma.quote.deleteMany({ where: { id: { in: toRemove } } })] : []),
+      ...(toRemove.length
+        ? [this.prisma.quote.deleteMany({ where: { id: { in: toRemove } } })]
+        : []),
       ...toAdd.map((ffId) =>
         this.prisma.quote.create({
           data: {
@@ -106,7 +117,11 @@ export class RfqService {
     });
     if (!query) throw new NotFoundException("Query not found");
 
-    const legs = await this.prisma.leg.findMany({ where: { queryId }, select: { id: true }, orderBy: { legCode: "asc" } });
+    const legs = await this.prisma.leg.findMany({
+      where: { queryId },
+      select: { id: true },
+      orderBy: { legCode: "asc" },
+    });
     const deadline = await this.resolveDeadline(input.submissionDeadline);
 
     const ready: LegRfqContext[] = [];
@@ -151,7 +166,8 @@ export class RfqService {
         where: { queryId_freightForwarderId: { queryId, freightForwarderId } },
         select: { id: true, rfqNumber: true },
       });
-      if (!rfq) throw new NotFoundException("No RFQ found for this freight forwarder on this query");
+      if (!rfq)
+        throw new NotFoundException("No RFQ found for this freight forwarder on this query");
       const { token, hash } = this.token.mint();
       await tx.rfq.update({ where: { id: rfq.id }, data: { accessTokenHash: hash } });
       await tx.rfqTokenReissue.create({
@@ -162,7 +178,10 @@ export class RfqService {
   }
 
   async getRfqState(queryId: string): Promise<QueryRfqStateDto> {
-    const query = await this.prisma.query.findUnique({ where: { id: queryId }, select: { id: true } });
+    const query = await this.prisma.query.findUnique({
+      where: { id: queryId },
+      select: { id: true },
+    });
     if (!query) throw new NotFoundException("Query not found");
 
     const [quotes, rfqs] = await Promise.all([
@@ -172,7 +191,10 @@ export class RfqService {
 
     const ffIds = [...new Set(quotes.map((q) => q.freightForwarderId))];
     const ffs = ffIds.length
-      ? await this.prisma.freightForwarder.findMany({ where: { id: { in: ffIds } }, orderBy: { companyName: "asc" } })
+      ? await this.prisma.freightForwarder.findMany({
+          where: { id: { in: ffIds } },
+          orderBy: { companyName: "asc" },
+        })
       : [];
 
     return {
@@ -241,7 +263,11 @@ export class RfqService {
             "This leg's selected forwarders have already been sent this RFQ; confirm to proceed.",
           );
         }
-        return { rfqs: [], distributedLegIds: [], skipped: [{ legId, reason: "already-distributed" }] };
+        return {
+          rfqs: [],
+          distributedLegIds: [],
+          skipped: [{ legId, reason: "already-distributed" }],
+        };
       }
       throw new BadRequestException("Select at least one freight forwarder before distributing");
     }
@@ -249,7 +275,10 @@ export class RfqService {
     // F1 / F4 / F5
     const errors = await this.validateLegForDistribution(ctx);
     if (errors.length) {
-      throw new BadRequestException({ message: "Leg is not ready for distribution", codes: errors });
+      throw new BadRequestException({
+        message: "Leg is not ready for distribution",
+        codes: errors,
+      });
     }
 
     const deadline = await this.resolveDeadline(input.submissionDeadline);
@@ -286,7 +315,9 @@ export class RfqService {
       if (leg.warehouseHandlingIncluded == null) errors.push("F7_WAREHOUSE_UNDECIDED");
       else if (leg.warehouseHandlingIncluded === true) {
         const conflict = await findWarehouseYesConflict(this.prisma, {
-          queryId: leg.queryId, legId: leg.id, warehousePointIds: whIds,
+          queryId: leg.queryId,
+          legId: leg.id,
+          warehousePointIds: whIds,
         });
         if (conflict) errors.push("F8_WAREHOUSE_DOUBLE_YES");
       }
@@ -366,12 +397,19 @@ export class RfqService {
           // reminder/expiry ScheduledEvents re-arm below off this same `deadline`). A
           // fresh-quote-only amend (no reactivation) deliberately does NOT hit this branch —
           // it leaves an existing Rfq's deadline untouched (D3, rfq-distribute.e2e-spec.ts).
-          rfq = await tx.rfq.update({ where: { id: rfq.id }, data: { submissionDeadline: deadline } });
+          rfq = await tx.rfq.update({
+            where: { id: rfq.id },
+            data: { submissionDeadline: deadline },
+          });
         }
         const legIds = new Set<string>();
         for (const { quoteId, legCtx } of items) {
           const snapshot = buildManifestSnapshot(legCtx, query, frozenAt);
-          const chargeConfig = await buildChargeConfigSnapshot(this.prisma, legCtx.leg, snapshot.cargo);
+          const chargeConfig = await buildChargeConfigSnapshot(
+            this.prisma,
+            legCtx.leg,
+            snapshot.cargo,
+          );
           await tx.quote.update({
             where: { id: quoteId },
             data: {
@@ -439,18 +477,29 @@ export class RfqService {
         // already writes through.
         if (reactivatingFfIds.has(entry.freightForwarderId)) {
           await this.prisma.scheduledEvent.deleteMany({
-            where: { entityType: "RFQ", entityId: entry.rfqId, eventKey: { in: ["rfq.reminder", "rfq.expiry"] } },
+            where: {
+              entityType: "RFQ",
+              entityId: entry.rfqId,
+              eventKey: { in: ["rfq.reminder", "rfq.expiry"] },
+            },
           });
         }
 
         // reminders (future tiers only) + one expiry, anchored to the RFQ
         await this.scheduled.schedule(
-          "RFQ", entry.rfqId, "rfq.reminder",
-          offsets.map((h) => ({ tier: `T${h}H`, dueAt: new Date(deadline.getTime() - h * 60 * 60 * 1000) })),
+          "RFQ",
+          entry.rfqId,
+          "rfq.reminder",
+          offsets.map((h) => ({
+            tier: `T${h}H`,
+            dueAt: new Date(deadline.getTime() - h * 60 * 60 * 1000),
+          })),
           { tenantId: user.tenantId },
         );
         await this.scheduled.schedule(
-          "RFQ", entry.rfqId, "rfq.expiry",
+          "RFQ",
+          entry.rfqId,
+          "rfq.expiry",
           [{ tier: "DEADLINE", dueAt: deadline }],
           { tenantId: user.tenantId },
         );

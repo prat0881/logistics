@@ -69,7 +69,9 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     await cleanupQuery(CODE, execId);
     await cleanupQuery(CODE2, execId2);
     await cleanupQuery(CODE3, execId3);
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: FF_PREFIX } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: FF_PREFIX } },
+    });
   };
 
   beforeAll(async () => {
@@ -118,10 +120,22 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       data: { queryCode: CODE, assignedUserId: execId, incoterms: "FOB" },
     });
     const origin = await prisma.point.create({
-      data: { queryId: query.id, type: "PICKUP", name: "Shenzhen Port", city: "Shenzhen", country: "CN" },
+      data: {
+        queryId: query.id,
+        type: "PICKUP",
+        name: "Shenzhen Port",
+        city: "Shenzhen",
+        country: "CN",
+      },
     });
     const dest = await prisma.point.create({
-      data: { queryId: query.id, type: "DELIVERY", name: "Jebel Ali", city: "Dubai", country: "AE" },
+      data: {
+        queryId: query.id,
+        type: "DELIVERY",
+        name: "Jebel Ali",
+        city: "Dubai",
+        country: "AE",
+      },
     });
     const { packageIds } = await createCargoWithPackages(prisma, {
       queryId: query.id,
@@ -184,7 +198,14 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
 
     // --- act: RfqDefining field (package.grossWt) on a distributed leg, WITH a reason → the saga ---
     const res = await mediator.apply(
-      { entity: "package", id: packageId, field: "grossWt", queryId: query.id, actorId, reason: REASON },
+      {
+        entity: "package",
+        id: packageId,
+        field: "grossWt",
+        queryId: query.id,
+        actorId,
+        reason: REASON,
+      },
       async (tx) => {
         await tx.package.update({ where: { id: packageId }, data: { grossWt: NEW_GROSS_WT } });
       },
@@ -237,7 +258,12 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       reason: string;
       impactClass: string;
       affectedScope: { type: string; id: string }[];
-      invalidatedQuotes: { quoteId: string; freightForwarderId: string; grandTotal: string | null; currency: string | null }[];
+      invalidatedQuotes: {
+        quoteId: string;
+        freightForwarderId: string;
+        grandTotal: string | null;
+        currency: string | null;
+      }[];
       refreshedQuotes: { quoteId: string; freightForwarderId: string }[];
     };
     expect(payload.field).toBe("grossWt");
@@ -253,7 +279,12 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
 
     // --- assert: the invalidated FF (FF-A) was notified (EMAIL → its contact) ---
     const msg = await prisma.messageLog.findFirst({
-      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.leg.reopened", toAddress: ffA.email },
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.leg.reopened",
+        toAddress: ffA.email,
+      },
     });
     expect(msg).not.toBeNull();
     expect(msg?.channel).toBe("EMAIL");
@@ -263,7 +294,12 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
 
     // --- assert: the pending FF (FF-B) was NOT notified (refreshed silently, §11.4) ---
     const ffBMsg = await prisma.messageLog.findFirst({
-      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.leg.reopened", toAddress: ffB.email },
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.leg.reopened",
+        toAddress: ffB.email,
+      },
     });
     expect(ffBMsg).toBeNull();
   });
@@ -276,10 +312,22 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       data: { queryCode: CODE2, assignedUserId: execId2, incoterms: "FOB" },
     });
     const origin = await prisma.point.create({
-      data: { queryId: query.id, type: "PICKUP", name: "Ningbo Port", city: "Ningbo", country: "CN" },
+      data: {
+        queryId: query.id,
+        type: "PICKUP",
+        name: "Ningbo Port",
+        city: "Ningbo",
+        country: "CN",
+      },
     });
     const dest = await prisma.point.create({
-      data: { queryId: query.id, type: "DELIVERY", name: "Khalifa Port", city: "Abu Dhabi", country: "AE" },
+      data: {
+        queryId: query.id,
+        type: "DELIVERY",
+        name: "Khalifa Port",
+        city: "Abu Dhabi",
+        country: "AE",
+      },
     });
 
     const mkLeg = async (legCode: string) => {
@@ -289,8 +337,12 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       });
       const leg = await prisma.leg.create({
         data: {
-          queryId: query.id, legCode, mode: "AIR", status: "PARTIALLY_QUOTED",
-          originPointId: origin.id, destinationPointId: dest.id,
+          queryId: query.id,
+          legCode,
+          mode: "AIR",
+          status: "PARTIALLY_QUOTED",
+          originPointId: origin.id,
+          destinationPointId: dest.id,
         },
       });
       await assignPackagesToLeg(prisma, leg.id, packageIds);
@@ -309,42 +361,78 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
 
     const rfqA = await prisma.rfq.create({
       data: {
-        queryId: query.id, freightForwarderId: ffA.id, rfqNumber: `${CODE2}-RFQ001`,
+        queryId: query.id,
+        freightForwarderId: ffA.id,
+        rfqNumber: `${CODE2}-RFQ001`,
         accessTokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
-        submissionDeadline: new Date(Date.now() + 86400000), currency: "USD",
+        submissionDeadline: new Date(Date.now() + 86400000),
+        currency: "USD",
       },
     });
 
     const quoteA1 = await prisma.quote.create({
       data: {
-        queryId: query.id, legId: legOne.id, freightForwarderId: ffA.id, rfqId: rfqA.id,
-        status: QuoteStatus.QUOTED, grandTotal: 1000,
-        manifestSnapshot: { legId: legOne.id, incoterms: "FOB" } as unknown as Prisma.InputJsonValue,
+        queryId: query.id,
+        legId: legOne.id,
+        freightForwarderId: ffA.id,
+        rfqId: rfqA.id,
+        status: QuoteStatus.QUOTED,
+        grandTotal: 1000,
+        manifestSnapshot: {
+          legId: legOne.id,
+          incoterms: "FOB",
+        } as unknown as Prisma.InputJsonValue,
       },
     });
     const quoteA2 = await prisma.quote.create({
       data: {
-        queryId: query.id, legId: legTwo.id, freightForwarderId: ffA.id, rfqId: rfqA.id,
-        status: QuoteStatus.QUOTED, grandTotal: 2000,
-        manifestSnapshot: { legId: legTwo.id, incoterms: "FOB" } as unknown as Prisma.InputJsonValue,
+        queryId: query.id,
+        legId: legTwo.id,
+        freightForwarderId: ffA.id,
+        rfqId: rfqA.id,
+        status: QuoteStatus.QUOTED,
+        grandTotal: 2000,
+        manifestSnapshot: {
+          legId: legTwo.id,
+          incoterms: "FOB",
+        } as unknown as Prisma.InputJsonValue,
       },
     });
     const quoteB = await prisma.quote.create({
       data: {
-        queryId: query.id, legId: legOne.id, freightForwarderId: ffB.id, status: QuoteStatus.RFQ_SENT,
-        manifestSnapshot: { legId: legOne.id, incoterms: "FOB" } as unknown as Prisma.InputJsonValue,
+        queryId: query.id,
+        legId: legOne.id,
+        freightForwarderId: ffB.id,
+        status: QuoteStatus.RFQ_SENT,
+        manifestSnapshot: {
+          legId: legOne.id,
+          incoterms: "FOB",
+        } as unknown as Prisma.InputJsonValue,
       },
     });
     const quoteC = await prisma.quote.create({
       data: {
-        queryId: query.id, legId: legTwo.id, freightForwarderId: ffC.id, status: QuoteStatus.RFQ_SENT,
-        manifestSnapshot: { legId: legTwo.id, incoterms: "FOB" } as unknown as Prisma.InputJsonValue,
+        queryId: query.id,
+        legId: legTwo.id,
+        freightForwarderId: ffC.id,
+        status: QuoteStatus.RFQ_SENT,
+        manifestSnapshot: {
+          legId: legTwo.id,
+          incoterms: "FOB",
+        } as unknown as Prisma.InputJsonValue,
       },
     });
 
     // --- act: query-wide RfqDefining field (incoterms), WITH a reason → all legs cascade ---
     const res = await mediator.apply(
-      { entity: "query", id: query.id, field: "incoterms", queryId: query.id, actorId, reason: "incoterms renegotiated" },
+      {
+        entity: "query",
+        id: query.id,
+        field: "incoterms",
+        queryId: query.id,
+        actorId,
+        reason: "incoterms renegotiated",
+      },
       async (tx) => {
         await tx.query.update({ where: { id: query.id }, data: { incoterms: "CIF" } });
       },
@@ -374,7 +462,9 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     }
 
     // --- assert: one ChangeLog row spanning both legs + both invalidated quotes ---
-    const logs = await prisma.changeLog.findMany({ where: { queryId: query.id, changeType: "change-order" } });
+    const logs = await prisma.changeLog.findMany({
+      where: { queryId: query.id, changeType: "change-order" },
+    });
     expect(logs).toHaveLength(1);
     const payload = logs[0].payload as {
       affectedScope: { type: string; id: string }[];
@@ -388,13 +478,22 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       ]),
     );
     expect(payload.affectedScope).toHaveLength(2);
-    expect(payload.invalidatedQuotes.map((q) => q.quoteId).sort()).toEqual([quoteA1.id, quoteA2.id].sort());
-    expect(payload.refreshedQuotes.map((q) => q.quoteId).sort()).toEqual([quoteB.id, quoteC.id].sort());
+    expect(payload.invalidatedQuotes.map((q) => q.quoteId).sort()).toEqual(
+      [quoteA1.id, quoteA2.id].sort(),
+    );
+    expect(payload.refreshedQuotes.map((q) => q.quoteId).sort()).toEqual(
+      [quoteB.id, quoteC.id].sort(),
+    );
 
     // --- assert: FF-A gets exactly ONE notification covering BOTH its reopened legs (per-FF
     //     grouping — not one-per-leg). ---
     const ffAMsgs = await prisma.messageLog.findMany({
-      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.leg.reopened", toAddress: ffA.email },
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.leg.reopened",
+        toAddress: ffA.email,
+      },
     });
     expect(ffAMsgs).toHaveLength(1);
     expect(ffAMsgs[0].subject).toContain(rfqA.rfqNumber);
@@ -404,7 +503,12 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     // --- assert: neither pending FF was notified ---
     for (const ff of [ffB, ffC]) {
       const msg = await prisma.messageLog.findFirst({
-        where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.leg.reopened", toAddress: ff.email },
+        where: {
+          entityType: "QUERY",
+          entityId: query.id,
+          eventKey: "rfq.leg.reopened",
+          toAddress: ff.email,
+        },
       });
       expect(msg).toBeNull();
     }
@@ -440,22 +544,39 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     const ffA = await mkFf(`${FF_PREFIX}D-A-QUOTED`);
     const rfqA = await prisma.rfq.create({
       data: {
-        queryId: query.id, freightForwarderId: ffA.id, rfqNumber: `${CODE3}-RFQ001`,
+        queryId: query.id,
+        freightForwarderId: ffA.id,
+        rfqNumber: `${CODE3}-RFQ001`,
         accessTokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
-        submissionDeadline: new Date(Date.now() + 86400000), currency: "USD",
+        submissionDeadline: new Date(Date.now() + 86400000),
+        currency: "USD",
       },
     });
     const quoteA = await prisma.quote.create({
       data: {
-        queryId: query.id, legId: distLeg.id, freightForwarderId: ffA.id, rfqId: rfqA.id,
-        status: QuoteStatus.QUOTED, grandTotal: 3000,
-        manifestSnapshot: { legId: distLeg.id, incoterms: "FOB" } as unknown as Prisma.InputJsonValue,
+        queryId: query.id,
+        legId: distLeg.id,
+        freightForwarderId: ffA.id,
+        rfqId: rfqA.id,
+        status: QuoteStatus.QUOTED,
+        grandTotal: 3000,
+        manifestSnapshot: {
+          legId: distLeg.id,
+          incoterms: "FOB",
+        } as unknown as Prisma.InputJsonValue,
       },
     });
 
     // --- act: query-wide incoterms edit → classifier fans to BOTH legs; only distLeg is live ---
     const res = await mediator.apply(
-      { entity: "query", id: query.id, field: "incoterms", queryId: query.id, actorId, reason: "incoterms renegotiated" },
+      {
+        entity: "query",
+        id: query.id,
+        field: "incoterms",
+        queryId: query.id,
+        actorId,
+        reason: "incoterms renegotiated",
+      },
       async (tx) => {
         await tx.query.update({ where: { id: query.id }, data: { incoterms: "CIF" } });
       },
@@ -477,14 +598,21 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     expect(draftAfter?.status).toBe("DRAFT");
 
     // --- assert: the ChangeLog records ONLY the distributed leg (minimal blast radius) ---
-    const logs = await prisma.changeLog.findMany({ where: { queryId: query.id, changeType: "change-order" } });
+    const logs = await prisma.changeLog.findMany({
+      where: { queryId: query.id, changeType: "change-order" },
+    });
     expect(logs).toHaveLength(1);
     const payload = logs[0].payload as { affectedScope: { type: string; id: string }[] };
     expect(payload.affectedScope).toEqual([{ type: "leg", id: distLeg.id }]); // NOT the draft leg
 
     // --- assert: the invalidated FF was notified (best-effort notify ran to completion) ---
     const msg = await prisma.messageLog.findFirst({
-      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.leg.reopened", toAddress: ffA.email },
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.leg.reopened",
+        toAddress: ffA.email,
+      },
     });
     expect(msg).not.toBeNull();
   });

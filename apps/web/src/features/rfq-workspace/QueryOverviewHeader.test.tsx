@@ -59,7 +59,10 @@ describe("QueryOverviewHeader", () => {
   });
 
   it("renders reference-tag icons under their own 'Reference Tags' field, not under Totals", () => {
-    const queryWithTag = { ...query, cargos: [makeCargo({ tags: ["OUT_OF_GAUGE"] })] } as unknown as QueryDetail;
+    const queryWithTag = {
+      ...query,
+      cargos: [makeCargo({ tags: ["OUT_OF_GAUGE"] })],
+    } as unknown as QueryDetail;
     render(<QueryOverviewHeader query={queryWithTag} />);
     const label = screen.getByText("Reference Tags");
     const field = label.closest("div")!;

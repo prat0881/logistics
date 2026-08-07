@@ -10,8 +10,22 @@ const endpoints: FfPortalEndpoint[] = [
 ];
 
 const truckingDefaults: QuoteDraft["trucking"] = [
-  { legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: null, rateVariant: "DEDICATED", tonnage: null },
-  { legEndpointPointId: "p1", truckingType: "GROUPAGE", basis: "PER_TRUCK", amount: null, rateVariant: "GROUPAGE", tonnage: null },
+  {
+    legEndpointPointId: "p1",
+    truckingType: "DEDICATED",
+    basis: "PER_TRUCK",
+    amount: null,
+    rateVariant: "DEDICATED",
+    tonnage: null,
+  },
+  {
+    legEndpointPointId: "p1",
+    truckingType: "GROUPAGE",
+    basis: "PER_TRUCK",
+    amount: null,
+    rateVariant: "GROUPAGE",
+    tonnage: null,
+  },
 ];
 
 function Harness() {

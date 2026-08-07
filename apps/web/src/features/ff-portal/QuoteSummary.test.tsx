@@ -4,28 +4,59 @@ import type { QuoteDraft } from "@svyft/shared";
 import { QuoteSummary } from "./QuoteSummary";
 
 const roadDraft: QuoteDraft = {
-  legId: "L1", mode: "ROAD", currency: "USD", quoteValidityUntil: null,
+  legId: "L1",
+  mode: "ROAD",
+  currency: "USD",
+  quoteValidityUntil: null,
   cargo: [{ packageId: "p1", grossWtKg: 1500, cbm: 2.5, chargedWeightKg: 1500 }],
   charges: [{ zone: null, presetKey: null, label: "Fuel surcharge", amount: 200 }],
   trucking: [
-    { legEndpointPointId: "p1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: 500, rateVariant: "DEDICATED", tonnage: "T_5" },
-    { legEndpointPointId: "p1", truckingType: "GROUPAGE", basis: "PER_TRUCK", amount: null, rateVariant: "GROUPAGE", tonnage: null },
+    {
+      legEndpointPointId: "p1",
+      truckingType: "DEDICATED",
+      basis: "PER_TRUCK",
+      amount: 500,
+      rateVariant: "DEDICATED",
+      tonnage: "T_5",
+    },
+    {
+      legEndpointPointId: "p1",
+      truckingType: "GROUPAGE",
+      basis: "PER_TRUCK",
+      amount: null,
+      rateVariant: "GROUPAGE",
+      tonnage: null,
+    },
   ],
   seaRates: [],
-  warehouse: [{ warehousePointId: "w1", position: "ORIGIN", label: "Origin warehouse", amount: 300 }],
-  transit: null, dgSurchargeNote: null, termsConditions: null,
+  warehouse: [
+    { warehousePointId: "w1", position: "ORIGIN", label: "Origin warehouse", amount: 300 },
+  ],
+  transit: null,
+  dgSurchargeNote: null,
+  termsConditions: null,
 };
 
 const airDraft: QuoteDraft = {
-  legId: "L1", mode: "AIR", currency: "USD", quoteValidityUntil: null,
+  legId: "L1",
+  mode: "AIR",
+  currency: "USD",
+  quoteValidityUntil: null,
   cargo: [{ packageId: "p1", grossWtKg: 1000, cbm: 2, chargedWeightKg: 1000 }],
   charges: [{ zone: "MAIN_FREIGHT", presetKey: "x", label: "Air Freight", amount: 900 }],
-  trucking: [], seaRates: [], warehouse: [],
-  transit: null, dgSurchargeNote: null, termsConditions: null,
+  trucking: [],
+  seaRates: [],
+  warehouse: [],
+  transit: null,
+  dgSurchargeNote: null,
+  termsConditions: null,
 };
 
 const seaDraft: QuoteDraft = {
-  legId: "L1", mode: "SEA", currency: "USD", quoteValidityUntil: null,
+  legId: "L1",
+  mode: "SEA",
+  currency: "USD",
+  quoteValidityUntil: null,
   cargo: [{ packageId: "p1", grossWtKg: 2000, cbm: 5, chargedWeightKg: 2000 }],
   charges: [{ zone: "ORIGIN", presetKey: null, label: "Origin THC", amount: 150 }],
   trucking: [],
@@ -34,7 +65,9 @@ const seaDraft: QuoteDraft = {
     { rateVariant: "LCL", containerSize: null, amount: null },
   ],
   warehouse: [],
-  transit: null, dgSurchargeNote: null, termsConditions: null,
+  transit: null,
+  dgSurchargeNote: null,
+  termsConditions: null,
 };
 
 describe("QuoteSummary", () => {

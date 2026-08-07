@@ -36,7 +36,9 @@ describe(`${PREFIX} (e2e)`, () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -64,9 +66,15 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- query + points: P1 (pickup), W (warehouse), P2 (delivery) ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const p1 = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const w = await prisma.point.create({ data: { queryId: query.id, type: "WAREHOUSE", country: "CN" } });
-    const p2 = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const p1 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const w = await prisma.point.create({
+      data: { queryId: query.id, type: "WAREHOUSE", country: "CN" },
+    });
+    const p2 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     // --- two ROAD legs, both F1-complete + READY_FOR_RFQ: A = P1→W, B = W→P2 ---
     const legA = await prisma.leg.create({

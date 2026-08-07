@@ -38,7 +38,9 @@ describe(`${PREFIX} (e2e)`, () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items/chargeSelections
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -66,8 +68,12 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- build an AIR leg with an origin+dest point and cargo ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -89,8 +95,12 @@ describe(`${PREFIX} (e2e)`, () => {
     await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     // --- Executive selects AIR_DEST_THC (a STANDARD line) on the popover; nothing else ---
-    const destThc = await prisma.chargeLineDefinition.findUniqueOrThrow({ where: { key: "AIR_DEST_THC" } });
-    await prisma.legChargeLineSelection.create({ data: { legId: leg.id, definitionId: destThc.id } });
+    const destThc = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "AIR_DEST_THC" },
+    });
+    await prisma.legChargeLineSelection.create({
+      data: { legId: leg.id, definitionId: destThc.id },
+    });
 
     // --- 1 FF selected for RFQ ---
     const ff = await prisma.freightForwarder.create({
@@ -122,7 +132,10 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- verify the frozen chargeConfigSnapshot on the quote ---
     const quote = await prisma.quote.findFirstOrThrow({ where: { legId: leg.id } });
-    const snap = quote.chargeConfigSnapshot as { lines: { definitionKey: string }[]; warehouseIncluded: boolean };
+    const snap = quote.chargeConfigSnapshot as {
+      lines: { definitionKey: string }[];
+      warehouseIncluded: boolean;
+    };
     const keys = snap.lines.map((l) => l.definitionKey);
     expect(keys).toContain("AIR_ORIGIN_THC"); // a core
     expect(keys).toContain("AIR_DEST_THC"); // selected
@@ -131,9 +144,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- Task 9: the FF portal GET must seed legs[0].seededCharges FROM this frozen
     //     snapshot (not the old hardcoded AIR_CHARGE_PRESETS) ---
-    const portalRes = await request(app.getHttpServer())
-      .get(`/api/ff/rfq/${token}`)
-      .expect(200); // no auth cookie — the token IS the auth
+    const portalRes = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200); // no auth cookie — the token IS the auth
     const seededKeys = portalRes.body.legs[0].seededCharges.map(
       (c: { definitionKey: string }) => c.definitionKey,
     );
@@ -161,8 +172,12 @@ describe(`${PREFIX} (e2e)`, () => {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-FIX-${seq}`, incoterms: "FOB" },
     });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -224,7 +239,9 @@ describe(`${PREFIX} (e2e)`, () => {
     mode: "AIR" | "SEA" | "ROAD",
     getBody: {
       legs: Array<{
-        manifest: { cargo: Array<{ packageId: string; grossWt: string; volumeCbm: string | null }> };
+        manifest: {
+          cargo: Array<{ packageId: string; grossWt: string; volumeCbm: string | null }>;
+        };
         seededCharges: Array<{
           zone: string | null;
           definitionKey: string;
@@ -288,7 +305,9 @@ describe(`${PREFIX} (e2e)`, () => {
 
     const res = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
 
-    const seededKeys = res.body.legs[0].seededCharges.map((c: { definitionKey: string }) => c.definitionKey);
+    const seededKeys = res.body.legs[0].seededCharges.map(
+      (c: { definitionKey: string }) => c.definitionKey,
+    );
     expect(seededKeys).toContain("ROAD_STD_INSURANCE");
   });
 

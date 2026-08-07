@@ -1,10 +1,5 @@
 import { useMemo, useState } from "react";
-import {
-  FreightMode,
-  PointType,
-  type Finding,
-  type QueryDetail,
-} from "@svyft/shared";
+import { FreightMode, PointType, type Finding, type QueryDetail } from "@svyft/shared";
 import { cn } from "@/lib/utils";
 import { toRouteGraph } from "./routeGraph";
 
@@ -96,10 +91,7 @@ export function RouteDiagram({
   const layout = useMemo(() => computeLayout(graph, vBulge), [graph, vBulge]);
 
   // Resolve findings → per-point / per-leg highlight severity.
-  const highlights = useMemo(
-    () => resolveHighlights(graph, findings),
-    [graph, findings],
-  );
+  const highlights = useMemo(() => resolveHighlights(graph, findings), [graph, findings]);
 
   const prefersReducedMotion = useMemo(
     () =>
@@ -134,10 +126,7 @@ export function RouteDiagram({
   return (
     <figure
       data-slot="route-diagram"
-      className={cn(
-        "relative overflow-x-auto rounded-md border bg-card p-3",
-        className,
-      )}
+      className={cn("relative overflow-x-auto rounded-md border bg-card p-3", className)}
       aria-label="Route diagram"
     >
       <figcaption className="mb-2 flex items-center justify-between gap-2">
@@ -170,9 +159,7 @@ export function RouteDiagram({
         <g>
           {graph.legs.map((leg) => {
             const o = leg.originPointId ? pos.get(leg.originPointId) : undefined;
-            const d = leg.destinationPointId
-              ? pos.get(leg.destinationPointId)
-              : undefined;
+            const d = leg.destinationPointId ? pos.get(leg.destinationPointId) : undefined;
             if (!o || !d) return null; // incomplete leg — C1 flags it in the panel
             const hl = highlights.legs.get(leg.id) ?? { finding: null };
             return (
@@ -401,8 +388,7 @@ function Node({
   onLeave?: () => void;
 }) {
   const meta = POINT_GLYPH[point.type] ?? { glyph: "•", label: point.type };
-  const code =
-    point.unLocode ?? point.iataCode ?? point.icaoCode ?? point.terminal ?? "";
+  const code = point.unLocode ?? point.iataCode ?? point.icaoCode ?? point.terminal ?? "";
   const name = point.name ?? point.city ?? "—";
   const locality = [point.city, point.country].filter(Boolean).join(", ");
 
@@ -493,13 +479,7 @@ function Node({
           {code}
         </text>
       ) : (
-        <text
-          x={12}
-          y={39}
-          fontSize={13}
-          fontWeight={600}
-          fill="hsl(var(--foreground))"
-        >
+        <text x={12} y={39} fontSize={13} fontWeight={600} fill="hsl(var(--foreground))">
           {truncate(name, 20)}
         </text>
       )}
@@ -553,7 +533,10 @@ function RouteTooltip({
         className="pointer-events-none z-10 rounded-md border bg-popover px-3 py-2 text-xs shadow-md max-w-[240px] space-y-1"
         style={{ position: "absolute", left, top }}
       >
-        <div className="font-semibold">{typeLabel}{code ? ` · ${code}` : ""}</div>
+        <div className="font-semibold">
+          {typeLabel}
+          {code ? ` · ${code}` : ""}
+        </div>
         {point.name && <div>{point.name}</div>}
         {point.streetAddress && <div>{point.streetAddress}</div>}
         {cityPostal && <div>{cityPostal}</div>}
@@ -562,7 +545,9 @@ function RouteTooltip({
         {point.contactPhone && <div>{point.contactPhone}</div>}
         {point.contactEmail && <div>{point.contactEmail}</div>}
         {msgs.map((m, i) => (
-          <div key={i} className="text-destructive">{m}</div>
+          <div key={i} className="text-destructive">
+            {m}
+          </div>
         ))}
       </div>
     );
@@ -575,7 +560,8 @@ function RouteTooltip({
   const oPos = leg.originPointId ? pos.get(leg.originPointId) : undefined;
   const dPos = leg.destinationPointId ? pos.get(leg.destinationPointId) : undefined;
   const midX = oPos && dPos ? (oPos.x + NODE_W + dPos.x) / 2 : (oPos?.x ?? 0) + NODE_W;
-  const midY = oPos && dPos ? (oPos.y + NODE_H / 2 + dPos.y + NODE_H / 2) / 2 : (oPos?.y ?? 0) + NODE_H / 2;
+  const midY =
+    oPos && dPos ? (oPos.y + NODE_H / 2 + dPos.y + NODE_H / 2) / 2 : (oPos?.y ?? 0) + NODE_H / 2;
   const left = Math.max(0, midX + 8);
   const top = Math.max(0, midY - 20);
 
@@ -596,13 +582,19 @@ function RouteTooltip({
       className="pointer-events-none z-10 rounded-md border bg-popover px-3 py-2 text-xs shadow-md max-w-[240px] space-y-1"
       style={{ position: "absolute", left, top }}
     >
-      <div className="font-semibold">{leg.legCode} · {leg.mode ?? "no mode"}</div>
+      <div className="font-semibold">
+        {leg.legCode} · {leg.mode ?? "no mode"}
+      </div>
       <div>{leg.status}</div>
-      <div>{originName} → {destName}</div>
+      <div>
+        {originName} → {destName}
+      </div>
       <div>{leg.assignedPackageIds.length} packages</div>
       <div>{rollupLine}</div>
       {msgs.map((m, i) => (
-        <div key={i} className="text-destructive">{m}</div>
+        <div key={i} className="text-destructive">
+          {m}
+        </div>
       ))}
     </div>
   );
@@ -750,8 +742,7 @@ function computeLayout(graph: ReturnType<typeof toRouteGraph>, vBulge = 0): Layo
 
   const cols = sortedDepths.length || 1;
   const width = PAD * 2 + cols * NODE_W + (cols - 1) * COL_GAP;
-  const height =
-    PAD * 2 + vBulge * 2 + maxRows * NODE_H + Math.max(0, maxRows - 1) * ROW_GAP;
+  const height = PAD * 2 + vBulge * 2 + maxRows * NODE_H + Math.max(0, maxRows - 1) * ROW_GAP;
 
   return {
     width: Math.max(width, 320),
@@ -770,9 +761,7 @@ function computeLayout(graph: ReturnType<typeof toRouteGraph>, vBulge = 0): Layo
  * group fans apart. A group of one keeps bow 0 (a straight edge). The key is unordered
  * so opposite-direction legs land in the same group and separate too.
  */
-function computeEdgeBows(
-  legs: ReturnType<typeof toRouteGraph>["legs"],
-): Map<string, number> {
+function computeEdgeBows(legs: ReturnType<typeof toRouteGraph>["legs"]): Map<string, number> {
   const groups = new Map<string, string[]>();
   for (const l of legs) {
     if (!l.originPointId || !l.destinationPointId) continue;

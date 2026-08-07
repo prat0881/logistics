@@ -102,9 +102,7 @@ describe("LegSection QUOTED branch", () => {
       ),
     );
     expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /submit quote/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /submit quote/i })).not.toBeInTheDocument();
   });
 });
 
@@ -122,8 +120,6 @@ describe("LegSection readOnly", () => {
         />,
       ),
     );
-    expect(
-      screen.getByRole("button", { name: /submit quote/i }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /submit quote/i })).toBeDisabled();
   });
 });

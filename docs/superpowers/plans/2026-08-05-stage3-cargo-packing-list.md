@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-*(Every task's requirements implicitly include this section. Values verified against the current tree and the Stage-3 handoff.)*
+_(Every task's requirements implicitly include this section. Values verified against the current tree and the Stage-3 handoff.)_
 
 - **Node** `>=20 <21`; **pnpm** `9.x`; **TypeScript** `^5.6`, `strict`. **Prettier:** double quotes, semicolons, `trailingComma: all`, `printWidth: 100`.
 - **Branch:** `feat/stage-3-cargo-packing-list` (off `main`). Plan doc + implementation ship as **one PR**. **Conventional Commits**, one commit per task, each ending with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
@@ -32,21 +32,25 @@
 ## File structure
 
 **`packages/shared/src/`**
+
 - `cargo.ts` — **rewrite**: add `PackageType`/`UnitOfMeasure` enums, `DG` tag, `TONNE` unit; canonical helpers (`toCanonicalDim`/`fromCanonicalDim`, `toCanonicalWeight`/`fromCanonicalWeight`, `cbmFromCanonical`); `effectiveTags`; `cargoSchema`/`packageSchema`/`itemSchema` (+ update variants); `CargoDto`/`PackageDto`/`ItemDto`; update `collectCreateFindings` inputs.
 - `query.ts` — **modify:** `collectCreateFindings` cargo arm → per-package DG→MSDS + dims/gross present.
 - `cargo.test.ts`, `query.test.ts` — extend.
 
 **`prisma/`**
+
 - `schema.prisma` — enums + `Cargo`/`Package`(ex-`CargoItem`)/`Item` + `LegPackage`(ex-`LegCargo`) + `QuoteCargoLine.packageId`.
 - `migrations/20260805_cargo_packing_list/migration.sql` — **hand-authored**.
 
 **`apps/api/src/modules/`**
+
 - `cargo/` — repurpose to the **Cargo grouping** (`cargo.service.ts`, `cargo.controller.ts`, `cargo.impact.ts`, `cargo.module.ts`).
 - `cargo/package.*` + `cargo/item.*` — new services/controllers/impact under the cargo module (co-located; one domain).
 - `legs/legs.service.ts`, `legs/leg.impact.ts` — repoint `assignedCargoIds`→`assignedPackageIds`, `LegCargo`→`LegPackage`.
 - `queries/queries.service.ts` — leg roll-up simplify + `assignedPackageIds` projection.
 
 **`apps/web/src/features/query-wizard/steps/`**
+
 - `cargo/` — `useCargo.ts` (cargo grouping) + `usePackages.ts` + `useItems.ts`; `Step3Cargo.tsx` (main table + expansion); `cargo/CargoPopup.tsx`, `cargo/PackageEditor.tsx`, `cargo/ItemsMiniTable.tsx` (replace `CargoRowForm.tsx`).
 - `legs/CargoAssignmentControl.tsx`, `legs/cargoConflicts.ts`, `legs/useLegs.ts` — package grain.
 
@@ -57,10 +61,12 @@
 ### Task 1: Shared — enums + canonical-unit helpers
 
 **Files:**
+
 - Modify: `packages/shared/src/cargo.ts`
 - Test: `packages/shared/src/cargo.test.ts`
 
 **Interfaces — Produces:**
+
 - `PackageType` (`BOX·PALLET·CRATE·CARTON·DRUM·BUNDLE`) + `PACKAGE_TYPES`; `UnitOfMeasure` (`PC·SET·BOX·KG·M·ROLL`) + `UOMS`.
 - `ReferenceTag` gains `DG`; `WeightUnit` gains `TONNE`.
 - `toCanonicalDim(v:number, u:DimUnit):number` (→ cm), `fromCanonicalDim(vCm:number, u:DimUnit):number`.
@@ -72,9 +78,16 @@
 
 ```ts
 import {
-  PACKAGE_TYPES, UOMS, REFERENCE_TAGS, WEIGHT_UNITS,
-  toCanonicalDim, fromCanonicalDim, toCanonicalWeight, fromCanonicalWeight,
-  cbmFromCanonical, weightUnitLabel,
+  PACKAGE_TYPES,
+  UOMS,
+  REFERENCE_TAGS,
+  WEIGHT_UNITS,
+  toCanonicalDim,
+  fromCanonicalDim,
+  toCanonicalWeight,
+  fromCanonicalWeight,
+  cbmFromCanonical,
+  weightUnitLabel,
 } from "./cargo";
 
 describe("packing-list vocabularies", () => {
@@ -91,8 +104,8 @@ describe("packing-list vocabularies", () => {
 describe("canonical unit helpers", () => {
   it("dims round-trip cm/mm to canonical cm", () => {
     expect(toCanonicalDim(100, "CM")).toBe(100);
-    expect(toCanonicalDim(1000, "MM")).toBe(100);          // 1000 mm = 100 cm
-    expect(fromCanonicalDim(100, "MM")).toBe(1000);        // 100 cm shown as 1000 mm
+    expect(toCanonicalDim(1000, "MM")).toBe(100); // 1000 mm = 100 cm
+    expect(fromCanonicalDim(100, "MM")).toBe(1000); // 100 cm shown as 1000 mm
     expect(fromCanonicalDim(toCanonicalDim(37, "MM"), "MM")).toBeCloseTo(37, 9); // V-6 round-trip
   });
   it("weights round-trip kg/tonne/g to canonical kg", () => {
@@ -121,19 +134,30 @@ Expected: FAIL — `PACKAGE_TYPES`/`toCanonicalDim`/etc. not exported; `WEIGHT_U
 
 ```ts
 export const PackageType = {
-  BOX: "BOX", PALLET: "PALLET", CRATE: "CRATE", CARTON: "CARTON", DRUM: "DRUM", BUNDLE: "BUNDLE",
+  BOX: "BOX",
+  PALLET: "PALLET",
+  CRATE: "CRATE",
+  CARTON: "CARTON",
+  DRUM: "DRUM",
+  BUNDLE: "BUNDLE",
 } as const;
 export type PackageType = (typeof PackageType)[keyof typeof PackageType];
 export const PACKAGE_TYPES = Object.values(PackageType) as [PackageType, ...PackageType[]];
 
 export const UnitOfMeasure = {
-  PC: "PC", SET: "SET", BOX: "BOX", KG: "KG", M: "M", ROLL: "ROLL",
+  PC: "PC",
+  SET: "SET",
+  BOX: "BOX",
+  KG: "KG",
+  M: "M",
+  ROLL: "ROLL",
 } as const;
 export type UnitOfMeasure = (typeof UnitOfMeasure)[keyof typeof UnitOfMeasure];
 export const UOMS = Object.values(UnitOfMeasure) as [UnitOfMeasure, ...UnitOfMeasure[]];
 ```
 
 Extend the existing const objects (keep order stable; append new members):
+
 - `ReferenceTag` — add `DG: "DG"`.
 - `WeightUnit` — add `TONNE: "TONNE"` **between** `KG` and `GM` so `WEIGHT_UNITS` = `["KG","TONNE","GM"]`.
 
@@ -141,7 +165,7 @@ Add helpers (canonical = cm, kg; volume m³):
 
 ```ts
 export function toCanonicalDim(v: number, u: DimUnit): number {
-  return u === "MM" ? v / 10 : v;            // mm → cm
+  return u === "MM" ? v / 10 : v; // mm → cm
 }
 export function fromCanonicalDim(vCm: number, u: DimUnit): number {
   return u === "MM" ? vCm * 10 : vCm;
@@ -149,7 +173,7 @@ export function fromCanonicalDim(vCm: number, u: DimUnit): number {
 export function toCanonicalWeight(v: number, u: WeightUnit): number {
   if (u === "TONNE") return v * 1000;
   if (u === "GM") return v / 1000;
-  return v;                                   // KG
+  return v; // KG
 }
 export function fromCanonicalWeight(vKg: number, u: WeightUnit): number {
   if (u === "TONNE") return vKg / 1000;
@@ -162,13 +186,27 @@ export function cbmFromCanonical(dimLcm: number, dimWcm: number, dimHcm: number)
 }
 
 const PACKAGE_TYPE_LABELS: Record<PackageType, string> = {
-  BOX: "Box", PALLET: "Pallet", CRATE: "Crate", CARTON: "Carton", DRUM: "Drum", BUNDLE: "Bundle",
+  BOX: "Box",
+  PALLET: "Pallet",
+  CRATE: "Crate",
+  CARTON: "Carton",
+  DRUM: "Drum",
+  BUNDLE: "Bundle",
 };
-export function packageTypeLabel(t: PackageType): string { return PACKAGE_TYPE_LABELS[t] ?? t; }
+export function packageTypeLabel(t: PackageType): string {
+  return PACKAGE_TYPE_LABELS[t] ?? t;
+}
 const UOM_LABELS: Record<UnitOfMeasure, string> = {
-  PC: "pc", SET: "set", BOX: "box", KG: "kg", M: "m", ROLL: "roll",
+  PC: "pc",
+  SET: "set",
+  BOX: "box",
+  KG: "kg",
+  M: "m",
+  ROLL: "roll",
 };
-export function uomLabel(u: UnitOfMeasure): string { return UOM_LABELS[u] ?? u; }
+export function uomLabel(u: UnitOfMeasure): string {
+  return UOM_LABELS[u] ?? u;
+}
 export function weightUnitLabel(u: WeightUnit): string {
   return u === "GM" ? "g" : u === "TONNE" ? "tonne" : "kg";
 }
@@ -191,10 +229,12 @@ git commit -m "feat(shared): PackageType/UnitOfMeasure enums, DG tag, TONNE unit
 ### Task 2: Shared — Cargo/Package/Item schemas, DTOs, tag union, create-validation
 
 **Files:**
+
 - Modify: `packages/shared/src/cargo.ts`, `packages/shared/src/query.ts`, `packages/shared/src/index.ts`
 - Test: `packages/shared/src/cargo.test.ts`, `packages/shared/src/query.test.ts`
 
 **Interfaces — Produces:**
+
 - `cargoCreateSchema`/`cargoUpdateSchema` (`poReference?`, `label?`, `dimUnit`, `weightUnit`).
 - `packageCreateSchema`/`packageUpdateSchema` (`packageNo`, `packageType`(enum), `dimL/W/H`, `grossWt`, `netWt?`, `tags[]`) — **entry-unit values** (converted server-side).
 - `itemCreateSchema`/`itemUpdateSchema` (`product?`, `qty?`, `uom?`, `hsCode?`, `tags[]`) with V‑4 refine (`qty ⇒ uom`).
@@ -205,9 +245,7 @@ git commit -m "feat(shared): PackageType/UnitOfMeasure enums, DG tag, TONNE unit
 - [ ] **Step 1: Write the failing test** (append to `cargo.test.ts`)
 
 ```ts
-import {
-  packageCreateSchema, itemCreateSchema, cargoCreateSchema, effectiveTags,
-} from "./cargo";
+import { packageCreateSchema, itemCreateSchema, cargoCreateSchema, effectiveTags } from "./cargo";
 
 describe("packing-list schemas", () => {
   it("cargo accepts optional PO + requires units with defaults", () => {
@@ -217,14 +255,21 @@ describe("packing-list schemas", () => {
     expect(r.weightUnit).toBe("KG");
   });
   it("package requires packageNo + type + dims + gross", () => {
-    const base = { packageNo: "P-1", packageType: "PALLET", dimL: 120, dimW: 100, dimH: 140, grossWt: 420 };
+    const base = {
+      packageNo: "P-1",
+      packageType: "PALLET",
+      dimL: 120,
+      dimW: 100,
+      dimH: 140,
+      grossWt: 420,
+    };
     expect(packageCreateSchema.safeParse(base).success).toBe(true);
     expect(packageCreateSchema.safeParse({ ...base, packageType: "NUCLEAR" }).success).toBe(false);
     expect(packageCreateSchema.safeParse({ ...base, dimL: 0 }).success).toBe(false); // V-1
     expect(packageCreateSchema.safeParse({ ...base, netWt: 500 }).success).toBe(false); // V-2 net>gross
   });
   it("item requires UoM only when qty present (V-4)", () => {
-    expect(itemCreateSchema.safeParse({ product: "Paint" }).success).toBe(true);        // qty absent → ok
+    expect(itemCreateSchema.safeParse({ product: "Paint" }).success).toBe(true); // qty absent → ok
     expect(itemCreateSchema.safeParse({ product: "Paint", qty: 8 }).success).toBe(false); // qty w/o uom
     expect(itemCreateSchema.safeParse({ product: "Paint", qty: 8, uom: "PC" }).success).toBe(true);
   });
@@ -232,8 +277,9 @@ describe("packing-list schemas", () => {
 
 describe("effectiveTags (BL-3 union)", () => {
   it("unions package + item tags, deduped, order-stable", () => {
-    expect(effectiveTags({ tags: ["HEAVY"], items: [{ tags: ["DG"] }, { tags: ["HEAVY", "FRAGILE"] }] }))
-      .toEqual(["HEAVY", "DG", "FRAGILE"]);
+    expect(
+      effectiveTags({ tags: ["HEAVY"], items: [{ tags: ["DG"] }, { tags: ["HEAVY", "FRAGILE"] }] }),
+    ).toEqual(["HEAVY", "DG", "FRAGILE"]);
   });
 });
 ```
@@ -243,13 +289,34 @@ Append to `query.test.ts`:
 ```ts
 import { collectCreateFindings } from "./query";
 it("flags a package with a DG item but no MSDS (F6, per package)", () => {
-  const ready = { id: "q1", clientId: "c1", contactName: "Jo", contactEmail: "j@a.co",
-    contactPhone: "+911234567890", readyDate: new Date(), targetDelivery: new Date(), incoterms: "FOB" as const };
+  const ready = {
+    id: "q1",
+    clientId: "c1",
+    contactName: "Jo",
+    contactEmail: "j@a.co",
+    contactPhone: "+911234567890",
+    readyDate: new Date(),
+    targetDelivery: new Date(),
+    incoterms: "FOB" as const,
+  };
   const f = collectCreateFindings(ready, [
-    { id: "pk1", effectiveTags: ["DG"], msdsFileId: null, packageNo: "P-1", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 },
+    {
+      id: "pk1",
+      effectiveTags: ["DG"],
+      msdsFileId: null,
+      packageNo: "P-1",
+      dimL: 1,
+      dimW: 1,
+      dimH: 1,
+      grossWt: 1,
+    },
   ]);
   expect(f).toHaveLength(1);
-  expect(f[0]).toMatchObject({ rule: "F6", severity: "blocking", scope: { type: "package", id: "pk1" } });
+  expect(f[0]).toMatchObject({
+    rule: "F6",
+    severity: "blocking",
+    scope: { type: "package", id: "pk1" },
+  });
 });
 ```
 
@@ -271,85 +338,121 @@ export const cargoUpdateSchema = cargoCreateSchema.partial();
 export type CargoUpdateInput = z.infer<typeof cargoUpdateSchema>;
 
 // Package dims/weights arrive in the CARGO's entry unit; the service converts to canonical.
-export const packageCreateSchema = z.object({
-  packageNo: z.string().trim().min(1).max(60),
-  packageType: z.enum(PACKAGE_TYPES),
-  dimL: z.number().positive().max(100000),
-  dimW: z.number().positive().max(100000),
-  dimH: z.number().positive().max(100000),
-  grossWt: z.number().positive().max(1000000000),
-  netWt: z.number().nonnegative().max(1000000000).optional(),
-  tags: z.array(z.enum(REFERENCE_TAGS)).optional(),
-}).refine((p) => p.netWt === undefined || p.netWt <= p.grossWt, {
-  message: "Net weight must be ≤ gross weight", path: ["netWt"],   // V-2
-});
+export const packageCreateSchema = z
+  .object({
+    packageNo: z.string().trim().min(1).max(60),
+    packageType: z.enum(PACKAGE_TYPES),
+    dimL: z.number().positive().max(100000),
+    dimW: z.number().positive().max(100000),
+    dimH: z.number().positive().max(100000),
+    grossWt: z.number().positive().max(1000000000),
+    netWt: z.number().nonnegative().max(1000000000).optional(),
+    tags: z.array(z.enum(REFERENCE_TAGS)).optional(),
+  })
+  .refine((p) => p.netWt === undefined || p.netWt <= p.grossWt, {
+    message: "Net weight must be ≤ gross weight",
+    path: ["netWt"], // V-2
+  });
 export type PackageCreateInput = z.infer<typeof packageCreateSchema>;
-export const packageUpdateSchema = z.object({
-  packageNo: z.string().trim().min(1).max(60),
-  packageType: z.enum(PACKAGE_TYPES),
-  dimL: z.number().positive().max(100000),
-  dimW: z.number().positive().max(100000),
-  dimH: z.number().positive().max(100000),
-  grossWt: z.number().positive().max(1000000000),
-  netWt: z.number().nonnegative().max(1000000000).nullable(),
-  tags: z.array(z.enum(REFERENCE_TAGS)),
-  reason: z.string().trim().min(1).max(500),   // SB6 change-order metadata (stripped before Prisma)
-}).partial().refine((p) => p.netWt == null || p.grossWt == null || p.netWt <= p.grossWt, {
-  message: "Net weight must be ≤ gross weight", path: ["netWt"],
-});
+export const packageUpdateSchema = z
+  .object({
+    packageNo: z.string().trim().min(1).max(60),
+    packageType: z.enum(PACKAGE_TYPES),
+    dimL: z.number().positive().max(100000),
+    dimW: z.number().positive().max(100000),
+    dimH: z.number().positive().max(100000),
+    grossWt: z.number().positive().max(1000000000),
+    netWt: z.number().nonnegative().max(1000000000).nullable(),
+    tags: z.array(z.enum(REFERENCE_TAGS)),
+    reason: z.string().trim().min(1).max(500), // SB6 change-order metadata (stripped before Prisma)
+  })
+  .partial()
+  .refine((p) => p.netWt == null || p.grossWt == null || p.netWt <= p.grossWt, {
+    message: "Net weight must be ≤ gross weight",
+    path: ["netWt"],
+  });
 export type PackageUpdateInput = z.infer<typeof packageUpdateSchema>;
 
-export const itemCreateSchema = z.object({
-  product: z.string().trim().max(200).optional(),
-  qty: z.number().positive().max(1000000000).optional(),
-  uom: z.enum(UOMS).optional(),
-  hsCode: z.string().trim().max(40).optional(),
-  tags: z.array(z.enum(REFERENCE_TAGS)).optional(),
-}).refine((i) => i.qty === undefined || i.uom !== undefined, {
-  message: "Unit of measure is required when a quantity is entered", path: ["uom"],   // V-4
-});
+export const itemCreateSchema = z
+  .object({
+    product: z.string().trim().max(200).optional(),
+    qty: z.number().positive().max(1000000000).optional(),
+    uom: z.enum(UOMS).optional(),
+    hsCode: z.string().trim().max(40).optional(),
+    tags: z.array(z.enum(REFERENCE_TAGS)).optional(),
+  })
+  .refine((i) => i.qty === undefined || i.uom !== undefined, {
+    message: "Unit of measure is required when a quantity is entered",
+    path: ["uom"], // V-4
+  });
 export type ItemCreateInput = z.infer<typeof itemCreateSchema>;
-export const itemUpdateSchema = z.object({
-  product: z.string().trim().max(200).nullable(),
-  qty: z.number().positive().max(1000000000).nullable(),
-  uom: z.enum(UOMS).nullable(),
-  hsCode: z.string().trim().max(40).nullable(),
-  tags: z.array(z.enum(REFERENCE_TAGS)),
-}).partial().refine((i) => i.qty == null || i.uom != null, {
-  message: "Unit of measure is required when a quantity is entered", path: ["uom"],
-});
+export const itemUpdateSchema = z
+  .object({
+    product: z.string().trim().max(200).nullable(),
+    qty: z.number().positive().max(1000000000).nullable(),
+    uom: z.enum(UOMS).nullable(),
+    hsCode: z.string().trim().max(40).nullable(),
+    tags: z.array(z.enum(REFERENCE_TAGS)),
+  })
+  .partial()
+  .refine((i) => i.qty == null || i.uom != null, {
+    message: "Unit of measure is required when a quantity is entered",
+    path: ["uom"],
+  });
 export type ItemUpdateInput = z.infer<typeof itemUpdateSchema>;
 
 export interface ItemDto {
-  id: string; rowIndex: number;
-  product: string | null; qty: string | null; uom: UnitOfMeasure | null;
-  hsCode: string | null; tags: ReferenceTag[];
+  id: string;
+  rowIndex: number;
+  product: string | null;
+  qty: string | null;
+  uom: UnitOfMeasure | null;
+  hsCode: string | null;
+  tags: ReferenceTag[];
 }
 export interface PackageDto {
-  id: string; rowIndex: number; packageNo: string; packageType: PackageType;
-  dimL: string; dimW: string; dimH: string;      // canonical cm (Decimal → string)
-  grossWt: string; netWt: string | null;         // canonical kg
-  volumeCbm: string | null;                       // m³
-  tags: ReferenceTag[];                           // own tags
-  effectiveTags: ReferenceTag[];                  // own ∪ item tags (derived)
+  id: string;
+  rowIndex: number;
+  packageNo: string;
+  packageType: PackageType;
+  dimL: string;
+  dimW: string;
+  dimH: string; // canonical cm (Decimal → string)
+  grossWt: string;
+  netWt: string | null; // canonical kg
+  volumeCbm: string | null; // m³
+  tags: ReferenceTag[]; // own tags
+  effectiveTags: ReferenceTag[]; // own ∪ item tags (derived)
   msdsFileId: string | null;
   items: ItemDto[];
 }
 export interface CargoDto {
-  id: string; rowIndex: number;
-  poReference: string | null; label: string | null;
-  dimUnit: DimUnit; weightUnit: WeightUnit;
+  id: string;
+  rowIndex: number;
+  poReference: string | null;
+  label: string | null;
+  dimUnit: DimUnit;
+  weightUnit: WeightUnit;
   packages: PackageDto[];
   // derived header (H4–H8) — computed by the service, never stored
-  packageCount: number; grossWeightKg: string; volumeCbm: string;
-  tags: ReferenceTag[]; chargeableWeight: null;
+  packageCount: number;
+  grossWeightKg: string;
+  volumeCbm: string;
+  tags: ReferenceTag[];
+  chargeableWeight: null;
 }
 
-export function effectiveTags(pkg: { tags: ReferenceTag[]; items: { tags: ReferenceTag[] }[] }): ReferenceTag[] {
+export function effectiveTags(pkg: {
+  tags: ReferenceTag[];
+  items: { tags: ReferenceTag[] }[];
+}): ReferenceTag[] {
   const seen = new Set<ReferenceTag>();
   const out: ReferenceTag[] = [];
   for (const t of [...pkg.tags, ...pkg.items.flatMap((i) => i.tags)]) {
-    if (!seen.has(t)) { seen.add(t); out.push(t); }
+    if (!seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
   }
   return out;
 }
@@ -361,14 +464,24 @@ Change the `CargoForValidation` interface + the cargo loop to package grain:
 
 ```ts
 export interface PackageForValidation {
-  id: string; effectiveTags: ReferenceTag[]; msdsFileId: string | null;
-  packageNo: string; dimL: number; dimW: number; dimH: number; grossWt: number;
+  id: string;
+  effectiveTags: ReferenceTag[];
+  msdsFileId: string | null;
+  packageNo: string;
+  dimL: number;
+  dimW: number;
+  dimH: number;
+  grossWt: number;
 }
 // in collectCreateFindings, replace the cargo arm:
 for (const p of packages) {
   if (p.effectiveTags.includes("DG") && !p.msdsFileId) {
-    findings.push({ rule: "F6", severity: "blocking", scope: { type: "package", id: p.id },
-      message: `Package ${p.packageNo}: a dangerous-goods package requires an MSDS (PDF)` });
+    findings.push({
+      rule: "F6",
+      severity: "blocking",
+      scope: { type: "package", id: p.id },
+      message: `Package ${p.packageNo}: a dangerous-goods package requires an MSDS (PDF)`,
+    });
   }
 }
 ```
@@ -393,6 +506,7 @@ git commit -m "feat(shared): cargo/package/item schemas + DTOs + effectiveTags u
 ### Task 3: Prisma — Cargo/Package/Item models + hand-authored migration
 
 **Files:**
+
 - Modify: `prisma/schema.prisma`
 - Create: `prisma/migrations/20260805_cargo_packing_list/migration.sql`
 - Test: `apps/api/test/cargo-packing-model.e2e-spec.ts`
@@ -412,10 +526,13 @@ import { PrismaService } from "../src/prisma/prisma.service";
 
 const PFX = "cpl-model-";
 describe("Cargo/Package/Item model (e2e)", () => {
-  let app: INestApplication; let prisma: PrismaService;
+  let app: INestApplication;
+  let prisma: PrismaService;
   beforeAll(async () => {
     const m = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = m.createNestApplication(); await app.init(); prisma = m.get(PrismaService);
+    app = m.createNestApplication();
+    await app.init();
+    prisma = m.get(PrismaService);
   });
   afterAll(async () => {
     await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } });
@@ -423,23 +540,75 @@ describe("Cargo/Package/Item model (e2e)", () => {
   });
 
   it("computes volumeCbm = L*W*H/1e6 (no ×qty) and cascades cargo→package→item", async () => {
-    const q = await prisma.query.create({ data: { queryCode: `Z${Date.now()}`.slice(0, 12), shipmentDescription: `${PFX}a` } });
-    const cargo = await prisma.cargo.create({ data: { queryId: q.id, rowIndex: 0, poReference: "PO-1", dimUnit: "CM", weightUnit: "KG" } });
-    const pkg = await prisma.package.create({ data: {
-      queryId: q.id, cargoId: cargo.id, rowIndex: 0, packageNo: "P-1", packageType: "PALLET",
-      dimL: 120, dimW: 100, dimH: 140, grossWt: 420, tags: ["DG"] } });
-    expect(Number(pkg.volumeCbm)).toBeCloseTo(1.68, 6);           // 120*100*140/1e6
-    await prisma.item.create({ data: { packageId: pkg.id, rowIndex: 0, product: "Deck paint", qty: 8, uom: "PC", hsCode: "32081090" } });
+    const q = await prisma.query.create({
+      data: { queryCode: `Z${Date.now()}`.slice(0, 12), shipmentDescription: `${PFX}a` },
+    });
+    const cargo = await prisma.cargo.create({
+      data: { queryId: q.id, rowIndex: 0, poReference: "PO-1", dimUnit: "CM", weightUnit: "KG" },
+    });
+    const pkg = await prisma.package.create({
+      data: {
+        queryId: q.id,
+        cargoId: cargo.id,
+        rowIndex: 0,
+        packageNo: "P-1",
+        packageType: "PALLET",
+        dimL: 120,
+        dimW: 100,
+        dimH: 140,
+        grossWt: 420,
+        tags: ["DG"],
+      },
+    });
+    expect(Number(pkg.volumeCbm)).toBeCloseTo(1.68, 6); // 120*100*140/1e6
+    await prisma.item.create({
+      data: {
+        packageId: pkg.id,
+        rowIndex: 0,
+        product: "Deck paint",
+        qty: 8,
+        uom: "PC",
+        hsCode: "32081090",
+      },
+    });
     await prisma.query.delete({ where: { id: q.id } });
     expect(await prisma.package.count({ where: { queryId: q.id } })).toBe(0);
     expect(await prisma.item.count({ where: { packageId: pkg.id } })).toBe(0);
   });
 
   it("enforces packageNo uniqueness per query (V-5)", async () => {
-    const q = await prisma.query.create({ data: { queryCode: `Z${Date.now() + 1}`.slice(0, 12), shipmentDescription: `${PFX}b` } });
+    const q = await prisma.query.create({
+      data: { queryCode: `Z${Date.now() + 1}`.slice(0, 12), shipmentDescription: `${PFX}b` },
+    });
     const c = await prisma.cargo.create({ data: { queryId: q.id, rowIndex: 0 } });
-    await prisma.package.create({ data: { queryId: q.id, cargoId: c.id, rowIndex: 0, packageNo: "DUP", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } });
-    await expect(prisma.package.create({ data: { queryId: q.id, cargoId: c.id, rowIndex: 1, packageNo: "DUP", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } })).rejects.toThrow();
+    await prisma.package.create({
+      data: {
+        queryId: q.id,
+        cargoId: c.id,
+        rowIndex: 0,
+        packageNo: "DUP",
+        packageType: "BOX",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      },
+    });
+    await expect(
+      prisma.package.create({
+        data: {
+          queryId: q.id,
+          cargoId: c.id,
+          rowIndex: 1,
+          packageNo: "DUP",
+          packageType: "BOX",
+          dimL: 1,
+          dimW: 1,
+          dimH: 1,
+          grossWt: 1,
+        },
+      }),
+    ).rejects.toThrow();
   });
 });
 ```
@@ -605,6 +774,7 @@ pnpm --filter @svyft/api exec prisma migrate dev --schema ../../prisma/schema.pr
 pnpm --filter @svyft/api exec prisma generate --schema ../../prisma/schema.prisma
 pnpm --filter @svyft/api exec prisma migrate diff --from-url "$(grep '^DATABASE_URL' apps/api/.env | cut -d'\"' -f2)" --to-schema-datamodel prisma/schema.prisma --script
 ```
+
 Expected: applies clean; `migrate diff` prints `-- This is an empty migration.` (zero drift — confirms the `volumeCbm` `dbgenerated(...)` string matches).
 
 - [ ] **Step 6: Run the model test** — `pnpm --filter @svyft/api test -- cargo-packing-model` → PASS.
@@ -629,10 +799,12 @@ git commit -m "feat(prisma): Cargo/Package/Item models + LegPackage rename + sim
 ### Task 4: API — Cargo grouping service + derived header DTO
 
 **Files:**
+
 - Modify: `apps/api/src/modules/cargo/cargo.service.ts`, `cargo.controller.ts`, `cargo.impact.ts`, `cargo.module.ts`
 - Test: `apps/api/test/cargo.e2e-spec.ts` (repurpose)
 
 **Interfaces:**
+
 - Consumes: `PrismaService`, `ChangeMediator`, `ImpactRegistry`, `@svyft/shared` schemas/DTOs (Task 2).
 - Produces: `CargoService.create/update/remove/getTree(queryId)`; `shapeCargo(cargo, packages, items): CargoDto` with derived H4–H8; `cargoImpactMap` (`poReference`/`label`/`dimUnit`/`weightUnit`: `Corrective`; `@create`/`@delete`: `Structural`).
 
@@ -640,12 +812,15 @@ git commit -m "feat(prisma): Cargo/Package/Item models + LegPackage rename + sim
 
 ```ts
 it("creates a cargo and returns a zeroed derived header before any packages exist", async () => {
-  const { queryId } = await freshQuery();      // existing helper minting a query (cargo.e2e-spec)
-  const cargo = await api().post(`/api/queries/${queryId}/cargo`).set("Cookie", cookie())
-    .send({ poReference: "PO-1", dimUnit: "CM", weightUnit: "KG" }).expect(201);
+  const { queryId } = await freshQuery(); // existing helper minting a query (cargo.e2e-spec)
+  const cargo = await api()
+    .post(`/api/queries/${queryId}/cargo`)
+    .set("Cookie", cookie())
+    .send({ poReference: "PO-1", dimUnit: "CM", weightUnit: "KG" })
+    .expect(201);
   expect(cargo.body.packageCount).toBe(0);
   expect(Number(cargo.body.grossWeightKg)).toBe(0);
-  expect(cargo.body.chargeableWeight).toBeNull();               // H7 blank at Stage 3
+  expect(cargo.body.chargeableWeight).toBeNull(); // H7 blank at Stage 3
   const list = await api().get(`/api/queries/${queryId}/cargo`).set("Cookie", cookie()).expect(200);
   expect(list.body.find((x: { id: string }) => x.id === cargo.body.id).poReference).toBe("PO-1");
 });
@@ -693,11 +868,13 @@ git commit -m "feat(api): Cargo grouping CRUD + derived header roll-ups (H4-H8)"
 ### Task 5: API — Package service (canonical storage, packageNo V-5, MSDS)
 
 **Files:**
+
 - Create: `apps/api/src/modules/cargo/package.service.ts`, `package.controller.ts`, `package.impact.ts`
 - Modify: `cargo.module.ts` (register), `files/*` unchanged (reuse `FilesService.storeMsds`)
 - Test: `apps/api/test/package.e2e-spec.ts`
 
 **Interfaces:**
+
 - Produces: `PackageService.create(queryId, cargoId, input, user)`, `.update`, `.remove`, `.attachMsds`, `shapePackage(pkgWithItems): PackageDto`. `packageImpactMap` (`packageType`/dims/`grossWt`/`netWt`: `RfqDefining`; `packageNo`/`tags`/`msdsFileId`: `Corrective`; `@create`/`@delete`: `Structural`).
 - Consumes: `cargo.dimUnit`/`weightUnit` for canonical conversion (read the parent cargo).
 
@@ -707,27 +884,63 @@ git commit -m "feat(api): Cargo grouping CRUD + derived header roll-ups (H4-H8)"
 it("stores dims/weights canonically (mm/tonne entry → cm/kg) and computes volumeCbm", async () => {
   const { queryId } = await freshQuery();
   const cargo = await addCargo(queryId, { dimUnit: "MM", weightUnit: "TONNE" });
-  const p = await api().post(`/api/queries/${queryId}/cargo/${cargo.id}/packages`).set("Cookie", cookie())
-    .send({ packageNo: "P-1", packageType: "CRATE", dimL: 1200, dimW: 1000, dimH: 1400, grossWt: 0.42 }).expect(201);
-  expect(Number(p.body.dimL)).toBe(120);            // 1200 mm → 120 cm
-  expect(Number(p.body.grossWt)).toBe(420);          // 0.42 t → 420 kg
+  const p = await api()
+    .post(`/api/queries/${queryId}/cargo/${cargo.id}/packages`)
+    .set("Cookie", cookie())
+    .send({
+      packageNo: "P-1",
+      packageType: "CRATE",
+      dimL: 1200,
+      dimW: 1000,
+      dimH: 1400,
+      grossWt: 0.42,
+    })
+    .expect(201);
+  expect(Number(p.body.dimL)).toBe(120); // 1200 mm → 120 cm
+  expect(Number(p.body.grossWt)).toBe(420); // 0.42 t → 420 kg
   expect(Number(p.body.volumeCbm)).toBeCloseTo(1.68, 4);
 });
 it("rejects a duplicate packageNo within the query (V-5, case-insensitive/trimmed)", async () => {
-  const { queryId } = await freshQuery(); const cargo = await addCargo(queryId, {});
-  await addPackage(queryId, cargo.id, { packageNo: "P-1", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 });
-  await api().post(`/api/queries/${queryId}/cargo/${cargo.id}/packages`).set("Cookie", cookie())
-    .send({ packageNo: " p-1 ", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 }).expect(409);
+  const { queryId } = await freshQuery();
+  const cargo = await addCargo(queryId, {});
+  await addPackage(queryId, cargo.id, {
+    packageNo: "P-1",
+    packageType: "BOX",
+    dimL: 1,
+    dimW: 1,
+    dimH: 1,
+    grossWt: 1,
+  });
+  await api()
+    .post(`/api/queries/${queryId}/cargo/${cargo.id}/packages`)
+    .set("Cookie", cookie())
+    .send({ packageNo: " p-1 ", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: 1 })
+    .expect(409);
 });
 it("rolls packages into the cargo's derived header (C7: Σ gross/volume, packageCount)", async () => {
-  const { queryId } = await freshQuery(); const cargo = await addCargo(queryId, { dimUnit: "CM", weightUnit: "KG" });
-  await addPackage(queryId, cargo.id, { packageNo: "P-1", packageType: "PALLET", dimL: 120, dimW: 100, dimH: 140, grossWt: 420 });
-  await addPackage(queryId, cargo.id, { packageNo: "P-2", packageType: "BOX", dimL: 100, dimW: 50, dimH: 40, grossWt: 30 });
+  const { queryId } = await freshQuery();
+  const cargo = await addCargo(queryId, { dimUnit: "CM", weightUnit: "KG" });
+  await addPackage(queryId, cargo.id, {
+    packageNo: "P-1",
+    packageType: "PALLET",
+    dimL: 120,
+    dimW: 100,
+    dimH: 140,
+    grossWt: 420,
+  });
+  await addPackage(queryId, cargo.id, {
+    packageNo: "P-2",
+    packageType: "BOX",
+    dimL: 100,
+    dimW: 50,
+    dimH: 40,
+    grossWt: 30,
+  });
   const list = await api().get(`/api/queries/${queryId}/cargo`).set("Cookie", cookie()).expect(200);
   const c = list.body.find((x: { id: string }) => x.id === cargo.id);
   expect(c.packageCount).toBe(2);
-  expect(Number(c.grossWeightKg)).toBeCloseTo(450, 3);       // 420 + 30
-  expect(Number(c.volumeCbm)).toBeCloseTo(1.88, 4);          // 1.68 + 0.20
+  expect(Number(c.grossWeightKg)).toBeCloseTo(450, 3); // 420 + 30
+  expect(Number(c.volumeCbm)).toBeCloseTo(1.88, 4); // 1.68 + 0.20
 });
 ```
 
@@ -760,11 +973,22 @@ git commit -m "feat(api): Package CRUD — canonical cm/kg storage, packageNo V-
 
 ```ts
 it("clones a package N times with unique packageNos and copied items", async () => {
-  const { queryId } = await freshQuery(); const cargo = await addCargo(queryId, {});
-  const p = await addPackage(queryId, cargo.id, { packageNo: "PLT", packageType: "PALLET", dimL: 120, dimW: 100, dimH: 140, grossWt: 420 });
+  const { queryId } = await freshQuery();
+  const cargo = await addCargo(queryId, {});
+  const p = await addPackage(queryId, cargo.id, {
+    packageNo: "PLT",
+    packageType: "PALLET",
+    dimL: 120,
+    dimW: 100,
+    dimH: 140,
+    grossWt: 420,
+  });
   await addItem(queryId, cargo.id, p.id, { product: "Paint", qty: 8, uom: "PC" });
-  const res = await api().post(`/api/queries/${queryId}/cargo/${cargo.id}/packages/${p.id}/copies`).set("Cookie", cookie())
-    .send({ count: 2 }).expect(201);
+  const res = await api()
+    .post(`/api/queries/${queryId}/cargo/${cargo.id}/packages/${p.id}/copies`)
+    .set("Cookie", cookie())
+    .send({ count: 2 })
+    .expect(201);
   expect(res.body).toHaveLength(2);
   const nos = res.body.map((x: { packageNo: string }) => x.packageNo);
   expect(new Set(nos).size).toBe(2);
@@ -788,12 +1012,21 @@ it("clones a package N times with unique packageNos and copied items", async () 
 ```ts
 it("rejects an item with qty but no UoM (V-4) and discards an empty item", async () => {
   const { queryId, cargoId, packageId } = await freshPackage();
-  await api().post(`/api/queries/${queryId}/cargo/${cargoId}/packages/${packageId}/items`).set("Cookie", cookie())
-    .send({ product: "X", qty: 3 }).expect(400);                       // V-4: qty ⇒ uom
-  await api().post(`/api/queries/${queryId}/cargo/${cargoId}/packages/${packageId}/items`).set("Cookie", cookie())
-    .send({}).expect(400);                                              // no product & no qty → discarded/invalid
-  const ok = await api().post(`/api/queries/${queryId}/cargo/${cargoId}/packages/${packageId}/items`).set("Cookie", cookie())
-    .send({ product: "Paint", qty: 8, uom: "PC", hsCode: "32081090" }).expect(201);
+  await api()
+    .post(`/api/queries/${queryId}/cargo/${cargoId}/packages/${packageId}/items`)
+    .set("Cookie", cookie())
+    .send({ product: "X", qty: 3 })
+    .expect(400); // V-4: qty ⇒ uom
+  await api()
+    .post(`/api/queries/${queryId}/cargo/${cargoId}/packages/${packageId}/items`)
+    .set("Cookie", cookie())
+    .send({})
+    .expect(400); // no product & no qty → discarded/invalid
+  const ok = await api()
+    .post(`/api/queries/${queryId}/cargo/${cargoId}/packages/${packageId}/items`)
+    .set("Cookie", cookie())
+    .send({ product: "Paint", qty: 8, uom: "PC", hsCode: "32081090" })
+    .expect(201);
   expect(ok.body.uom).toBe("PC");
 });
 ```
@@ -836,13 +1069,25 @@ it("sets query.dgIndicator when any item carries the DG tag", async () => {
 ```ts
 it("exports one row per item with package+cargo context and a totals row", async () => {
   const { queryId, cargoId, packageId } = await freshPackage({ packageNo: "P-1", grossWt: 420 });
-  await addItem(queryId, cargoId, packageId, { product: "Paint", qty: 8, uom: "PC", hsCode: "32081090" });
-  const buf = await request(app.getHttpServer()).post(`/api/queries/${queryId}/cargo/export`).set("Cookie", cookie()).expect(201).then((r) => r.body);
-  const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
+  await addItem(queryId, cargoId, packageId, {
+    product: "Paint",
+    qty: 8,
+    uom: "PC",
+    hsCode: "32081090",
+  });
+  const buf = await request(app.getHttpServer())
+    .post(`/api/queries/${queryId}/cargo/export`)
+    .set("Cookie", cookie())
+    .expect(201)
+    .then((r) => r.body);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf);
   const ws = wb.getWorksheet("Packing List")!;
   const header = ws.getRow(1).values as string[];
-  expect(header).toEqual(expect.arrayContaining(["Package No", "HSN", "Volume (CBM)", "DG (Yes/No)"]));
-  expect(ws.getCell("A2").value).toBeDefined();      // first data row present
+  expect(header).toEqual(
+    expect.arrayContaining(["Package No", "HSN", "Volume (CBM)", "DG (Yes/No)"]),
+  );
+  expect(ws.getCell("A2").value).toBeDefined(); // first data row present
 });
 ```
 
@@ -862,8 +1107,22 @@ it("exports one row per item with package+cargo context and a totals row", async
 ```ts
 it("assigns packages to a leg and sums canonical roll-ups directly", async () => {
   const { queryId, cargoId } = await freshCargo();
-  const p1 = await addPackage(queryId, cargoId, { packageNo: "P-1", packageType: "BOX", dimL: 100, dimW: 50, dimH: 40, grossWt: 5 });
-  const p2 = await addPackage(queryId, cargoId, { packageNo: "P-2", packageType: "BOX", dimL: 100, dimW: 50, dimH: 40, grossWt: 10 });
+  const p1 = await addPackage(queryId, cargoId, {
+    packageNo: "P-1",
+    packageType: "BOX",
+    dimL: 100,
+    dimW: 50,
+    dimH: 40,
+    grossWt: 5,
+  });
+  const p2 = await addPackage(queryId, cargoId, {
+    packageNo: "P-2",
+    packageType: "BOX",
+    dimL: 100,
+    dimW: 50,
+    dimH: 40,
+    grossWt: 10,
+  });
   const { legId } = await addLeg(queryId, { assignedPackageIds: [p1.id, p2.id] });
   const res = await api().get(`/api/queries/${queryId}`).set("Cookie", cookie()).expect(200);
   const leg = res.body.legs.find((l: { id: string }) => l.id === legId);
@@ -901,9 +1160,9 @@ it("assigns packages to a leg and sums canonical roll-ups directly", async () =>
 
 ```ts
 it("shows a cargo row with derived totals and expands to packages then items", async () => {
-  renderStep3({ cargo: [oneCargoWithTwoPackages()] });   // fixture helper
+  renderStep3({ cargo: [oneCargoWithTwoPackages()] }); // fixture helper
   expect(await screen.findByText("PO-1")).toBeInTheDocument();
-  expect(screen.getByText("2")).toBeInTheDocument();          // package count
+  expect(screen.getByText("2")).toBeInTheDocument(); // package count
   await userEvent.click(screen.getByLabelText("Expand cargo PO-1"));
   expect(await screen.findByText("P-1")).toBeInTheDocument(); // package row
   await userEvent.click(screen.getByLabelText("Expand package P-1"));
@@ -936,8 +1195,15 @@ it("shows a cargo row with derived totals and expands to packages then items", a
 ```ts
 it("shows CBM in the cargo unit and reveals MSDS upload when a package is effectively DG", async () => {
   renderPackageEditor({ cargoUnits: { dimUnit: "MM", weightUnit: "KG" } });
-  await fillPackage({ packageNo: "P-1", packageType: "CRATE", dimL: "1200", dimW: "1000", dimH: "1400", grossWt: "420" });
-  expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("1.6800");     // mm entry → 1.68 m³
+  await fillPackage({
+    packageNo: "P-1",
+    packageType: "CRATE",
+    dimL: "1200",
+    dimW: "1000",
+    dimH: "1400",
+    grossWt: "420",
+  });
+  expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("1.6800"); // mm entry → 1.68 m³
   expect(screen.queryByLabelText("Upload MSDS PDF")).toBeNull();
   await toggleTag("DG");
   expect(screen.getByLabelText("Upload MSDS PDF")).toBeInTheDocument();
@@ -959,10 +1225,12 @@ it("shows CBM in the cargo unit and reveals MSDS upload when a package is effect
 ```ts
 it("requires UoM when qty is entered and flags the package DG when an item is DG", async () => {
   renderPackageEditor({});
-  await addItemLine({ product: "Paint", qty: "8" });     // no uom
+  await addItemLine({ product: "Paint", qty: "8" }); // no uom
   await clickSaveItem();
   expect(await screen.findByText(/Unit of measure is required/i)).toBeInTheDocument();
-  await selectUom("PC"); await toggleItemTag("DG"); await clickSaveItem();
+  await selectUom("PC");
+  await toggleItemTag("DG");
+  await clickSaveItem();
   expect(screen.getByLabelText("Upload MSDS PDF")).toBeInTheDocument();
 });
 ```
@@ -1004,24 +1272,24 @@ it("requires UoM when qty is entered and flags the package DG when an item is DG
 
 ## Self-review — spec coverage
 
-| Spec section | Task(s) |
-|---|---|
-| C1/C2 three-level model, reuse CargoItem | 3 |
-| C3 main table = cargo, expansion | 12 |
-| C4 one-record-per-package + add N copies | 6, 14 |
-| C5 packageCount parked | 3 (column) |
+| Spec section                                 | Task(s)     |
+| -------------------------------------------- | ----------- |
+| C1/C2 three-level model, reuse CargoItem     | 3           |
+| C3 main table = cargo, expansion             | 12          |
+| C4 one-record-per-package + add N copies     | 6, 14       |
+| C5 packageCount parked                       | 3 (column)  |
 | C6 cargo-level units, canonical cm/kg, tonne | 1, 3, 5, 13 |
-| C7 derived H4–H8 | 4, 12 |
-| C8 DG tag + union + dgIndicator | 1, 2, 8 |
-| C9 package net weight, V‑2, V‑3 dropped | 2, 5 |
-| C10 MSDS per package, DG-triggered | 2, 5, 14 |
-| C11 PO/Ref at cargo | 2, 4 |
-| C12 no customs form (popup only) | 13–15 |
-| C13 leg mapping at package grain | 10, 16 |
-| C14 pre-go-live migration (reset path) | 3 |
-| V‑4 qty⇒UoM | 2, 7, 15 |
-| V‑5 packageNo uniqueness | 3, 5 |
-| V‑6 unit round-trip | 1 |
-| V‑7 tag non-removal (UI) | 14, 15 |
-| Excel export restructure | 9 |
-| Docs alignment | 17 |
+| C7 derived H4–H8                             | 4, 12       |
+| C8 DG tag + union + dgIndicator              | 1, 2, 8     |
+| C9 package net weight, V‑2, V‑3 dropped      | 2, 5        |
+| C10 MSDS per package, DG-triggered           | 2, 5, 14    |
+| C11 PO/Ref at cargo                          | 2, 4        |
+| C12 no customs form (popup only)             | 13–15       |
+| C13 leg mapping at package grain             | 10, 16      |
+| C14 pre-go-live migration (reset path)       | 3           |
+| V‑4 qty⇒UoM                                  | 2, 7, 15    |
+| V‑5 packageNo uniqueness                     | 3, 5        |
+| V‑6 unit round-trip                          | 1           |
+| V‑7 tag non-removal (UI)                     | 14, 15      |
+| Excel export restructure                     | 9           |
+| Docs alignment                               | 17          |

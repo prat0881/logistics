@@ -88,21 +88,23 @@ describe("Cargo export — packing list xlsx (e2e)", () => {
   // collecting the raw response bytes ourselves instead of letting supertest's default parser
   // touch them.
   function exportXlsx(queryId: string) {
-    return api()
-      .post(`/api/queries/${queryId}/cargo/export`)
-      .set("Cookie", cookie())
-      .buffer(true)
-      // No explicit param types: superagent's `.parse()` overload only exposes a `Response`-typed
-      // callback shape (real runtime value is the raw Node response stream — a long-standing
-      // @types/superagent inaccuracy for this exact binary-buffering idiom), so let contextual
-      // typing from the overload drive the callback's parameter types instead of hand-annotating
-      // them (hand-annotating `res`/`cb` here is what trips `tsc`, even though ts-jest's isolated
-      // transpile never checks it).
-      .parse((res, cb) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(Buffer.from(c)));
-        res.on("end", () => cb(null, Buffer.concat(chunks)));
-      });
+    return (
+      api()
+        .post(`/api/queries/${queryId}/cargo/export`)
+        .set("Cookie", cookie())
+        .buffer(true)
+        // No explicit param types: superagent's `.parse()` overload only exposes a `Response`-typed
+        // callback shape (real runtime value is the raw Node response stream — a long-standing
+        // @types/superagent inaccuracy for this exact binary-buffering idiom), so let contextual
+        // typing from the overload drive the callback's parameter types instead of hand-annotating
+        // them (hand-annotating `res`/`cb` here is what trips `tsc`, even though ts-jest's isolated
+        // transpile never checks it).
+        .parse((res, cb) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (c: Buffer) => chunks.push(Buffer.from(c)));
+          res.on("end", () => cb(null, Buffer.concat(chunks)));
+        })
+    );
   }
 
   // Robust column lookup by header text (rather than a hardcoded column letter) so assertions

@@ -24,14 +24,14 @@ Query ──1:N──▶ Cargo ──1:N──▶ Package ──1:N──▶ Ite
 
 ### 1.1 What this build delivers vs defers
 
-| Delivered now | Deferred |
-|---|---|
-| Cargo→Package→Item model + migration | `packageCount` **multiplier** behaviour (column reserved, parked at 1) |
-| Package-grain roll-ups (derived), tag union, DG-as-tag | Chargeable weight (Stage 4, filled by the freight forwarder) |
-| Cargo-level unit selectors, canonical cm/kg storage, kg/tonne/g | — |
-| Nested cargo popup entry; two-level table expansion; "add N copies" | — |
-| Package↔leg mapping at package grain (today's rules) | — |
-| HSN per item; MSDS per package (DG-triggered) | — |
+| Delivered now                                                       | Deferred                                                               |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Cargo→Package→Item model + migration                                | `packageCount` **multiplier** behaviour (column reserved, parked at 1) |
+| Package-grain roll-ups (derived), tag union, DG-as-tag              | Chargeable weight (Stage 4, filled by the freight forwarder)           |
+| Cargo-level unit selectors, canonical cm/kg storage, kg/tonne/g     | —                                                                      |
+| Nested cargo popup entry; two-level table expansion; "add N copies" | —                                                                      |
+| Package↔leg mapping at package grain (today's rules)                | —                                                                      |
+| HSN per item; MSDS per package (DG-triggered)                       | —                                                                      |
 
 ---
 
@@ -39,22 +39,22 @@ Query ──1:N──▶ Cargo ──1:N──▶ Package ──1:N──▶ Ite
 
 Numbered for citation from the implementation plan. All confirmed with the requester.
 
-| # | Decision | Rationale |
-|---|---|---|
-| **C1** | Three levels: `Query → Cargo → Package → Item`. | Business restructure of the flat model. |
-| **C2** | **Reuse `CargoItem` as `Package`** (rename/repurpose the existing table); add a thin `Cargo` parent and a new `Item` child. | Minimises change: `LegCargo` and `QuoteCargoLine` keep pointing at the same physical rows — now packages — so Stage‑4 joins are untouched. |
-| **C3** | **Package is the unit of representation everywhere except the Cargo Details main table.** Main table row = a Cargo; expanding a cargo reveals its packages; expanding a package reveals its items. Edit/Remove act at the cargo level (nested popup). | PRD §2.1 + requester direction. |
-| **C4** | **One record per physical package** (no stored multiplier). An **"add N copies"** helper clones a package into N discrete records, each with its own Package No. | Keeps roll-ups pure Σ and leg mapping / Package-No uniqueness meaningful. |
-| **C5** | `packageCount` **parked**: kept as a `Package` column, default 1, **no calculation**, **not shown in UI**. | Reserved pending business definition of "N identical packages." |
-| **C6** | **Unit selectors (Dimension, Weight) live on the Cargo**; values stored **canonical cm/kg** on packages (units are presentation-only, BL‑6). Weight units = **kg / tonne / g**. | Per-cargo entry context; canonical storage keeps roll-ups pure Σ and simplifies the generated column. |
-| **C7** | **Header totals H4–H8 are derived-on-read, never stored** (count, Σgross, Σvolume, ⋃tags, chargeable=null). | PRD §2.2 ("a stored total goes stale"); matches Technical Design §4.5 (leg roll-ups are derived, only `volumeCbm`/`dgIndicator` are stored exceptions). |
-| **C8** | **DG becomes a reference tag** (the `isDangerous` boolean is removed). Tags **union upward** (`package.tags = own ∪ ⋃ item.tags`; `cargo.tags = ⋃ package.tags`) and **cannot be cleared above** where set. `Query.dgIndicator` derives from the DG tag. | PRD BL‑3, V‑7. |
-| **C9** | **Net weight is package-level only** (`Package.netWt`, nullable), **shown in the UI**. **V‑3 dropped** (its "Σ item net weights" premise never existed — items have no net weight). **V‑2 active**. | PRD internal inconsistency resolved; net stays where it is measured. |
-| **C10** | **MSDS attaches per Package**, required when **any item under the package (or the package itself) carries the DG tag**. Otherwise MSDS behaves exactly as today (PDF-only, magic-byte validated, uploaded from the row). | Business direction; keeps today's package-level MSDS with the DG trigger derived from the tag union (C8). |
-| **C11** | **PO/Reference lives on the Cargo** (one reference per grouping). No mixed references within a package. | Gives Cargo a clear identity; removes the PRD's "Mixed (n)" case. |
-| **C12** | **No separate customs-form output.** Business confirmed the "customs form" meant the **cargo → package → item entry popup** (delivered here), not a generated document. HSN is still captured per item. | Clarified with business — the requirement is the structured entry, not a customs file. |
-| **C13** | **Package↔leg mapping uses today's rules at package grain** (sequential multi-leg journey; R1–R9 continuity; `cargoConflicts` re-grained to packages). | Requester direction; preserves the route-validation engine. |
-| **C14** | **Migration is the pre-go-live/test-data path** (no production cargo/quotes to preserve). | Confirmed with requester. |
+| #       | Decision                                                                                                                                                                                                                                                 | Rationale                                                                                                                                               |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **C1**  | Three levels: `Query → Cargo → Package → Item`.                                                                                                                                                                                                          | Business restructure of the flat model.                                                                                                                 |
+| **C2**  | **Reuse `CargoItem` as `Package`** (rename/repurpose the existing table); add a thin `Cargo` parent and a new `Item` child.                                                                                                                              | Minimises change: `LegCargo` and `QuoteCargoLine` keep pointing at the same physical rows — now packages — so Stage‑4 joins are untouched.              |
+| **C3**  | **Package is the unit of representation everywhere except the Cargo Details main table.** Main table row = a Cargo; expanding a cargo reveals its packages; expanding a package reveals its items. Edit/Remove act at the cargo level (nested popup).    | PRD §2.1 + requester direction.                                                                                                                         |
+| **C4**  | **One record per physical package** (no stored multiplier). An **"add N copies"** helper clones a package into N discrete records, each with its own Package No.                                                                                         | Keeps roll-ups pure Σ and leg mapping / Package-No uniqueness meaningful.                                                                               |
+| **C5**  | `packageCount` **parked**: kept as a `Package` column, default 1, **no calculation**, **not shown in UI**.                                                                                                                                               | Reserved pending business definition of "N identical packages."                                                                                         |
+| **C6**  | **Unit selectors (Dimension, Weight) live on the Cargo**; values stored **canonical cm/kg** on packages (units are presentation-only, BL‑6). Weight units = **kg / tonne / g**.                                                                          | Per-cargo entry context; canonical storage keeps roll-ups pure Σ and simplifies the generated column.                                                   |
+| **C7**  | **Header totals H4–H8 are derived-on-read, never stored** (count, Σgross, Σvolume, ⋃tags, chargeable=null).                                                                                                                                              | PRD §2.2 ("a stored total goes stale"); matches Technical Design §4.5 (leg roll-ups are derived, only `volumeCbm`/`dgIndicator` are stored exceptions). |
+| **C8**  | **DG becomes a reference tag** (the `isDangerous` boolean is removed). Tags **union upward** (`package.tags = own ∪ ⋃ item.tags`; `cargo.tags = ⋃ package.tags`) and **cannot be cleared above** where set. `Query.dgIndicator` derives from the DG tag. | PRD BL‑3, V‑7.                                                                                                                                          |
+| **C9**  | **Net weight is package-level only** (`Package.netWt`, nullable), **shown in the UI**. **V‑3 dropped** (its "Σ item net weights" premise never existed — items have no net weight). **V‑2 active**.                                                      | PRD internal inconsistency resolved; net stays where it is measured.                                                                                    |
+| **C10** | **MSDS attaches per Package**, required when **any item under the package (or the package itself) carries the DG tag**. Otherwise MSDS behaves exactly as today (PDF-only, magic-byte validated, uploaded from the row).                                 | Business direction; keeps today's package-level MSDS with the DG trigger derived from the tag union (C8).                                               |
+| **C11** | **PO/Reference lives on the Cargo** (one reference per grouping). No mixed references within a package.                                                                                                                                                  | Gives Cargo a clear identity; removes the PRD's "Mixed (n)" case.                                                                                       |
+| **C12** | **No separate customs-form output.** Business confirmed the "customs form" meant the **cargo → package → item entry popup** (delivered here), not a generated document. HSN is still captured per item.                                                  | Clarified with business — the requirement is the structured entry, not a customs file.                                                                  |
+| **C13** | **Package↔leg mapping uses today's rules at package grain** (sequential multi-leg journey; R1–R9 continuity; `cargoConflicts` re-grained to packages).                                                                                                   | Requester direction; preserves the route-validation engine.                                                                                             |
+| **C14** | **Migration is the pre-go-live/test-data path** (no production cargo/quotes to preserve).                                                                                                                                                                | Confirmed with requester.                                                                                                                               |
 
 ---
 
@@ -73,16 +73,16 @@ Query ──1:N──▶ Cargo ──1:N──▶ Package(ex-CargoItem) ──1:
 
 ### 3.2 `Cargo` (new — the grouping / packing-list-section row)
 
-| Field | Type | Entry | Notes |
-|---|---|---|---|
-| `id` | uuid PK | — | |
-| `tenantId` | uuid? | — | tenant-ready (repo convention) |
-| `queryId` | uuid FK → Query | — | cascade delete |
-| `rowIndex` | int | assigned | main-table order |
-| `poReference` | text? | typed | optional (PRD H1); the cargo's identity/label |
-| `label` | text? | typed | optional human label |
-| `dimUnit` | enum `DimUnit` (CM·MM) | selected | **entry/display only**; default CM |
-| `weightUnit` | enum `WeightUnit` (KG·TONNE·GM) | selected | **entry/display only**; default KG |
+| Field         | Type                            | Entry    | Notes                                         |
+| ------------- | ------------------------------- | -------- | --------------------------------------------- |
+| `id`          | uuid PK                         | —        |                                               |
+| `tenantId`    | uuid?                           | —        | tenant-ready (repo convention)                |
+| `queryId`     | uuid FK → Query                 | —        | cascade delete                                |
+| `rowIndex`    | int                             | assigned | main-table order                              |
+| `poReference` | text?                           | typed    | optional (PRD H1); the cargo's identity/label |
+| `label`       | text?                           | typed    | optional human label                          |
+| `dimUnit`     | enum `DimUnit` (CM·MM)          | selected | **entry/display only**; default CM            |
+| `weightUnit`  | enum `WeightUnit` (KG·TONNE·GM) | selected | **entry/display only**; default KG            |
 
 **Derived on read (never stored — C7):** `packageCount = COUNT(packages)`, `grossWeightKg = Σ package.grossWt`, `volumeCbm = Σ package.volumeCbm`, `tags = ⋃ package.tags`, `chargeableWeight = null`.
 
@@ -90,39 +90,39 @@ Query ──1:N──▶ Cargo ──1:N──▶ Package(ex-CargoItem) ──1:
 
 Rename `model CargoItem` → `model Package`. Keep the row; change its shape.
 
-| Field | Type | Change vs today | Notes |
-|---|---|---|---|
-| `id` | uuid PK | keep | `LegCargo`/`QuoteCargoLine` still FK here |
-| `tenantId` | uuid? | keep | |
-| `queryId` | uuid FK → Query | **keep** (denormalised) | avoids touching queryId-scoped services; also reachable via `cargo` |
-| `cargoId` | uuid FK → Cargo | **new** | cascade delete |
-| `rowIndex` | int | keep | order within the cargo |
-| `packageNo` | text | **new** | auto-numbered, editable, **unique per query** (V‑5) |
-| `packageType` | enum `PackageType` | **was free-text** | dropdown: BOX·PALLET·CRATE·CARTON·DRUM·BUNDLE |
-| `dimL` `dimW` `dimH` | Decimal(10,2) | keep | **stored canonical cm** (C6) |
-| `grossWt` | Decimal(12,3) | keep | **stored canonical kg** |
-| `netWt` | Decimal(12,3)? | keep | nullable; shown (C9) |
-| `tags` | `ReferenceTag[]` | keep + **DG added** | own tags; unions with item tags on read |
-| `msdsFileId` | uuid FK → FileAsset? | **keep** | package-level MSDS; required when the package's **effective** tags include DG (F6, C10) |
-| `volumeCbm` | Decimal(14,6) generated | **simplified** | `GENERATED ALWAYS AS (dimL*dimW*dimH/1e6) STORED` — no `×qty`, no unit CASE (storage is canonical cm) |
-| `packageCount` | int default 1 | **new, parked** | no calculation; not shown (C5) |
-| `createdAt`/`updatedAt` | — | keep | |
+| Field                   | Type                    | Change vs today         | Notes                                                                                                 |
+| ----------------------- | ----------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `id`                    | uuid PK                 | keep                    | `LegCargo`/`QuoteCargoLine` still FK here                                                             |
+| `tenantId`              | uuid?                   | keep                    |                                                                                                       |
+| `queryId`               | uuid FK → Query         | **keep** (denormalised) | avoids touching queryId-scoped services; also reachable via `cargo`                                   |
+| `cargoId`               | uuid FK → Cargo         | **new**                 | cascade delete                                                                                        |
+| `rowIndex`              | int                     | keep                    | order within the cargo                                                                                |
+| `packageNo`             | text                    | **new**                 | auto-numbered, editable, **unique per query** (V‑5)                                                   |
+| `packageType`           | enum `PackageType`      | **was free-text**       | dropdown: BOX·PALLET·CRATE·CARTON·DRUM·BUNDLE                                                         |
+| `dimL` `dimW` `dimH`    | Decimal(10,2)           | keep                    | **stored canonical cm** (C6)                                                                          |
+| `grossWt`               | Decimal(12,3)           | keep                    | **stored canonical kg**                                                                               |
+| `netWt`                 | Decimal(12,3)?          | keep                    | nullable; shown (C9)                                                                                  |
+| `tags`                  | `ReferenceTag[]`        | keep + **DG added**     | own tags; unions with item tags on read                                                               |
+| `msdsFileId`            | uuid FK → FileAsset?    | **keep**                | package-level MSDS; required when the package's **effective** tags include DG (F6, C10)               |
+| `volumeCbm`             | Decimal(14,6) generated | **simplified**          | `GENERATED ALWAYS AS (dimL*dimW*dimH/1e6) STORED` — no `×qty`, no unit CASE (storage is canonical cm) |
+| `packageCount`          | int default 1           | **new, parked**         | no calculation; not shown (C5)                                                                        |
+| `createdAt`/`updatedAt` | —                       | keep                    |                                                                                                       |
 
 **Removed from this table** (move to `Item`): `poReference` (→ Cargo, C11), `productName`, `qty`, `hsCode`, `isDangerous` (→ DG tag, C8), `dimUnit`/`weightUnit` (→ Cargo, C6), `freightDensity`/`chargeableWeight` (were Stage‑4 placeholders — Stage 4 already carries these on `QuoteCargoLine`, so drop the unused columns here). **`msdsFileId` stays** (package-level MSDS, C10).
 
 ### 3.4 `Item` (new — commercial/customs unit)
 
-| Field | Type | Entry | Notes |
-|---|---|---|---|
-| `id` | uuid PK | — | |
-| `tenantId` | uuid? | — | |
-| `packageId` | uuid FK → Package | — | cascade delete |
-| `rowIndex` | int | assigned | display position; SN shown as `rowIndex + 1` (not stored) |
-| `product` | text? | typed/lookup | **optional** |
-| `qty` | Decimal? | typed | **optional** |
-| `uom` | enum `UnitOfMeasure` (PC·SET·BOX·KG·M·ROLL) | selected | **required only when `qty` present** (V‑4) |
-| `hsCode` | text? | typed | optional at Stage 3 |
-| `tags` | `ReferenceTag[]` | selected | incl. DG (DG here makes the parent package require an MSDS) |
+| Field       | Type                                        | Entry        | Notes                                                       |
+| ----------- | ------------------------------------------- | ------------ | ----------------------------------------------------------- |
+| `id`        | uuid PK                                     | —            |                                                             |
+| `tenantId`  | uuid?                                       | —            |                                                             |
+| `packageId` | uuid FK → Package                           | —            | cascade delete                                              |
+| `rowIndex`  | int                                         | assigned     | display position; SN shown as `rowIndex + 1` (not stored)   |
+| `product`   | text?                                       | typed/lookup | **optional**                                                |
+| `qty`       | Decimal?                                    | typed        | **optional**                                                |
+| `uom`       | enum `UnitOfMeasure` (PC·SET·BOX·KG·M·ROLL) | selected     | **required only when `qty` present** (V‑4)                  |
+| `hsCode`    | text?                                       | typed        | optional at Stage 3                                         |
+| `tags`      | `ReferenceTag[]`                            | selected     | incl. DG (DG here makes the parent package require an MSDS) |
 
 An item with **neither product nor qty is discarded on save** (V‑4).
 
@@ -166,17 +166,17 @@ cargo.tags             = ⋃ package.tags(effective)      (H8)
 
 ## 5. Validation catalogue (V-1…V-8 → new model)
 
-| ID | Rule | Level | Status in this design |
-|---|---|---|---|
-| V‑1 | L, W, H, Gross Wt all > 0 | Package | Keep (Zod positivity, block on save) |
-| V‑2 | Net ≤ Gross where both present | Package | **Active** (net is entered in UI) |
-| V‑3 | Σ item net weights ≤ package gross | — | **Dropped** (no item net weight — C9) |
-| V‑4 | Qty ⇒ UoM; item with no qty & no product discarded | Item | **New** |
-| V‑5 | Package No unique per shipment, case-insensitive, trimmed | Package (query-scoped) | **New** |
-| V‑6 | Unit change must not alter stored value; cm→mm→cm round-trips | Cargo | Satisfied by canonical storage; add CI test |
-| V‑7 | A tag set on an item can't be removed at package/cargo level | Item→Package→Cargo | **New** (UI union guard) |
-| V‑8 | Dims/weights reject negatives & non-numerics; blank ≠ zero for Net only | Package | Keep (Zod; `netWt` nullable) |
-| F6 | DG package requires an MSDS (PDF) | Package | Triggered when the package's **effective** tags include DG (any item, or the package itself) |
+| ID  | Rule                                                                    | Level                  | Status in this design                                                                        |
+| --- | ----------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------- |
+| V‑1 | L, W, H, Gross Wt all > 0                                               | Package                | Keep (Zod positivity, block on save)                                                         |
+| V‑2 | Net ≤ Gross where both present                                          | Package                | **Active** (net is entered in UI)                                                            |
+| V‑3 | Σ item net weights ≤ package gross                                      | —                      | **Dropped** (no item net weight — C9)                                                        |
+| V‑4 | Qty ⇒ UoM; item with no qty & no product discarded                      | Item                   | **New**                                                                                      |
+| V‑5 | Package No unique per shipment, case-insensitive, trimmed               | Package (query-scoped) | **New**                                                                                      |
+| V‑6 | Unit change must not alter stored value; cm→mm→cm round-trips           | Cargo                  | Satisfied by canonical storage; add CI test                                                  |
+| V‑7 | A tag set on an item can't be removed at package/cargo level            | Item→Package→Cargo     | **New** (UI union guard)                                                                     |
+| V‑8 | Dims/weights reject negatives & non-numerics; blank ≠ zero for Net only | Package                | Keep (Zod; `netWt` nullable)                                                                 |
+| F6  | DG package requires an MSDS (PDF)                                       | Package                | Triggered when the package's **effective** tags include DG (any item, or the package itself) |
 
 `collectCreateFindings` (shared, create-phase) updates: mandatory query fields unchanged; cargo checks become **per package whose effective tags include DG → MSDS present**, plus package dims/gross present.
 
@@ -229,11 +229,11 @@ One row per **Cargo**, columns aggregated over its packages:
 
 Single worksheet **`Packing List`**, **one row per Item**, with its package and cargo context repeated on each line. A **package with no items** emits one row with the item columns blank. An optional **totals row** closes the sheet (package count, Σ gross, Σ volume). Column order:
 
-| Group | Columns |
-|---|---|
-| Cargo | `Cargo #` · `PO / Reference` |
+| Group   | Columns                                                                                                                                        |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cargo   | `Cargo #` · `PO / Reference`                                                                                                                   |
 | Package | `Package No` · `Package Type` · `Dim L (cm)` · `Dim W (cm)` · `Dim H (cm)` · `Gross Wt (kg)` · `Net Wt (kg)` · `Volume (CBM)` · `Package Tags` |
-| Item | `SN` · `Product` · `Qty` · `UoM` · `HSN` · `Item Tags` · `DG (Yes/No)` |
+| Item    | `SN` · `Product` · `Qty` · `UoM` · `HSN` · `Item Tags` · `DG (Yes/No)`                                                                         |
 
 `DG` is derived from the DG tag; `Package Tags` / `Item Tags` render the effective (unioned) set. Values are canonical cm/kg, so the `(cm)`/`(kg)` headers are now accurate (today's export hardcodes them even for mm/g rows). Excel **import** remains out of scope.
 
@@ -256,7 +256,7 @@ Cargo mutations already flow through `ChangeMediator` with `cargoImpactMap`. Re-
 - **`package`** — `packageType`/`dimL`/`dimW`/`dimH`/`grossWt`/`netWt`: `RfqDefining`; `packageNo`/`tags`/`msdsFileId`: `Corrective`; `@create`/`@delete`: `Structural`.
 - **`item`** — `product`/`qty`/`uom`/`hsCode`/`tags`: `Corrective`; `@create`/`@delete`: `Corrective` (items don't change what a FF quotes — the package does).
 
-*(Rationale: FFs quote against package weight/dims/type, so those stay `RfqDefining`; commercial/customs detail is `Corrective`.)*
+_(Rationale: FFs quote against package weight/dims/type, so those stay `RfqDefining`; commercial/customs detail is `Corrective`.)_
 
 ---
 
@@ -267,6 +267,7 @@ Test data only, no production preservation. Applied as **hand-authored SQL + `pr
 **One-time data wipe (run + confirmed before applying):** truncate the transactional tables — queries, the cargo cluster, points, legs, rfqs, quotes, charge lines, escalations, emails, notifications, change logs, status transitions. **Keep** masters + config/catalogue (users, clients, vessels, reference). This clears orphaned cargo refs and gives fresh fixtures.
 
 **Migration SQL (DDL only):**
+
 1. `CREATE TYPE "PackageType"`, `"UnitOfMeasure"`; `ALTER TYPE "ReferenceTag" ADD VALUE 'DG'`; `ALTER TYPE "WeightUnit" ADD VALUE 'TONNE' AFTER 'KG'`. (An `ADD VALUE` must not be used in the same transaction that references the new value.)
 2. `DROP TABLE "LegCargo"`; clear + repoint `QuoteCargoLine` (`DELETE FROM "QuoteCargoLine"`, drop its cargo FK, rename `cargoItemId → packageId`); then `DROP TABLE "CargoItem"`.
 3. `CREATE TABLE "Cargo"`, `"Package"` (with `volumeCbm` `GENERATED ALWAYS AS ("dimL"*"dimW"*"dimH"/1000000) STORED`, `@@unique(queryId, packageNo)`), `"Item"`, `"LegPackage"`.
@@ -287,19 +288,19 @@ Per-level CRUD under the query, mirroring today's cargo endpoints (all mediated 
 - `POST /queries/:id/cargo/export` — restructured packing-list xlsx.
 - Leg assignment body carries `assignedPackageIds` (was `assignedCargoIds`).
 
-*(A single nested `PUT /queries/:id/cargo/:cid` that saves the whole tree is also viable and matches the popup's one-transaction save — to be finalised in the implementation plan.)*
+_(A single nested `PUT /queries/:id/cargo/:cid` that saves the whole tree is also viable and matches the popup's one-transaction save — to be finalised in the implementation plan.)_
 
 ---
 
 ## 13. Open items
 
-| # | Item | Disposition |
-|---|---|---|
-| O1 | `packageCount` **multiplier** semantics (N identical packages) | Column reserved (default 1, no calc, hidden). Confirm business need; if adopted, revisit roll-ups (weighted Σ) and leg mapping. |
-| O2 | Net-weight display | Resolved: **shown**. If business later hides it, revisit V‑2/V‑3. |
-| O3 | Mixed references within a package | Resolved: **not supported** (PO/Ref at cargo). Revisit only if business requires item-level references. |
-| O4 | FK/table rename vs `@@map` fallback | Default = clean rename; fallback documented (§3.6). |
-| O5 | Nested `PUT` vs per-level endpoints | Finalise in implementation plan (§12). |
+| #   | Item                                                           | Disposition                                                                                                                     |
+| --- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| O1  | `packageCount` **multiplier** semantics (N identical packages) | Column reserved (default 1, no calc, hidden). Confirm business need; if adopted, revisit roll-ups (weighted Σ) and leg mapping. |
+| O2  | Net-weight display                                             | Resolved: **shown**. If business later hides it, revisit V‑2/V‑3.                                                               |
+| O3  | Mixed references within a package                              | Resolved: **not supported** (PO/Ref at cargo). Revisit only if business requires item-level references.                         |
+| O4  | FK/table rename vs `@@map` fallback                            | Default = clean rename; fallback documented (§3.6).                                                                             |
+| O5  | Nested `PUT` vs per-level endpoints                            | Finalise in implementation plan (§12).                                                                                          |
 
 ---
 
@@ -309,4 +310,4 @@ Excel import · chargeable-weight / freight-density computation (Stage 4) · `pa
 
 ---
 
-*End of design.*
+_End of design._

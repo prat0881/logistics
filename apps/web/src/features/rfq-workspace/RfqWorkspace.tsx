@@ -34,8 +34,10 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
     }
   }, [legs]);
 
-  if (query.isLoading || rfqState.isLoading) return <p className="text-sm text-muted-foreground">Loading workspace…</p>;
-  if (query.isError || !query.data) return <p className="text-sm text-destructive">Failed to load the query.</p>;
+  if (query.isLoading || rfqState.isLoading)
+    return <p className="text-sm text-muted-foreground">Loading workspace…</p>;
+  if (query.isError || !query.data)
+    return <p className="text-sm text-destructive">Failed to load the query.</p>;
 
   const q = query.data;
   const quotes = rfqState.data?.quotes ?? [];
@@ -45,7 +47,9 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
   function jumpToLeg(legId: string) {
     setOpenLegId(legId);
     requestAnimationFrame(() =>
-      document.getElementById(`legcard-${legId}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" }),
+      document
+        .getElementById(`legcard-${legId}`)
+        ?.scrollIntoView?.({ behavior: "smooth", block: "center" }),
     );
   }
 
@@ -62,22 +66,33 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
     <div className="space-y-5">
       <QueryOverviewHeader query={q} />
 
-      <section aria-label="Route overview" className="rounded-lg border border-border bg-card p-4 sm:p-6">
-        <h2 className="mb-3 font-display text-sm font-semibold text-muted-foreground">Route overview</h2>
+      <section
+        aria-label="Route overview"
+        className="rounded-lg border border-border bg-card p-4 sm:p-6"
+      >
+        <h2 className="mb-3 font-display text-sm font-semibold text-muted-foreground">
+          Route overview
+        </h2>
         <RouteDiagram detail={q} findings={[]} onEditLeg={jumpToLeg} />
       </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-lg font-semibold">RFQ distribution</h2>
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={() => setOpenLegId(null)}>Collapse All</Button>
+          <Button variant="ghost" onClick={() => setOpenLegId(null)}>
+            Collapse All
+          </Button>
           <Button variant="secondary" onClick={runDistributeAll} disabled={distributeAll.isPending}>
             {distributeAll.isPending ? "Distributing…" : "Distribute All"}
           </Button>
         </div>
       </div>
 
-      {allError && <p role="alert" className="text-sm text-destructive">{allError}</p>}
+      {allError && (
+        <p role="alert" className="text-sm text-destructive">
+          {allError}
+        </p>
+      )}
       {allResult && (
         <div className="rounded-md border border-border bg-card p-3 text-sm">
           {allResult.distributedLegIds.length > 0 && (
@@ -106,7 +121,9 @@ export function RfqWorkspace({ queryId }: { queryId: string }) {
           />
         ))}
         {q.legs.length === 0 && (
-          <p className="text-sm text-muted-foreground">This query has no legs yet — add legs in the Create stage first.</p>
+          <p className="text-sm text-muted-foreground">
+            This query has no legs yet — add legs in the Create stage first.
+          </p>
         )}
       </div>
     </div>

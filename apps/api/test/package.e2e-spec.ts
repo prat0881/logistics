@@ -48,7 +48,10 @@ describe("Package CRUD (e2e)", () => {
   async function freshQuery(): Promise<{ queryId: string }> {
     seq += 1;
     const q = await prisma.query.create({
-      data: { queryCode: `Z5${Date.now()}${seq}`.slice(0, 24), shipmentDescription: `${PFX}${seq}` },
+      data: {
+        queryCode: `Z5${Date.now()}${seq}`.slice(0, 24),
+        shipmentDescription: `${PFX}${seq}`,
+      },
     });
     return { queryId: q.id };
   }
@@ -68,7 +71,12 @@ describe("Package CRUD (e2e)", () => {
   // Item CRUD (Task 7) doesn't exist yet — fixture items for the copy (Task 6) tests below are
   // seeded directly via Prisma rather than through an HTTP endpoint. queryId/cargoId are accepted
   // (not used — Item has no such columns) purely so call sites read symmetrically with addPackage.
-  function addItem(_queryId: string, _cargoId: string, packageId: string, body: Record<string, unknown>) {
+  function addItem(
+    _queryId: string,
+    _cargoId: string,
+    packageId: string,
+    body: Record<string, unknown>,
+  ) {
     return prisma.item.create({ data: { packageId, rowIndex: 1, ...body } });
   }
 
@@ -86,7 +94,14 @@ describe("Package CRUD (e2e)", () => {
     const p = await api()
       .post(`/api/queries/${queryId}/cargo/${cargo.body.id}/packages`)
       .set("Cookie", cookie())
-      .send({ packageNo: "P-1", packageType: "CRATE", dimL: 1200, dimW: 1000, dimH: 1400, grossWt: 0.42 })
+      .send({
+        packageNo: "P-1",
+        packageType: "CRATE",
+        dimL: 1200,
+        dimW: 1000,
+        dimH: 1400,
+        grossWt: 0.42,
+      })
       .expect(201);
     expect(Number(p.body.dimL)).toBe(120); // 1200 mm → 120 cm
     expect(Number(p.body.grossWt)).toBe(420); // 0.42 t → 420 kg
@@ -133,7 +148,10 @@ describe("Package CRUD (e2e)", () => {
       dimH: 40,
       grossWt: 30,
     }).expect(201);
-    const list = await api().get(`/api/queries/${queryId}/cargo`).set("Cookie", cookie()).expect(200);
+    const list = await api()
+      .get(`/api/queries/${queryId}/cargo`)
+      .set("Cookie", cookie())
+      .expect(200);
     const c = list.body.find((x: { id: string }) => x.id === cargo.body.id);
     expect(c.packageCount).toBe(2);
     expect(Number(c.grossWeightKg)).toBeCloseTo(450, 3); // 420 + 30

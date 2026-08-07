@@ -4,18 +4,21 @@ import type { ReferenceTag } from "./cargo";
 
 // Role = when/how a catalogue line is included on the FF portal.
 export const ChargeLineRole = {
-  CORE: "CORE",           // always shown & priced (Air/Sea Zones 1-2, Road trucking)
-  STANDARD: "STANDARD",   // Executive-selected (popover "Standard")
+  CORE: "CORE", // always shown & priced (Air/Sea Zones 1-2, Road trucking)
+  STANDARD: "STANDARD", // Executive-selected (popover "Standard")
   TAG_DRIVEN: "TAG_DRIVEN", // Executive-selected (popover "Tag-driven") AND its tagKey must be carried by a package on the leg
   WAREHOUSE: "WAREHOUSE", // included via the per-leg warehouse toggle, never the popover
 } as const;
 export type ChargeLineRole = (typeof ChargeLineRole)[keyof typeof ChargeLineRole];
-export const CHARGE_LINE_ROLES = Object.values(ChargeLineRole) as [ChargeLineRole, ...ChargeLineRole[]];
+export const CHARGE_LINE_ROLES = Object.values(ChargeLineRole) as [
+  ChargeLineRole,
+  ...ChargeLineRole[],
+];
 
 // InputType = how the FF prices it / which instance table stores the amount.
 export const ChargeLineInputType = {
-  PLAIN: "PLAIN",                       // ChargeLine {amount, note}
-  TRUCKING: "TRUCKING",                 // TruckingCharge {type, basis, amount, remarks}
+  PLAIN: "PLAIN", // ChargeLine {amount, note}
+  TRUCKING: "TRUCKING", // TruckingCharge {type, basis, amount, remarks}
   WAREHOUSE_STAGING: "WAREHOUSE_STAGING", // WarehouseStagingLine {amount, cargoAcceptanceWindow}
   HEAVY_WEIGHT_CALC: "HEAVY_WEIGHT_CALC", // QuoteDraftCharge {pieceWeightKg, airlineLimitKg, ratePerExcessKg} → computeHeavyWeightAmount
 } as const;
@@ -32,8 +35,8 @@ export interface ChargeLineDefinitionDto {
   mode: FreightMode;
   role: ChargeLineRole;
   inputType: ChargeLineInputType;
-  zone: ChargeZone | null;   // ORIGIN|MAIN_FREIGHT|DESTINATION for Air/Sea; null for Road
-  tagKey: string | null;     // TAG_DRIVEN gate key (a ReferenceTag); null for non-TAG_DRIVEN roles
+  zone: ChargeZone | null; // ORIGIN|MAIN_FREIGHT|DESTINATION for Air/Sea; null for Road
+  tagKey: string | null; // TAG_DRIVEN gate key (a ReferenceTag); null for non-TAG_DRIVEN roles
   label: string;
   sortOrder: number;
   isActive: boolean;
@@ -50,7 +53,7 @@ export interface ResolvedChargeLine {
 
 // The per-quote frozen snapshot (design §5.4 / §7).
 export interface ChargeConfigSnapshot {
-  lines: ResolvedChargeLine[];   // PLAIN + HEAVY_WEIGHT_CALC, all mandatory-to-price
+  lines: ResolvedChargeLine[]; // PLAIN + HEAVY_WEIGHT_CALC, all mandatory-to-price
   warehouseIncluded: boolean;
 }
 
@@ -77,10 +80,17 @@ export function resolveChargeConfig(
     .filter((d) => {
       if (d.role === "CORE") return true;
       if (d.role === "STANDARD") return selected.has(d.key);
-      if (d.role === "TAG_DRIVEN") return selected.has(d.key) && d.tagKey != null && tagSet.has(d.tagKey);
+      if (d.role === "TAG_DRIVEN")
+        return selected.has(d.key) && d.tagKey != null && tagSet.has(d.tagKey);
       return false;
     })
     .sort((a, b) => a.sortOrder - b.sortOrder)
-    .map((d) => ({ definitionKey: d.key, role: d.role, inputType: d.inputType, zone: d.zone, label: d.label }));
+    .map((d) => ({
+      definitionKey: d.key,
+      role: d.role,
+      inputType: d.inputType,
+      zone: d.zone,
+      label: d.label,
+    }));
   return { lines, warehouseIncluded };
 }

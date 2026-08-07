@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import type { FfPortalLegDto, FfPortalRfqDto, ManifestSnapshotCargo, QuoteDraft } from "@svyft/shared";
+import type {
+  FfPortalLegDto,
+  FfPortalRfqDto,
+  ManifestSnapshotCargo,
+  QuoteDraft,
+} from "@svyft/shared";
 import { draftFromDto } from "./draftFromDto";
 
 const rfq: FfPortalRfqDto = {
@@ -45,9 +50,18 @@ function airLeg(): FfPortalLegDto {
       cargo: [pkg1],
       frozenAt: "2026-08-01T00:00:00.000Z",
     },
-    endpoints: [{ pointId: "w1", type: "WAREHOUSE", name: "W", country: "IN", warehousePosition: "ORIGIN" }],
+    endpoints: [
+      { pointId: "w1", type: "WAREHOUSE", name: "W", country: "IN", warehousePosition: "ORIGIN" },
+    ],
     seededCharges: [
-      { zone: "MAIN_FREIGHT", definitionKey: "AIR_MAIN_FREIGHT", presetKey: "AIR_MAIN_FREIGHT", label: "Air Freight", isPreset: true, amount: null },
+      {
+        zone: "MAIN_FREIGHT",
+        definitionKey: "AIR_MAIN_FREIGHT",
+        presetKey: "AIR_MAIN_FREIGHT",
+        label: "Air Freight",
+        isPreset: true,
+        amount: null,
+      },
     ],
     warehouseIncluded: true,
     draft: null,
@@ -61,17 +75,44 @@ describe("draftFromDto", () => {
     expect(d.mode).toBe("AIR");
     expect(d.currency).toBe("USD");
     expect(d.quoteValidityUntil).toBe("2026-09-01T00:00:00.000Z");
-    expect(d.cargo).toEqual([{ packageId: "pk1", grossWtKg: 1500, cbm: 2.5, chargedWeightKg: null }]);
-    expect(d.charges[0]).toMatchObject({ definitionKey: "AIR_MAIN_FREIGHT", presetKey: "AIR_MAIN_FREIGHT", amount: null });
-    expect(d.warehouse[0]).toMatchObject({ warehousePointId: "w1", position: "ORIGIN", label: "Origin warehouse", amount: null, cfsCode: null, side: null });
+    expect(d.cargo).toEqual([
+      { packageId: "pk1", grossWtKg: 1500, cbm: 2.5, chargedWeightKg: null },
+    ]);
+    expect(d.charges[0]).toMatchObject({
+      definitionKey: "AIR_MAIN_FREIGHT",
+      presetKey: "AIR_MAIN_FREIGHT",
+      amount: null,
+    });
+    expect(d.warehouse[0]).toMatchObject({
+      warehousePointId: "w1",
+      position: "ORIGIN",
+      label: "Origin warehouse",
+      amount: null,
+      cfsCode: null,
+      side: null,
+    });
   });
 
   it("seeds two Road rate rows (Dedicated + Groupage) off the leg's first endpoint, both unpriced", () => {
     const road = { ...airLeg(), mode: "ROAD" as const, seededCharges: [] };
     const d = draftFromDto(road, rfq);
     expect(d.trucking).toEqual([
-      { legEndpointPointId: "w1", truckingType: "DEDICATED", basis: "PER_TRUCK", amount: null, rateVariant: "DEDICATED", tonnage: null },
-      { legEndpointPointId: "w1", truckingType: "GROUPAGE", basis: "PER_TRUCK", amount: null, rateVariant: "GROUPAGE", tonnage: null },
+      {
+        legEndpointPointId: "w1",
+        truckingType: "DEDICATED",
+        basis: "PER_TRUCK",
+        amount: null,
+        rateVariant: "DEDICATED",
+        tonnage: null,
+      },
+      {
+        legEndpointPointId: "w1",
+        truckingType: "GROUPAGE",
+        basis: "PER_TRUCK",
+        amount: null,
+        rateVariant: "GROUPAGE",
+        tonnage: null,
+      },
     ]);
     expect(d.seaRates).toEqual([]);
     expect(d.charges).toEqual([]);
@@ -101,17 +142,35 @@ describe("draftFromDto", () => {
 
   it("seeds a mandatory-but-unset transit plan (guaranteedTransitDays null)", () => {
     const d = draftFromDto(airLeg(), rfq);
-    expect(d.transit).toEqual({ departureDate: null, arrivalDate: null, guaranteedTransitDays: null });
+    expect(d.transit).toEqual({
+      departureDate: null,
+      arrivalDate: null,
+      guaranteedTransitDays: null,
+    });
   });
 
   it("carries seeded plain configured lines (zone: null, definitionKey) into charges", () => {
     const leg = {
       ...airLeg(),
       mode: "ROAD" as const,
-      seededCharges: [{ zone: null, definitionKey: "ROAD_FUEL_SURCHARGE", presetKey: null, label: "Fuel Surcharge", isPreset: true as const, amount: null }],
+      seededCharges: [
+        {
+          zone: null,
+          definitionKey: "ROAD_FUEL_SURCHARGE",
+          presetKey: null,
+          label: "Fuel Surcharge",
+          isPreset: true as const,
+          amount: null,
+        },
+      ],
     };
     const d = draftFromDto(leg, rfq);
-    expect(d.charges[0]).toMatchObject({ zone: null, definitionKey: "ROAD_FUEL_SURCHARGE", label: "Fuel Surcharge", amount: null });
+    expect(d.charges[0]).toMatchObject({
+      zone: null,
+      definitionKey: "ROAD_FUEL_SURCHARGE",
+      label: "Fuel Surcharge",
+      amount: null,
+    });
   });
 
   it("gates warehouse rows on warehouseIncluded (falsy/undefined → none)", () => {

@@ -267,9 +267,7 @@ describe("QueryWizardPage", () => {
     await userEvent.click(createBtn);
 
     // Client-side preview fires first — "Client is required" is an F1 blocking finding
-    await waitFor(() =>
-      expect(screen.getByText("Client is required")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("Client is required")).toBeInTheDocument());
     // Status should still be DRAFT
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
     // The server /create endpoint must NOT have been called — client preview blocked it
@@ -309,7 +307,8 @@ describe("QueryWizardPage", () => {
           createCalls.push(url);
           return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
         }
-        if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithDgPackageNoMsds };
+        if (url.includes("/api/queries/q9"))
+          return { status: 200, body: detailWithDgPackageNoMsds };
         return { status: 200, body: {} };
       }),
     );
@@ -446,7 +445,8 @@ describe("QueryWizardPage", () => {
           createCalls.push(url);
           return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
         }
-        if (url.includes("/api/queries/q9")) return { status: 200, body: detailWithIncompleteChecklist };
+        if (url.includes("/api/queries/q9"))
+          return { status: 200, body: detailWithIncompleteChecklist };
         return { status: 200, body: {} };
       }),
     );
@@ -466,7 +466,9 @@ describe("QueryWizardPage", () => {
 
     // ValidationSummary should appear with blocking findings
     await screen.findByText(/Resolve .* to create this query/i);
-    const blockingItems = await screen.findAllByText(/Internal notes are required|must be confirmed/i);
+    const blockingItems = await screen.findAllByText(
+      /Internal notes are required|must be confirmed/i,
+    );
     expect(blockingItems.length).toBeGreaterThan(0);
 
     // Server was NOT called — gate aborted before the request
@@ -515,9 +517,7 @@ describe("QueryWizardPage", () => {
     );
 
     // Status badge should flip to RFQ_READY
-    await waitFor(() =>
-      expect(screen.getByText("RFQ_READY")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("RFQ_READY")).toBeInTheDocument());
   });
 
   it("Next advances to Step 2 even when Step-1 mandatory fields are empty (Round-1 Common #5)", async () => {
@@ -525,7 +525,10 @@ describe("QueryWizardPage", () => {
       "fetch",
       mockFetch((url) => {
         if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
         if (url.includes("/api/clients"))
           return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
         if (url.includes("/api/vessels"))
@@ -600,7 +603,10 @@ describe("QueryWizardPage", () => {
       "fetch",
       mockFetch((url, init) => {
         if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
         if (url.includes("/api/clients"))
           return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
         if (url.includes("/api/vessels"))
@@ -630,7 +636,10 @@ describe("QueryWizardPage", () => {
       "fetch",
       mockFetch((url, init) => {
         if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
         if (url.includes("/api/queries/q9/create") && init?.method === "POST")
           return { status: 500, body: { message: "Internal error" } };
         if (url.includes("/api/queries/q9")) return { status: 200, body: fullDraftDetail };
@@ -642,7 +651,10 @@ describe("QueryWizardPage", () => {
       <Routes>
         <Route path="/queries/:id" element={<QueryWizardPage />} />
       </Routes>,
-      { route: "/queries/q9?step=4", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+      {
+        route: "/queries/q9?step=4",
+        user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" },
+      },
     );
 
     const createBtn = await screen.findByRole("button", { name: /Create Query/i });
@@ -666,7 +678,10 @@ describe("QueryWizardPage", () => {
       "fetch",
       mockFetch((url, init) => {
         if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
         if (url.includes("/api/queries/q9/create") && init?.method === "POST") {
           createCalls.push(url);
           return { status: 201, body: { id: "q9", status: "RFQ_READY" } };
@@ -680,7 +695,10 @@ describe("QueryWizardPage", () => {
       <Routes>
         <Route path="/queries/:id" element={<QueryWizardPage />} />
       </Routes>,
-      { route: "/queries/q9?step=4", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+      {
+        route: "/queries/q9?step=4",
+        user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" },
+      },
     );
 
     const createBtn = await screen.findByRole("button", { name: /Create Query/i });
@@ -711,7 +729,10 @@ describe("QueryWizardPage", () => {
       "fetch",
       mockFetch((url, init) => {
         if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
         if (url.includes("/api/queries/q9/checklist") && init?.method === "PATCH") {
           events.push("checklist");
           checklistPersisted = true;
@@ -730,7 +751,10 @@ describe("QueryWizardPage", () => {
       <Routes>
         <Route path="/queries/:id" element={<QueryWizardPage />} />
       </Routes>,
-      { route: "/queries/q9?step=4", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+      {
+        route: "/queries/q9?step=4",
+        user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" },
+      },
     );
 
     const weight = await screen.findByRole("checkbox", { name: /Weight confirmed/i });
@@ -750,13 +774,18 @@ describe("QueryWizardPage", () => {
       "fetch",
       mockFetch((url, init) => {
         if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
         if (url.endsWith("/api/queries") && init?.method === "POST") {
           posts.push(JSON.parse(init.body as string));
           return { status: 201, body: draftDetail };
         }
-        if (url.includes("/api/clients")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
-        if (url.includes("/api/vessels")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/clients"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
+        if (url.includes("/api/vessels"))
+          return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 20 } };
         if (url.includes("/api/queries/q9")) return { status: 200, body: draftDetail };
         return { status: 200, body: {} };
       }),
@@ -782,7 +811,10 @@ describe("QueryWizardPage", () => {
       "fetch",
       mockFetch((url) => {
         if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } } };
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
         if (url.includes("/api/queries/qA")) return { status: 200, body: queryADetail };
         if (url.includes("/api/queries/qB")) return { status: 200, body: queryBDetail };
         return { status: 200, body: {} };

@@ -155,7 +155,9 @@ describe("useCargo", () => {
 
   describe("exportXlsx()", () => {
     it("POSTs to /cargo/export, gets blob, creates object URL, triggers download, revokes URL", async () => {
-      const fakeBlob = new Blob(["xlsx data"], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const fakeBlob = new Blob(["xlsx data"], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
       const fakeObjectUrl = "blob:http://localhost/fake-uuid";
 
       const createObjectURLMock = vi.fn(() => fakeObjectUrl);
@@ -197,8 +199,8 @@ describe("useCargo", () => {
       });
 
       // Assert POST to /cargo/export
-      const exportCall = fetchMock.mock.calls.find(([url]) =>
-        url === `/api/queries/${QUERY_ID}/cargo/export`,
+      const exportCall = fetchMock.mock.calls.find(
+        ([url]) => url === `/api/queries/${QUERY_ID}/cargo/export`,
       );
       expect(exportCall).toBeTruthy();
       expect((exportCall![1] as RequestInit).method).toBe("POST");

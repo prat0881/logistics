@@ -21,14 +21,7 @@ const cargo = (over: Partial<CargoDto>): CargoDto => ({
 
 describe("CargoTagIcons", () => {
   it("shows each characteristic once, deduped across rows", () => {
-    render(
-      <CargoTagIcons
-        cargo={[
-          cargo({ tags: ["DG", "HEAVY"] }),
-          cargo({ tags: ["DG"] }),
-        ]}
-      />,
-    );
+    render(<CargoTagIcons cargo={[cargo({ tags: ["DG", "HEAVY"] }), cargo({ tags: ["DG"] })]} />);
     expect(screen.getAllByLabelText(/dangerous goods/i)).toHaveLength(1); // deduped
     expect(screen.getByLabelText(/heavy/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/fragile/i)).toBeNull();

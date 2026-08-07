@@ -29,9 +29,13 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     // Package is onDelete: Restrict, so if Query's cascade reached Package first (deleting it)
     // while a QuoteCargoLine still pointed at it, the delete would fail (mirrors the quote-then-
     // query cleanup order in ff-portal-v2-model.e2e-spec.ts / ff-portal-grain.e2e-spec.ts).
-    await prisma.quote.deleteMany({ where: { query: { queryCode: { startsWith: PFX } } } }).catch(() => {});
+    await prisma.quote
+      .deleteMany({ where: { query: { queryCode: { startsWith: PFX } } } })
+      .catch(() => {});
     await prisma.query.deleteMany({ where: { queryCode: { startsWith: PFX } } }).catch(() => {}); // cascades points/legs/cargo/packages/items
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: PFX } } }).catch(() => {});
+    await prisma.freightForwarder
+      .deleteMany({ where: { freightForwarderCode: { startsWith: PFX } } })
+      .catch(() => {});
   }
 
   it("creates and reads back all six pricing child tables with correct types", async () => {
@@ -85,8 +89,8 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         legId: leg.id,
         freightForwarderId: ff.id,
         status: "SELECT",
-        totalChargeableWeightT: 2.500, // column kept for now but unused post-Unit-2 (kg lives on QuoteCargoLine) — still a real, writable Decimal(12,3) column
-        grandTotal: 1500.00,
+        totalChargeableWeightT: 2.5, // column kept for now but unused post-Unit-2 (kg lives on QuoteCargoLine) — still a real, writable Decimal(12,3) column
+        grandTotal: 1500.0,
         dgSurchargeNote: "No DG",
         termsConditions: "NET 30",
       },
@@ -114,7 +118,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         isPreset: true,
         presetKey: "ORIGIN_HANDLING",
         definitionKey: "AIR_ORIGIN_THC",
-        amount: 200.00,
+        amount: 200.0,
         sortOrder: 1,
       },
     });
@@ -125,7 +129,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         legEndpointPointId: originPoint.id,
         truckingType: "DEDICATED",
         basis: "PER_TRUCK",
-        amount: 350.00,
+        amount: 350.0,
         remarks: "Door pickup",
         rateVariant: "DEDICATED",
         tonnage: "T_5",
@@ -137,7 +141,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         quoteId: quote.id,
         rateVariant: "FCL",
         containerSize: "FORTY",
-        amount: 1800.00,
+        amount: 1800.0,
         remarks: "Main leg",
       },
     });
@@ -149,7 +153,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         position: "ORIGIN",
         label: "Origin staging",
         isPreset: false,
-        amount: 100.00,
+        amount: 100.0,
         cargoAcceptanceWindow: "2026-08-01T08:00:00Z",
         cfsCode: "CFS-001",
         side: "DROP",
@@ -163,7 +167,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         flightVoyageNo: "EK9601",
         departureDate: new Date("2026-08-05T10:00:00Z"),
         arrivalDate: new Date("2026-08-06T06:00:00Z"),
-        carrierSurcharge: 50.00,
+        carrierSurcharge: 50.0,
         guaranteedTransitDays: 1,
         airline: "Emirates SkyCargo",
         flightNumber: "EK9601",
@@ -221,7 +225,9 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     expect(reloadedQuote.warehouseStagingLines).toHaveLength(1);
     expect(reloadedQuote.warehouseStagingLines[0].position).toBe("ORIGIN");
     expect(reloadedQuote.warehouseStagingLines[0].warehousePointId).toBe(originPoint.id);
-    expect(reloadedQuote.warehouseStagingLines[0].cargoAcceptanceWindow).toBe("2026-08-01T08:00:00Z");
+    expect(reloadedQuote.warehouseStagingLines[0].cargoAcceptanceWindow).toBe(
+      "2026-08-01T08:00:00Z",
+    );
     expect(reloadedQuote.warehouseStagingLines[0].cfsCode).toBe("CFS-001");
     expect(reloadedQuote.warehouseStagingLines[0].side).toBe("DROP");
 

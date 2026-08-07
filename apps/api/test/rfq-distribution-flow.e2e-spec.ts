@@ -54,7 +54,9 @@ describe(`${PREFIX} (e2e)`, () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -164,16 +166,20 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(entryL1.accessToken).toHaveLength(64);
     const rfqL1 = await prisma.rfq.findUnique({ where: { id: entryL1.rfqId } });
     expect(rfqL1).not.toBeNull();
-    expect(createHash("sha256").update(entryL1.accessToken as string).digest("hex")).toBe(
-      rfqL1!.accessTokenHash,
-    );
+    expect(
+      createHash("sha256")
+        .update(entryL1.accessToken as string)
+        .digest("hex"),
+    ).toBe(rfqL1!.accessTokenHash);
 
     // L1 leg status → RFQ_SENT
     const legL1After = await prisma.leg.findUnique({ where: { id: l1.id } });
     expect(legL1After?.status).toBe("RFQ_SENT");
 
     // FF-X quote on L1 → RFQ_SENT
-    const quoteL1 = await prisma.quote.findFirst({ where: { legId: l1.id, freightForwarderId: ffX.id } });
+    const quoteL1 = await prisma.quote.findFirst({
+      where: { legId: l1.id, freightForwarderId: ffX.id },
+    });
     expect(quoteL1?.status).toBe("RFQ_SENT");
 
     // Store for later amend assertions

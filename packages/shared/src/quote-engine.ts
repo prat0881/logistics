@@ -4,7 +4,11 @@ import type { FreightMode } from "./config";
 import type { ResolvedChargeLine } from "./charge-config";
 
 /** Heavy-Weight excess amount = max(0, pieceWeightKg − airlineLimitKg) × ratePerExcessKg. */
-export function computeHeavyWeightAmount(pieceWeightKg: number, airlineLimitKg: number, ratePerExcessKg: number): number {
+export function computeHeavyWeightAmount(
+  pieceWeightKg: number,
+  airlineLimitKg: number,
+  ratePerExcessKg: number,
+): number {
   return Math.max(0, pieceWeightKg - airlineLimitKg) * ratePerExcessKg;
 }
 
@@ -16,7 +20,11 @@ function effectiveChargeAmount(c: QuoteDraftCharge): number {
   return c.amount ?? 0;
 }
 
-export interface QuoteVariantTotal { key: string; rateAmount: number | null; grandTotal: number; }
+export interface QuoteVariantTotal {
+  key: string;
+  rateAmount: number | null;
+  grandTotal: number;
+}
 export interface QuoteTotals {
   variants: QuoteVariantTotal[];
   sharedSubtotal: number;
@@ -51,7 +59,11 @@ export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
       variants.push({ key, rateAmount: anyPriced ? sum : null, grandTotal: sum + sharedSubtotal });
   } else if (draft.mode === "SEA") {
     for (const r of draft.seaRates)
-      variants.push({ key: r.rateVariant, rateAmount: r.amount, grandTotal: (r.amount ?? 0) + sharedSubtotal });
+      variants.push({
+        key: r.rateVariant,
+        rateAmount: r.amount,
+        grandTotal: (r.amount ?? 0) + sharedSubtotal,
+      });
   } else {
     variants.push({ key: "AIR", rateAmount: null, grandTotal: sharedSubtotal });
   }
@@ -63,10 +75,18 @@ export function computeQuoteTotals(draft: QuoteDraft): QuoteTotals {
  *  NOT NULL column — Q_WEIGHT (QuoteCargoLine.chargedWeightKg) and Q_CUSTOM_AMOUNT
  *  (ChargeLine.amount for a custom line) close the two gaps the original 6 rules left open. */
 export function validateQuote(
-  draft: QuoteDraft, deadlineIso: string, nowIso: string, activeLines: ResolvedChargeLine[] = [],
+  draft: QuoteDraft,
+  deadlineIso: string,
+  nowIso: string,
+  activeLines: ResolvedChargeLine[] = [],
 ): Finding[] {
   const f: Finding[] = [];
-  const blk = (rule: string, message: string, scope: Finding["scope"]): Finding => ({ rule, severity: "blocking", scope, message });
+  const blk = (rule: string, message: string, scope: Finding["scope"]): Finding => ({
+    rule,
+    severity: "blocking",
+    scope,
+    message,
+  });
   const leg = { type: "leg", id: draft.legId } as const;
 
   // (6) submission before the deadline
@@ -74,18 +94,37 @@ export function validateQuote(
     f.push(blk("Q_DEADLINE", "The submission deadline has passed", leg));
 
   // (1) currency + validity (validity ≥ deadline)
-  if (!draft.currency) f.push(blk("Q_CURRENCY", "Currency is required", { type: "field", id: "currency" }));
-  if (!draft.quoteValidityUntil) f.push(blk("Q_VALIDITY", "Quote Validity Until is required", { type: "field", id: "quoteValidityUntil" }));
+  if (!draft.currency)
+    f.push(blk("Q_CURRENCY", "Currency is required", { type: "field", id: "currency" }));
+  if (!draft.quoteValidityUntil)
+    f.push(
+      blk("Q_VALIDITY", "Quote Validity Until is required", {
+        type: "field",
+        id: "quoteValidityUntil",
+      }),
+    );
   else if (new Date(draft.quoteValidityUntil).getTime() < new Date(deadlineIso).getTime())
-    f.push(blk("Q_VALIDITY", "Quote Validity Until must be on or after the submission deadline", { type: "field", id: "quoteValidityUntil" }));
+    f.push(
+      blk("Q_VALIDITY", "Quote Validity Until must be on or after the submission deadline", {
+        type: "field",
+        id: "quoteValidityUntil",
+      }),
+    );
 
   // Charged Weight (kg) mandatory on every package (QuoteCargoLine.chargedWeightKg is NOT NULL)
   for (const c of draft.cargo)
     if (c.chargedWeightKg == null)
-      f.push(blk("Q_WEIGHT", "Charged Weight (kg) is required for every package", { type: "cargo", id: c.packageId }));
+      f.push(
+        blk("Q_WEIGHT", "Charged Weight (kg) is required for every package", {
+          type: "cargo",
+          id: c.packageId,
+        }),
+      );
 
   // (2) every active charge line priced — amount present; 0 allowed ONLY with a remark
-  const byKey = new Map(draft.charges.filter((c) => c.definitionKey).map((c) => [c.definitionKey!, c]));
+  const byKey = new Map(
+    draft.charges.filter((c) => c.definitionKey).map((c) => [c.definitionKey!, c]),
+  );
   for (const line of activeLines) {
     if (line.inputType === "HEAVY_WEIGHT_CALC") {
       const c = byKey.get(line.definitionKey);
@@ -95,7 +134,8 @@ export function validateQuote(
     }
     if (line.inputType !== "PLAIN") continue;
     const c = byKey.get(line.definitionKey);
-    if (!c || c.amount == null) f.push(blk("Q_PRICED", `Charge line "${line.label}" must be priced`, leg));
+    if (!c || c.amount == null)
+      f.push(blk("Q_PRICED", `Charge line "${line.label}" must be priced`, leg));
     else if (c.amount === 0 && !c.note?.trim())
       f.push(blk("Q_PRICED", `A remark is required to quote "${line.label}" at 0`, leg));
   }
@@ -104,13 +144,24 @@ export function validateQuote(
   // force-unwrapped at materialize — ff-portal.service.ts's chargeLine.createMany)
   for (const c of draft.charges)
     if (!c.definitionKey && !c.presetKey) {
-      if (!c.note?.trim()) f.push(blk("Q_CUSTOM_REMARK", `A remark is required on the custom charge "${c.label}"`, leg));
-      if (c.amount == null) f.push(blk("Q_CUSTOM_AMOUNT", `An amount is required on the custom charge "${c.label}"`, leg));
+      if (!c.note?.trim())
+        f.push(
+          blk("Q_CUSTOM_REMARK", `A remark is required on the custom charge "${c.label}"`, leg),
+        );
+      if (c.amount == null)
+        f.push(
+          blk("Q_CUSTOM_AMOUNT", `An amount is required on the custom charge "${c.label}"`, leg),
+        );
     }
 
   // (4) Guaranteed Transit Time present on every leg
   if (draft.transit?.guaranteedTransitDays == null)
-    f.push(blk("Q_TRANSIT", "Guaranteed Transit Time is required", { type: "field", id: "guaranteedTransitDays" }));
+    f.push(
+      blk("Q_TRANSIT", "Guaranteed Transit Time is required", {
+        type: "field",
+        id: "guaranteedTransitDays",
+      }),
+    );
 
   // (5) dual-rate — ≥1 of the two rates filled (each filled rate yields its own grand total)
   if (draft.mode === "ROAD" && !draft.trucking.some((t) => t.amount != null))
@@ -125,12 +176,18 @@ export function validateQuote(
   return f;
 }
 
-export interface WhLeg { originPointId: string | null; destinationPointId: string | null; mode: FreightMode | null; }
+export interface WhLeg {
+  originPointId: string | null;
+  destinationPointId: string | null;
+  mode: FreightMode | null;
+}
 
 /** Order the leg edges into a single point sequence (source→sink); returns [] if no orderable chain. */
 function orderPointSequence(legs: WhLeg[]): string[] {
-  const edges = legs.filter((l): l is WhLeg & { originPointId: string; destinationPointId: string } =>
-    !!l.originPointId && !!l.destinationPointId);
+  const edges = legs.filter(
+    (l): l is WhLeg & { originPointId: string; destinationPointId: string } =>
+      !!l.originPointId && !!l.destinationPointId,
+  );
   if (edges.length === 0) return [];
   const next = new Map<string, string>();
   const indeg = new Map<string, number>();
@@ -138,7 +195,8 @@ function orderPointSequence(legs: WhLeg[]): string[] {
   for (const e of edges) {
     next.set(e.originPointId, e.destinationPointId);
     indeg.set(e.destinationPointId, (indeg.get(e.destinationPointId) ?? 0) + 1);
-    nodes.add(e.originPointId); nodes.add(e.destinationPointId);
+    nodes.add(e.originPointId);
+    nodes.add(e.destinationPointId);
   }
   const source = [...nodes].find((n) => (indeg.get(n) ?? 0) === 0);
   if (!source) return []; // cyclic / non-orderable
@@ -148,12 +206,17 @@ function orderPointSequence(legs: WhLeg[]): string[] {
   while (next.has(cur)) {
     const nxt = next.get(cur)!;
     if (seen.has(nxt)) break;
-    seq.push(nxt); seen.add(nxt); cur = nxt;
+    seq.push(nxt);
+    seen.add(nxt);
+    cur = nxt;
   }
   return seq;
 }
 
-export function classifyWarehousePositions(legs: WhLeg[], warehousePointIds: string[]): Record<string, WarehousePosition> {
+export function classifyWarehousePositions(
+  legs: WhLeg[],
+  warehousePointIds: string[],
+): Record<string, WarehousePosition> {
   const seq = orderPointSequence(legs);
   const idxOf = new Map(seq.map((p, i) => [p, i] as const));
   const mainLeg = legs.find((l) => l.mode === "AIR" || l.mode === "SEA");

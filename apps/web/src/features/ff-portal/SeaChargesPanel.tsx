@@ -37,7 +37,12 @@ export function SeaChargesPanel(): JSX.Element {
             {/* Container size — FCL only */}
             {rateVariant === "FCL" && (
               <div className="space-y-1">
-                <label htmlFor={`sea-container-${i}`} className="text-xs font-medium text-muted-foreground">Container size</label>
+                <label
+                  htmlFor={`sea-container-${i}`}
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  Container size
+                </label>
                 <Select
                   value={row?.containerSize ?? ""}
                   onValueChange={(v) =>
@@ -46,12 +51,17 @@ export function SeaChargesPanel(): JSX.Element {
                     })
                   }
                 >
-                  <SelectTrigger id={`sea-container-${i}`} aria-label={`Container size for ${heading}`}>
+                  <SelectTrigger
+                    id={`sea-container-${i}`}
+                    aria-label={`Container size for ${heading}`}
+                  >
                     <SelectValue placeholder="Select container size" />
                   </SelectTrigger>
                   <SelectContent>
                     {CONTAINER_SIZES.map((c) => (
-                      <SelectItem key={c} value={c}>{containerSizeLabel(c)}</SelectItem>
+                      <SelectItem key={c} value={c}>
+                        {containerSizeLabel(c)}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -60,20 +70,28 @@ export function SeaChargesPanel(): JSX.Element {
 
             {/* Amount */}
             <div className="space-y-1">
-              <label htmlFor={`sea-amount-${i}`} className="text-xs font-medium text-muted-foreground">Amount</label>
+              <label
+                htmlFor={`sea-amount-${i}`}
+                className="text-xs font-medium text-muted-foreground"
+              >
+                Amount
+              </label>
               <NumberField
                 id={`sea-amount-${i}`}
                 aria-label={`Amount for ${heading}`}
                 value={row?.amount ?? null}
-                onChange={(v) =>
-                  setValue(`seaRates.${i}.amount`, v, { shouldDirty: true })
-                }
+                onChange={(v) => setValue(`seaRates.${i}.amount`, v, { shouldDirty: true })}
               />
             </div>
 
             {/* Remarks */}
             <div className="space-y-1">
-              <label htmlFor={`sea-remarks-${i}`} className="text-xs font-medium text-muted-foreground">Remarks</label>
+              <label
+                htmlFor={`sea-remarks-${i}`}
+                className="text-xs font-medium text-muted-foreground"
+              >
+                Remarks
+              </label>
               <Textarea
                 id={`sea-remarks-${i}`}
                 aria-label={`Remarks for ${heading}`}

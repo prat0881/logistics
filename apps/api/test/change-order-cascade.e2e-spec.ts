@@ -66,7 +66,9 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
       const rfqs = await prisma.rfq.findMany({ where: { queryId: q.id }, select: { id: true } });
       const rfqIds = rfqs.map((r) => r.id);
       if (rfqIds.length) {
-        await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+        await prisma.scheduledEvent.deleteMany({
+          where: { entityType: "RFQ", entityId: { in: rfqIds } },
+        });
       }
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.notification.deleteMany({ where: { recipientUserId: execId } });
@@ -75,7 +77,9 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: FF_PREFIX } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: FF_PREFIX } },
+    });
   };
 
   beforeAll(async () => {
@@ -128,10 +132,22 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
       data: { queryCode: CODE, assignedUserId: execId, incoterms: "FOB" },
     });
     const origin = await prisma.point.create({
-      data: { queryId: query.id, type: "PICKUP", name: "Shenzhen Port", city: "Shenzhen", country: "CN" },
+      data: {
+        queryId: query.id,
+        type: "PICKUP",
+        name: "Shenzhen Port",
+        city: "Shenzhen",
+        country: "CN",
+      },
     });
     const dest = await prisma.point.create({
-      data: { queryId: query.id, type: "DELIVERY", name: "Jebel Ali", city: "Dubai", country: "AE" },
+      data: {
+        queryId: query.id,
+        type: "DELIVERY",
+        name: "Jebel Ali",
+        city: "Dubai",
+        country: "AE",
+      },
     });
 
     const { cargoId: cargo1Id, packageIds: pkg1Ids } = await createCargoWithPackages(prisma, {
@@ -197,7 +213,11 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
         status: QuoteStatus.QUOTED,
         grandTotal: FF_A_GRAND_TOTAL,
         totalChargeableWeightT: 1.5,
-        manifestSnapshot: mkSnapshot(leg1.id, pkg1Id, OLD_GROSS_WT) as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: mkSnapshot(
+          leg1.id,
+          pkg1Id,
+          OLD_GROSS_WT,
+        ) as unknown as Prisma.InputJsonValue,
       },
     });
     // FF-A's pricing child — must SURVIVE invalidation (non-destructive history, design §11).
@@ -212,7 +232,11 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
         legId: leg1.id,
         freightForwarderId: ffB.id,
         status: QuoteStatus.RFQ_SENT,
-        manifestSnapshot: mkSnapshot(leg1.id, pkg1Id, OLD_GROSS_WT) as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: mkSnapshot(
+          leg1.id,
+          pkg1Id,
+          OLD_GROSS_WT,
+        ) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -226,7 +250,11 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
         status: QuoteStatus.QUOTED,
         grandTotal: FF_C_GRAND_TOTAL,
         totalChargeableWeightT: 0.7,
-        manifestSnapshot: mkSnapshot(leg2.id, pkg2Id, CARGO2_GROSS_WT) as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: mkSnapshot(
+          leg2.id,
+          pkg2Id,
+          CARGO2_GROSS_WT,
+        ) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -258,19 +286,31 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
     expect(body.needsChangeOrder).toBe(true);
     expect(body.preview.affectedLegs).toEqual([leg1.id]); // L2 never named
     expect(body.preview.impactClass).toBe("RfqDefining");
-    expect(body.preview.invalidatingQuotes).toEqual([{ quoteId: quoteA.id, freightForwarderId: ffA.id }]);
-    expect(body.preview.refreshingQuotes).toEqual([{ quoteId: quoteB.id, freightForwarderId: ffB.id }]);
+    expect(body.preview.invalidatingQuotes).toEqual([
+      { quoteId: quoteA.id, freightForwarderId: ffA.id },
+    ]);
+    expect(body.preview.refreshingQuotes).toEqual([
+      { quoteId: quoteB.id, freightForwarderId: ffB.id },
+    ]);
 
     // Nothing was written by the preview.
     const pkg1AfterPreview = await prisma.package.findUnique({ where: { id: pkg1Id } });
     expect(Number(pkg1AfterPreview?.grossWt)).toBe(OLD_GROSS_WT);
-    expect((await prisma.quote.findUnique({ where: { id: quoteA.id } }))?.status).toBe(QuoteStatus.QUOTED);
+    expect((await prisma.quote.findUnique({ where: { id: quoteA.id } }))?.status).toBe(
+      QuoteStatus.QUOTED,
+    );
     expect(await prisma.changeLog.count({ where: { queryId: query.id } })).toBe(0);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Step 2 — the SAME edit WITH a reason: the full cascade runs.
     // ─────────────────────────────────────────────────────────────────────────
-    await packageService.update(query.id, cargo1Id, pkg1Id, { grossWt: NEW_GROSS_WT, reason: REASON }, user);
+    await packageService.update(
+      query.id,
+      cargo1Id,
+      pkg1Id,
+      { grossWt: NEW_GROSS_WT, reason: REASON },
+      user,
+    );
 
     const pkg1After = await prisma.package.findUnique({ where: { id: pkg1Id } });
     expect(Number(pkg1After?.grossWt)).toBe(NEW_GROSS_WT);
@@ -303,7 +343,9 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
 
     // Exactly one durable ChangeLog row, with the reason + FF-A's pricing snapshot. entity/
     // entityId now name the PACKAGE (grossWt moved off Cargo — package.impact.ts).
-    const logs = await prisma.changeLog.findMany({ where: { queryId: query.id, changeType: "change-order" } });
+    const logs = await prisma.changeLog.findMany({
+      where: { queryId: query.id, changeType: "change-order" },
+    });
     expect(logs).toHaveLength(1);
     expect(logs[0].entity).toBe("package");
     expect(logs[0].entityId).toBe(pkg1Id);
@@ -333,7 +375,12 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
 
     // One rfq.leg.reopened MessageLog to FF-A; FF-B (pending) is NOT notified (design §11.4).
     const ffAMsg = await prisma.messageLog.findFirst({
-      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.leg.reopened", toAddress: ffA.email },
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.leg.reopened",
+        toAddress: ffA.email,
+      },
     });
     expect(ffAMsg).not.toBeNull();
     expect(ffAMsg?.channel).toBe("EMAIL");
@@ -341,7 +388,12 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
     expect(ffAMsg?.bodyRendered).toContain("L1");
     expect(ffAMsg?.bodyRendered).toContain(REASON);
     const ffBMsg = await prisma.messageLog.findFirst({
-      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.leg.reopened", toAddress: ffB.email },
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.leg.reopened",
+        toAddress: ffB.email,
+      },
     });
     expect(ffBMsg).toBeNull();
 
@@ -361,7 +413,12 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
     expect(ffCSnap.cargo[0].packageId).toBe(pkg2Id);
 
     const ffCMsg = await prisma.messageLog.findFirst({
-      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.leg.reopened", toAddress: ffC.email },
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.leg.reopened",
+        toAddress: ffC.email,
+      },
     });
     expect(ffCMsg).toBeNull(); // never notified — was never in scope
 
@@ -379,7 +436,9 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
     expect(quoteAFinal?.status).toBe(QuoteStatus.RFQ_SENT);
 
     const rfqAAfter = await prisma.rfq.findUnique({ where: { id: rfqA.id } });
-    expect(rfqAAfter?.submissionDeadline.getTime()).toBeGreaterThan(rfqA.submissionDeadline.getTime());
+    expect(rfqAAfter?.submissionDeadline.getTime()).toBeGreaterThan(
+      rfqA.submissionDeadline.getTime(),
+    );
     expect(rfqAAfter?.submissionDeadline.getTime()).toBeGreaterThan(Date.now());
   });
 });

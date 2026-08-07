@@ -39,7 +39,10 @@ export async function loadLegForRfq(
   queryId: string,
   legId: string,
 ): Promise<LegRfqContext> {
-  const leg = await prisma.leg.findFirst({ where: { id: legId, queryId }, include: LEG_RFQ_INCLUDE });
+  const leg = await prisma.leg.findFirst({
+    where: { id: legId, queryId },
+    include: LEG_RFQ_INCLUDE,
+  });
   if (!leg) throw new NotFoundException("Leg not found");
   // Resolve each endpoint's free-text country (a name OR code, any case) to its ISO
   // code, so it can be compared against FF `availableCountries` (which are ISO codes).
