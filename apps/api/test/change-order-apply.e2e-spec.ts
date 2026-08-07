@@ -182,8 +182,10 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       },
     });
     // FF-A's pricing child — must SURVIVE invalidation (history is non-destructive, §11).
+    // v3: QuoteCargoLine.chargedWeightKg dropped (that value moved to the leg-level
+    // Quote.chargedWeightKg) — this row is now just the packageId pointer.
     await prisma.quoteCargoLine.create({
-      data: { quoteId: quoteA.id, packageId, chargedWeightKg: 1500 },
+      data: { quoteId: quoteA.id, packageId },
     });
 
     const quoteB = await prisma.quote.create({

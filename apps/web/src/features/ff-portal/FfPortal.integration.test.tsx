@@ -44,45 +44,52 @@ const sentDraft: QuoteDraft = {
   mode: "AIR",
   currency: null, // will be merged from rfq.currency by LegSectionForm
   quoteValidityUntil: null, // will be merged from rfq.quoteValidityUntil by LegSectionForm
+  chargedWeightKg: 1000, // v3: leg-level (was per-package) → FF-entered → Q_WEIGHT passes
+  notes: null,
   cargo: [
     {
       packageId: "c1",
       grossWtKg: 1000,
       cbm: 1,
-      chargedWeightKg: 1000, // FF-entered → Q_WEIGHT passes
     },
   ],
+  // Air's single implicit column → every cell carries rateVariant: null (v3).
+  // 12 pre-priced at 0; only Air Freight (AIR_MAIN_FREIGHT) left unpriced → one input to fill
   charges: [
-    // 12 pre-priced at 0; only Air Freight (AIR_MAIN_FREIGHT) left unpriced → one input to fill
     {
       zone: "ORIGIN",
       presetKey: "AIR_ORIGIN_EXPORT_CLEARANCE",
       label: "Export Customs Clearance",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "ORIGIN",
       presetKey: "AIR_ORIGIN_DOCUMENTATION",
       label: "Documentation Charges",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "ORIGIN",
       presetKey: "AIR_ORIGIN_THC",
       label: "Origin THC / Airport Handling",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "ORIGIN",
       presetKey: "AIR_ORIGIN_SECURITY",
       label: "Security / Screening Charges",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "ORIGIN",
       presetKey: "AIR_ORIGIN_WAREHOUSE_PRESTORAGE",
       label: "Warehouse / Pre-storage at OAP",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "MAIN_FREIGHT",
@@ -90,57 +97,66 @@ const sentDraft: QuoteDraft = {
       presetKey: "AIR_MAIN_FREIGHT",
       label: "Air Freight",
       amount: null,
+      rateVariant: null,
     }, // ← the one to price
     {
       zone: "MAIN_FREIGHT",
       presetKey: "AIR_MAIN_SEC",
       label: "Security Exchange (SEC)",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "MAIN_FREIGHT",
       presetKey: "AIR_MAIN_CARRIER_SURCHARGE",
       label: "Airline / Carrier Surcharge",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "MAIN_FREIGHT",
       presetKey: "AIR_MAIN_HEAVY_WEIGHT",
       label: "Heavy Weight Surcharge",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "DESTINATION",
       presetKey: "AIR_DEST_THC",
       label: "Destination THC / Airport Handling",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "DESTINATION",
       presetKey: "AIR_DEST_IMPORT_CLEARANCE",
       label: "Import Customs Clearance",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "DESTINATION",
       presetKey: "AIR_DEST_LAST_MILE",
       label: "Last Mile Handling / Lift Gate",
       amount: 0,
+      rateVariant: null,
     },
     {
       zone: "DESTINATION",
       presetKey: "AIR_DEST_STORAGE",
       label: "Storage 1 Free Day Charges",
       amount: 0,
+      rateVariant: null,
     },
   ],
   trucking: [],
   seaRates: [],
   warehouse: [],
-  // Q_TRANSIT requires guaranteedTransitDays (already 5, satisfied). departureDate/arrivalDate
-  // are legacy fields — required by the QuoteDraftTransit shape but ungated and no longer
-  // editable via TransitPlanForm (superseded by mode-specific plannedDeparture/plannedArrival).
-  transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: 5 },
+  // Q_TRANSIT requires guaranteedTransitDaysByVariant[AIR_VARIANT_KEY] (already 5, satisfied).
+  // departureDate/arrivalDate are legacy fields — required by the QuoteDraftTransit shape but
+  // ungated and no longer editable via TransitPlanForm (superseded by mode-specific
+  // plannedDeparture/plannedArrival).
+  transit: { departureDate: null, arrivalDate: null, guaranteedTransitDaysByVariant: { AIR: 5 } },
   dgSurchargeNote: null,
   termsConditions: null,
 };
@@ -214,12 +230,13 @@ const quotedDraft: QuoteDraft = {
   mode: "AIR",
   currency: "USD",
   quoteValidityUntil: "2999-02-01T00:00:00.000Z",
+  chargedWeightKg: 1000, // v3: leg-level, not per-package
+  notes: null,
   cargo: [
     {
       packageId: "c1",
       grossWtKg: 1000,
       cbm: 1,
-      chargedWeightKg: 1000,
     },
   ],
   charges: [
@@ -228,6 +245,7 @@ const quotedDraft: QuoteDraft = {
       presetKey: "AIR_MAIN_FREIGHT",
       label: "Air Freight",
       amount: 2000,
+      rateVariant: null, // Air's single implicit column
     },
   ],
   trucking: [],
@@ -236,7 +254,7 @@ const quotedDraft: QuoteDraft = {
   transit: {
     departureDate: "2026-08-05T10:00:00.000Z",
     arrivalDate: "2026-08-07T10:00:00.000Z",
-    guaranteedTransitDays: 5,
+    guaranteedTransitDaysByVariant: { AIR: 5 },
   },
   dgSurchargeNote: null,
   termsConditions: "Accepted",
@@ -306,7 +324,10 @@ describe("FfPortal integration — happy path", () => {
 
     // 1. Price the "Air Freight" charge
     // NumberField renders an <input type="number"> with aria-label "Amount for Air Freight"
-    const amountInput = screen.getByLabelText(/amount for air freight/i);
+    // v3: ChargeMatrix labels a cell "<row label> — <column label>" (e.g. "Air Freight — Air"),
+    // replacing the old "Amount for <label>" convention; anchored so it doesn't also match the
+    // per-cell "Note for Air Freight — Air" sibling field (Task 5 round 1).
+    const amountInput = screen.getByLabelText(/^air freight — air$/i);
     await userEvent.clear(amountInput);
     await userEvent.type(amountInput, "2000");
 
@@ -400,7 +421,10 @@ describe("FfPortal integration — 422 surfacing", () => {
 
     // Fill in all the required fields so the CLIENT gate passes
     // (price the charge, set dates, check T&C — then server returns 422)
-    const amountInput = screen.getByLabelText(/amount for air freight/i);
+    // v3: ChargeMatrix labels a cell "<row label> — <column label>" (e.g. "Air Freight — Air"),
+    // replacing the old "Amount for <label>" convention; anchored so it doesn't also match the
+    // per-cell "Note for Air Freight — Air" sibling field (Task 5 round 1).
+    const amountInput = screen.getByLabelText(/^air freight — air$/i);
     await userEvent.clear(amountInput);
     await userEvent.type(amountInput, "2000");
 

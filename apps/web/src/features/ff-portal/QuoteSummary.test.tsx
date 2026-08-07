@@ -8,8 +8,15 @@ const roadDraft: QuoteDraft = {
   mode: "ROAD",
   currency: "USD",
   quoteValidityUntil: null,
-  cargo: [{ packageId: "p1", grossWtKg: 1500, cbm: 2.5, chargedWeightKg: 1500 }],
-  charges: [{ zone: null, presetKey: null, label: "Fuel surcharge", amount: 200 }],
+  chargedWeightKg: 1500, // v3: leg-level, not per-package
+  notes: null,
+  cargo: [{ packageId: "p1", grossWtKg: 1500, cbm: 2.5 }],
+  // v3: charges are per-variant matrix cells — the same "Fuel surcharge" priced identically under
+  // both columns (a charge no longer has a variant-independent "shared" cell).
+  charges: [
+    { zone: null, presetKey: null, label: "Fuel surcharge", amount: 200, rateVariant: "DEDICATED" },
+    { zone: null, presetKey: null, label: "Fuel surcharge", amount: 200, rateVariant: "GROUPAGE" },
+  ],
   trucking: [
     {
       legEndpointPointId: "p1",
@@ -42,8 +49,12 @@ const airDraft: QuoteDraft = {
   mode: "AIR",
   currency: "USD",
   quoteValidityUntil: null,
-  cargo: [{ packageId: "p1", grossWtKg: 1000, cbm: 2, chargedWeightKg: 1000 }],
-  charges: [{ zone: "MAIN_FREIGHT", presetKey: "x", label: "Air Freight", amount: 900 }],
+  chargedWeightKg: 1000, // v3: leg-level, not per-package
+  notes: null,
+  cargo: [{ packageId: "p1", grossWtKg: 1000, cbm: 2 }],
+  charges: [
+    { zone: "MAIN_FREIGHT", presetKey: "x", label: "Air Freight", amount: 900, rateVariant: null },
+  ],
   trucking: [],
   seaRates: [],
   warehouse: [],
@@ -57,8 +68,12 @@ const seaDraft: QuoteDraft = {
   mode: "SEA",
   currency: "USD",
   quoteValidityUntil: null,
-  cargo: [{ packageId: "p1", grossWtKg: 2000, cbm: 5, chargedWeightKg: 2000 }],
-  charges: [{ zone: "ORIGIN", presetKey: null, label: "Origin THC", amount: 150 }],
+  chargedWeightKg: 2000, // v3: leg-level, not per-package
+  notes: null,
+  cargo: [{ packageId: "p1", grossWtKg: 2000, cbm: 5 }],
+  charges: [
+    { zone: "ORIGIN", presetKey: null, label: "Origin THC", amount: 150, rateVariant: "FCL" },
+  ],
   trucking: [],
   seaRates: [
     { rateVariant: "FCL", containerSize: "TWENTY", amount: 1200 },
@@ -73,9 +88,11 @@ const seaDraft: QuoteDraft = {
 describe("QuoteSummary", () => {
   it("shows the shared subtotal and chargeable weight (kg)", () => {
     render(<QuoteSummary draft={roadDraft} currency="USD" />);
-    // sharedSubtotal = 200 (charge) + 300 (warehouse) = 500; chargeableWeightKg = 1500
+    // v3: sharedSubtotal is the warehouse total ONLY (charges are per-variant matrix cells now,
+    // folded into each variant's own grandTotal instead — see computeQuoteTotals) = 300 (warehouse);
+    // chargeableWeightKg is the leg-level QuoteDraft.chargedWeightKg = 1500.
     const sharedRow = screen.getByText("Shared subtotal").closest("div");
-    expect(sharedRow).toHaveTextContent("500.00");
+    expect(sharedRow).toHaveTextContent("300.00");
     expect(screen.getByTestId("total-chargeable")).toHaveTextContent("1500.000");
   });
 
@@ -83,13 +100,15 @@ describe("QuoteSummary", () => {
     render(<QuoteSummary draft={roadDraft} currency="USD" />);
     expect(screen.getAllByTestId(/^grand-total-/)).toHaveLength(2);
 
-    // Dedicated: rateAmount 500 + sharedSubtotal 500 = 1000
+    // Dedicated: chargeSum 200 (Fuel surcharge, DEDICATED column) + rateAmount 500 + sharedSubtotal
+    // (warehouse) 300 = 1000
     const dedicated = screen.getByTestId("grand-total-DEDICATED");
     expect(dedicated).toHaveTextContent("Dedicated total");
     expect(dedicated).toHaveTextContent("1,000.00");
     expect(dedicated).toHaveTextContent("USD");
 
-    // Groupage: no row priced → rateAmount null → blank ("–"), not "500.00"
+    // Groupage: its own freight rate (trucking) is unpriced → rateAmount null → blank ("–")
+    // regardless of its 200 of charges — QuoteSummary's blank rule keys off rateAmount alone.
     const groupage = screen.getByTestId("grand-total-GROUPAGE");
     expect(groupage).toHaveTextContent("Groupage total");
     expect(groupage).toHaveTextContent("–");
@@ -102,7 +121,7 @@ describe("QuoteSummary", () => {
 
     const air = screen.getByTestId("grand-total-AIR");
     expect(air).toHaveTextContent("Air total");
-    expect(air).toHaveTextContent("900.00"); // sharedSubtotal only (900 + 0 warehouse)
+    expect(air).toHaveTextContent("900.00"); // chargeSum (Air Freight, rateVariant: null) 900 + 0 warehouse
     expect(air).not.toHaveTextContent("–");
   });
 
@@ -110,7 +129,7 @@ describe("QuoteSummary", () => {
     render(<QuoteSummary draft={seaDraft} currency="USD" />);
     expect(screen.getAllByTestId(/^grand-total-/)).toHaveLength(2);
 
-    // FCL: rateAmount 1200 + sharedSubtotal 150 (Origin THC, no warehouse) = 1350
+    // FCL: chargeSum 150 (Origin THC, FCL column) + rateAmount 1200 + sharedSubtotal (warehouse) 0 = 1350
     const fcl = screen.getByTestId("grand-total-FCL");
     expect(fcl).toHaveTextContent("FCL total");
     expect(fcl).toHaveTextContent("1,350.00");

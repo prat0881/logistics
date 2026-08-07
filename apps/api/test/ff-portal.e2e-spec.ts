@@ -6,6 +6,7 @@ import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
 import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
+import type { QuoteDraft, ChargeZone } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
@@ -163,19 +164,22 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   }
 
   /**
-   * Build a complete valid v2 Air draft from the GET response body (mirrors
+   * Build a complete valid v3 Air draft from the GET response body (mirrors
    * ff-portal-grain.e2e-spec.ts / charge-config-distribute.e2e-spec.ts's fullValidDraft).
-   * - cargo: one entry per frozen manifest package, each given an FF-entered chargedWeightKg
-   *   (the dropped density model had no such field — grossWtKg/cbm are display-only, re-derived
-   *   from the manifest server-side at submit regardless of what's sent here) (satisfies Q_WEIGHT)
-   * - charges: every PLAIN preset priced at amount=10; the HEAVY_WEIGHT_CALC line
-   *   (AIR_MAIN_HEAVY_WEIGHT) priced via its 3 calc inputs instead (satisfies Q_PRICED)
+   * - chargedWeightKg: one leg-level FF-entered value (v3 — was per-package pre-v3); grossWtKg/cbm
+   *   stay display-only, re-derived from the manifest server-side at submit regardless of what's
+   *   sent here (satisfies Q_WEIGHT)
+   * - charges: every PLAIN preset priced at amount=10, each carrying rateVariant: null (Air's
+   *   single implicit column); the HEAVY_WEIGHT_CALC line (AIR_MAIN_HEAVY_WEIGHT) priced via its 3
+   *   calc inputs instead (satisfies Q_PRICED)
    * - trucking/seaRates/warehouse: empty (no trucking/warehouse endpoints in fixture; mode AIR
    *   never gates on Q_RATE)
-   * - transit: departure + arrival + guaranteedTransitDays set (satisfies Q_TRANSIT)
+   * - transit: departure + arrival + guaranteedTransitDaysByVariant.AIR set (satisfies Q_TRANSIT)
    * - currency: USD (satisfies Q_CURRENCY)
    * - quoteValidityUntil: after the RFQ deadline (satisfies Q_VALIDITY)
-   * - no DG-specific submit gate in v2 (QuoteDraftCargo dropped isDangerous entirely) → dgSurchargeNote: null
+   * - no DG-specific submit gate (QuoteDraftCargo has no isDangerous field) → dgSurchargeNote: null
+   * The return type is annotated `QuoteDraft` so the compiler — not just the runtime Zod schema —
+   * enforces the v3 shape.
    */
   function fullValidDraft(
     legId: string,
@@ -185,7 +189,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
           cargo: Array<{ packageId: string; grossWt: string; volumeCbm: string | null }>;
         };
         seededCharges: Array<{
-          zone: string | null;
+          zone: ChargeZone | null;
           definitionKey?: string;
           inputType?: string;
           presetKey: string | null;
@@ -193,21 +197,23 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         }>;
       }>;
     },
-  ) {
+  ): QuoteDraft {
     const leg = getBody.legs[0];
     return {
       legId,
       mode: "AIR",
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 125, // v3: one leg-level chargeable weight (was per-package)
+      notes: null,
       cargo: leg.manifest.cargo.map((c) => ({
         packageId: c.packageId,
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
-        chargedWeightKg: 125,
       })),
       // seededCharges are keyed by definitionKey (frozen from chargeConfigSnapshot); presetKey is
-      // always null (kept only for shape compatibility, per FfPortalSeededCharge).
+      // always null (kept only for shape compatibility, per FfPortalSeededCharge). rateVariant:
+      // null on every cell — Air's single implicit column (v3).
       charges: leg.seededCharges.map((c) =>
         c.inputType === "HEAVY_WEIGHT_CALC"
           ? {
@@ -216,6 +222,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
               presetKey: c.presetKey,
               label: c.label,
               amount: null,
+              rateVariant: null,
               pieceWeightKg: 180,
               airlineLimitKg: 100,
               ratePerExcessKg: 2.5,
@@ -226,6 +233,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
               presetKey: c.presetKey,
               label: c.label,
               amount: 10,
+              rateVariant: null,
             },
       ),
       trucking: [],
@@ -234,7 +242,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       transit: {
         departureDate: "2026-08-12T00:00:00.000Z",
         arrivalDate: "2026-08-14T00:00:00.000Z",
-        guaranteedTransitDays: 2,
+        guaranteedTransitDaysByVariant: { AIR: 2 },
       },
       dgSurchargeNote: null,
       termsConditions: null,
@@ -258,12 +266,17 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     ); // Air cores (Task 9: seededCharges now keyed by definitionKey, frozen from chargeConfigSnapshot)
     // v2 dropped the whole density model — no FreightDensityFactor/seededDensity concept survives
     // on the DTO. The replacement grain proof: the manifest is package-grain (packageId, no
-    // cargoItemId), and there's no pre-seeded pricing value anywhere (leg.draft is null until the
-    // FF's first PATCH — Charged Wt starts unset, not defaulted).
+    // cargoItemId), and there's no pre-seeded PRICING value anywhere — v3: resolveScope seeds a
+    // starter QuoteDraft (the per-variant charge matrix) rather than `null` once the leg has >=1
+    // active charge-config line (design §5; AIR_MAIN_FREIGHT above proves this leg does) — so "no
+    // pre-seeded value" now means the seeded draft's chargedWeightKg/notes are unset, not that the
+    // draft itself is null.
     expect(leg).not.toHaveProperty("seededDensity");
     expect(leg.manifest.cargo[0]).toMatchObject({ packageId: expect.any(String) });
     expect(leg.manifest.cargo[0]).not.toHaveProperty("cargoItemId");
-    expect(leg.draft).toBeNull();
+    expect(leg.draft).not.toBeNull();
+    expect(leg.draft.chargedWeightKg).toBeNull(); // Charged Wt starts unset, not defaulted
+    expect(leg.draft.notes).toBeNull();
   });
 
   it("rejects a bad token with 401", async () => {
@@ -277,8 +290,18 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       mode: "AIR",
       currency: "EUR",
       quoteValidityUntil: "2026-09-01T00:00:00.000Z",
+      chargedWeightKg: null,
+      notes: null,
       cargo: [],
-      charges: [{ zone: "ORIGIN", presetKey: "AIR_ORIGIN_THC", label: "Origin THC", amount: 42 }],
+      charges: [
+        {
+          zone: "ORIGIN",
+          presetKey: "AIR_ORIGIN_THC",
+          label: "Origin THC",
+          amount: 42,
+          rateVariant: null,
+        },
+      ],
       trucking: [],
       seaRates: [],
       warehouse: [],
@@ -335,10 +358,11 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   it("submit: missing charged weight/currency → 422 findings, Quote stays RFQ_SENT", async () => {
     const { token, legId } = await distributeFixture();
 
-    // PATCH a draft that is missing currency and has empty cargo (no Charged Wt entered for the
-    // frozen manifest package) + no charges. Submit re-derives draft.cargo from the FROZEN
-    // manifest (not the stored draft's cargo array — ff-portal.service.ts's submit()), so every
-    // manifest package's chargedWeightKg resolves to null regardless of `cargo: []` here.
+    // PATCH a draft that is missing currency and chargedWeightKg (v3: the one leg-level
+    // Chargeable Weight — Q_WEIGHT gates directly on it now, not a per-package derivation) + no
+    // charges. Submit re-derives draft.cargo from the FROZEN manifest regardless of `cargo: []`
+    // here (ff-portal.service.ts's submit()), but chargedWeightKg/notes pass through from the
+    // stored draft as-is — leaving it null is what trips Q_WEIGHT.
     await request(app.getHttpServer())
       .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
       .send({
@@ -346,6 +370,8 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         mode: "AIR",
         currency: null,
         quoteValidityUntil: null,
+        chargedWeightKg: null,
+        notes: null,
         cargo: [],
         charges: [],
         trucking: [],
@@ -607,7 +633,11 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     const manifestCargo = portalRes.body.legs[0].manifest.cargo;
     expect(manifestCargo).toHaveLength(1);
     expect(Number(manifestCargo[0].grossWt)).toBeCloseTo(5, 6); // 5 kg, NOT 5000
-    expect(portalRes.body.legs[0].draft).toBeNull(); // draft is null on first GET; the manifest is the ground truth
+    // v3: resolveScope seeds a starter draft (the per-variant matrix) once the leg has active
+    // charge-config lines rather than returning null — the manifest is still the ground truth for
+    // grossWt/cbm (re-derived server-side at submit regardless of the draft), it's just no longer
+    // signalled by a null draft.
+    expect(portalRes.body.legs[0].draft).not.toBeNull();
   });
 
   it("submit: tampered cargo immutables (grossWtKg/cbm) are ignored — server re-derives from the manifest", async () => {
@@ -618,13 +648,13 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     // Build a valid draft, then tamper the display-only cargo immutables (grossWtKg/cbm) — v2
     // dropped isDangerous from QuoteDraftCargo entirely (no DG-specific submit gate survives the
     // re-model, see ff-portal-grain.e2e-spec.ts's header comment), so there's nothing analogous
-    // to tamper there any more; chargedWeightKg is left honest (it's the one genuinely
-    // FF-editable field, and tampering IT would just change the legitimate price, not prove
-    // anything about server-side immutability).
+    // to tamper there any more; chargedWeightKg is left honest (v3: it's a separate leg-level
+    // field on the draft, not part of `cargo` at all any more — tampering it would just change
+    // the legitimate price, not prove anything about server-side immutability of cargo).
     const base = fullValidDraft(legId, got.body);
     const tampered = {
       ...base,
-      cargo: base.cargo.map((c: { packageId: string; chargedWeightKg: number | null }) => ({
+      cargo: base.cargo.map((c: { packageId: string }) => ({
         ...c,
         grossWtKg: 9999,
         cbm: 9999,
@@ -646,14 +676,15 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     expect(res.body.status).toBe("QUOTED");
 
     // Persisted chargedWeightKg reflects the honest FF-entered value from fullValidDraft (125),
-    // never the tampered 9999 — QuoteCargoLine has no grossWt/cbm column at all in v2, so those
+    // never the tampered 9999 — v3: chargedWeightKg lives on Quote (leg-level), not
+    // QuoteCargoLine, which (both pre- and post-v3) has no grossWt/cbm column at all, so those
     // tampered fields structurally cannot leak into any persisted table.
     const q = await prisma.quote.findFirst({
       where: { legId },
       include: { quoteCargoLines: true },
     });
     expect(q?.quoteCargoLines.length).toBeGreaterThan(0);
-    expect(Number(q!.quoteCargoLines[0].chargedWeightKg)).toBe(125);
+    expect(Number(q!.chargedWeightKg)).toBe(125);
 
     // The frozen manifest itself (server-side truth) is untouched by the client's tampered draft.
     const manifest = q!.manifestSnapshot as { cargo: Array<{ grossWt: string }> };
@@ -725,18 +756,21 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     // FCL priced; LCL row present but amount left blank — Q_RATE only requires ONE of the two SEA
     // variants filled, so this is a legitimate, submittable draft. seededCharges here are the 5
     // SEA CORE PLAIN origin lines (SEA_MAIN_FREIGHT is retired/inactive — sea freight prices via
-    // seaRates instead), each priced at $10 = $50 shared subtotal.
+    // seaRates instead); v3: charges are per-variant matrix cells, so each is priced under FCL
+    // only ($10 x 5 = $50) — LCL is left completely untouched (no rate, no charges), proving it
+    // stays a legitimate blank column rather than needing to be filled too.
     const draft = {
       legId: leg.id,
       mode: "SEA",
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 520, // v3: one leg-level chargeable weight (was per-package)
+      notes: null,
       cargo: legDto.manifest.cargo.map(
         (c: { packageId: string; grossWt: string; volumeCbm: string | null }) => ({
           packageId: c.packageId,
           grossWtKg: Number(c.grossWt),
           cbm: Number(c.volumeCbm ?? 0),
-          chargedWeightKg: 520,
         }),
       ),
       charges: legDto.seededCharges.map(
@@ -746,6 +780,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
           presetKey: null,
           label: c.label,
           amount: 10,
+          rateVariant: "FCL",
         }),
       ),
       trucking: [],
@@ -757,7 +792,8 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       transit: {
         departureDate: "2026-09-01T00:00:00.000Z",
         arrivalDate: "2026-09-10T00:00:00.000Z",
-        guaranteedTransitDays: 9,
+        // only FCL is a priced variant (LCL is untouched) — Q_TRANSIT only requires FCL's slot.
+        guaranteedTransitDaysByVariant: { FCL: 9 },
       },
       dgSurchargeNote: null,
       termsConditions: null,
@@ -785,8 +821,9 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     expect(rates[0]!.rateVariant).toBe("FCL");
     expect(Number(rates[0]!.amount)).toBe(1800);
 
-    // Quote.grandTotal = the engine's MAX variant grand total: FCL = 1800 + $50 shared subtotal =
-    // 1850; LCL (unpriced) = 0 + 50 = 50. max(1850, 50) = 1850.
+    // Quote.grandTotal = the engine's MAX variant grand total: FCL = 1800 (rate) + $50 (its own
+    // charges) + $0 warehouse = 1850; LCL (untouched) = 0 (rate) + 0 (no charges) + $0 = 0.
+    // max(1850, 0) = 1850.
     const quote = await prisma.quote.findUniqueOrThrow({ where: { id: submitRes.body.quoteId } });
     expect(Number(quote.grandTotal)).toBe(1850);
   });

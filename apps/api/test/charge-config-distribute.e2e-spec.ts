@@ -5,7 +5,8 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
-import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
+import { Role, ACCESS_TOKEN_COOKIE, variantsForMode, AIR_VARIANT_KEY } from "@svyft/shared";
+import type { QuoteDraft, ChargeZone } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
@@ -228,11 +229,14 @@ describe(`${PREFIX} (e2e)`, () => {
   }
 
   /**
-   * Build a complete valid v2 draft from the GET response body (mirrors ff-portal-grain.e2e-spec.ts /
-   * ff-portal.e2e-spec.ts's fullValidDraft): cargo is per-package with an FF-entered
-   * chargedWeightKg (the dropped density model had no such concept), and a HEAVY_WEIGHT_CALC
-   * line (AIR_MAIN_HEAVY_WEIGHT) is priced via its 3 calc inputs rather than a flat amount.
-   * Optionally omit one mandatory line's charge (`omitKey`) to exercise the Q_PRICED gate.
+   * Build a complete valid v3 draft from the GET response body (mirrors ff-portal-grain.e2e-spec.ts /
+   * ff-portal.e2e-spec.ts's fullValidDraft): chargedWeightKg is one leg-level FF-entered value
+   * (v3 — was per-package pre-v3), and every seeded line is fanned out across the mode's
+   * rate-variant columns (variantsForMode; AIR's single implicit column uses rateVariant: null) —
+   * a HEAVY_WEIGHT_CALC line (AIR_MAIN_HEAVY_WEIGHT) is priced via its 3 calc inputs per column
+   * rather than a flat amount. Optionally omit one mandatory line's charge (`omitKey`) to
+   * exercise the Q_PRICED gate. The return type is annotated `QuoteDraft` so the compiler — not
+   * just the runtime Zod schema — enforces the v3 shape.
    */
   function fullValidDraft(
     legId: string,
@@ -243,7 +247,7 @@ describe(`${PREFIX} (e2e)`, () => {
           cargo: Array<{ packageId: string; grossWt: string; volumeCbm: string | null }>;
         };
         seededCharges: Array<{
-          zone: string | null;
+          zone: ChargeZone | null;
           definitionKey: string;
           inputType?: string;
           label: string;
@@ -251,41 +255,47 @@ describe(`${PREFIX} (e2e)`, () => {
       }>;
     },
     opts?: { omitKey?: string },
-  ) {
+  ): QuoteDraft {
     const leg = getBody.legs[0];
+    const variants = variantsForMode(mode);
     return {
       legId,
       mode,
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 10, // v3: one leg-level chargeable weight (was per-package)
+      notes: null,
       cargo: leg.manifest.cargo.map((c) => ({
         packageId: c.packageId,
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
-        chargedWeightKg: 10,
       })),
       charges: leg.seededCharges
         .filter((c) => c.definitionKey !== opts?.omitKey)
-        .map((c, i) =>
-          c.inputType === "HEAVY_WEIGHT_CALC"
-            ? {
-                zone: c.zone,
-                definitionKey: c.definitionKey,
-                presetKey: null,
-                label: c.label,
-                amount: null,
-                pieceWeightKg: 180,
-                airlineLimitKg: 100,
-                ratePerExcessKg: 2.5,
-              }
-            : {
-                zone: c.zone,
-                definitionKey: c.definitionKey,
-                presetKey: null,
-                label: c.label,
-                amount: i === 0 ? 0 : 10, // 0 is a valid price — Q_PRICED treats amount != null as "priced"
-                note: i === 0 ? "quoted at 0 by agreement" : undefined, // Q_PRICED requires a remark to accept 0
-              },
+        .flatMap((c, i) =>
+          variants.map((rateVariant) =>
+            c.inputType === "HEAVY_WEIGHT_CALC"
+              ? {
+                  zone: c.zone,
+                  definitionKey: c.definitionKey,
+                  presetKey: null,
+                  label: c.label,
+                  amount: null,
+                  rateVariant,
+                  pieceWeightKg: 180,
+                  airlineLimitKg: 100,
+                  ratePerExcessKg: 2.5,
+                }
+              : {
+                  zone: c.zone,
+                  definitionKey: c.definitionKey,
+                  presetKey: null,
+                  label: c.label,
+                  amount: i === 0 ? 0 : 10, // 0 is a valid price — Q_PRICED treats amount != null as "priced"
+                  rateVariant,
+                  note: i === 0 ? "quoted at 0 by agreement" : undefined, // Q_PRICED requires a remark to accept 0
+                },
+          ),
         ),
       trucking: [],
       seaRates: [],
@@ -293,7 +303,11 @@ describe(`${PREFIX} (e2e)`, () => {
       transit: {
         departureDate: "2026-08-12T00:00:00.000Z",
         arrivalDate: "2026-08-14T00:00:00.000Z",
-        guaranteedTransitDays: 3,
+        // one Guaranteed Transit Time per rate-variant column (v3) — Air's single implicit column
+        // is keyed by AIR_VARIANT_KEY (its ChargeRateVariant is `null`, which can't be an object key).
+        guaranteedTransitDaysByVariant: Object.fromEntries(
+          variants.map((v) => [v ?? AIR_VARIANT_KEY, 3]),
+        ),
       },
       dgSurchargeNote: null,
       termsConditions: null,

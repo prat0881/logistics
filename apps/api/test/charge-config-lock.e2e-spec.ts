@@ -361,14 +361,17 @@ describe(`${PREFIX} (e2e)`, () => {
       mode: "ROAD",
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 5, // v3: one leg-level chargeable weight (was per-package)
+      notes: null,
       cargo: legDto1.manifest.cargo.map(
         (c: { packageId: string; grossWt: string; volumeCbm: string | null }) => ({
           packageId: c.packageId,
           grossWtKg: Number(c.grossWt),
           cbm: Number(c.volumeCbm ?? 0),
-          chargedWeightKg: 5,
         }),
       ),
+      // v3: charges carry a rateVariant (the matrix column); this test isn't exercising
+      // per-variant behavior, so every line prices under DEDICATED only.
       charges: legDto1.seededCharges.map(
         (c: { zone: string | null; definitionKey: string; label: string }) => ({
           zone: c.zone,
@@ -376,6 +379,7 @@ describe(`${PREFIX} (e2e)`, () => {
           presetKey: null,
           label: c.label,
           amount: 77,
+          rateVariant: "DEDICATED",
         }),
       ),
       trucking: [],
@@ -416,9 +420,22 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(quoteAfterChangeOrder.draftJson).toBeNull();
 
     // --- the FF re-opens the portal: no stale draft, fresh config (INSURANCE only) ---
+    // v3: resolveScope seeds a starter QuoteDraft (the per-variant matrix) rather than `null`
+    // whenever the leg has >=1 active charge-config line (design §5) — a cleared draftJson no
+    // longer shows up as `draft: null`. "No stale draft" now means the FRESH seed reflects the
+    // re-frozen config (INSURANCE only, every cell unpriced) and carries NONE of the stale
+    // TAIL_LIFT pricing (77) the FF had entered before the change-order.
     const got2 = await request(server).get(`/api/ff/rfq/${token}`).expect(200);
     const legDto2 = got2.body.legs[0];
-    expect(legDto2.draft).toBeNull();
+    expect(legDto2.draft).not.toBeNull();
+    const seededDraftKeys = (legDto2.draft.charges as { definitionKey: string }[]).map(
+      (c) => c.definitionKey,
+    );
+    expect(seededDraftKeys.length).toBeGreaterThan(0);
+    expect(seededDraftKeys.every((k) => k === "ROAD_STD_INSURANCE")).toBe(true); // no TAIL_LIFT
+    expect(
+      (legDto2.draft.charges as { amount: number | null }[]).every((c) => c.amount === null),
+    ).toBe(true); // nothing pre-priced — not the stale 77
     const keys2 = legDto2.seededCharges.map((c: { definitionKey: string }) => c.definitionKey);
     expect(keys2).toEqual(["ROAD_STD_INSURANCE"]);
 
@@ -429,14 +446,17 @@ describe(`${PREFIX} (e2e)`, () => {
       mode: "ROAD",
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 5, // v3: one leg-level chargeable weight (was per-package)
+      notes: null,
       cargo: legDto2.manifest.cargo.map(
         (c: { packageId: string; grossWt: string; volumeCbm: string | null }) => ({
           packageId: c.packageId,
           grossWtKg: Number(c.grossWt),
           cbm: Number(c.volumeCbm ?? 0),
-          chargedWeightKg: 5,
         }),
       ),
+      // DEDICATED only (matches the trucking rate below) — GROUPAGE stays untouched, so only
+      // DEDICATED needs to clear Q_PRICED/Q_TRANSIT; grandTotal = trucking 500 + INSURANCE 55 = 555.
       charges: legDto2.seededCharges.map(
         (c: { zone: string | null; definitionKey: string; label: string }) => ({
           zone: c.zone,
@@ -444,6 +464,7 @@ describe(`${PREFIX} (e2e)`, () => {
           presetKey: null,
           label: c.label,
           amount: 55,
+          rateVariant: "DEDICATED",
         }),
       ),
       trucking: [
@@ -462,7 +483,7 @@ describe(`${PREFIX} (e2e)`, () => {
       transit: {
         departureDate: "2026-08-12T00:00:00.000Z",
         arrivalDate: "2026-08-14T00:00:00.000Z",
-        guaranteedTransitDays: 3,
+        guaranteedTransitDaysByVariant: { DEDICATED: 3 },
       },
       dgSurchargeNote: null,
       termsConditions: null,

@@ -97,16 +97,17 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     });
 
     // 2. Insert one row per pricing table — v2 grain (design §7, Unit 2 re-model): QuoteCargoLine
-    // keys off packageId + a single FF-entered chargedWeightKg (the dropped freightDensity/
-    // chargeableWeightT density-derived columns are gone); TruckingCharge/SeaFreightRate carry
+    // keys off packageId only in v3 (the FF-entered chargeable weight it briefly carried,
+    // chargedWeightKg, moved to the leg-level Quote.chargedWeightKg — see design §3.1/D2 — so
+    // QuoteCargoLine is back to a pure pointer row); TruckingCharge/SeaFreightRate carry
     // the dual-rate rateVariant (+tonnage/containerSize); ChargeLine/WarehouseStagingLine grew
     // mode-specific calc/attribution columns; SeaFreightRate is a new 6th pricing child table
-    // (replaces the retired flat SEA_MAIN_FREIGHT preset).
+    // (replaces the retired flat SEA_MAIN_FREIGHT preset). ChargeLine/TransitPlan additionally
+    // grew a nullable v3 `rateVariant` (the per-variant charge-matrix column — see below).
     const qcl = await prisma.quoteCargoLine.create({
       data: {
         quoteId: quote.id,
         packageId,
-        chargedWeightKg: 123.456,
       },
     });
 
@@ -120,6 +121,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         definitionKey: "AIR_ORIGIN_THC",
         amount: 200.0,
         sortOrder: 1,
+        rateVariant: "DEDICATED", // v3: the per-variant matrix column this charge belongs to
       },
     });
 
@@ -163,6 +165,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     const tp = await prisma.transitPlan.create({
       data: {
         quoteId: quote.id,
+        rateVariant: "DEDICATED", // v3: one TransitPlan row per (quoteId, rateVariant) — see below
         carrier: "Emirates SkyCargo",
         flightVoyageNo: "EK9601",
         departureDate: new Date("2026-08-05T10:00:00Z"),
@@ -184,7 +187,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         truckingCharges: true,
         seaFreightRates: true,
         warehouseStagingLines: true,
-        transitPlan: true,
+        transitPlans: true, // v3: Quote.transitPlan (1:nullable-1) renamed to transitPlans (1:many)
       },
     });
 
@@ -193,10 +196,11 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     expect(reloadedQuote.dgSurchargeNote).toBe("No DG");
     expect(reloadedQuote.termsConditions).toBe("NET 30");
 
-    // QuoteCargoLine — v2: packageId + chargedWeightKg only (the density-derived columns are gone)
+    // QuoteCargoLine — v3: packageId only (chargedWeightKg moved to the leg-level
+    // Quote.chargedWeightKg; the older density-derived columns were already gone pre-v3)
     expect(reloadedQuote.quoteCargoLines).toHaveLength(1);
-    expect(Number(reloadedQuote.quoteCargoLines[0].chargedWeightKg)).toBeCloseTo(123.456, 3);
     expect(reloadedQuote.quoteCargoLines[0].packageId).toBe(packageId);
+    expect(reloadedQuote.quoteCargoLines[0]).not.toHaveProperty("chargedWeightKg");
     expect(reloadedQuote.quoteCargoLines[0]).not.toHaveProperty("freightDensity");
     expect(reloadedQuote.quoteCargoLines[0]).not.toHaveProperty("chargeableWeightT");
 
@@ -206,6 +210,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     expect(Number(reloadedQuote.chargeLines[0].amount)).toBeCloseTo(200, 2);
     expect(reloadedQuote.chargeLines[0].presetKey).toBe("ORIGIN_HANDLING");
     expect(reloadedQuote.chargeLines[0].definitionKey).toBe("AIR_ORIGIN_THC");
+    expect(reloadedQuote.chargeLines[0].rateVariant).toBe("DEDICATED"); // v3
 
     // TruckingCharge — v2 dual-rate: rateVariant + tonnage
     expect(reloadedQuote.truckingCharges).toHaveLength(1);
@@ -231,14 +236,19 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     expect(reloadedQuote.warehouseStagingLines[0].cfsCode).toBe("CFS-001");
     expect(reloadedQuote.warehouseStagingLines[0].side).toBe("DROP");
 
-    // TransitPlan (1:1) — pre-existing columns kept as-is, plus v2's mode-specific airline/flightNumber
-    expect(reloadedQuote.transitPlan).not.toBeNull();
-    expect(reloadedQuote.transitPlan!.carrier).toBe("Emirates SkyCargo");
-    expect(reloadedQuote.transitPlan!.flightVoyageNo).toBe("EK9601");
-    expect(reloadedQuote.transitPlan!.guaranteedTransitDays).toBe(1);
-    expect(reloadedQuote.transitPlan!.quoteId).toBe(quote.id);
-    expect(reloadedQuote.transitPlan!.airline).toBe("Emirates SkyCargo");
-    expect(reloadedQuote.transitPlan!.flightNumber).toBe("EK9601");
+    // TransitPlan — v3: Quote.transitPlans is now 1:many (one row per priced rate variant), keyed
+    // by the composite (quoteId, rateVariant) unique index instead of one-row-per-quote; this
+    // fixture creates exactly one (DEDICATED) row. Pre-existing columns (carrier/flightVoyageNo/
+    // guaranteedTransitDays/mode-specific airline/flightNumber) kept as-is.
+    expect(reloadedQuote.transitPlans).toHaveLength(1);
+    const transitPlan = reloadedQuote.transitPlans[0];
+    expect(transitPlan.rateVariant).toBe("DEDICATED"); // v3
+    expect(transitPlan.carrier).toBe("Emirates SkyCargo");
+    expect(transitPlan.flightVoyageNo).toBe("EK9601");
+    expect(transitPlan.guaranteedTransitDays).toBe(1);
+    expect(transitPlan.quoteId).toBe(quote.id);
+    expect(transitPlan.airline).toBe("Emirates SkyCargo");
+    expect(transitPlan.flightNumber).toBe("EK9601");
 
     // Point back-relations
     const reloadedOriginPoint = await prisma.point.findUniqueOrThrow({

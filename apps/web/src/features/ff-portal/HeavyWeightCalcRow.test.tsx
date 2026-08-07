@@ -12,6 +12,8 @@ const defaultDraft: QuoteDraft = {
   mode: "AIR",
   currency: "USD",
   quoteValidityUntil: null,
+  chargedWeightKg: null,
+  notes: null,
   cargo: [],
   charges: [
     {
@@ -20,6 +22,7 @@ const defaultDraft: QuoteDraft = {
       presetKey: null,
       label: LABEL,
       amount: null,
+      rateVariant: null, // Air's single implicit column
       pieceWeightKg: null,
       airlineLimitKg: null,
       ratePerExcessKg: null,
@@ -28,7 +31,7 @@ const defaultDraft: QuoteDraft = {
   trucking: [],
   seaRates: [],
   warehouse: [],
-  transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
+  transit: { departureDate: null, arrivalDate: null, guaranteedTransitDaysByVariant: {} },
   dgSurchargeNote: null,
   termsConditions: null,
 };

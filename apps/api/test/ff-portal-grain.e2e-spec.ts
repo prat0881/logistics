@@ -18,9 +18,8 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 // per-variant totals). This spec drives the REAL, unmodified HTTP path end to end --
 // ff-selection -> distribute -> GET portal -> PATCH draft -> POST submit -- against a real
 // Cargo->Package->Item + LegPackage fixture (same fixture shape as Task 3's original), then
-// asserts the v2 materialize: QuoteCargoLine.chargedWeightKg, two TruckingCharge rows with
-// distinct rateVariant, Quote.grandTotal = the engine's max variant grand total, and the
-// mandatory-Guaranteed-Transit gate (Q_TRANSIT).
+// asserts the v2 materialize: two TruckingCharge rows with distinct rateVariant, Quote.grandTotal
+// = the engine's max variant grand total, and the mandatory-Guaranteed-Transit gate (Q_TRANSIT).
 //
 // Before Task 9's fix: `apps/api` doesn't even `nest build` -- ff-portal.service.ts still
 // writes `QuoteCargoLine.freightDensity`/`chargeableWeightT` (dropped by Unit 2's migration)
@@ -46,6 +45,20 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 // trucking/seaRate variants filled, so a dual-rate draft can legitimately carry the OTHER
 // variant as amount=null -- submit now filters those out before materializing instead of
 // force-unwrapping `amount!` on a row that was never priced (same crash class).
+//
+// Task 9 (FF Portal v3, per-variant quoting) pruning addendum: chargedWeightKg moved OFF
+// QuoteCargoLine entirely onto a single leg-level Quote.chargedWeightKg (design §3.1/D2) — every
+// draft fixture below was re-pointed accordingly (one leg-level value, not one per package), and
+// the QuoteCargoLine.chargedWeightKg / per-package-scoped-Q_WEIGHT assertions the (1) addendum
+// above describes were removed where the underlying scenario no longer exists. One whole test
+// ("blocks submit with 422 Q_WEIGHT... when a package has no Charged Wt") was DELETED rather than
+// rewritten — see the note in its place below — because its premise (one package priced, a
+// SIBLING package missing its weight) is no longer constructible under v3's one-leg-level-value
+// model, and what remained of its intent is already covered by ff-portal-v3.e2e-spec.ts. Also:
+// `guaranteedTransitDays` (one value per leg) became `guaranteedTransitDaysByVariant` (one value
+// per PRICED rate-variant column — design §3.1/D3); Quote.draftJson is now PERSISTED after submit
+// (design §6 finding #8), not nulled, so the one assertion that checked `draftJson).toBeNull()`
+// was inverted, not deleted.
 const PFX = "FFGRAIN_";
 
 describe(`${PFX}ff-portal-grain (e2e)`, () => {
@@ -214,17 +227,20 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
 
     // --- price only the trucking + transit; Guaranteed Transit intentionally left blank —
     //     submit must 422/Q_TRANSIT. Two rate variants at the SAME leg (Dedicated ex-origin,
-    //     Groupage ex-destination) so both TruckingCharge rows are genuinely distinct. ---
+    //     Groupage ex-destination) so both TruckingCharge rows are genuinely distinct. v3:
+    //     chargedWeightKg is one leg-level value (was per-package) — the two-packages fixture is
+    //     kept for manifest-grain/DG-tag fidelity (effectiveTags), not per-package weight anymore.
     const draftNoTransit: QuoteDraft = {
       legId: leg.id,
       mode: "ROAD",
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 173.7, // v3: one leg-level chargeable weight (was 125.5 + 48.2 per package)
+      notes: null,
       cargo: legDto.manifest.cargo.map((c) => ({
         packageId: c.packageId,
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
-        chargedWeightKg: c.packageId === pkg1.id ? 125.5 : 48.2,
       })),
       charges: [],
       trucking: [
@@ -253,7 +269,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
         departureDate: "2026-08-12T00:00:00.000Z",
         arrivalDate: "2026-08-14T00:00:00.000Z",
         plannedPickupDate: "2026-08-11T00:00:00.000Z",
-        guaranteedTransitDays: null, // <-- the gap under test
+        guaranteedTransitDaysByVariant: {}, // <-- the gap under test
       },
       dgSurchargeNote: "Handled per IATA/ADR DG regulations",
       termsConditions: null,
@@ -261,12 +277,21 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draftNoTransit).expect(200);
     const blockedRes = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(422);
-    expect(blockedRes.body.findings.map((f: { rule: string }) => f.rule)).toEqual(["Q_TRANSIT"]);
+    // v3: BOTH Dedicated and Groupage are priced variants (both trucking rows are filled), and
+    // validateQuote's Q_TRANSIT loop fires once PER priced variant missing its transit-days — so
+    // this is 2 findings, not 1 (was a single leg-wide Q_TRANSIT pre-v3).
+    expect(blockedRes.body.findings).toHaveLength(2);
+    expect(
+      (blockedRes.body.findings as { rule: string }[]).every((f) => f.rule === "Q_TRANSIT"),
+    ).toBe(true);
 
-    // --- fill Guaranteed Transit Time; submit must now succeed ---
+    // --- fill Guaranteed Transit Time for BOTH priced variants; submit must now succeed ---
     const draftReady: QuoteDraft = {
       ...draftNoTransit,
-      transit: { ...draftNoTransit.transit!, guaranteedTransitDays: 3 },
+      transit: {
+        ...draftNoTransit.transit!,
+        guaranteedTransitDaysByVariant: { DEDICATED: 3, GROUPAGE: 3 },
+      },
     };
     await api().patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draftReady).expect(200);
 
@@ -274,12 +299,12 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     expect(submitRes.body.status).toBe("QUOTED");
     const quoteId = submitRes.body.quoteId as string;
 
-    // --- one QuoteCargoLine per package, chargedWeightKg persisted (kg, not density/T) ---
+    // --- one QuoteCargoLine per package (v3: no chargedWeightKg column on it any more — see the
+    //     Quote-level assertion below) ---
     const lines = await prisma.quoteCargoLine.findMany({ where: { quoteId } });
     expect(lines).toHaveLength(2);
-    const byPackage = new Map(lines.map((l) => [l.packageId, Number(l.chargedWeightKg)]));
-    expect(byPackage.get(pkg1.id)).toBe(125.5);
-    expect(byPackage.get(pkg2.id)).toBe(48.2);
+    expect(lines.map((l) => l.packageId).sort()).toEqual([pkg1.id, pkg2.id].sort());
+    expect(lines[0]).not.toHaveProperty("chargedWeightKg");
 
     // --- two TruckingCharge rows, distinct rateVariant, dual-rate fields carried through ---
     const trucking = await prisma.truckingCharge.findMany({
@@ -297,13 +322,21 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     expect(groupage.tonnage).toBeNull();
     expect(groupage.legEndpointPointId).toBe(dest.id);
 
+    // --- two TransitPlan rows (one per priced variant), each carrying its own rateVariant (v3) ---
+    const transitPlans = await prisma.transitPlan.findMany({ where: { quoteId } });
+    expect(transitPlans).toHaveLength(2);
+    expect(transitPlans.map((t) => t.rateVariant).sort()).toEqual(["DEDICATED", "GROUPAGE"]);
+
     // --- Quote.grandTotal = the engine's MAX variant grand total (no charges/warehouse here,
     //     so each variant's grand total is just its own trucking amount: max(500, 300) = 500) ---
     const quote = await prisma.quote.findUniqueOrThrow({ where: { id: quoteId } });
     expect(Number(quote.grandTotal)).toBe(500);
-    expect(quote.totalChargeableWeightT).toBeNull(); // column kept but unused — kg lives on QuoteCargoLine
+    expect(quote.totalChargeableWeightT).toBeNull(); // column kept but unused — kg lives on Quote.chargedWeightKg
+    expect(Number(quote.chargedWeightKg)).toBe(173.7); // v3: the one leg-level value, on Quote itself
     expect(quote.dgSurchargeNote).toBe("Handled per IATA/ADR DG regulations");
-    expect(quote.draftJson).toBeNull(); // consumed on submit
+    // v3 (design §6 finding #8): submit PERSISTS the submitted draft (was Prisma.DbNull
+    // pre-fix) — the FF portal preview/print reads it back post-submission.
+    expect(quote.draftJson).not.toBeNull();
   });
 
   it("materializes a HEAVY_WEIGHT_CALC charge line via computeHeavyWeightAmount", async () => {
@@ -391,7 +424,10 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       mode: "AIR",
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
-      cargo: [{ packageId: pkg.id, grossWtKg: 500, cbm: 0.96, chargedWeightKg: 550 }],
+      chargedWeightKg: 550, // v3: one leg-level chargeable weight (was per-package)
+      notes: null,
+      cargo: [{ packageId: pkg.id, grossWtKg: 500, cbm: 0.96 }],
+      // rateVariant: null on every cell — Air's single implicit column (v3).
       charges: legDto.seededCharges.map((c) =>
         c.inputType === "HEAVY_WEIGHT_CALC"
           ? {
@@ -400,6 +436,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
               presetKey: c.presetKey,
               label: c.label,
               amount: null,
+              rateVariant: null,
               pieceWeightKg: 180,
               airlineLimitKg: 100,
               ratePerExcessKg: 2.5,
@@ -410,6 +447,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
               presetKey: c.presetKey,
               label: c.label,
               amount: 50,
+              rateVariant: null,
             },
       ),
       trucking: [],
@@ -422,7 +460,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
         flightNumber: "EK9821",
         plannedDeparture: "2026-09-01T10:00:00.000Z",
         plannedArrival: "2026-09-01T18:00:00.000Z",
-        guaranteedTransitDays: 2,
+        guaranteedTransitDaysByVariant: { AIR: 2 },
       },
       dgSurchargeNote: null,
       termsConditions: null,
@@ -456,139 +494,16 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     expect(Number(quote.grandTotal)).toBe(plainCount * 50 + 200);
   });
 
-  it("blocks submit with 422 Q_WEIGHT (not a 500) when a package has no Charged Wt", async () => {
-    const admin = cookie(Role.ADMINISTRATOR);
-    const CODE = `${PFX}3`;
-
-    const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({
-      data: { queryId: query.id, type: "PICKUP", country: "CN" },
-    });
-    const dest = await prisma.point.create({
-      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
-    });
-
-    const cargo = await prisma.cargo.create({ data: { queryId: query.id, rowIndex: 0 } });
-    const pkg1 = await prisma.package.create({
-      data: {
-        queryId: query.id,
-        cargoId: cargo.id,
-        rowIndex: 0,
-        packageNo: "PK-1",
-        packageType: "BOX",
-        dimL: 100,
-        dimW: 50,
-        dimH: 40,
-        grossWt: 120,
-      },
-    });
-    const pkg2 = await prisma.package.create({
-      data: {
-        queryId: query.id,
-        cargoId: cargo.id,
-        rowIndex: 1,
-        packageNo: "PK-2",
-        packageType: "DRUM",
-        dimL: 60,
-        dimW: 60,
-        dimH: 60,
-        grossWt: 45,
-      },
-    });
-
-    const leg = await prisma.leg.create({
-      data: {
-        queryId: query.id,
-        legCode: "L-FFGRAIN-3",
-        mode: "ROAD",
-        status: "READY_FOR_RFQ",
-        originPointId: origin.id,
-        destinationPointId: dest.id,
-        readyDate: new Date(),
-        targetDelivery: new Date(Date.now() + 86400000),
-        legPackages: { create: [{ packageId: pkg1.id }, { packageId: pkg2.id }] },
-      },
-    });
-
-    const ff = await prisma.freightForwarder.create({
-      data: {
-        freightForwarderCode: `FF-${PFX}C`,
-        companyName: `FF-${PFX}C Co`,
-        pic: "P",
-        contactNumber: "+1000000002",
-        email: `ff-${PFX.toLowerCase()}c@e2e.test`,
-        availableCountries: ["CN", "AE"],
-        modes: ["ROAD"],
-        status: "ACTIVE",
-        handleDg: false,
-        defaultCurrency: "USD",
-      },
-    });
-
-    await api()
-      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
-      .set("Cookie", admin)
-      .send({ ffIds: [ff.id] })
-      .expect(200);
-    const distRes = await api()
-      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
-      .set("Cookie", admin)
-      .send({})
-      .expect(201);
-    const token = distRes.body.rfqs[0].accessToken as string;
-
-    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
-    const legDto = (got.body as FfPortalRfqDto).legs[0];
-
-    // pkg1 priced, pkg2 left WITHOUT a Charged Wt — everything else (currency, validity,
-    // trucking, transit) is genuinely valid, so a 422 here can only come from Q_WEIGHT.
-    const draft: QuoteDraft = {
-      legId: leg.id,
-      mode: "ROAD",
-      currency: "USD",
-      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
-      cargo: legDto.manifest.cargo.map((c) => ({
-        packageId: c.packageId,
-        grossWtKg: Number(c.grossWt),
-        cbm: Number(c.volumeCbm ?? 0),
-        chargedWeightKg: c.packageId === pkg1.id ? 125.5 : null,
-      })),
-      charges: [],
-      trucking: [
-        {
-          legEndpointPointId: origin.id,
-          truckingType: "DEDICATED",
-          basis: "PER_TRUCK",
-          amount: 500,
-          remarks: "Dedicated ex-origin",
-          rateVariant: "DEDICATED",
-          tonnage: "T_5",
-        },
-      ],
-      seaRates: [],
-      warehouse: [],
-      transit: {
-        departureDate: "2026-08-12T00:00:00.000Z",
-        arrivalDate: "2026-08-14T00:00:00.000Z",
-        guaranteedTransitDays: 3,
-      },
-      dgSurchargeNote: null,
-      termsConditions: null,
-    };
-
-    await api().patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draft).expect(200);
-    // Before the fix: quoteCargoLine.createMany's `chargedWeightKg: c.chargedWeightKg!` force-
-    // unwraps null onto a NOT NULL column — Prisma rejects it with a PrismaClientValidationError,
-    // which the global PrismaExceptionFilter maps to a generic 400 "Invalid request" (crashing
-    // past the submit gate with zero diagnostic info for the FF), not this proper, specific 422
-    // Q_WEIGHT finding. `.expect(422)` fails loudly (with the real status) if that regresses.
-    const res = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(422);
-    const weightFinding = (
-      res.body.findings as { rule: string; scope: { type: string; id?: string } }[]
-    ).find((f) => f.rule === "Q_WEIGHT");
-    expect(weightFinding).toBeDefined();
-    expect(weightFinding?.scope).toEqual({ type: "cargo", id: pkg2.id });
-  });
+  // DELETED (Task 9, v3): "blocks submit with 422 Q_WEIGHT (not a 500) when a package has no
+  // Charged Wt" no longer applies — its entire premise was PER-PACKAGE chargedWeightKg (pkg1
+  // priced, pkg2 left blank, scope: {type:"cargo", id: pkg2.id}), which v3 structurally removed
+  // (chargedWeightKg is now one leg-level QuoteDraft field, not per-QuoteCargoLine — there is no
+  // longer a "package missing its own weight while another has one" scenario to construct). What
+  // remained of its intent — Q_WEIGHT surfaces as a proper, specifically-scoped 422 finding
+  // rather than crashing past the gate on a force-unwrapped null — is now fully and exactly
+  // covered by ff-portal-v3.e2e-spec.ts's "submit: missing the leg-level chargedWeightKg -> 422
+  // Q_WEIGHT (field-scoped, not per-cargo), Quote stays RFQ_SENT", which asserts the v3 scope
+  // shape `{type:"field", id:"chargedWeightKg"}` directly.
 
   it("materializes only the priced trucking variant when the other dual-rate row is left blank", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
@@ -662,17 +577,19 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     const legDto = (got.body as FfPortalRfqDto).legs[0];
 
     // Dedicated priced; Groupage row present but amount left blank — Q_RATE only requires ONE
-    // of the two variants filled, so this is a legitimate, submittable draft.
+    // of the two variants filled, so this is a legitimate, submittable draft. Groupage has no
+    // charges either, so it stays entirely untouched (v3: only Dedicated needs transit-days).
     const draft: QuoteDraft = {
       legId: leg.id,
       mode: "ROAD",
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 130, // v3: one leg-level chargeable weight (was per-package)
+      notes: null,
       cargo: legDto.manifest.cargo.map((c) => ({
         packageId: c.packageId,
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
-        chargedWeightKg: 130,
       })),
       charges: [],
       trucking: [
@@ -699,7 +616,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       transit: {
         departureDate: "2026-08-12T00:00:00.000Z",
         arrivalDate: "2026-08-14T00:00:00.000Z",
-        guaranteedTransitDays: 4,
+        guaranteedTransitDaysByVariant: { DEDICATED: 4 },
       },
       dgSurchargeNote: null,
       termsConditions: null,
@@ -796,19 +713,20 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     const legDto = (got.body as FfPortalRfqDto).legs[0];
 
     // Guaranteed Transit Time set (mandatory, Q_TRANSIT) but NO generic departureDate/
-    // arrivalDate — only the Road-specific plannedPickupDate. This is a fully valid v2 draft:
-    // v2 replaced the old departure/arrival requirement with mandatory guaranteedTransitDays,
-    // and every mode-specific date field is optional.
+    // arrivalDate — only the Road-specific plannedPickupDate. This is a fully valid draft:
+    // guaranteedTransitDaysByVariant is mandatory (per priced variant) and every mode-specific
+    // date field is optional.
     const draft: QuoteDraft = {
       legId: leg.id,
       mode: "ROAD",
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 130, // v3: one leg-level chargeable weight (was per-package)
+      notes: null,
       cargo: legDto.manifest.cargo.map((c) => ({
         packageId: c.packageId,
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
-        chargedWeightKg: 130,
       })),
       charges: [],
       trucking: [
@@ -828,7 +746,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
         departureDate: null,
         arrivalDate: null,
         plannedPickupDate: "2026-08-11T00:00:00.000Z",
-        guaranteedTransitDays: 5,
+        guaranteedTransitDaysByVariant: { DEDICATED: 5 }, // only Dedicated is priced
       },
       dgSurchargeNote: null,
       termsConditions: null,
@@ -845,6 +763,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     const transitPlan = await prisma.transitPlan.findFirstOrThrow({
       where: { quoteId: submitRes.body.quoteId },
     });
+    expect(transitPlan.rateVariant).toBe("DEDICATED"); // v3: the one priced variant's column
     expect(transitPlan.departureDate).toBeNull(); // NOT 1970-01-01T00:00:00.000Z
     expect(transitPlan.arrivalDate).toBeNull();
     expect(transitPlan.guaranteedTransitDays).toBe(5);

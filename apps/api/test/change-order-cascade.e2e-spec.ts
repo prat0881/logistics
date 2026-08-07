@@ -221,8 +221,10 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
       },
     });
     // FF-A's pricing child — must SURVIVE invalidation (non-destructive history, design §11).
+    // v3: QuoteCargoLine.chargedWeightKg dropped (that value moved to the leg-level
+    // Quote.chargedWeightKg) — this row is now just the packageId pointer.
     await prisma.quoteCargoLine.create({
-      data: { quoteId: quoteA.id, packageId: pkg1Id, chargedWeightKg: 1500 },
+      data: { quoteId: quoteA.id, packageId: pkg1Id },
     });
 
     // FF-B: still pending on L1 — refreshed in place, never invalidated, never notified.
