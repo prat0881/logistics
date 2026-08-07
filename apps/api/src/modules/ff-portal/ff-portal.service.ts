@@ -10,6 +10,8 @@ import {
   validateQuote,
   computeQuoteTotals,
   computeHeavyWeightAmount,
+  variantsForMode,
+  AIR_VARIANT_KEY,
   QuoteEvent,
   Role,
 } from "@svyft/shared";
@@ -21,6 +23,9 @@ import type {
   QuoteDraftCharge,
   Finding,
   ChargeConfigSnapshot,
+  ResolvedChargeLine,
+  FreightMode,
+  ChargeRateVariant,
 } from "@svyft/shared";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -35,6 +40,83 @@ const chargeAmount = (c: QuoteDraftCharge): number =>
   c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null
     ? computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg)
     : c.amount!;
+
+// ── v3 per-variant helpers (design §3.1/§5) ──────────────────────────────────────────────────
+// The three functions below mirror quote-engine.ts's private chargeCellPriced/variantRate/
+// isVariantPriced EXACTLY (same rules validateQuote used to decide which variant columns are
+// "priced" and therefore required full charge pricing + a transit-days value). They're
+// duplicated locally — same pattern as chargeAmount() above mirroring effectiveChargeAmount() —
+// because materialize (submit(), below) needs the identical "priced variant" verdict for two
+// purposes: (a) drop any charge cell that isn't priced before force-unwrapping its amount (an
+// untouched variant's cells are legitimately null post-gate — same reasoning as the existing
+// trucking/seaRates amount!=null filters), and (b) write exactly one TransitPlan row per priced
+// variant, no more, no fewer.
+
+/** A charge cell counts as "priced" once it carries a usable amount — a literal `amount`, or
+ *  (for a HEAVY_WEIGHT_CALC line) all three calc inputs. Matches chargeAmount()'s own notion of
+ *  "computable" so a cell this treats as priced never hits chargeAmount()'s `c.amount!`
+ *  force-unwrap with a null. */
+const chargeCellPriced = (c: QuoteDraftCharge): boolean =>
+  c.amount != null ||
+  (c.pieceWeightKg != null && c.airlineLimitKg != null && c.ratePerExcessKg != null);
+
+/** The freight-rate cell for variant `v`: Road ← the matching `trucking` row, Sea ← the matching
+ *  `seaRates` row, Air ← always null (Air prices its freight via the AIR_MAIN_FREIGHT charge
+ *  line instead — see quote-engine.ts's variantRate for the full rationale). */
+function variantRate(draft: QuoteDraft, v: ChargeRateVariant | null): number | null {
+  if (draft.mode === "ROAD") return draft.trucking.find((t) => t.rateVariant === v)?.amount ?? null;
+  if (draft.mode === "SEA") return draft.seaRates.find((r) => r.rateVariant === v)?.amount ?? null;
+  return null;
+}
+
+/** Has variant `v` had *anything* entered against it — its freight-rate cell or any charge cell?
+ *  An untouched variant materializes NO ChargeLine cells and gets NO TransitPlan row. */
+function isVariantPriced(draft: QuoteDraft, v: ChargeRateVariant | null): boolean {
+  if (variantRate(draft, v) != null) return true;
+  return draft.charges.some((c) => c.rateVariant === v && chargeCellPriced(c));
+}
+
+/** resolveScope seed (design §5): when a leg has no saved draftJson yet, GET returns a starter
+ *  QuoteDraft instead of null — the full per-variant charge matrix (every active chargeConfig
+ *  line × the mode's rate-variant columns, one QuoteDraftCharge per cell, `amount: null`; Air's
+ *  single implicit column seeds `rateVariant: null` for free via variantsForMode("AIR") ===
+ *  [null]) plus a blank leg-level chargeable weight, notes, and per-variant transit-days map —
+ *  so the portal always has an addressable cell for every (line, variant) pair rather than the
+ *  client reconstructing the cross-product itself. Everything else starts empty/null; submit()
+ *  re-derives currency/quoteValidityUntil/cargo from the RFQ/manifest regardless of what a client
+ *  echoes back from here, so seeding them is unnecessary (kept null/empty, not guessed). */
+function seedQuoteDraft(
+  legId: string,
+  mode: FreightMode | null,
+  lines: ResolvedChargeLine[],
+): QuoteDraft {
+  const variants = variantsForMode(mode);
+  return {
+    legId,
+    mode,
+    currency: null,
+    quoteValidityUntil: null,
+    chargedWeightKg: null,
+    notes: null,
+    cargo: [],
+    charges: lines.flatMap((l) =>
+      variants.map((v) => ({
+        zone: l.zone,
+        definitionKey: l.definitionKey,
+        presetKey: null,
+        label: l.label,
+        amount: null,
+        rateVariant: v,
+      })),
+    ),
+    trucking: [],
+    seaRates: [],
+    warehouse: [],
+    transit: { departureDate: null, arrivalDate: null, guaranteedTransitDaysByVariant: {} },
+    dgSurchargeNote: null,
+    termsConditions: null,
+  };
+}
 
 @Injectable()
 export class FfPortalService {
@@ -67,7 +149,7 @@ export class FfPortalService {
 
     const legs: FfPortalLegDto[] = scope.quotes.map((q) => {
       const manifest = q.manifestSnapshot as ManifestSnapshot;
-      const mode = q.leg.mode;
+      const mode = q.leg.mode as FfPortalLegDto["mode"]; // FreightMode | null
       const snap = (q.chargeConfigSnapshot as ChargeConfigSnapshot | null) ?? {
         lines: [],
         warehouseIncluded: false,
@@ -85,7 +167,7 @@ export class FfPortalService {
         legId: q.legId,
         quoteId: q.id,
         status: q.status as FfPortalLegDto["status"],
-        mode: mode as FfPortalLegDto["mode"],
+        mode,
         manifest,
         endpoints,
         // snap.lines is already PLAIN | HEAVY_WEIGHT_CALC only (resolveChargeConfig excludes
@@ -102,7 +184,9 @@ export class FfPortalService {
           amount: null,
         })),
         warehouseIncluded: snap.warehouseIncluded,
-        draft: q.draftJson ? (q.draftJson as QuoteDraft) : null,
+        // v3 (design §5): seed the per-variant matrix when there's no saved draft yet — see
+        // seedQuoteDraft above — instead of returning null.
+        draft: q.draftJson ? (q.draftJson as QuoteDraft) : seedQuoteDraft(q.legId, mode, snap.lines),
       };
     });
 
@@ -194,12 +278,13 @@ export class FfPortalService {
       mode: q.leg.mode as "AIR" | "SEA" | "ROAD",
       currency: scope.rfq.currency,
       quoteValidityUntil: scope.rfq.quoteValidityUntil?.toISOString() ?? null,
+      // v3: one leg-level chargeable weight + notes (was per-QuoteCargoLine chargedWeightKg).
+      chargedWeightKg: stored.chargedWeightKg ?? null,
+      notes: stored.notes ?? null,
       cargo: manifest.cargo.map((c) => ({
         packageId: c.packageId,
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
-        chargedWeightKg:
-          stored.cargo?.find((s) => s.packageId === c.packageId)?.chargedWeightKg ?? null,
       })),
       charges: staleFilteredCharges.map((c) => ({ ...c })),
       trucking: (stored.trucking ?? []).map((t) => ({ ...t })),
@@ -234,7 +319,7 @@ export class FfPortalService {
         ],
       });
 
-    // ── validate (design §7, submit-gate v2 — 6 blocking rules) ──
+    // ── validate (design §3.2, submit-gate v3 — per-variant-column rules) ──
     const findings: Finding[] = validateQuote(
       draft,
       scope.rfq.submissionDeadline.toISOString(),
@@ -256,16 +341,22 @@ export class FfPortalService {
         await tx.transitPlan.deleteMany({ where: { quoteId: q.id } });
 
         // Create child rows
+        // v3: chargedWeightKg moved off QuoteCargoLine onto Quote (leg-level) — see the
+        // quote.update below.
         await tx.quoteCargoLine.createMany({
           data: draft.cargo.map((c) => ({
             quoteId: q.id,
             packageId: c.packageId,
-            chargedWeightKg: c.chargedWeightKg!,
           })),
         });
 
+        // v3: charges are per-variant matrix cells (rateVariant null = Air's single implicit
+        // column or a non-variant/custom line). An untouched variant's cells are legitimately
+        // null post-gate (Q_PRICED only requires full pricing for a variant that's actually
+        // priced) — filter them out here for the same reason the trucking/seaRates filters below
+        // exist: so chargeAmount(c)'s `c.amount!` force-unwrap is always safe.
         await tx.chargeLine.createMany({
-          data: draft.charges.map((c, i) => ({
+          data: draft.charges.filter(chargeCellPriced).map((c, i) => ({
             quoteId: q.id,
             zone: c.zone,
             definitionKey: c.definitionKey ?? null,
@@ -279,6 +370,7 @@ export class FfPortalService {
             airlineLimitKg: c.airlineLimitKg ?? null,
             ratePerExcessKg: c.ratePerExcessKg ?? null,
             billOfLadingType: c.billOfLadingType ?? null,
+            rateVariant: c.rateVariant,
           })),
         });
 
@@ -329,42 +421,51 @@ export class FfPortalService {
           });
         }
 
+        // v3: one TransitPlan row per PRICED variant (was a single row per quote) — an untouched
+        // variant has no data worth persisting and Q_TRANSIT never required a days value for it.
+        // The Air transit-days bridge: the draft keys Air's days under AIR_VARIANT_KEY ("AIR")
+        // since guaranteedTransitDaysByVariant needs a real object key, but Air's TransitPlan row
+        // itself still gets `rateVariant: null` (v is null for Air — variantsForMode("AIR") ===
+        // [null]) to match ChargeLine/TruckingCharge/SeaFreightRate's null-for-Air convention.
         if (draft.transit) {
-          await tx.transitPlan.create({
-            data: {
-              quoteId: q.id,
-              carrier: draft.transit.carrier ?? null,
-              flightVoyageNo: draft.transit.flightVoyageNo ?? null,
-              departureDate: draft.transit.departureDate
-                ? new Date(draft.transit.departureDate)
-                : null,
-              arrivalDate: draft.transit.arrivalDate ? new Date(draft.transit.arrivalDate) : null,
-              carrierSurcharge: draft.transit.carrierSurcharge ?? null,
-              guaranteedTransitDays: draft.transit.guaranteedTransitDays ?? null,
-              plannedPickupDate: draft.transit.plannedPickupDate
-                ? new Date(draft.transit.plannedPickupDate)
-                : null,
-              airline: draft.transit.airline ?? null,
-              flightNumber: draft.transit.flightNumber ?? null,
-              plannedDeparture: draft.transit.plannedDeparture
-                ? new Date(draft.transit.plannedDeparture)
-                : null,
-              plannedArrival: draft.transit.plannedArrival
-                ? new Date(draft.transit.plannedArrival)
-                : null,
-              shippingLine: draft.transit.shippingLine ?? null,
-              vesselVoyage: draft.transit.vesselVoyage ?? null,
-              etd: draft.transit.etd ? new Date(draft.transit.etd) : null,
-              eta: draft.transit.eta ? new Date(draft.transit.eta) : null,
-            },
-          });
+          const transit = draft.transit;
+          const pricedVariants = variantsForMode(draft.mode).filter((v) => isVariantPriced(draft, v));
+          for (const v of pricedVariants) {
+            await tx.transitPlan.create({
+              data: {
+                quoteId: q.id,
+                rateVariant: v,
+                carrier: transit.carrier ?? null,
+                flightVoyageNo: transit.flightVoyageNo ?? null,
+                departureDate: transit.departureDate ? new Date(transit.departureDate) : null,
+                arrivalDate: transit.arrivalDate ? new Date(transit.arrivalDate) : null,
+                carrierSurcharge: transit.carrierSurcharge ?? null,
+                guaranteedTransitDays: transit.guaranteedTransitDaysByVariant[v ?? AIR_VARIANT_KEY] ?? null,
+                plannedPickupDate: transit.plannedPickupDate
+                  ? new Date(transit.plannedPickupDate)
+                  : null,
+                airline: transit.airline ?? null,
+                flightNumber: transit.flightNumber ?? null,
+                plannedDeparture: transit.plannedDeparture
+                  ? new Date(transit.plannedDeparture)
+                  : null,
+                plannedArrival: transit.plannedArrival ? new Date(transit.plannedArrival) : null,
+                shippingLine: transit.shippingLine ?? null,
+                vesselVoyage: transit.vesselVoyage ?? null,
+                etd: transit.etd ? new Date(transit.etd) : null,
+                eta: transit.eta ? new Date(transit.eta) : null,
+              },
+            });
+          }
         }
 
         await tx.quote.update({
           where: { id: q.id },
           data: {
             grandTotal: Math.max(...totals.variants.map((v) => v.grandTotal), 0),
-            totalChargeableWeightT: null, // column kept for now; kg lives on QuoteCargoLine
+            totalChargeableWeightT: null, // column kept for now; unused (kg lives on Quote.chargedWeightKg)
+            chargedWeightKg: draft.chargedWeightKg,
+            notes: draft.notes,
             dgSurchargeNote: draft.dgSurchargeNote,
             termsConditions: draft.termsConditions,
             submittedAt: new Date(),
