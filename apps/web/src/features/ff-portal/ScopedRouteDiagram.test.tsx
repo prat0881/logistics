@@ -100,6 +100,59 @@ describe("ScopedRouteDiagram", () => {
     expect(container.querySelector('[data-leg-id="L2"]')).not.toBeNull();
   });
 
+  it("orders nodes by route topology, not by the order legs were assigned (regression: finding #1)", () => {
+    // Legs are supplied in ASSIGNMENT order [L2, L1], but the route topology is
+    // L1 (p1->p2) then L2 (p2->p3). The FF must see p1 before p2 before p3 —
+    // matching the executive route view's left-to-right ordering — regardless
+    // of the order the legs happen to appear in the `legs` prop. Under the old
+    // "order of first appearance across legs" layout, L2 is processed first so
+    // p2/p3 would be discovered (and placed) before p1 — this assertion fails
+    // under that implementation.
+    const legs = [
+      leg({
+        legId: "L2",
+        legCode: "LEG-2",
+        origin: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        destination: { country: "US", name: "Final Delivery", city: "Newark" },
+        endpoints: [p2, p3],
+      }),
+      leg({
+        legId: "L1",
+        legCode: "LEG-1",
+        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
+        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        endpoints: [p1, p2],
+      }),
+    ];
+    const { container } = render(<ScopedRouteDiagram legs={legs} />);
+
+    const xOf = (pointId: string) => {
+      const node = container.querySelector(`[data-point-id="${pointId}"]`) as SVGGElement;
+      const m = /translate\(\s*([-\d.]+)/.exec(node.getAttribute("transform") ?? "");
+      return Number(m![1]);
+    };
+
+    // Topological order p1 -> p2 -> p3, regardless of the [L2, L1] input order.
+    expect(xOf("p1")).toBeLessThan(xOf("p2"));
+    expect(xOf("p2")).toBeLessThan(xOf("p3"));
+
+    // The rendered DOM order (tab order) matches the visual left-to-right order too.
+    const order = Array.from(container.querySelectorAll("[data-point-id]")).map((n) =>
+      n.getAttribute("data-point-id"),
+    );
+    expect(order).toEqual(["p1", "p2", "p3"]);
+
+    // Hover/click detail still works post-fix.
+    fireEvent.click(container.querySelector('[data-point-id="p1"]') as SVGGElement);
+    const detail = screen.getByTestId("scoped-route-node-detail");
+    expect(within(detail).getByText("Origin WH")).toBeInTheDocument();
+
+    // Read-only: a second click on the same node just closes the panel again
+    // (no navigation, no edit affordance — the component has no onEdit* props).
+    fireEvent.click(container.querySelector('[data-point-id="p1"]') as SVGGElement);
+    expect(screen.queryByTestId("scoped-route-node-detail")).toBeNull();
+  });
+
   it("renders a lone node (no edge) for a leg with only one endpoint, without crashing", () => {
     const legs = [leg({ legId: "L1", endpoints: [p1] })];
     const { container } = render(<ScopedRouteDiagram legs={legs} />);

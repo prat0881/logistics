@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { FreightMode, PointType, type FfPortalLegDto } from "@svyft/shared";
 import { cn } from "@/lib/utils";
+import { computeLongestPathDepth } from "@/lib/routeLayering";
 
 /**
  * ScopedRouteDiagram — FF-portal "Route overview" (design §4.8.3).
@@ -11,7 +12,9 @@ import { cn } from "@/lib/utils";
  * separate, self-contained component, NOT a port of the executive
  * `RouteDiagram` (query-wizard/steps/legs/RouteDiagram.tsx): that component
  * needs a full `QueryDetail` and its hover tooltip surfaces street address +
- * contact details, which the FF must never see.
+ * contact details, which the FF must never see. It's also read-only here —
+ * no `onEditPoint`/`onEditLeg`-equivalent props exist, so a node click only
+ * ever toggles the local masked-detail panel below, never navigation/edit.
  *
  * Masking: nodes render only `type` / `name` / `country` (+ `city` from the
  * frozen manifest snapshot). The portal DTO (`FfPortalEndpoint`) doesn't
@@ -19,9 +22,19 @@ import { cn } from "@/lib/utils";
  * to accidentally render, and this component only ever reads that whitelist
  * off the DTO (never spreads/forwards arbitrary fields).
  *
- * Layout is a simple left-to-right sequence, columns assigned in order of
- * first appearance across `legs` — the executive's longest-path layering is
- * unnecessary for a small, single-FF scoped view. The small `modeColor` /
+ * Layout is a single left-to-right row, one column per node. Column ORDER
+ * is the executive's longest-path layering (`computeLongestPathDepth` in
+ * `@/lib/routeLayering`, shared with `RouteDiagram`'s `computeLayout`):
+ * sources at depth 0, each leg pushes its destination to
+ * `max(existing, depth[origin] + 1)`. That's a pure-topology computation —
+ * it only reads point ids + each leg's origin/destination id, never the
+ * masked-away fields — so it works unchanged on this scoped, masked subgraph.
+ * This must NOT default back to "order of first appearance across `legs`":
+ * that ordering tracks assignment order, not route order, and silently
+ * desyncs from the executive's route view whenever legs were assigned out
+ * of topological order (finding #1). Only the ordering is shared; the pixel
+ * layout stays single-row (unlike `RouteDiagram`'s multi-row stacking) since
+ * a small, single-FF scoped view doesn't need it. The small `modeColor` /
  * `modeDash` / `POINT_GLYPH` helpers below are copied from `RouteDiagram`
  * (they're pure/presentational) rather than imported, per design.
  */
@@ -136,13 +149,37 @@ function buildScopedGraph(legs: FfPortalLegDto[]): ScopedGraph {
   return { nodes: [...nodes.values()], edges };
 }
 
+/**
+ * Orders nodes by the executive route topology — longest-path depth via the
+ * shared `computeLongestPathDepth` (depth 0 = sources, each edge pushes its
+ * destination to `max(existing, depth[origin] + 1)`) — so a source→sink
+ * chain always renders left-to-right regardless of the order `legs` were
+ * assigned in. Depth is the sort key; `Array.prototype.sort` is stable, so
+ * nodes sharing a depth (e.g. a fork/branch in the assigned subgraph) keep
+ * their original discovery order rather than being reshuffled arbitrarily —
+ * this is still a single-row layout (see `computeLayout`), so a shared depth
+ * just means adjacent columns, not a stacked/parallel row.
+ */
+function orderNodesByTopology(nodes: ScopedNode[], edges: ScopedEdge[]): ScopedNode[] {
+  const depth = computeLongestPathDepth(
+    nodes.map((n) => n.pointId),
+    edges.map((e) => ({ originId: e.fromPointId, destinationId: e.toPointId })),
+  );
+  return [...nodes].sort((a, b) => (depth.get(a.pointId) ?? 0) - (depth.get(b.pointId) ?? 0));
+}
+
 interface Layout {
   width: number;
   height: number;
   pos: Map<string, number>; // pointId -> x; single row, y is constant
 }
 
-/** Single-row, left-to-right layout — columns in order of first appearance. */
+/**
+ * Single-row, left-to-right layout — one column per node, in the order the
+ * `nodes` array is given. Callers are expected to pre-order `nodes`
+ * (`orderNodesByTopology`) — this function is deliberately unaware of edges
+ * or topology, it just lays out whatever order it's handed.
+ */
 function computeLayout(nodes: ScopedNode[]): Layout {
   const pos = new Map<string, number>();
   nodes.forEach((n, i) => pos.set(n.pointId, PAD + i * (NODE_W + COL_GAP)));
@@ -156,7 +193,11 @@ export function ScopedRouteDiagram({ legs, className }: ScopedRouteDiagramProps)
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const graph = useMemo(() => buildScopedGraph(legs), [legs]);
-  const layout = useMemo(() => computeLayout(graph.nodes), [graph.nodes]);
+  const orderedNodes = useMemo(
+    () => orderNodesByTopology(graph.nodes, graph.edges),
+    [graph.nodes, graph.edges],
+  );
+  const layout = useMemo(() => computeLayout(orderedNodes), [orderedNodes]);
 
   if (graph.nodes.length === 0) {
     return (
@@ -175,7 +216,7 @@ export function ScopedRouteDiagram({ legs, className }: ScopedRouteDiagramProps)
   const { width, height, pos } = layout;
   const rowY = PAD; // single row
   const svgHeight = height + LEGEND_H;
-  const selected = graph.nodes.find((n) => n.pointId === selectedId) ?? null;
+  const selected = orderedNodes.find((n) => n.pointId === selectedId) ?? null;
 
   const toggle = (pointId: string) => setSelectedId((cur) => (cur === pointId ? null : pointId));
 
@@ -227,9 +268,10 @@ export function ScopedRouteDiagram({ legs, className }: ScopedRouteDiagramProps)
           })}
         </g>
 
-        {/* Nodes. */}
+        {/* Nodes — rendered in topological order (see `orderNodesByTopology`), so
+            visual left-to-right order and DOM/tab order agree. */}
         <g>
-          {graph.nodes.map((node) => {
+          {orderedNodes.map((node) => {
             const x = pos.get(node.pointId) ?? 0;
             return (
               <Node

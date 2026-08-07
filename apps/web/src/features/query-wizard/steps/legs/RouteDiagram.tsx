@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { FreightMode, PointType, type Finding, type QueryDetail } from "@svyft/shared";
 import { cn } from "@/lib/utils";
+import { computeLongestPathDepth } from "@/lib/routeLayering";
 import { toRouteGraph } from "./routeGraph";
 
 /**
@@ -694,10 +695,16 @@ interface Layout {
  * destination to `max(existing, depth[origin] + 1)`. Points sharing a depth are
  * stacked vertically. Isolated points (no leg) go in a trailing column so
  * orphans are still drawn.
+ *
+ * The depth relaxation itself is `computeLongestPathDepth` in
+ * `@/lib/routeLayering` — shared with the FF-portal `ScopedRouteDiagram`,
+ * which needs the identical source→sink ordering over its masked,
+ * assignment-scoped subgraph (design §6 finding #1). Everything below the
+ * depth computation (column-rank positioning, row-stacking, orphan
+ * trailing) is specific to this multi-row diagram and stays local.
  */
 function computeLayout(graph: ReturnType<typeof toRouteGraph>, vBulge = 0): Layout {
   const pointIds = graph.points.map((p) => p.id);
-  const depth = new Map<string, number>(pointIds.map((id) => [id, 0]));
 
   const isDestination = new Set(
     graph.legs.map((l) => l.destinationPointId).filter(Boolean) as string[],
@@ -708,24 +715,14 @@ function computeLayout(graph: ReturnType<typeof toRouteGraph>, vBulge = 0): Layo
     if (l.destinationPointId) touched.add(l.destinationPointId);
   }
 
-  // Sources (never a destination) start at 0; everything else derives.
-  // Relax depths to a fixpoint. Cap iterations to guard against a cycle
-  // (validateRoute flags cycles; we just avoid an infinite loop here).
-  const maxIter = graph.legs.length + 2;
-  for (let i = 0; i < maxIter; i++) {
-    let changed = false;
-    for (const l of graph.legs) {
-      if (!l.originPointId || !l.destinationPointId) continue;
-      const od = depth.get(l.originPointId) ?? 0;
-      const cur = depth.get(l.destinationPointId) ?? 0;
-      const next = od + 1;
-      if (next > cur) {
-        depth.set(l.destinationPointId, next);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
+  // Sources (never a destination) start at 0; everything else derives via
+  // longest-path relaxation (cycle-safe: capped iterations, see
+  // `computeLongestPathDepth`'s doc — validateRoute flags cycles as a data
+  // problem separately, this just avoids an infinite loop here).
+  const depth = computeLongestPathDepth(
+    pointIds,
+    graph.legs.map((l) => ({ originId: l.originPointId, destinationId: l.destinationPointId })),
+  );
   // A point that IS a destination but also (erroneously) kept depth 0 through a
   // cycle still renders; nothing else to do.
   void isDestination;
