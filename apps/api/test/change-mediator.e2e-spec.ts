@@ -157,12 +157,14 @@ describe("Change Mediator (integration)", () => {
     expect(res.scope).toEqual([{ type: "cargo", id: cargoId }]);
   });
 
-  // Package-grain fan-out (restored gating, Unit 2): `case "package"` in ImpactClassifier now
-  // resolves scope via routing.legsCarryingPackage (LegPackage) — the SAME shape as the cargo
-  // fan-out above, but one level down the tree. This is a distinct classifier branch from
-  // "cargo" (which fans via a package's cargoId, not the package's own id), so it needs its own
-  // direct coverage — this is the exact restored behavior the Unit-2 review flagged as a
-  // correctness gate for the change-order fork.
+  // Package-grain SCOPE RESOLUTION (restored gating, Unit 2): `case "package"` in
+  // ImpactClassifier now resolves scope via routing.legsCarryingPackage (LegPackage) — the SAME
+  // shape as the cargo fan-out above, but one level down the tree. This is a distinct classifier
+  // branch from "cargo" (which fans via a package's cargoId, not the package's own id), so it
+  // needs its own direct coverage. These two tests assert only the scope-resolution INPUT to the
+  // fork decision (class + scoped legs); the end-to-end change-order FORK itself — a package edit
+  // on a leg with a LIVE quote returning needsChangeOrder — is proven separately against the real
+  // mediated-service path in change-order-cascade.e2e-spec.ts.
   it("fans a package edit's scope out to the legs carrying it via LegPackage (restored package-grain gating)", async () => {
     const { queryId, packageId } = await createCargoRow("pkg-fanout");
     const legC = await prisma.leg.create({ data: { queryId, legCode: "LC" } });
