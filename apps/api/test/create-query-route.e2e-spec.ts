@@ -3,11 +3,12 @@ import { INestApplication } from "@nestjs/common";
 import cookieParser from "cookie-parser";
 import request from "supertest";
 import { JwtService } from "@nestjs/jwt";
-import { Role, ACCESS_TOKEN_COOKIE, LegStatus, QueryStatus } from "@svyft/shared";
+import { Role, ACCESS_TOKEN_COOKIE, LegStatus, QueryStatus, type WeightUnit } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? "test-access-secret";
 const PFX = "p5-createq-";
@@ -44,6 +45,11 @@ describe("Create Query route gating (e2e)", () => {
     await app.close();
   });
 
+  // A v1 flat CargoItem row with qty:3 represented "3 units of a 1x1x1m box" via a single row's
+  // qty multiplier (volumeCbm = dimL*dimW*dimH*qty/1e6). A v2 Package has no qty — a Package IS
+  // one physical unit — so the equivalent fixture is 3 separate 100x100x100cm Packages under one
+  // Cargo grouping, all assigned to the leg. This reproduces the same totalPackages=3/totalCbm≈3
+  // roll-up test-4 asserts on below.
   async function validQuery() {
     const q = await prisma.query.create({
       data: {
@@ -60,9 +66,16 @@ describe("Create Query route gating (e2e)", () => {
     });
     const pu = await prisma.point.create({ data: { queryId: q.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", timezone: "Asia/Kolkata" } });
     const de = await prisma.point.create({ data: { queryId: q.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" } });
-    const cargo = await prisma.cargoItem.create({ data: { queryId: q.id, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 3, dimL: 100, dimW: 100, dimH: 100, grossWt: 50 } });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: q.id,
+      packages: [
+        { packageNo: "PO-1", dimL: 100, dimW: 100, dimH: 100, grossWt: 50 },
+        { packageNo: "PO-2", dimL: 100, dimW: 100, dimH: 100, grossWt: 50 },
+        { packageNo: "PO-3", dimL: 100, dimW: 100, dimH: 100, grossWt: 50 },
+      ],
+    });
     const leg = await prisma.leg.create({ data: { queryId: q.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: READY, targetDelivery: TARGET } });
-    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo.id } });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     return { queryId: q.id, legId: leg.id };
   }
 
@@ -106,14 +119,20 @@ describe("Create Query route gating (e2e)", () => {
     expect(res.body.origin[0].city).toBe("Mumbai");
     expect(res.body.destination[0].city).toBe("Pune");
     expect(res.body.legs[0].rollup.totalPackages).toBe(3);
-    expect(res.body.legs[0].rollup.totalCbm).toBeCloseTo(3); // (1×1×1 m³)×3
-    expect(res.body.legs[0].assignedCargoIds).toHaveLength(1);
+    expect(res.body.legs[0].rollup.totalCbm).toBeCloseTo(3); // 3 packages × (1×1×1 m³)
+    expect(res.body.legs[0].assignedPackageIds).toHaveLength(3);
   });
 
-  // Build a leg carrying two cargo rows with the given gross weights and units.
+  // Build a leg carrying two packages from two DIFFERENT cargo groupings (each with its own
+  // entry weightUnit), so the packages' grossWt values are converted to canonical kg by the
+  // real PackageService.create (via the owning Cargo's weightUnit) before the leg roll-up sums
+  // them — same "mixed entry units still sum correctly" intent as the old flat-cargo version,
+  // proven through the real HTTP layer rather than helpers/cargo.ts (which writes already-
+  // canonical values and so can't exercise the conversion itself — see helpers/cargo.ts's own
+  // header comment).
   async function legWithTwoCargo(
-    c1: { grossWt: number; weightUnit: string },
-    c2: { grossWt: number; weightUnit: string },
+    c1: { grossWt: number; weightUnit: WeightUnit },
+    c2: { grossWt: number; weightUnit: WeightUnit },
   ) {
     const q = await prisma.query.create({
       data: {
@@ -129,17 +148,33 @@ describe("Create Query route gating (e2e)", () => {
     const de = await prisma.point.create({
       data: { queryId: q.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" },
     });
-    const cargo1 = await prisma.cargoItem.create({
-      data: { queryId: q.id, rowIndex: 1, poReference: "PO1", productName: "P1", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: c1.grossWt, weightUnit: c1.weightUnit as "KG" | "GM" },
-    });
-    const cargo2 = await prisma.cargoItem.create({
-      data: { queryId: q.id, rowIndex: 2, poReference: "PO2", productName: "P2", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: c2.grossWt, weightUnit: c2.weightUnit as "KG" | "GM" },
-    });
     const leg = await prisma.leg.create({
       data: { queryId: q.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: READY, targetDelivery: TARGET },
     });
-    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo1.id } });
-    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo2.id } });
+
+    const cargo1 = await api()
+      .post(`/api/queries/${q.id}/cargo`)
+      .set("Cookie", cookie())
+      .send({ poReference: "PO1", weightUnit: c1.weightUnit })
+      .expect(201);
+    const pkg1 = await api()
+      .post(`/api/queries/${q.id}/cargo/${cargo1.body.id}/packages`)
+      .set("Cookie", cookie())
+      .send({ packageNo: "PO1-P1", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: c1.grossWt })
+      .expect(201);
+
+    const cargo2 = await api()
+      .post(`/api/queries/${q.id}/cargo`)
+      .set("Cookie", cookie())
+      .send({ poReference: "PO2", weightUnit: c2.weightUnit })
+      .expect(201);
+    const pkg2 = await api()
+      .post(`/api/queries/${q.id}/cargo/${cargo2.body.id}/packages`)
+      .set("Cookie", cookie())
+      .send({ packageNo: "PO2-P1", packageType: "BOX", dimL: 1, dimW: 1, dimH: 1, grossWt: c2.grossWt })
+      .expect(201);
+
+    await assignPackagesToLeg(prisma, leg.id, [pkg1.body.id, pkg2.body.id]);
     return { queryId: q.id, legId: leg.id };
   }
 

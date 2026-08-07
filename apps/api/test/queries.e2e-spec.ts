@@ -11,6 +11,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 const PFX = "p4-queries-";
 
@@ -163,9 +164,12 @@ describe("Queries (e2e)", () => {
     // now incidental and is NOT required for the route to be valid).
     const pu = await prisma.point.create({ data: { queryId: created.body.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", timezone: "Asia/Kolkata" } });
     const de = await prisma.point.create({ data: { queryId: created.body.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" } });
-    const cargo = await prisma.cargoItem.create({ data: { queryId: created.body.id, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: created.body.id,
+      packages: [{ dimL: 1, dimW: 1, dimH: 1, grossWt: 1 }],
+    });
     const leg = await prisma.leg.create({ data: { queryId: created.body.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: "2026-08-01T00:00:00.000Z", targetDelivery: "2026-08-20T00:00:00.000Z" } });
-    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo.id } });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${created.body.id}/create`).set("Cookie", cookie(Role.EXECUTIVE))
@@ -203,11 +207,14 @@ describe("Queries (e2e)", () => {
       }).expect(201);
     const pu = await prisma.point.create({ data: { queryId: created.body.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", timezone: "Asia/Kolkata" } });
     const de = await prisma.point.create({ data: { queryId: created.body.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" } });
-    const cargo = await prisma.cargoItem.create({ data: { queryId: created.body.id, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: created.body.id,
+      packages: [{ dimL: 1, dimW: 1, dimH: 1, grossWt: 1 }],
+    });
     // Leg dates DIFFER from query dates: query ready=2026-08-01, leg ready=2026-08-03
     // query targetDelivery=2026-08-20, leg targetDelivery=2026-08-18
     const leg = await prisma.leg.create({ data: { queryId: created.body.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: "2026-08-03T00:00:00.000Z", targetDelivery: "2026-08-18T00:00:00.000Z" } });
-    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo.id } });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${created.body.id}/create`).set("Cookie", cookie(Role.EXECUTIVE))

@@ -432,13 +432,18 @@ describe("Package CRUD (e2e)", () => {
       type FindFirstFn = typeof prisma.package.findFirst;
       const original: FindFirstFn = prisma.package.findFirst.bind(prisma.package);
       let calls = 0;
-      const spy = jest
-        .spyOn(prisma.package, "findFirst")
-        .mockImplementation((...args: Parameters<FindFirstFn>) => {
-          calls += 1;
-          if (calls === 3) return Promise.reject(new Error("simulated DB failure (test)"));
-          return original(...args);
-        });
+      // Cast the whole implementation to FindFirstFn (rather than typing the return of each
+      // branch): Prisma's real return type is a fluent `Prisma__PackageClient` thenable (extra
+      // chain methods like `.include()`), not a bare Promise, so a plain
+      // `Promise.reject(...)`/pass-through return doesn't structurally match it even though both
+      // branches are only ever awaited here, never chained.
+      const spy = jest.spyOn(prisma.package, "findFirst").mockImplementation(((
+        ...args: Parameters<FindFirstFn>
+      ) => {
+        calls += 1;
+        if (calls === 3) return Promise.reject(new Error("simulated DB failure (test)"));
+        return original(...args);
+      }) as FindFirstFn);
 
       try {
         await copyPackage(queryId, cargo.body.id, p.body.id, 3).expect(500);
