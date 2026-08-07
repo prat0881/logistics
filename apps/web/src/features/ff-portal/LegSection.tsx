@@ -9,6 +9,7 @@ import type {
   ResolvedChargeLine,
 } from "@svyft/shared";
 import { quoteDraftSchema, validateQuote, computeQuoteTotals } from "@svyft/shared";
+import { Textarea } from "@/components/ui/textarea";
 import { draftFromDto } from "./draftFromDto";
 import { useSaveDraft, useSubmit } from "./useFfPortal";
 import { PortalError } from "./portalClient";
@@ -231,8 +232,26 @@ function LegSectionForm({
         {/* Findings summary */}
         <QuoteFindingsSummary findings={displayedFindings} onNavigate={handleNavigate} />
 
+        {/* Notes (design §6 finding #5): FF free-text notes, rendered immediately before the
+            Accept-terms control — the very next section opens with SubmissionBar's own
+            "I accept the terms & conditions" checkbox. Distinct from dgSurchargeNote (below, DG
+            only) and termsConditions. */}
+        <section id={sectionAnchorId(leg.legId, "notes")}>
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Notes
+          </h3>
+          <Textarea
+            aria-label="Notes"
+            placeholder="Add any notes for this quote..."
+            {...form.register("notes")}
+          />
+        </section>
+
         {/* Submission bar — anchored for "terms" navigation */}
         <section id={sectionAnchorId(leg.legId, "terms")}>
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Terms
+          </h3>
           <SubmissionBar
             showDgNote={showDgNote}
             currency={currency}

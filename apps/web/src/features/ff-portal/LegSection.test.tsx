@@ -148,3 +148,79 @@ describe("LegSection readOnly", () => {
     expect(screen.getByRole("button", { name: /submit quote/i })).toBeDisabled();
   });
 });
+
+describe("LegSection sections & layout (design §6 finding #7)", () => {
+  it("groups the quote form into labelled sections", () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={leg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+        />,
+      ),
+    );
+    expect(screen.getByRole("heading", { name: /cargo & weight/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^charges$/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /warehousing/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /transit plan/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^notes$/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^terms$/i })).toBeInTheDocument();
+  });
+});
+
+describe("LegSection notes (design §6 finding #5)", () => {
+  it("renders a Notes textarea, positioned immediately before the Accept-terms control", async () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={leg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+        />,
+      ),
+    );
+    const notes = screen.getByLabelText(/^notes$/i);
+    // showDgNote is false for this fixture (no DG-tagged cargo), so the Accept-terms checkbox is
+    // the only checkbox on the page.
+    const acceptTerms = screen.getByRole("checkbox");
+
+    // DOM order: Notes precedes the Accept-terms control.
+    expect(
+      notes.compareDocumentPosition(acceptTerms) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await userEvent.type(notes, "Handle with care");
+    expect(notes).toHaveValue("Handle with care");
+  });
+
+  it("includes the typed Notes value in the saved draft payload", async () => {
+    const fx = mockFetch(() => ({ status: 200, body: {} }));
+    vi.stubGlobal("fetch", fx);
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={leg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+        />,
+      ),
+    );
+    await userEvent.type(screen.getByLabelText(/^notes$/i), "Fragile");
+    await userEvent.click(screen.getByRole("button", { name: /save draft/i }));
+
+    expect(fx).toHaveBeenCalledTimes(1);
+    const [, init] = fx.mock.calls[0];
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.notes).toBe("Fragile");
+  });
+});

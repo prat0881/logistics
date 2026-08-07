@@ -11,12 +11,14 @@ function baseDefaults(mode: FreightMode | null): QuoteDraft {
     mode,
     currency: "USD",
     quoteValidityUntil: null,
+    chargedWeightKg: null,
+    notes: null,
     cargo: [],
     charges: [],
     trucking: [],
     seaRates: [],
     warehouse: [],
-    transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
+    transit: { departureDate: null, arrivalDate: null, guaranteedTransitDaysByVariant: {} },
     dgSurchargeNote: null,
     termsConditions: null,
   };
@@ -29,26 +31,65 @@ function Harness({ mode }: { mode: FreightMode | null }) {
   return (
     <FormProvider {...form}>
       <TransitPlanForm mode={mode} />
-      <output data-testid="guaranteed">{transit?.guaranteedTransitDays ?? ""}</output>
+      <output data-testid="guaranteed-by-variant">
+        {JSON.stringify(transit?.guaranteedTransitDaysByVariant ?? {})}
+      </output>
       <output data-testid="planned-departure">{transit?.plannedDeparture ?? ""}</output>
     </FormProvider>
   );
 }
 
-describe("TransitPlanForm — Guaranteed Transit Time (mandatory, every mode)", () => {
-  it("always renders the Guaranteed Transit Time field, regardless of mode", () => {
-    (["ROAD", "AIR", "SEA", null] as const).forEach((mode) => {
+describe("TransitPlanForm — Guaranteed Transit Time (mandatory, per rate-variant column)", () => {
+  it("renders a single Air-labelled field for Air and for an unresolved mode (single implicit column)", () => {
+    ([null, "AIR"] as const).forEach((mode) => {
       const { unmount } = render(<Harness mode={mode} />);
-      expect(screen.getByLabelText(/guaranteed transit time/i)).toBeInTheDocument();
+      expect(screen.getAllByLabelText(/guaranteed transit time/i)).toHaveLength(1);
+      expect(screen.getByLabelText(/guaranteed transit time.*air/i)).toBeInTheDocument();
       unmount();
     });
   });
 
-  it("writes a numeric value to transit.guaranteedTransitDays", async () => {
+  it("renders two fields for Road, one per variant (Dedicated + Groupage), matching the charge matrix's columns", () => {
+    render(<Harness mode="ROAD" />);
+    expect(screen.getAllByLabelText(/guaranteed transit time/i)).toHaveLength(2);
+    expect(screen.getByLabelText(/guaranteed transit time.*dedicated/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/guaranteed transit time.*groupage/i)).toBeInTheDocument();
+  });
+
+  it("renders two fields for Sea, one per variant (FCL + LCL), matching the charge matrix's columns", () => {
+    render(<Harness mode="SEA" />);
+    expect(screen.getAllByLabelText(/guaranteed transit time/i)).toHaveLength(2);
+    expect(screen.getByLabelText(/guaranteed transit time.*fcl/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/guaranteed transit time.*lcl/i)).toBeInTheDocument();
+  });
+
+  it("writes a numeric value keyed by AIR_VARIANT_KEY for Air's single column", async () => {
     render(<Harness mode="AIR" />);
-    const input = screen.getByLabelText(/guaranteed transit time/i);
+    const input = screen.getByLabelText(/guaranteed transit time.*air/i);
     await userEvent.type(input, "5");
-    expect(screen.getByTestId("guaranteed").textContent).toBe("5");
+    expect(JSON.parse(screen.getByTestId("guaranteed-by-variant").textContent ?? "{}")).toEqual({
+      AIR: 5,
+    });
+  });
+
+  it("writes independent values per variant for Road (Dedicated and Groupage don't clobber each other)", async () => {
+    render(<Harness mode="ROAD" />);
+    await userEvent.type(screen.getByLabelText(/guaranteed transit time.*dedicated/i), "3");
+    await userEvent.type(screen.getByLabelText(/guaranteed transit time.*groupage/i), "7");
+    expect(JSON.parse(screen.getByTestId("guaranteed-by-variant").textContent ?? "{}")).toEqual({
+      DEDICATED: 3,
+      GROUPAGE: 7,
+    });
+  });
+
+  it("writes independent values per variant for Sea (FCL and LCL don't clobber each other)", async () => {
+    render(<Harness mode="SEA" />);
+    await userEvent.type(screen.getByLabelText(/guaranteed transit time.*fcl/i), "10");
+    await userEvent.type(screen.getByLabelText(/guaranteed transit time.*lcl/i), "20");
+    expect(JSON.parse(screen.getByTestId("guaranteed-by-variant").textContent ?? "{}")).toEqual({
+      FCL: 10,
+      LCL: 20,
+    });
   });
 });
 
@@ -56,7 +97,7 @@ describe("TransitPlanForm — Road", () => {
   it("renders the Road-specific Planned Pickup Date field and no Air/Sea fields", () => {
     render(<Harness mode="ROAD" />);
     expect(screen.getByLabelText(/planned pickup date/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/airline/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^airline/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/flight number/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/shipping line/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/vessel/i)).not.toBeInTheDocument();
