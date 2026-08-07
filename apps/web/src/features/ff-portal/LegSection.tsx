@@ -13,7 +13,7 @@ import { draftFromDto } from "./draftFromDto";
 import { useSaveDraft, useSubmit } from "./useFfPortal";
 import { PortalError } from "./portalClient";
 import { CargoManifestTable } from "./CargoManifestTable";
-import { ChargedWeightGrid } from "./ChargedWeightGrid";
+import { CargoWeightTable } from "./CargoWeightTable";
 import { ChargeZonePanel } from "./ChargeZonePanel";
 import { RoadChargesPanel } from "./RoadChargesPanel";
 import { TruckingBlocks } from "./TruckingBlocks";
@@ -192,20 +192,13 @@ function LegSectionForm({
   return (
     <FormProvider {...form}>
       <div className="space-y-8">
-        {/* Cargo manifest — always visible at top */}
-        <section>
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Cargo manifest
-          </h3>
-          <CargoManifestTable cargo={leg.manifest.cargo} />
-        </section>
-
-        {/* Charged weight */}
+        {/* Cargo & chargeable weight — merged table (design §6 finding #2): per-package rows,
+            a Totals row, and the one leg-level Chargeable Weight (kg) input, all in one table. */}
         <section id={sectionAnchorId(leg.legId, "density")}>
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Charged weight
+            Cargo & weight
           </h3>
-          <ChargedWeightGrid cargo={leg.manifest.cargo} />
+          <CargoWeightTable manifest={leg.manifest.cargo} />
         </section>
 
         {/* Mode pricing: AIR/SEA → ChargeZonePanel, ROAD → TruckingBlocks */}

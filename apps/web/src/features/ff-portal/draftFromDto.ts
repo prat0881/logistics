@@ -24,7 +24,6 @@ export function draftFromDto(leg: FfPortalLegDto, rfq: FfPortalRfqDto): QuoteDra
     packageId: c.packageId,
     grossWtKg: toNumOrNull(c.grossWt) ?? 0,
     cbm: toNumOrNull(c.volumeCbm) ?? 0,
-    chargedWeightKg: null,
   }));
   const charges = leg.seededCharges.map((s) => ({
     zone: s.zone,
@@ -72,12 +71,17 @@ export function draftFromDto(leg: FfPortalLegDto, rfq: FfPortalRfqDto): QuoteDra
     mode: leg.mode,
     currency: rfq.currency,
     quoteValidityUntil: rfq.quoteValidityUntil,
+    // v3: one leg-level chargeable weight + FF notes (design §3.1/D2, D5) — a fresh draft (no
+    // leg.draft yet) starts both unset; an existing draft's values pass through the `leg.draft`
+    // branch above via the spread instead of this literal.
+    chargedWeightKg: null,
+    notes: null,
     cargo,
     charges,
     trucking,
     seaRates,
     warehouse,
-    transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
+    transit: { departureDate: null, arrivalDate: null, guaranteedTransitDaysByVariant: {} },
     dgSurchargeNote: null,
     termsConditions: null,
   };

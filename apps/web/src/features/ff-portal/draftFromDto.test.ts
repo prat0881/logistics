@@ -69,15 +69,13 @@ function airLeg(): FfPortalLegDto {
 }
 
 describe("draftFromDto", () => {
-  it("seeds per-package cargo (kg passthrough, chargedWeightKg null), charges, warehouse, and RFQ currency/validity", () => {
+  it("seeds per-package cargo (kg passthrough, no per-package chargedWeightKg), charges, warehouse, and RFQ currency/validity", () => {
     const d = draftFromDto(airLeg(), rfq);
     expect(d.legId).toBe("L1");
     expect(d.mode).toBe("AIR");
     expect(d.currency).toBe("USD");
     expect(d.quoteValidityUntil).toBe("2026-09-01T00:00:00.000Z");
-    expect(d.cargo).toEqual([
-      { packageId: "pk1", grossWtKg: 1500, cbm: 2.5, chargedWeightKg: null },
-    ]);
+    expect(d.cargo).toEqual([{ packageId: "pk1", grossWtKg: 1500, cbm: 2.5 }]);
     expect(d.charges[0]).toMatchObject({
       definitionKey: "AIR_MAIN_FREIGHT",
       presetKey: "AIR_MAIN_FREIGHT",
@@ -91,6 +89,13 @@ describe("draftFromDto", () => {
       cfsCode: null,
       side: null,
     });
+  });
+
+  it("seeds the leg-level chargedWeightKg/notes as null (v3: no more per-package charged weight)", () => {
+    const d = draftFromDto(airLeg(), rfq);
+    expect(d.chargedWeightKg).toBeNull();
+    expect(d.notes).toBeNull();
+    expect(d.cargo.every((c) => !("chargedWeightKg" in c))).toBe(true);
   });
 
   it("seeds two Road rate rows (Dedicated + Groupage) off the leg's first endpoint, both unpriced", () => {
@@ -140,12 +145,12 @@ describe("draftFromDto", () => {
     expect(d.seaRates).toEqual([]);
   });
 
-  it("seeds a mandatory-but-unset transit plan (guaranteedTransitDays null)", () => {
+  it("seeds a mandatory-but-unset transit plan (guaranteedTransitDaysByVariant empty)", () => {
     const d = draftFromDto(airLeg(), rfq);
     expect(d.transit).toEqual({
       departureDate: null,
       arrivalDate: null,
-      guaranteedTransitDays: null,
+      guaranteedTransitDaysByVariant: {},
     });
   });
 
@@ -186,12 +191,14 @@ describe("draftFromDto", () => {
       mode: "SEA",
       currency: "EUR",
       quoteValidityUntil: "2020-01-01T00:00:00.000Z",
+      chargedWeightKg: 850,
+      notes: "handle with care",
       cargo: [],
       charges: [],
       trucking: [],
       seaRates: [],
       warehouse: [],
-      transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
+      transit: { departureDate: null, arrivalDate: null, guaranteedTransitDaysByVariant: {} },
       dgSurchargeNote: "x",
       termsConditions: null,
     };
@@ -202,5 +209,9 @@ describe("draftFromDto", () => {
     expect(d.currency).toBe("USD");
     expect(d.quoteValidityUntil).toBe("2026-09-01T00:00:00.000Z");
     expect(d.dgSurchargeNote).toBe("x");
+    // leg-level chargedWeightKg/notes are the FF's own entered values — an existing draft's
+    // values pass straight through unchanged; only the RFQ/leg-sourced fields above get overwritten.
+    expect(d.chargedWeightKg).toBe(850);
+    expect(d.notes).toBe("handle with care");
   });
 });
