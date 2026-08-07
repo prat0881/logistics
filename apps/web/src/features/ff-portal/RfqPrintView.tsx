@@ -7,6 +7,7 @@ import type {
   FreightMode,
   QuoteDraft,
   QuoteDraftCharge,
+  QuoteDraftWarehouse,
 } from "@svyft/shared";
 import {
   variantsForMode,
@@ -157,6 +158,15 @@ function LegPrintSection({ leg }: { leg: FfPortalLegDto }) {
         )}
       </div>
 
+      {draft && draft.warehouse.some((w) => w.amount != null) && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Warehousing
+          </h3>
+          <WarehousingList warehouse={draft.warehouse} />
+        </div>
+      )}
+
       {draft?.notes && (
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -166,6 +176,35 @@ function LegPrintSection({ leg }: { leg: FfPortalLegDto }) {
         </div>
       )}
     </section>
+  );
+}
+
+/** Read-only mirror of `WarehouseStaging` (design D4: warehousing is SHARED, not per-variant —
+ *  unlike the charge matrix, there's no column-per-variant here, just one row per warehouse
+ *  point). `computeQuoteTotals` folds every row's amount into EVERY variant's Grand Total, so
+ *  without this section the print doc's Grand Total silently included warehouse money with no
+ *  line item to explain it (finding #8 fix round 1). Static — no inputs, unlike the live
+ *  `WarehouseStaging` form it mirrors. */
+function WarehousingList({ warehouse }: { warehouse: QuoteDraftWarehouse[] }) {
+  return (
+    <dl className="space-y-2 text-sm">
+      {warehouse.map((w, i) => (
+        <div
+          key={`${w.warehousePointId}-${i}`}
+          className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5"
+        >
+          <dt>
+            <span>{w.label}</span>
+            {w.cargoAcceptanceWindow && (
+              <span className="block text-xs text-muted-foreground">
+                Acceptance window: {w.cargoAcceptanceWindow}
+              </span>
+            )}
+          </dt>
+          <dd className="font-mono tabular-nums">{fmtAmount(w.amount)}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

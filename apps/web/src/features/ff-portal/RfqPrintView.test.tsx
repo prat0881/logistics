@@ -167,6 +167,31 @@ const quotedRoadLeg: FfPortalLegDto = {
   draft: quotedRoadDraft,
 };
 
+// Warehousing is shared (design D4), not per-variant — WarehouseStaging's read-only mirror
+// (design §6 finding #8 fix round 1: the preview omitted this section entirely, so a leg with a
+// priced warehouse point showed a Grand Total that silently included warehouse money nothing on
+// the page explained).
+const quotedRoadLegWithWarehouse: FfPortalLegDto = {
+  ...quotedRoadLeg,
+  legId: "L4",
+  quoteId: "Q4",
+  manifest: { ...quotedRoadLeg.manifest, legId: "L4", legCode: "LEG-04" },
+  warehouseIncluded: true,
+  draft: {
+    ...quotedRoadDraft,
+    legId: "L4",
+    warehouse: [
+      {
+        warehousePointId: "wp1",
+        position: "ORIGIN",
+        label: "Nhava Sheva CFS",
+        amount: 250,
+        cargoAcceptanceWindow: "2025-08-01 09:00",
+      },
+    ],
+  },
+};
+
 // AIR's degenerate single-implicit-column case (variantsForMode("AIR") === [null]): freight has
 // NO separate row — it's just the AIR_MAIN_FREIGHT `charges` line, same as any other header.
 const quotedAirLeg: FfPortalLegDto = {
@@ -290,6 +315,22 @@ describe("RfqPrintView", () => {
     expect(screen.getByText("640.00")).toBeInTheDocument();
     expect(screen.getByText("1250.500")).toBeInTheDocument();
     expect(screen.getByText("Priority handling requested")).toBeInTheDocument();
+  });
+
+  // ── finding #8 fix round 1: the shared (non-per-variant, design D4) Warehousing section was
+  // missing entirely, even though computeQuoteTotals folds it into every variant's Grand Total —
+  // so a priced warehouse point made the Grand Total not reconcile with the visible line items.
+  it("renders a Warehousing section with the label, amount, and acceptance window for a priced warehouse row (finding #8 fix round 1)", () => {
+    render(<RfqPrintView rfq={{ ...rfq, legs: [quotedRoadLegWithWarehouse] }} />);
+    expect(screen.getByText("Warehousing")).toBeInTheDocument();
+    expect(screen.getByText("Nhava Sheva CFS")).toBeInTheDocument();
+    expect(screen.getByText("250.00")).toBeInTheDocument();
+    expect(screen.getByText(/2025-08-01 09:00/)).toBeInTheDocument();
+  });
+
+  it("does not render a Warehousing section when no warehouse row is priced", () => {
+    render(<RfqPrintView rfq={{ ...rfq, legs: [quotedRoadLeg] }} />);
+    expect(screen.queryByText("Warehousing")).toBeNull();
   });
 
   it("renders a Terms & Conditions section", () => {
