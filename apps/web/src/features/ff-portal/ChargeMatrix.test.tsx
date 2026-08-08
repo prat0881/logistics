@@ -3,7 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useForm, FormProvider, useWatch, type Control } from "react-hook-form";
 import type { QuoteDraft, FfPortalSeededCharge, FreightMode, ResolvedChargeLine } from "@svyft/shared";
-import { validateQuote } from "@svyft/shared";
+import { validateQuote, seedQuoteDraftPricing } from "@svyft/shared";
 import { ChargeMatrix } from "./ChargeMatrix";
 
 // ── Radix Select helper ──────────────────────────────────────────────────────────────────────
@@ -300,6 +300,37 @@ describe("ChargeMatrix — Road (Dedicated/Groupage columns)", () => {
     const totalRow = screen.getByTestId("chargematrix-total-DEDICATED").closest("tr");
     expect(totalRow).not.toBeNull();
     expect(within(totalRow!).getAllByRole("cell").length).toBe(headerCells.length);
+  });
+});
+
+// ── finding #1: the matrix must render EDITABLE freight cells from the REAL shared seed shape ──
+// The regression was that the SERVER seed (ff-portal.service.ts) returned trucking:[]/seaRates:[],
+// so once resolveScope always returned it, ChargeMatrix rendered every freight cell as a disabled
+// NotApplicableCell (trucking.findIndex(...) === -1). These render from `seedQuoteDraftPricing` —
+// the exact seed both the server and draftFromDto now produce — instead of a hand-seeded fixture.
+describe("ChargeMatrix — renders the shared seed shape with editable freight cells (finding #1)", () => {
+  it("ROAD: seedQuoteDraftPricing yields editable Road Freight cells for both variants", () => {
+    const draft = { ...baseDraft("ROAD"), ...seedQuoteDraftPricing(ROAD_LINES, "ROAD", "p1") };
+    render(<Harness seededCharges={ROAD_LINES} defaultValues={draft} mode="ROAD" />);
+    expect(screen.getByLabelText(/road freight — dedicated/i)).toBeEnabled();
+    expect(screen.getByLabelText(/road freight — groupage/i)).toBeEnabled();
+  });
+
+  it("SEA: seedQuoteDraftPricing yields editable Sea Freight cells for both variants", () => {
+    const draft = { ...baseDraft("SEA"), ...seedQuoteDraftPricing(SEA_LINES, "SEA", "p1") };
+    render(<Harness seededCharges={SEA_LINES} defaultValues={draft} mode="SEA" />);
+    expect(screen.getByLabelText(/sea freight — fcl/i)).toBeEnabled();
+    expect(screen.getByLabelText(/sea freight — lcl/i)).toBeEnabled();
+  });
+
+  it("negative control: the OLD empty-trucking seed disables the freight cell (the finding #1 bug)", () => {
+    const draft = {
+      ...baseDraft("ROAD"),
+      charges: seedQuoteDraftPricing(ROAD_LINES, "ROAD", "p1").charges,
+      trucking: [], // the pre-fix server seed
+    };
+    render(<Harness seededCharges={ROAD_LINES} defaultValues={draft} mode="ROAD" />);
+    expect(screen.getByLabelText(/road freight — dedicated/i)).toBeDisabled();
   });
 });
 

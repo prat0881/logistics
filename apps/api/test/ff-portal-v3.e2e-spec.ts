@@ -164,6 +164,283 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     return { token: distRes.body.rfqs[0].accessToken as string, legId: leg.id, queryId: query.id };
   }
 
+  /**
+   * SEA counterpart of distributeRoadFixture — a SEA leg (FCL/LCL columns). SEA has CORE PLAIN
+   * lines (SEA_ORIGIN_* — SEA_MAIN_FREIGHT is retired/isActive:false since sea freight is the
+   * structured seaRates dual-rate), so no explicit chargeSelection is needed to freeze >=1 active
+   * line. Query -> points -> Cargo->Package (LegPackage) -> SEA Leg -> FF(modes:[SEA]) -> PUT
+   * ff-selection -> POST distribute.
+   */
+  async function distributeSeaFixture(): Promise<{ token: string; legId: string }> {
+    const admin = cookie();
+    const seq = ++fixtureSeq;
+    const query = await prisma.query.create({
+      data: { queryCode: `${PFX}${seq}`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: `L-${PFX}${seq}`,
+        mode: "SEA",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+      },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: `PK-${PFX}${seq}`, dimL: 100, dimW: 50, dimH: 40, grossWt: 120 }],
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PFX}${seq}`,
+        companyName: `FF ${PFX}${seq} Co`,
+        pic: "P",
+        contactNumber: "+1000000000",
+        email: `ff-${PFX.toLowerCase()}${seq}@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["SEA"],
+        status: "ACTIVE",
+        defaultCurrency: "USD",
+      },
+    });
+    await api()
+      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [ff.id] })
+      .expect(200);
+    const distRes = await api()
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    return { token: distRes.body.rfqs[0].accessToken as string, legId: leg.id };
+  }
+
+  /**
+   * A fresh ROAD leg with warehouse handling ON and a WAREHOUSE-type origin endpoint (so
+   * resolveScope's classifyWarehousePositions gives it a warehousePosition). No chargeSelection —
+   * ROAD has no CORE PLAIN lines, so snap.lines is empty and the priced variant is made priced via
+   * trucking alone, keeping this fixture focused on the warehouse seed. Returns raw token + ids.
+   */
+  async function distributeWarehouseFixture(): Promise<{ token: string; legId: string }> {
+    const admin = cookie();
+    const seq = ++fixtureSeq;
+    const query = await prisma.query.create({
+      data: { queryCode: `${PFX}${seq}`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "WAREHOUSE", country: "CN" }, // WAREHOUSE → gets a position
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: `L-${PFX}${seq}`,
+        mode: "ROAD",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+        warehouseHandlingIncluded: true, // → chargeConfigSnapshot.warehouseIncluded → seeds warehouse rows
+      },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: `PK-${PFX}${seq}`, dimL: 100, dimW: 50, dimH: 40, grossWt: 120 }],
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PFX}${seq}`,
+        companyName: `FF ${PFX}${seq} Co`,
+        pic: "P",
+        contactNumber: "+1000000000",
+        email: `ff-${PFX.toLowerCase()}${seq}@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["ROAD"],
+        status: "ACTIVE",
+        defaultCurrency: "USD",
+      },
+    });
+    await api()
+      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [ff.id] })
+      .expect(200);
+    const distRes = await api()
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    return { token: distRes.body.rfqs[0].accessToken as string, legId: leg.id };
+  }
+
+  // ── finding #1: the SERVER seed (resolveScope's seedQuoteDraft) must seed the mode's freight-
+  // rate rows (Road → trucking, Sea → seaRates), not []. The pre-fix server seed returned
+  // trucking:[]/seaRates:[], and since resolveScope now ALWAYS returns the server seed for a fresh
+  // leg (draftFromDto spreads it verbatim), every Road/Sea freight cell rendered disabled — the FF
+  // could not enter the freight rate at all. These drive the REAL HTTP seed path (the existing
+  // Road happy-path submitted with trucking:[], so it never exercised this). ──
+  it("Road: resolveScope seeds both trucking rows (freight editable); a priced trucking rate round-trips through submit (finding #1)", async () => {
+    const { token, legId } = await distributeRoadFixture();
+    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const draft = (got.body as FfPortalRfqDto).legs[0].draft as QuoteDraft;
+
+    // the seed now carries BOTH trucking variants (was [] pre-fix), keyed off the leg's first
+    // endpoint, unpriced.
+    expect(draft.trucking).toHaveLength(2);
+    expect(draft.trucking.map((t) => t.rateVariant).sort()).toEqual(["DEDICATED", "GROUPAGE"]);
+    expect(draft.trucking.every((t) => t.amount === null && t.basis === "PER_TRUCK")).toBe(true);
+    expect(draft.trucking.every((t) => t.legEndpointPointId.length > 0)).toBe(true); // real endpoint, not ""
+
+    const priced: QuoteDraft = {
+      ...draft,
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 500,
+      // price DEDICATED only: its trucking rate + its one seeded charge cell.
+      charges: draft.charges.map((c) => (c.rateVariant === "DEDICATED" ? { ...c, amount: 100 } : c)),
+      trucking: draft.trucking.map((t) =>
+        t.rateVariant === "DEDICATED" ? { ...t, amount: 4200, tonnage: "T_5" } : t,
+      ),
+      transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { DEDICATED: 4 } },
+    };
+    await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(priced).expect(200);
+    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    const quoteId = submitRes.body.quoteId as string;
+
+    const trucking = await prisma.truckingCharge.findMany({ where: { quoteId } });
+    expect(trucking).toHaveLength(1); // only the priced DEDICATED row materializes
+    expect(trucking[0].rateVariant).toBe("DEDICATED");
+    expect(Number(trucking[0].amount)).toBe(4200);
+    expect(trucking[0].basis).toBe("PER_TRUCK");
+  });
+
+  it("Sea: resolveScope seeds both seaRates rows (freight editable); a priced sea rate round-trips through submit (finding #1)", async () => {
+    const { token, legId } = await distributeSeaFixture();
+    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const draft = (got.body as FfPortalRfqDto).legs[0].draft as QuoteDraft;
+
+    expect(draft.seaRates).toHaveLength(2);
+    expect(draft.seaRates.map((r) => r.rateVariant).sort()).toEqual(["FCL", "LCL"]);
+    expect(draft.seaRates.every((r) => r.amount === null && r.containerSize === null)).toBe(true);
+
+    const priced: QuoteDraft = {
+      ...draft,
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 800,
+      // price FCL: every seeded CORE charge cell for FCL + the sea freight rate itself.
+      charges: draft.charges.map((c) => (c.rateVariant === "FCL" ? { ...c, amount: 100 } : c)),
+      seaRates: draft.seaRates.map((r) =>
+        r.rateVariant === "FCL" ? { ...r, amount: 9000, containerSize: "FORTY" } : r,
+      ),
+      transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { FCL: 18 } },
+    };
+    await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(priced).expect(200);
+    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    const quoteId = submitRes.body.quoteId as string;
+
+    const seaRates = await prisma.seaFreightRate.findMany({ where: { quoteId } });
+    expect(seaRates).toHaveLength(1); // only the priced FCL row materializes
+    expect(seaRates[0].rateVariant).toBe("FCL");
+    expect(Number(seaRates[0].amount)).toBe(9000);
+    expect(seaRates[0].containerSize).toBe("FORTY");
+  });
+
+  it("Sea: submit-gate blocks a priced FCL variant with no sea-freight rate, then passes once it's set (finding #3b)", async () => {
+    const { token, legId } = await distributeSeaFixture();
+    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const draft = (got.body as FfPortalRfqDto).legs[0].draft as QuoteDraft;
+
+    // FCL "priced" via its charge cells only — seaRates[FCL].amount left null.
+    const base: QuoteDraft = {
+      ...draft,
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 800,
+      charges: draft.charges.map((c) => (c.rateVariant === "FCL" ? { ...c, amount: 100 } : c)),
+      transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { FCL: 18 } },
+    };
+    await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(base).expect(200);
+    const blocked = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(422);
+    const seaFreightFinding = (
+      blocked.body.findings as { rule: string; message: string; scope: { type: string } }[]
+    ).find((f) => f.message.includes("Sea Freight"));
+    expect(seaFreightFinding).toBeDefined();
+    expect(seaFreightFinding?.rule).toBe("Q_PRICED");
+    expect(seaFreightFinding?.scope.type).toBe("leg"); // findingNav → Charges section
+    expect((await prisma.quote.findFirst({ where: { legId } }))?.status).toBe("RFQ_SENT");
+
+    // set the sea freight rate → passes.
+    const fixed: QuoteDraft = {
+      ...base,
+      seaRates: draft.seaRates.map((r) =>
+        r.rateVariant === "FCL" ? { ...r, amount: 9000, containerSize: "FORTY" } : r,
+      ),
+    };
+    await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(fixed).expect(200);
+    const ok = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    expect(ok.body.status).toBe("QUOTED");
+  });
+
+  it("Warehouse: resolveScope seeds the warehouse row for a fresh warehouse-included leg; a priced amount round-trips + folds into grandTotal (finding #1 sibling)", async () => {
+    const { token, legId } = await distributeWarehouseFixture();
+    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const draft = (got.body as FfPortalRfqDto).legs[0].draft as QuoteDraft;
+
+    // the seed now carries the warehouse row (was [] pre-fix → WarehouseStaging rendered nothing,
+    // so the FF could not price warehousing at all).
+    expect(draft.warehouse).toHaveLength(1);
+    expect(draft.warehouse[0]).toMatchObject({
+      position: "ORIGIN",
+      label: "Origin warehouse",
+      amount: null,
+    });
+    const whPointId = draft.warehouse[0].warehousePointId;
+    expect(whPointId.length).toBeGreaterThan(0);
+
+    const priced: QuoteDraft = {
+      ...draft,
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 500,
+      // DEDICATED priced via trucking (no CORE charge lines on ROAD); warehouse priced at 300.
+      trucking: draft.trucking.map((t) =>
+        t.rateVariant === "DEDICATED" ? { ...t, amount: 4200, tonnage: "T_5" } : t,
+      ),
+      warehouse: draft.warehouse.map((w) => ({ ...w, amount: 300 })),
+      transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { DEDICATED: 4 } },
+    };
+    await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(priced).expect(200);
+    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    const quoteId = submitRes.body.quoteId as string;
+
+    const whLines = await prisma.warehouseStagingLine.findMany({ where: { quoteId } });
+    expect(whLines).toHaveLength(1);
+    expect(whLines[0].warehousePointId).toBe(whPointId);
+    expect(whLines[0].position).toBe("ORIGIN");
+    expect(Number(whLines[0].amount)).toBe(300);
+
+    // Warehousing is shared across variants (design D4) → folds into every column's grand total.
+    // DEDICATED = trucking 4200 + warehouse 300 = 4500; persisted grandTotal = max variant column.
+    const quote = await prisma.quote.findUniqueOrThrow({ where: { id: quoteId } });
+    expect(Number(quote.grandTotal)).toBe(4500);
+  });
+
   it("resolveScope seeds the per-variant charge matrix (DEDICATED + GROUPAGE cells, amount null) instead of a null draft", async () => {
     const { token } = await distributeRoadFixture();
 

@@ -18,7 +18,16 @@ import { toNumOrNull } from "./numeric";
  *  read-only rows (frozen packing-list snapshot, package-grain) → a Totals row (Σ Gross, Σ CBM) →
  *  the single leg-level Chargeable Weight (kg) input (v3: QuoteDraft.chargedWeightKg — one figure
  *  per leg, not one per package; no density/tonne math anywhere in the quote layer). */
-export function CargoWeightTable({ manifest }: { manifest: ManifestSnapshotCargo[] }) {
+export function CargoWeightTable({
+  manifest,
+  legId,
+}: {
+  manifest: ManifestSnapshotCargo[];
+  // Leg-qualifies the Chargeable Weight input's aria-label (design §6 finding #4): FfPortalPage
+  // renders one LegSection per leg, so a bare "Chargeable Weight (kg)" label repeats across
+  // same-mode legs. The core phrase is kept up front so the accessible name still reads naturally.
+  legId: string;
+}) {
   const { control, setValue } = useFormContext<QuoteDraft>();
   const chargedWeightKg = useWatch({ control, name: "chargedWeightKg" });
 
@@ -79,7 +88,7 @@ export function CargoWeightTable({ manifest }: { manifest: ManifestSnapshotCargo
             </TableCell>
             <TableCell className="text-right">
               <NumberField
-                aria-label="Chargeable Weight (kg)"
+                aria-label={`Chargeable Weight (kg) — ${legId}`}
                 className="w-28 text-right"
                 value={chargedWeightKg}
                 onChange={(v) => setValue("chargedWeightKg", v, { shouldDirty: true })}

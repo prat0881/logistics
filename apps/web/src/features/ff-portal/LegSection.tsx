@@ -196,7 +196,7 @@ function LegSectionForm({
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Cargo & weight
           </h3>
-          <CargoWeightTable manifest={leg.manifest.cargo} />
+          <CargoWeightTable manifest={leg.manifest.cargo} legId={leg.legId} />
         </section>
 
         {/* Mode pricing: the per-variant charge matrix (design §3.1/§6 finding #3/#6) — rows are
@@ -223,7 +223,7 @@ function LegSectionForm({
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Transit plan
           </h3>
-          <TransitPlanForm mode={leg.mode} />
+          <TransitPlanForm mode={leg.mode} legId={leg.legId} />
         </section>
 
         {/* Quote summary */}

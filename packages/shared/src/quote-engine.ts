@@ -197,6 +197,16 @@ export function validateQuote(
         f.push(blk("Q_PRICED", `A remark is required to quote "${line.label}"${suffix} at 0`, leg));
     }
 
+    // Freight is REQUIRED for a priced SEA variant (owner decision): the dedicated Sea Freight
+    // rate (`seaRates[v].amount`, surfaced by variantRate) must be set — otherwise a variant made
+    // "priced" by a lone charge cell (isVariantPriced) would submit with no ocean freight at all.
+    // Air's freight is the AIR_MAIN_FREIGHT charge line (already gated by the active-line loop
+    // above); Road's trucking stays OPTIONAL, so this is deliberately SEA-only. `leg` scope +
+    // non-"Warehousing" message → findingNav routes it to the Charges section (where the Sea
+    // Freight row lives).
+    if (draft.mode === "SEA" && variantRate(draft, v) == null)
+      f.push(blk("Q_PRICED", `Sea Freight must be priced${suffix}`, leg));
+
     if (transitDaysFor(draft.transit, v) == null)
       f.push(
         blk("Q_TRANSIT", `Guaranteed Transit Time is required${suffix}`, {

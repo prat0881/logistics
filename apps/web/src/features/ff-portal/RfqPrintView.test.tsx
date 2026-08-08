@@ -192,6 +192,48 @@ const quotedRoadLegWithWarehouse: FfPortalLegDto = {
   },
 };
 
+// finding #3a: a variant whose own freight rate was never entered must read "—" in the grand-total
+// row — the SAME blank convention ChargeMatrix/QuoteSummary use — not a misleading "0.00". Here
+// DEDICATED is priced (tail lift 120 + trucking 500 = 620) while GROUPAGE is fully untouched.
+const partiallyPricedRoadLeg: FfPortalLegDto = {
+  ...quotedRoadLeg,
+  legId: "L5",
+  quoteId: "Q5",
+  manifest: { ...quotedRoadLeg.manifest, legId: "L5", legCode: "LEG-05" },
+  draft: {
+    ...quotedRoadDraft,
+    legId: "L5",
+    charges: [
+      {
+        zone: "ORIGIN",
+        definitionKey: "ROAD_STD_TAIL_LIFT",
+        presetKey: "ROAD_STD_TAIL_LIFT",
+        label: "Tail Lift",
+        amount: 120,
+        rateVariant: "DEDICATED",
+      },
+    ],
+    trucking: [
+      {
+        legEndpointPointId: "P1",
+        truckingType: "DEDICATED",
+        basis: "PER_TRUCK",
+        amount: 500,
+        rateVariant: "DEDICATED",
+        tonnage: "T_5",
+      },
+      {
+        legEndpointPointId: "P1",
+        truckingType: "GROUPAGE",
+        basis: "PER_TRUCK",
+        amount: null, // untouched → blank rate
+        rateVariant: "GROUPAGE",
+        tonnage: null,
+      },
+    ],
+  },
+};
+
 // AIR's degenerate single-implicit-column case (variantsForMode("AIR") === [null]): freight has
 // NO separate row — it's just the AIR_MAIN_FREIGHT `charges` line, same as any other header.
 const quotedAirLeg: FfPortalLegDto = {
@@ -307,6 +349,15 @@ describe("RfqPrintView", () => {
 
     // notes
     expect(screen.getByText("Handle with care — fragile glassware")).toBeInTheDocument();
+  });
+
+  it("shows '—' (not 0.00) in the grand-total row for an untouched/blank-rate variant (finding #3a)", () => {
+    render(<RfqPrintView rfq={{ ...rfq, legs: [partiallyPricedRoadLeg] }} />);
+    const totalRow = screen.getByText("Grand total").closest("tr")!;
+    // DEDICATED is priced → its real total; GROUPAGE is untouched → blank "—", never "0.00".
+    expect(within(totalRow).getByText("620.00")).toBeInTheDocument();
+    expect(within(totalRow).getByText("—")).toBeInTheDocument();
+    expect(within(totalRow).queryByText("0.00")).toBeNull();
   });
 
   it("renders per-cell amounts for a QUOTED AIR leg (single implicit column, freight folded into charges)", () => {

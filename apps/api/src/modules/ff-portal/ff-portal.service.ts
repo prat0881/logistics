@@ -10,6 +10,8 @@ import {
   validateQuote,
   computeQuoteTotals,
   computeHeavyWeightAmount,
+  seedQuoteDraftPricing,
+  seedQuoteDraftWarehouse,
   variantsForMode,
   AIR_VARIANT_KEY,
   QuoteEvent,
@@ -26,6 +28,7 @@ import type {
   ResolvedChargeLine,
   FreightMode,
   ChargeRateVariant,
+  SeedEndpoint,
 } from "@svyft/shared";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -80,17 +83,30 @@ function isVariantPriced(draft: QuoteDraft, v: ChargeRateVariant | null): boolea
  *  QuoteDraft instead of null — the full per-variant charge matrix (every active chargeConfig
  *  line × the mode's rate-variant columns, one QuoteDraftCharge per cell, `amount: null`; Air's
  *  single implicit column seeds `rateVariant: null` for free via variantsForMode("AIR") ===
- *  [null]) plus a blank leg-level chargeable weight, notes, and per-variant transit-days map —
- *  so the portal always has an addressable cell for every (line, variant) pair rather than the
- *  client reconstructing the cross-product itself. Everything else starts empty/null; submit()
- *  re-derives currency/quoteValidityUntil/cargo from the RFQ/manifest regardless of what a client
- *  echoes back from here, so seeding them is unnecessary (kept null/empty, not guessed). */
+ *  [null]) PLUS the mode's blank freight-rate rows (Road → Dedicated/Groupage `trucking`, Sea →
+ *  FCL/LCL `seaRates`, keyed off the leg's first endpoint for Road) PLUS the shared warehouse rows
+ *  (one per warehouse-positioned endpoint when handling is included) — so the portal always has an
+ *  addressable, editable cell for every (line, variant) pair, for the freight rate, AND for
+ *  warehousing, rather than the client reconstructing them. Charges + trucking + seaRates come from
+ *  `@svyft/shared`'s `seedQuoteDraftPricing`, warehouse from `seedQuoteDraftWarehouse` — the SAME
+ *  helpers the client's draftFromDto calls, a single source of truth so the server and client seeds
+ *  can never diverge (design §6 finding #1 + its warehouse sibling: the earlier
+ *  `trucking:[]`/`seaRates:[]`/`warehouse:[]` server seed left every Road/Sea freight cell disabled
+ *  and every warehouse row absent once resolveScope started always returning this seed).
+ *  Everything else starts empty/null; submit() re-derives currency/quoteValidityUntil/cargo from
+ *  the RFQ/manifest regardless of what a client echoes back, so seeding them is unnecessary. */
 function seedQuoteDraft(
   legId: string,
   mode: FreightMode | null,
   lines: ResolvedChargeLine[],
+  endpoints: SeedEndpoint[],
+  warehouseIncluded: boolean,
 ): QuoteDraft {
-  const variants = variantsForMode(mode);
+  const { charges, trucking, seaRates } = seedQuoteDraftPricing(
+    lines,
+    mode,
+    endpoints[0]?.pointId ?? "",
+  );
   return {
     legId,
     mode,
@@ -99,19 +115,10 @@ function seedQuoteDraft(
     chargedWeightKg: null,
     notes: null,
     cargo: [],
-    charges: lines.flatMap((l) =>
-      variants.map((v) => ({
-        zone: l.zone,
-        definitionKey: l.definitionKey,
-        presetKey: null,
-        label: l.label,
-        amount: null,
-        rateVariant: v,
-      })),
-    ),
-    trucking: [],
-    seaRates: [],
-    warehouse: [],
+    charges,
+    trucking,
+    seaRates,
+    warehouse: seedQuoteDraftWarehouse(warehouseIncluded, endpoints),
     transit: { departureDate: null, arrivalDate: null, guaranteedTransitDaysByVariant: {} },
     dgSurchargeNote: null,
     termsConditions: null,
@@ -184,11 +191,14 @@ export class FfPortalService {
           amount: null,
         })),
         warehouseIncluded: snap.warehouseIncluded,
-        // v3 (design §5): seed the per-variant matrix when there's no saved draft yet — see
-        // seedQuoteDraft above — instead of returning null.
+        // v3 (design §5): seed the per-variant matrix + the mode's freight-rate rows + the shared
+        // warehouse rows when there's no saved draft yet — see seedQuoteDraft above — instead of
+        // returning null. `endpoints` (with each warehouse endpoint's classified `warehousePosition`)
+        // and `snap.warehouseIncluded` are the SAME inputs the client's draftFromDto seeds from;
+        // Road's trucking rows key off `endpoints[0]` (the first endpoint), exactly as it does.
         draft: q.draftJson
           ? (q.draftJson as QuoteDraft)
-          : seedQuoteDraft(q.legId, mode, snap.lines),
+          : seedQuoteDraft(q.legId, mode, snap.lines, endpoints, snap.warehouseIncluded),
       };
     });
 

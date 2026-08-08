@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import type { Prisma, Incoterms } from "@prisma/client";
+import { Prisma, type Incoterms } from "@prisma/client";
 import {
   QuoteStatus,
   QuoteEvent,
@@ -416,6 +416,18 @@ export class RfqService {
               rfqId: rfq.id,
               manifestSnapshot: snapshot as unknown as Prisma.InputJsonValue,
               chargeConfigSnapshot: chargeConfig as unknown as Prisma.InputJsonValue,
+              // Clear any stale draft as the quote (re)enters distribution (design §6 finding #2).
+              // Submit now persists the submitted bid onto draftJson (finding #8), so a REACTIVATED
+              // (INVALID→RFQ_SENT) quote would otherwise carry its OLD bid — old amounts/rates/
+              // weight, worst case stale trucking rows on a mode-changed leg — into the re-seed,
+              // and resolveScope (which returns draftJson verbatim when present) would serve that
+              // stale bid instead of a clean matrix built from the FRESH manifest/chargeConfig
+              // snapshots written just above. Pairing the draft-clear with the snapshot-refresh in
+              // this one update keeps the three consistent. Prisma.DbNull (a nullable Json column →
+              // SQL NULL) makes resolveScope fall to seedQuoteDraft, exactly like the change-order
+              // re-freeze does for RFQ_SENT quotes (change-order.strategy.ts). No-op for a fresh
+              // SELECT quote (its draftJson is already null — a pre-distribution quote has no draft).
+              draftJson: Prisma.DbNull,
             },
           });
           quoteFires.push(quoteId);

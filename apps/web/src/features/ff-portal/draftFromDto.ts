@@ -1,15 +1,6 @@
-import type {
-  FfPortalLegDto,
-  FfPortalRfqDto,
-  QuoteDraft,
-  QuoteDraftWarehouse,
-} from "@svyft/shared";
-import { variantsForMode } from "@svyft/shared";
+import type { FfPortalLegDto, FfPortalRfqDto, QuoteDraft } from "@svyft/shared";
+import { seedQuoteDraftPricing, seedQuoteDraftWarehouse } from "@svyft/shared";
 import { toNumOrNull } from "./numeric";
-
-function warehouseLabel(position: QuoteDraftWarehouse["position"]): string {
-  return position === "ORIGIN" ? "Origin warehouse" : "Destination warehouse";
-}
 
 export function draftFromDto(leg: FfPortalLegDto, rfq: FfPortalRfqDto): QuoteDraft {
   if (leg.draft) {
@@ -26,57 +17,21 @@ export function draftFromDto(leg: FfPortalLegDto, rfq: FfPortalRfqDto): QuoteDra
     grossWtKg: toNumOrNull(c.grossWt) ?? 0,
     cbm: toNumOrNull(c.volumeCbm) ?? 0,
   }));
-  // v3 (design §3.1): fan every seeded line out across the mode's rate-variant columns — mirrors
-  // ff-portal.service.ts's seedQuoteDraft exactly, so a fresh draft (no leg.draft yet, the branch
-  // this fallback belongs to) seeds the SAME (definitionKey × variant) cross-product the server
-  // would have seeded. ChargeMatrix.tsx then always has an addressable cell for every (line,
-  // variant) pair regardless of which seed path produced this draft. Air's single implicit
-  // column seeds `rateVariant: null` for free via variantsForMode("AIR") === [null].
-  const variants = variantsForMode(leg.mode);
-  const charges = leg.seededCharges.flatMap((s) =>
-    variants.map((rateVariant) => ({
-      zone: s.zone,
-      definitionKey: s.definitionKey,
-      presetKey: s.presetKey,
-      label: s.label,
-      amount: null,
-      rateVariant,
-    })),
+  // v3 (design §3.1/§5): the per-variant charge matrix + the mode's freight-rate rows
+  // (Road → trucking, Sea → seaRates) come from ONE shared seed — the SAME `seedQuoteDraftPricing`
+  // the server's ff-portal.service.ts `seedQuoteDraft` calls, so this client fallback and the
+  // server seed can never diverge again (the divergence that made every Road/Sea freight cell
+  // render as a disabled "not applicable" cell — design §6 finding #1). Air seeds neither freight
+  // row (its freight is the AIR_MAIN_FREIGHT charge line). Both Road rows key off the leg's first
+  // endpoint (Road legs quote at the leg level, not per-endpoint).
+  const { charges, trucking, seaRates } = seedQuoteDraftPricing(
+    leg.seededCharges,
+    leg.mode,
+    leg.endpoints[0]?.pointId ?? "",
   );
-  const warehouse = (
-    leg.warehouseIncluded ? leg.endpoints.filter((e) => e.warehousePosition != null) : []
-  ).map((e) => ({
-    warehousePointId: e.pointId,
-    position: e.warehousePosition!,
-    label: warehouseLabel(e.warehousePosition!),
-    amount: null,
-    cfsCode: null,
-    side: null,
-  }));
-  // Road is dual-rate (design §7): seed both variants up front so the FF can price either or
-  // both — an unpriced row stays amount: null (blank rate → "–", computeQuoteTotals). Both rows
-  // key off the same leg endpoint (Road legs quote at the leg level, not per-endpoint).
-  const trucking =
-    leg.mode === "ROAD"
-      ? (["DEDICATED", "GROUPAGE"] as const).map((rv) => ({
-          legEndpointPointId: leg.endpoints[0]?.pointId ?? "",
-          truckingType: rv,
-          basis: "PER_TRUCK" as const,
-          amount: null,
-          rateVariant: rv,
-          tonnage: null,
-        }))
-      : [];
-  // Sea is dual-rate too (design §7): seed both FCL/LCL rows up front, same pattern as Road's
-  // Dedicated/Groupage — an unpriced row stays amount: null (blank rate → "–", computeQuoteTotals).
-  const seaRates =
-    leg.mode === "SEA"
-      ? (["FCL", "LCL"] as const).map((rv) => ({
-          rateVariant: rv,
-          containerSize: null,
-          amount: null,
-        }))
-      : [];
+  // Same shared helper the server's seedQuoteDraft calls (finding #1 sibling) — one source of
+  // truth so server + client warehouse seeds can't diverge.
+  const warehouse = seedQuoteDraftWarehouse(leg.warehouseIncluded === true, leg.endpoints);
   return {
     legId: leg.legId,
     mode: leg.mode,

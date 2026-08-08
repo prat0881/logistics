@@ -9,6 +9,11 @@ import { cn } from "@/lib/utils";
 
 export interface TransitPlanFormProps {
   mode: FreightMode | null;
+  // The rendered leg's id — prefixes every DOM `id` below so multiple same-mode legs on one portal
+  // (FfPortalPage renders one LegSection per leg) don't collide (design §6 finding #4: duplicate
+  // ids are invalid HTML and make a `<label htmlFor>` focus the wrong leg's field). Not shown to
+  // the user; the human-readable disambiguator stays in each field's Label text (per variant).
+  legId: string;
 }
 
 /** Column label matching ChargeMatrix's convention (rateVariantLabel for Road/Sea, "Air" for the
@@ -29,10 +34,12 @@ function variantLabel(v: ChargeRateVariant | null): string {
  * underlying QuoteDraftTransit columns are nullable and ungated, so dropping the inputs loses no
  * data integrity).
  */
-export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
+export function TransitPlanForm({ mode, legId }: TransitPlanFormProps): JSX.Element {
   const { register, control, setValue } = useFormContext<QuoteDraft>();
   const transit = useWatch({ control, name: "transit" });
   const variants = variantsForMode(mode);
+  // Leg-qualified DOM id (finding #4): unique per rendered leg so same-mode legs don't clash.
+  const fid = (name: string) => `${legId}-${name}`;
 
   return (
     <div className="space-y-6">
@@ -42,7 +49,7 @@ export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
       <div className={cn("grid gap-4", variants.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
         {variants.map((v) => {
           const variantKey = v ?? AIR_VARIANT_KEY;
-          const id = `transit-guaranteed-days-${variantKey}`;
+          const id = fid(`transit-guaranteed-days-${variantKey}`);
           return (
             <div className="space-y-1" key={variantKey}>
               <Label htmlFor={id}>
@@ -75,9 +82,9 @@ export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
 
       {mode === "ROAD" && (
         <div className="space-y-1">
-          <Label htmlFor="transit-planned-pickup">Planned Pickup Date</Label>
+          <Label htmlFor={fid("transit-planned-pickup")}>Planned Pickup Date</Label>
           <Input
-            id="transit-planned-pickup"
+            id={fid("transit-planned-pickup")}
             type="datetime-local"
             value={toDatetimeLocal(transit?.plannedPickupDate ?? null)}
             onChange={(e) =>
@@ -93,17 +100,17 @@ export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
         <>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label htmlFor="transit-airline">Airline</Label>
+              <Label htmlFor={fid("transit-airline")}>Airline</Label>
               <Input
-                id="transit-airline"
+                id={fid("transit-airline")}
                 placeholder="e.g. Emirates SkyCargo"
                 {...register("transit.airline")}
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="transit-flight-number">Flight Number</Label>
+              <Label htmlFor={fid("transit-flight-number")}>Flight Number</Label>
               <Input
-                id="transit-flight-number"
+                id={fid("transit-flight-number")}
                 placeholder="e.g. EK9701"
                 {...register("transit.flightNumber")}
               />
@@ -111,9 +118,9 @@ export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label htmlFor="transit-planned-departure">Planned Departure</Label>
+              <Label htmlFor={fid("transit-planned-departure")}>Planned Departure</Label>
               <Input
-                id="transit-planned-departure"
+                id={fid("transit-planned-departure")}
                 type="datetime-local"
                 value={toDatetimeLocal(transit?.plannedDeparture ?? null)}
                 onChange={(e) =>
@@ -124,9 +131,9 @@ export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="transit-planned-arrival">Planned Arrival</Label>
+              <Label htmlFor={fid("transit-planned-arrival")}>Planned Arrival</Label>
               <Input
-                id="transit-planned-arrival"
+                id={fid("transit-planned-arrival")}
                 type="datetime-local"
                 value={toDatetimeLocal(transit?.plannedArrival ?? null)}
                 onChange={(e) =>
@@ -144,17 +151,17 @@ export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
         <>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label htmlFor="transit-shipping-line">Shipping Line</Label>
+              <Label htmlFor={fid("transit-shipping-line")}>Shipping Line</Label>
               <Input
-                id="transit-shipping-line"
+                id={fid("transit-shipping-line")}
                 placeholder="e.g. Maersk"
                 {...register("transit.shippingLine")}
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="transit-vessel-voyage">Vessel / Voyage</Label>
+              <Label htmlFor={fid("transit-vessel-voyage")}>Vessel / Voyage</Label>
               <Input
-                id="transit-vessel-voyage"
+                id={fid("transit-vessel-voyage")}
                 placeholder="e.g. MSC Anna / 123W"
                 {...register("transit.vesselVoyage")}
               />
@@ -162,9 +169,9 @@ export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label htmlFor="transit-etd">ETD</Label>
+              <Label htmlFor={fid("transit-etd")}>ETD</Label>
               <Input
-                id="transit-etd"
+                id={fid("transit-etd")}
                 type="datetime-local"
                 value={toDatetimeLocal(transit?.etd ?? null)}
                 onChange={(e) =>
@@ -175,9 +182,9 @@ export function TransitPlanForm({ mode }: TransitPlanFormProps): JSX.Element {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="transit-eta">ETA</Label>
+              <Label htmlFor={fid("transit-eta")}>ETA</Label>
               <Input
-                id="transit-eta"
+                id={fid("transit-eta")}
                 type="datetime-local"
                 value={toDatetimeLocal(transit?.eta ?? null)}
                 onChange={(e) =>

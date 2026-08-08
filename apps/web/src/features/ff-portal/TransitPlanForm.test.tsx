@@ -25,12 +25,12 @@ function baseDefaults(mode: FreightMode | null): QuoteDraft {
 }
 
 /** Renders TransitPlanForm inside a real RHF form, exposing `transit` via useWatch for assertions. */
-function Harness({ mode }: { mode: FreightMode | null }) {
+function Harness({ mode, legId = "L1" }: { mode: FreightMode | null; legId?: string }) {
   const form = useForm<QuoteDraft>({ defaultValues: baseDefaults(mode) });
   const transit = useWatch({ control: form.control, name: "transit" });
   return (
     <FormProvider {...form}>
-      <TransitPlanForm mode={mode} />
+      <TransitPlanForm mode={mode} legId={legId} />
       <output data-testid="guaranteed-by-variant">
         {JSON.stringify(transit?.guaranteedTransitDaysByVariant ?? {})}
       </output>
@@ -93,6 +93,25 @@ describe("TransitPlanForm — Guaranteed Transit Time (mandatory, per rate-varia
   });
 });
 
+describe("TransitPlanForm — leg-qualified ids (a11y, finding #4)", () => {
+  it("prefixes every field id with the legId so two same-mode legs don't collide", () => {
+    const { container, unmount } = render(<Harness mode="AIR" legId="LEG-A" />);
+    const ids = [...container.querySelectorAll("[id]")].map((el) => el.id);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.every((id) => id.startsWith("LEG-A-"))).toBe(true);
+    unmount();
+  });
+
+  it("renders disjoint id sets for two legs of the same mode (no duplicate DOM ids)", () => {
+    const { container: a } = render(<Harness mode="ROAD" legId="LEG-A" />);
+    const { container: b } = render(<Harness mode="ROAD" legId="LEG-B" />);
+    const aIds = new Set([...a.querySelectorAll("[id]")].map((el) => el.id));
+    const bIds = [...b.querySelectorAll("[id]")].map((el) => el.id);
+    expect(bIds.length).toBeGreaterThan(0);
+    expect(bIds.some((id) => aIds.has(id))).toBe(false); // no shared id between the two legs
+  });
+});
+
 describe("TransitPlanForm — Road", () => {
   it("renders the Road-specific Planned Pickup Date field and no Air/Sea fields", () => {
     render(<Harness mode="ROAD" />);
@@ -149,7 +168,7 @@ describe("TransitPlanForm — Sea", () => {
       const etd = useWatch({ control: form.control, name: "transit.etd" });
       return (
         <FormProvider {...form}>
-          <TransitPlanForm mode="SEA" />
+          <TransitPlanForm mode="SEA" legId="L1" />
           <output data-testid="etd">{etd ?? ""}</output>
         </FormProvider>
       );

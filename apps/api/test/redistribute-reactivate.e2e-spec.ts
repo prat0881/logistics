@@ -7,7 +7,14 @@ import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
 import type { Prisma } from "@prisma/client";
-import { Role, ACCESS_TOKEN_COOKIE, QuoteStatus, type ManifestSnapshot } from "@svyft/shared";
+import {
+  Role,
+  ACCESS_TOKEN_COOKIE,
+  QuoteStatus,
+  type ManifestSnapshot,
+  type FfPortalRfqDto,
+  type QuoteDraft,
+} from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
@@ -275,6 +282,128 @@ describe(`${PREFIX} (e2e)`, () => {
     });
     expect(msg).not.toBeNull();
     expect(msg?.subject).toContain(rfq.rfqNumber);
+  });
+
+  it("clears a reactivated quote's STALE draftJson so re-distribution re-seeds clean, not the old bid (finding #2)", async () => {
+    const admin = cookie(Role.ADMINISTRATOR);
+
+    // --- fixtures: post-change-order state — an INVALID (AIR) quote carrying a STALE bid on
+    //     draftJson (submit now persists the bid, finding #8), plus its Rfq with a KNOWN raw
+    //     token so we can GET the portal after reactivation. ---
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-DRAFT`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 250 }],
+    });
+    const [packageId] = packageIds;
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L-REDIST-DRAFT",
+        mode: "AIR",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+      },
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
+    const ff = await mkFf(`FF-${PREFIX}-DRAFT`);
+
+    const rawToken = randomUUID();
+    const rfq = await prisma.rfq.create({
+      data: {
+        queryId: query.id,
+        freightForwarderId: ff.id,
+        rfqNumber: `${CODE}-DRAFT-RFQ001`,
+        accessTokenHash: createHash("sha256").update(rawToken).digest("hex"),
+        submissionDeadline: new Date(Date.now() - 3600_000),
+        incoterms: "FOB",
+        currency: "USD",
+      },
+    });
+
+    // The stale pre-change bid: a fully-priced ROAD-shaped draft (trucking rows + priced charges +
+    // a leg weight + notes) — deliberately mode-mismatched vs. the live AIR leg, so a clean re-seed
+    // is unmistakable (fresh AIR seed has NO trucking at all).
+    const staleDraft = {
+      legId: leg.id,
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 777,
+      notes: "STALE pre-change bid",
+      cargo: [{ packageId, grossWtKg: 111, cbm: 1 }],
+      charges: [
+        {
+          zone: null,
+          definitionKey: "ROAD_STD_TAIL_LIFT",
+          presetKey: null,
+          label: "Tail Lift",
+          amount: 999,
+          rateVariant: "DEDICATED",
+        },
+      ],
+      trucking: [
+        {
+          legEndpointPointId: origin.id,
+          truckingType: "DEDICATED",
+          basis: "PER_TRUCK",
+          amount: 4200,
+          rateVariant: "DEDICATED",
+          tonnage: "T_5",
+        },
+      ],
+      seaRates: [],
+      warehouse: [],
+      transit: { departureDate: null, arrivalDate: null, guaranteedTransitDaysByVariant: { DEDICATED: 3 } },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+    const quote = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ff.id,
+        rfqId: rfq.id,
+        status: QuoteStatus.INVALID,
+        manifestSnapshot: oldSnapshot(leg.id, packageId) as unknown as Prisma.InputJsonValue,
+        draftJson: staleDraft as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // --- act: re-distribute the reopened leg (reactivates the INVALID quote). ---
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+
+    // --- assert: the reactivated quote's draftJson was CLEARED (SQL NULL), not carried over. ---
+    const quoteAfter = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
+    expect(quoteAfter.status).toBe(QuoteStatus.RFQ_SENT);
+    expect(quoteAfter.draftJson).toBeNull();
+
+    // --- assert: a fresh GET re-seeds clean from the CURRENT AIR snapshot — none of the stale
+    //     ROAD bid survives (this is exactly what resolveScope serves the reopened FF). ---
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${rawToken}`).expect(200);
+    const legDto = (got.body as FfPortalRfqDto).legs[0];
+    expect(legDto.status).toBe("RFQ_SENT");
+    const draft = legDto.draft as QuoteDraft;
+    expect(draft.mode).toBe("AIR"); // re-seeded for the live leg, not the stale ROAD bid
+    expect(draft.chargedWeightKg).toBeNull(); // stale said 777
+    expect(draft.notes).toBeNull(); // stale said "STALE pre-change bid"
+    expect(draft.trucking).toEqual([]); // stale carried a priced DEDICATED trucking row
+    expect(draft.charges.every((c) => c.amount == null)).toBe(true); // stale had amount 999
   });
 
   it("a SELECT (fresh) quote still distributes normally (unaffected by the reactivation path)", async () => {

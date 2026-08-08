@@ -55,11 +55,17 @@ function WeightDebug({ control }: { control: Control<QuoteDraft> }) {
   return <div data-testid="weight-debug">{JSON.stringify(chargedWeightKg)}</div>;
 }
 
-function Harness({ manifest }: { manifest: ManifestSnapshotCargo[] }) {
+function Harness({
+  manifest,
+  legId = "L1",
+}: {
+  manifest: ManifestSnapshotCargo[];
+  legId?: string;
+}) {
   const form = useForm<QuoteDraft>({ defaultValues: defaultDraft });
   return (
     <FormProvider {...form}>
-      <CargoWeightTable manifest={manifest} />
+      <CargoWeightTable manifest={manifest} legId={legId} />
       <WeightDebug control={form.control} />
     </FormProvider>
   );
@@ -114,6 +120,13 @@ describe("CargoWeightTable", () => {
     render(<Harness manifest={[dgPackage, plainPackage]} />);
     expect(screen.getAllByRole("spinbutton")).toHaveLength(1);
     expect(screen.getByLabelText(/chargeable weight/i)).toBeInTheDocument();
+  });
+
+  it("leg-qualifies the Chargeable Weight aria-label so same-mode legs don't collide (finding #4)", () => {
+    render(<Harness manifest={[dgPackage]} legId="LEG-A" />);
+    // core phrase still present (existing /chargeable weight/i queries keep working) AND unique per leg
+    expect(screen.getByLabelText(/chargeable weight \(kg\) — LEG-A/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Chargeable Weight (kg)")).toBeNull(); // no bare, collidable label
   });
 
   it("writes an entered value to the leg-level chargedWeightKg, not a per-package field", async () => {

@@ -547,6 +547,113 @@ describe("validateQuote — Q_PRICED (per-variant active-line pricing, 0-needs-r
   });
 });
 
+// ── Freight-required submit-gate (owner decision): freight is REQUIRED for a priced AIR & SEA
+// variant, OPTIONAL for ROAD. Air's freight is the AIR_MAIN_FREIGHT charge line (gated by the
+// Q_PRICED active-line loop, verified below); Sea's is its dedicated seaRates rate (this is the
+// gap the rule closes); Road's trucking stays optional.
+describe("validateQuote — freight required for priced SEA variants (Q_PRICED), optional for ROAD", () => {
+  function seaDraft(): QuoteDraft {
+    return {
+      legId: "l1",
+      mode: "SEA",
+      currency: "USD",
+      quoteValidityUntil: "2026-08-20T00:00:00.000Z",
+      chargedWeightKg: 1000,
+      notes: null,
+      cargo: [{ packageId: "c1", grossWtKg: 1000, cbm: 2 }],
+      charges: [
+        // FCL is "priced" via a lone charge cell — the exact case isVariantPriced treats as
+        // priced while the sea freight rate is still blank.
+        {
+          zone: "ORIGIN",
+          definitionKey: "SEA_ORIGIN_THC",
+          presetKey: null,
+          rateVariant: "FCL",
+          label: "Origin THC",
+          amount: 50,
+        },
+      ],
+      trucking: [],
+      seaRates: [
+        { rateVariant: "FCL", containerSize: null, amount: null },
+        { rateVariant: "LCL", containerSize: null, amount: null },
+      ],
+      warehouse: [],
+      transit: {
+        departureDate: null,
+        arrivalDate: null,
+        guaranteedTransitDaysByVariant: { FCL: 12 },
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+  }
+
+  const seaThc: ResolvedChargeLine[] = [
+    { definitionKey: "SEA_ORIGIN_THC", role: "CORE", inputType: "PLAIN", zone: "ORIGIN", label: "Origin THC" },
+  ];
+
+  it("blocks a priced SEA variant that has no sea-freight rate (leg scope → findingNav routes to charges)", () => {
+    const f = validateQuote(seaDraft(), deadline, now, seaThc);
+    const finding = f.find((x) => x.rule === "Q_PRICED" && x.message.includes("Sea Freight"));
+    expect(finding).toBeDefined();
+    expect(finding?.message).toContain("FCL");
+    expect(finding?.scope).toEqual({ type: "leg", id: "l1" }); // charges section, not warehouse
+  });
+
+  it("passes once the priced SEA variant's sea-freight rate is set", () => {
+    const d = seaDraft();
+    d.seaRates = [
+      { rateVariant: "FCL", containerSize: "TWENTY", amount: 700 },
+      { rateVariant: "LCL", containerSize: null, amount: null },
+    ];
+    const f = validateQuote(d, deadline, now, seaThc);
+    expect(f.some((x) => x.message.includes("Sea Freight"))).toBe(false);
+  });
+
+  it("does not require the sea-freight rate on an UNTOUCHED SEA variant (LCL left alone)", () => {
+    const d = seaDraft();
+    d.seaRates = [
+      { rateVariant: "FCL", containerSize: "TWENTY", amount: 700 },
+      { rateVariant: "LCL", containerSize: null, amount: null },
+    ];
+    const f = validateQuote(d, deadline, now, seaThc);
+    // FCL is the only priced variant; LCL is untouched → no Sea Freight finding for LCL.
+    expect(f.some((x) => x.message.includes("Sea Freight") && x.message.includes("LCL"))).toBe(false);
+  });
+
+  it("does NOT require a trucking rate on a priced ROAD variant (freight optional for Road)", () => {
+    const d = roadOkDraft();
+    // DEDICATED priced via a charge cell only, its trucking rate left blank.
+    d.trucking = [
+      {
+        legEndpointPointId: "p1",
+        truckingType: "DEDICATED",
+        basis: "PER_TRUCK",
+        amount: null,
+        rateVariant: "DEDICATED",
+        tonnage: null,
+      },
+    ];
+    d.charges = [
+      { zone: null, definitionKey: "X", presetKey: null, rateVariant: "DEDICATED", label: "X", amount: 20 },
+    ];
+    const f = validateQuote(d, deadline, now, []);
+    expect(f.some((x) => x.message.includes("Road Freight"))).toBe(false);
+    expect(f).toHaveLength(0); // fully valid: Road freight is optional
+  });
+
+  it("AIR: a priced Air variant still requires its AIR_MAIN_FREIGHT charge line (existing Q_PRICED — verified unchanged)", () => {
+    const d = airOkDraft();
+    const freightCell = d.charges.find((c) => c.definitionKey === "AIR_MAIN_FREIGHT")!;
+    freightCell.amount = null; // unprice the air freight
+    const f = validateQuote(d, deadline, now, airActiveLines);
+    expect(
+      f.some((x) => x.rule === "Q_PRICED" && x.message.includes("Air Freight Charges")),
+    ).toBe(true);
+  });
+});
+
 describe("validateQuote — Q_CUSTOM_REMARK (custom [+ Add Charge] lines)", () => {
   it("blocks a custom line without a remark", () => {
     const d = airOkDraft();
