@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -234,8 +234,11 @@ describe("RfqWorkspace", () => {
     );
     wrap(<RfqWorkspace queryId="q1" />);
     await screen.findByText("YAL26-0001");
-    // L1 open by default → deadline-l1 in DOM, deadline-l2 not
-    expect(document.getElementById("deadline-l1")).toBeTruthy();
+    // L1 open by default → deadline-l1 in DOM, deadline-l2 not. The default-open is applied by a
+    // post-mount effect (openLegId starts null), so deadline-l1 renders a tick after the query
+    // header resolves — await it (like the sibling test's findByLabelText) instead of a sync read,
+    // which races under CI timing.
+    await waitFor(() => expect(document.getElementById("deadline-l1")).toBeTruthy());
     expect(document.getElementById("deadline-l2")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /^Leg L2/ }));
     expect(document.getElementById("deadline-l2")).toBeTruthy();
