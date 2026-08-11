@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { FreightMode, PointType, type Finding, type QueryDetail } from "@svyft/shared";
 import { cn } from "@/lib/utils";
-import { computeLongestPathDepth } from "@/lib/routeLayering";
+import { computeRouteLayout } from "@/lib/routeLayering";
 import { toRouteGraph } from "./routeGraph";
 
 /**
@@ -690,82 +690,46 @@ interface Layout {
 }
 
 /**
- * computeLayout — a simple longest-path layering (Stage-3 graphs are small).
- * Depth 0 = points that are never a destination (sources). Each leg pushes its
- * destination to `max(existing, depth[origin] + 1)`. Points sharing a depth are
- * stacked vertically. Isolated points (no leg) go in a trailing column so
- * orphans are still drawn.
+ * computeLayout — SVG pixel math on top of the shared `computeRouteLayout`
+ * grid engine (`@/lib/routeLayering`, shared with the FF-portal
+ * `ScopedRouteDiagram`, which needs the identical source→sink ordering over
+ * its masked, assignment-scoped subgraph — design §6 finding #1).
  *
- * The depth relaxation itself is `computeLongestPathDepth` in
- * `@/lib/routeLayering` — shared with the FF-portal `ScopedRouteDiagram`,
- * which needs the identical source→sink ordering over its masked,
- * assignment-scoped subgraph (design §6 finding #1). Everything below the
- * depth computation (column-rank positioning, row-stacking, orphan
- * trailing) is specific to this multi-row diagram and stays local.
+ * The engine owns the topology: longest-path depth → orphan-trailing
+ * (isolated points, touched by no leg, trail one column past the deepest
+ * touched point) → column-RANK grouping (never the raw depth — a cycle can
+ * inflate raw depths past the actual column count via the relaxation's
+ * iteration cap, so rank collapses columns back to a compact 0..n-1 range
+ * that always fits the computed width) → row-stacking within each column.
+ * Called here with `splitComponents: false`, which reproduces this
+ * function's original single-grid layout exactly (verified in Task 1's
+ * review). This function only converts the resulting `{col,row}` grid into
+ * SVG coordinates and derives the viewBox `width`/`height` — including the
+ * `vBulge` room reserved for fanned edge curves and the 320px minimum width
+ * floor for very small routes.
  */
 function computeLayout(graph: ReturnType<typeof toRouteGraph>, vBulge = 0): Layout {
   const pointIds = graph.points.map((p) => p.id);
+  const edges = graph.legs.map((l) => ({
+    originId: l.originPointId,
+    destinationId: l.destinationPointId,
+  }));
 
-  const isDestination = new Set(
-    graph.legs.map((l) => l.destinationPointId).filter(Boolean) as string[],
-  );
-  const touched = new Set<string>();
-  for (const l of graph.legs) {
-    if (l.originPointId) touched.add(l.originPointId);
-    if (l.destinationPointId) touched.add(l.destinationPointId);
-  }
+  const engineLayout = computeRouteLayout(pointIds, edges, { splitComponents: false });
 
-  // Sources (never a destination) start at 0; everything else derives via
-  // longest-path relaxation (cycle-safe: capped iterations, see
-  // `computeLongestPathDepth`'s doc — validateRoute flags cycles as a data
-  // problem separately, this just avoids an infinite loop here).
-  const depth = computeLongestPathDepth(
-    pointIds,
-    graph.legs.map((l) => ({ originId: l.originPointId, destinationId: l.destinationPointId })),
-  );
-  // A point that IS a destination but also (erroneously) kept depth 0 through a
-  // cycle still renders; nothing else to do.
-  void isDestination;
-
-  // Orphans (no leg touches them) trail to the right after the deepest column.
-  let maxDepth = 0;
-  for (const d of depth.values()) maxDepth = Math.max(maxDepth, d);
-  const orphanDepth = graph.legs.length > 0 ? maxDepth + 1 : 0;
-  for (const id of pointIds) {
-    if (!touched.has(id)) depth.set(id, orphanDepth);
-  }
-
-  // Group by depth (stable order = point order within each column).
-  const columns = new Map<number, string[]>();
-  for (const id of pointIds) {
-    const d = depth.get(id) ?? 0;
-    const arr = columns.get(d);
-    if (arr) arr.push(id);
-    else columns.set(d, [id]);
-  }
-
-  // Position by COLUMN RANK (index in the sorted-depth list), never the raw depth.
-  // A cycle makes the relaxation loop above run to its iteration cap and inflate
-  // raw depths (e.g. 9,10,11,12), so raw depth != column index. Since `width`
-  // below derives from the column COUNT, using the raw depth for x would place
-  // nodes far outside the viewBox and clip them → a blank canvas the user can no
-  // longer click to fix the bad leg. Ranking collapses the columns back to a
-  // compact 0..n-1 range that always fits the computed width.
   const pos = new Map<string, Pt>();
-  let maxRows = 0;
-  const sortedDepths = [...columns.keys()].sort((a, b) => a - b);
-  sortedDepths.forEach((d, col) => {
-    const ids = columns.get(d)!;
-    maxRows = Math.max(maxRows, ids.length);
-    ids.forEach((id, row) => {
-      pos.set(id, {
-        x: PAD + col * (NODE_W + COL_GAP),
-        y: PAD + vBulge + row * (NODE_H + ROW_GAP),
-      });
+  for (const [id, node] of engineLayout.nodes) {
+    pos.set(id, {
+      x: PAD + node.col * (NODE_W + COL_GAP),
+      y: PAD + vBulge + node.row * (NODE_H + ROW_GAP),
     });
-  });
+  }
 
-  const cols = sortedDepths.length || 1;
+  // Unlike this renderer, the engine doesn't floor colCount to 1 for an
+  // empty graph (0 points/edges) — keep that floor here so `width` below
+  // never collapses below a single empty column's baseline.
+  const cols = engineLayout.colCount || 1;
+  const maxRows = engineLayout.maxRows;
   const width = PAD * 2 + cols * NODE_W + (cols - 1) * COL_GAP;
   const height = PAD * 2 + vBulge * 2 + maxRows * NODE_H + Math.max(0, maxRows - 1) * ROW_GAP;
 
