@@ -32,6 +32,10 @@ export interface FfPortalEndpoint {
   type: string; // PointType (PICKUP|DELIVERY|WAREHOUSE|AIRPORT|SEAPORT)
   name: string | null;
   country: string | null;
+  // Non-sensitive location code — same precedence as the executive RouteDiagram
+  // (unLocode ?? iataCode ?? icaoCode ?? terminal): public, safe to expose to the FF (unlike
+  // street address / contact fields, which this DTO never carries).
+  code: string | null;
   warehousePosition: WarehousePosition | null; // set for WAREHOUSE endpoints, else null
 }
 export interface FfPortalSeededCharge {

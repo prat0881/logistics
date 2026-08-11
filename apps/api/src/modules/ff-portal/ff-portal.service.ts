@@ -168,6 +168,10 @@ export class FfPortalService {
           type: p.type,
           name: p.name,
           country: p.country,
+          // Non-sensitive location code, live-resolved off the current point (not the frozen
+          // manifestSnapshot) — same precedence as the executive RouteDiagram.tsx (query-wizard/
+          // steps/legs/RouteDiagram.tsx): unLocode ?? iataCode ?? icaoCode ?? terminal.
+          code: p.unLocode ?? p.iataCode ?? p.icaoCode ?? p.terminal ?? null,
           warehousePosition: p.type === "WAREHOUSE" ? (whPos[p.id] ?? null) : null,
         }));
       return {

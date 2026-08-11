@@ -92,8 +92,17 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
    * (READY_FOR_RFQ) -> select the seeded ROAD_STD_TAIL_LIFT STANDARD/PLAIN line (so the leg's
    * chargeConfigSnapshot freezes >=1 active charge-config line, per the brief) -> FF(modes:
    * [ROAD]) -> PUT ff-selection -> POST distribute. Returns the raw accessToken + ids.
+   *
+   * `originOverride` lets a caller reshape the origin Point (e.g. type: "AIRPORT" +
+   * iataCode) without duplicating the rest of this fixture — the leg's `mode` stays ROAD
+   * regardless, since this fixture creates Points/Legs directly via Prisma (bypassing
+   * LegsService's checkModeEndpoints pre-write check, same as the existing SEA fixture below
+   * already does with PICKUP/DELIVERY endpoints on a SEA leg).
    */
-  async function distributeRoadFixture(): Promise<{
+  async function distributeRoadFixture(originOverride?: {
+    type?: "PICKUP" | "AIRPORT";
+    iataCode?: string;
+  }): Promise<{
     token: string;
     legId: string;
     queryId: string;
@@ -104,7 +113,7 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
       data: { queryCode: `${PFX}${seq}`, incoterms: "FOB" },
     });
     const origin = await prisma.point.create({
-      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+      data: { queryId: query.id, type: "PICKUP", country: "CN", ...originOverride },
     });
     const dest = await prisma.point.create({
       data: { queryId: query.id, type: "DELIVERY", country: "AE" },
@@ -457,6 +466,20 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     expect(tailLiftCells).toHaveLength(2); // ROAD -> variantsForMode = [DEDICATED, GROUPAGE]
     expect(tailLiftCells.map((c) => c.rateVariant).sort()).toEqual(["DEDICATED", "GROUPAGE"]);
     expect(tailLiftCells.every((c) => c.amount === null)).toBe(true);
+  });
+
+  // Task 3 (ff-scoped route-diagram rework): resolveScope's endpoint map must expose the
+  // point's non-sensitive location code (IATA/UN-LOCODE/ICAO/terminal — never a street address
+  // or contact field) so the FF-portal route diagram can show "code + name" like the executive
+  // RouteDiagram does. Live-resolved off the current Point row (not the frozen manifestSnapshot),
+  // so this works for an already-distributed RFQ with no re-freeze/migration.
+  it("resolveScope exposes the origin point's IATA code as endpoints[0].code (Task 3)", async () => {
+    const { token } = await distributeRoadFixture({ type: "AIRPORT", iataCode: "PVG" });
+
+    const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
+    const legDto = (got.body as FfPortalRfqDto).legs[0];
+
+    expect(legDto.endpoints[0].code).toBe("PVG");
   });
 
   it("submit: prices both variants' charges + per-variant transit-days + leg weight + notes -> per-variant ChargeLine/TransitPlan rows, one Quote.chargedWeightKg/notes, grandTotal = max variant column, no QuoteCargoLine.chargedWeightKg", async () => {

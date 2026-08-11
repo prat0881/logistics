@@ -51,7 +51,14 @@ function airLeg(): FfPortalLegDto {
       frozenAt: "2026-08-01T00:00:00.000Z",
     },
     endpoints: [
-      { pointId: "w1", type: "WAREHOUSE", name: "W", country: "IN", warehousePosition: "ORIGIN" },
+      {
+        pointId: "w1",
+        type: "WAREHOUSE",
+        name: "W",
+        country: "IN",
+        code: null,
+        warehousePosition: "ORIGIN",
+      },
     ],
     seededCharges: [
       {

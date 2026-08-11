@@ -42,6 +42,7 @@ const p1: FfPortalEndpoint = {
   type: "WAREHOUSE",
   name: "Origin WH",
   country: "IN",
+  code: null,
   warehousePosition: "ORIGIN",
 };
 const p2: FfPortalEndpoint = {
@@ -49,6 +50,7 @@ const p2: FfPortalEndpoint = {
   type: "AIRPORT",
   name: "Hub Airport",
   country: "AE",
+  code: null,
   warehousePosition: null,
 };
 const p3: FfPortalEndpoint = {
@@ -56,6 +58,7 @@ const p3: FfPortalEndpoint = {
   type: "DELIVERY",
   name: "Final Delivery",
   country: "US",
+  code: null,
   warehousePosition: null,
 };
 
