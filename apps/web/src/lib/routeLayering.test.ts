@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeLongestPathDepth } from "./routeLayering";
+import { computeLongestPathDepth, computeRouteLayout } from "./routeLayering";
 
 describe("computeLongestPathDepth", () => {
   it("assigns depth 0 to a source point that is never a destination", () => {
@@ -68,5 +68,95 @@ describe("computeLongestPathDepth", () => {
     expect(depth.size).toBe(2);
     expect(Number.isFinite(depth.get("a"))).toBe(true);
     expect(Number.isFinite(depth.get("b"))).toBe(true);
+  });
+});
+
+describe("computeRouteLayout", () => {
+  it("(a) lays a linear chain across three columns, one row each, single component", () => {
+    // a -> b -> c: strictly increasing depth, no stacking, nothing to split.
+    const pointIds = ["a", "b", "c"];
+    const edges = [
+      { originId: "a", destinationId: "b" },
+      { originId: "b", destinationId: "c" },
+    ];
+    const layout = computeRouteLayout(pointIds, edges);
+    expect(layout.nodes.get("a")).toEqual({ id: "a", col: 0, row: 0, component: 0 });
+    expect(layout.nodes.get("b")).toEqual({ id: "b", col: 1, row: 0, component: 0 });
+    expect(layout.nodes.get("c")).toEqual({ id: "c", col: 2, row: 0, component: 0 });
+    expect(layout.colCount).toBe(3);
+    expect(layout.maxRows).toBe(1);
+    expect(layout.componentCount).toBe(1);
+    expect(layout.breakCols).toEqual([]);
+  });
+
+  it("(b) stacks a fork's siblings as rows within the shared column", () => {
+    // a -> b, a -> c: b and c share depth 1, so they stack as two rows in col 1.
+    const pointIds = ["a", "b", "c"];
+    const edges = [
+      { originId: "a", destinationId: "b" },
+      { originId: "a", destinationId: "c" },
+    ];
+    const layout = computeRouteLayout(pointIds, edges);
+    expect(layout.nodes.get("a")).toEqual({ id: "a", col: 0, row: 0, component: 0 });
+    expect(layout.nodes.get("b")).toEqual({ id: "b", col: 1, row: 0, component: 0 });
+    expect(layout.nodes.get("c")).toEqual({ id: "c", col: 1, row: 1, component: 0 });
+    expect(layout.colCount).toBe(2);
+    expect(layout.maxRows).toBe(2);
+    expect(layout.componentCount).toBe(1);
+  });
+
+  it("(c) trails an orphan (no edge) to the column after the deepest touched point", () => {
+    // a -> b (depths 0,1); o is touched by no edge, so it trails to col 2 and
+    // — since union-find never joins it to anything — forms its own component.
+    const pointIds = ["a", "b", "o"];
+    const edges = [{ originId: "a", destinationId: "b" }];
+    const layout = computeRouteLayout(pointIds, edges);
+    expect(layout.nodes.get("a")).toEqual({ id: "a", col: 0, row: 0, component: 0 });
+    expect(layout.nodes.get("b")).toEqual({ id: "b", col: 1, row: 0, component: 0 });
+    expect(layout.nodes.get("o")).toEqual({ id: "o", col: 2, row: 0, component: 1 });
+    expect(layout.colCount).toBe(3);
+    expect(layout.maxRows).toBe(1);
+    expect(layout.componentCount).toBe(2);
+    expect(layout.breakCols).toEqual([]);
+  });
+
+  it("(d) splitComponents:true separates disjoint chains with a break column between", () => {
+    // Two disjoint chains, a->b and c->d, share depths (both sources at depth 0,
+    // both sinks at depth 1) but must NOT share columns once split: each chain
+    // gets its own column-rank grid, offset by one empty break column.
+    const pointIds = ["a", "b", "c", "d"];
+    const edges = [
+      { originId: "a", destinationId: "b" },
+      { originId: "c", destinationId: "d" },
+    ];
+    const layout = computeRouteLayout(pointIds, edges, { splitComponents: true });
+    expect(layout.nodes.get("a")).toEqual({ id: "a", col: 0, row: 0, component: 0 });
+    expect(layout.nodes.get("b")).toEqual({ id: "b", col: 1, row: 0, component: 0 });
+    expect(layout.nodes.get("c")).toEqual({ id: "c", col: 3, row: 0, component: 1 });
+    expect(layout.nodes.get("d")).toEqual({ id: "d", col: 4, row: 0, component: 1 });
+    expect(layout.breakCols).toEqual([2]);
+    expect(layout.colCount).toBe(5);
+    expect(layout.maxRows).toBe(1);
+    expect(layout.componentCount).toBe(2);
+  });
+
+  it("(e) splitComponents:false packs the same disjoint chains into one global grid", () => {
+    // Same input as (d), but unsplit: depth wins over component, so a/c (both
+    // depth 0) share col 0 and b/d (both depth 1) share col 1 — executive
+    // behavior — while componentCount is still reported as 2.
+    const pointIds = ["a", "b", "c", "d"];
+    const edges = [
+      { originId: "a", destinationId: "b" },
+      { originId: "c", destinationId: "d" },
+    ];
+    const layout = computeRouteLayout(pointIds, edges, { splitComponents: false });
+    expect(layout.nodes.get("a")).toEqual({ id: "a", col: 0, row: 0, component: 0 });
+    expect(layout.nodes.get("c")).toEqual({ id: "c", col: 0, row: 1, component: 1 });
+    expect(layout.nodes.get("b")).toEqual({ id: "b", col: 1, row: 0, component: 0 });
+    expect(layout.nodes.get("d")).toEqual({ id: "d", col: 1, row: 1, component: 1 });
+    expect(layout.colCount).toBe(2);
+    expect(layout.maxRows).toBe(2);
+    expect(layout.breakCols).toEqual([]);
+    expect(layout.componentCount).toBe(2);
   });
 });
