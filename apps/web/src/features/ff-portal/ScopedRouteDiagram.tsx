@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { FreightMode, PointType, type FfPortalLegDto } from "@svyft/shared";
 import { cn } from "@/lib/utils";
-import { computeLongestPathDepth } from "@/lib/routeLayering";
+import { computeRouteLayout } from "@/lib/routeLayering";
 
 /**
  * ScopedRouteDiagram — FF-portal "Route overview" (design §4.8.3).
@@ -12,38 +12,49 @@ import { computeLongestPathDepth } from "@/lib/routeLayering";
  * separate, self-contained component, NOT a port of the executive
  * `RouteDiagram` (query-wizard/steps/legs/RouteDiagram.tsx): that component
  * needs a full `QueryDetail` and its hover tooltip surfaces street address +
- * contact details, which the FF must never see. It's also read-only here —
- * no `onEditPoint`/`onEditLeg`-equivalent props exist, so a node click only
- * ever toggles the local masked-detail panel below, never navigation/edit.
+ * contact details, which the FF must never see. `RouteDiagram` is NEVER
+ * imported here — only its layout constants/formulas and its node's
+ * code+name treatment are mirrored, by hand, onto this masked subgraph, so
+ * the two views read identically without risking a masked-field leak.
  *
- * Masking: nodes render only `type` / `name` / `country` (+ `city` from the
- * frozen manifest snapshot). The portal DTO (`FfPortalEndpoint`) doesn't
- * carry a street address or contact fields at all — there is nothing else
- * to accidentally render, and this component only ever reads that whitelist
- * off the DTO (never spreads/forwards arbitrary fields).
+ * Masking: nodes render only `type` / `code` / `name` / `country` (+ `city`
+ * from the frozen manifest snapshot). `code` is the same public,
+ * non-sensitive location code (IATA/UN-LOCODE/ICAO/terminal) the executive
+ * shows — live-resolved onto `FfPortalEndpoint.code`, same precedence as
+ * `RouteDiagram`'s node. The portal DTO doesn't carry a street address or
+ * contact fields at all — there is nothing else to accidentally render, and
+ * this component only ever reads that whitelist off the DTO (never
+ * spreads/forwards arbitrary fields).
  *
- * Layout is a single left-to-right row, one column per node. Column ORDER
- * is the executive's longest-path layering (`computeLongestPathDepth` in
- * `@/lib/routeLayering`, shared with `RouteDiagram`'s `computeLayout`):
- * sources at depth 0, each leg pushes its destination to
- * `max(existing, depth[origin] + 1)`. That's a pure-topology computation —
- * it only reads point ids + each leg's origin/destination id, never the
- * masked-away fields — so it works unchanged on this scoped, masked subgraph.
- * This must NOT default back to "order of first appearance across `legs`":
- * that ordering tracks assignment order, not route order, and silently
+ * Layout: nodes are positioned on the SAME grid the executive `RouteDiagram`
+ * uses — the shared `computeRouteLayout` engine (`@/lib/routeLayering`),
+ * called here with `splitComponents: true` so a non-contiguous scoped
+ * assignment (this FF's legs don't all chain into one connected route)
+ * renders as side-by-side components separated by an empty `breakCols`
+ * spacer, drawn as ONE diagram with a visible break marker rather than
+ * stacked separate blocks (design decision D2). Pixel constants
+ * (`NODE_W`/`NODE_H`/`COL_GAP`/`ROW_GAP`/`PAD`) are copied from the
+ * executive so the two views position identically. This MUST NOT revert to
+ * a single-row "order of first appearance across `legs`" layout: that
+ * ordering tracks assignment order, not route order, and both silently
  * desyncs from the executive's route view whenever legs were assigned out
- * of topological order (finding #1). Only the ordering is shared; the pixel
- * layout stays single-row (unlike `RouteDiagram`'s multi-row stacking) since
- * a small, single-FF scoped view doesn't need it. The small `modeColor` /
- * `modeDash` / `POINT_GLYPH` helpers below are copied from `RouteDiagram`
- * (they're pure/presentational) rather than imported, per design.
+ * of topological order, and collapses a branch/merge into one row instead
+ * of stacking it (finding #1). The small `modeColor` / `modeDash` /
+ * `POINT_GLYPH` / `Arrow` / `Legend` helpers below are copied from
+ * `RouteDiagram` (they're pure/presentational) rather than imported, per
+ * design.
+ *
+ * Read-only: nodes are static `<g>`s — no click/keyboard toggle, no detail
+ * panel. Each node carries a hover `<title>` with the same masked whitelist
+ * (`type · code · name · city, country`) for parity with the edge `<title>`.
  */
 
-// ── layout constants (SVG user units) ────────────────────────────────────────
+// ── layout constants (SVG user units) — match the executive RouteDiagram ────
 const NODE_W = 168;
-const NODE_H = 56;
-const COL_GAP = 72;
-const PAD = 20;
+const NODE_H = 64;
+const COL_GAP = 96;
+const ROW_GAP = 28;
+const PAD = 24;
 const LEGEND_H = 26;
 
 interface ScopedRouteDiagramProps {
@@ -84,6 +95,7 @@ interface ScopedNode {
   type: string;
   name: string | null;
   country: string | null;
+  code: string | null;
   city: string | null;
 }
 
@@ -123,6 +135,7 @@ function buildScopedGraph(legs: FfPortalLegDto[]): ScopedGraph {
         type: origin.type,
         name: origin.name,
         country: origin.country,
+        code: origin.code,
         city: originCity,
       });
     }
@@ -132,6 +145,7 @@ function buildScopedGraph(legs: FfPortalLegDto[]): ScopedGraph {
         type: destination.type,
         name: destination.name,
         country: destination.country,
+        code: destination.code,
         city: destCity,
       });
     }
@@ -149,55 +163,72 @@ function buildScopedGraph(legs: FfPortalLegDto[]): ScopedGraph {
   return { nodes: [...nodes.values()], edges };
 }
 
-/**
- * Orders nodes by the executive route topology — longest-path depth via the
- * shared `computeLongestPathDepth` (depth 0 = sources, each edge pushes its
- * destination to `max(existing, depth[origin] + 1)`) — so a source→sink
- * chain always renders left-to-right regardless of the order `legs` were
- * assigned in. Depth is the sort key; `Array.prototype.sort` is stable, so
- * nodes sharing a depth (e.g. a fork/branch in the assigned subgraph) keep
- * their original discovery order rather than being reshuffled arbitrarily —
- * this is still a single-row layout (see `computeLayout`), so a shared depth
- * just means adjacent columns, not a stacked/parallel row.
- */
-function orderNodesByTopology(nodes: ScopedNode[], edges: ScopedEdge[]): ScopedNode[] {
-  const depth = computeLongestPathDepth(
-    nodes.map((n) => n.pointId),
-    edges.map((e) => ({ originId: e.fromPointId, destinationId: e.toPointId })),
-  );
-  return [...nodes].sort((a, b) => (depth.get(a.pointId) ?? 0) - (depth.get(b.pointId) ?? 0));
+interface Pt {
+  x: number;
+  y: number;
 }
 
 interface Layout {
   width: number;
   height: number;
-  pos: Map<string, number>; // pointId -> x; single row, y is constant
+  pos: Map<string, Pt>;
+  /** Spacer column indices between disconnected components — see `computeRouteLayout`. */
+  breakCols: number[];
 }
 
 /**
- * Single-row, left-to-right layout — one column per node, in the order the
- * `nodes` array is given. Callers are expected to pre-order `nodes`
- * (`orderNodesByTopology`) — this function is deliberately unaware of edges
- * or topology, it just lays out whatever order it's handed.
+ * computeLayout — SVG pixel math on top of the shared `computeRouteLayout`
+ * grid engine, called with `splitComponents: true` (unlike the executive's
+ * `splitComponents: false`) so a non-contiguous scoped assignment lays out
+ * as side-by-side components with break-gap spacer columns between them
+ * instead of silently merging unrelated points into one grid. The pixel
+ * conversion itself — `x = PAD + col*(NODE_W+COL_GAP)`, `y = PAD +
+ * row*(NODE_H+ROW_GAP)`, and the width/height formulas — is copied from
+ * `RouteDiagram.computeLayout` verbatim (with NODE_W/H, COL_GAP/ROW_GAP, PAD
+ * matching the executive's constants) so the two diagrams position
+ * identically. Only this file's own presentational chrome (edges, node
+ * card, legend strip) differs — the grid math does not.
  */
-function computeLayout(nodes: ScopedNode[]): Layout {
-  const pos = new Map<string, number>();
-  nodes.forEach((n, i) => pos.set(n.pointId, PAD + i * (NODE_W + COL_GAP)));
-  const cols = Math.max(nodes.length, 1);
+function computeLayout(graph: ScopedGraph): Layout {
+  const pointIds = graph.nodes.map((n) => n.pointId);
+  const edges = graph.edges.map((e) => ({
+    originId: e.fromPointId,
+    destinationId: e.toPointId,
+  }));
+
+  const engineLayout = computeRouteLayout(pointIds, edges, { splitComponents: true });
+
+  const pos = new Map<string, Pt>();
+  for (const [id, node] of engineLayout.nodes) {
+    pos.set(id, {
+      x: PAD + node.col * (NODE_W + COL_GAP),
+      y: PAD + node.row * (NODE_H + ROW_GAP),
+    });
+  }
+
+  // Unlike this renderer, the engine doesn't floor colCount to 1 for an
+  // empty graph (0 nodes/edges) — keep that floor here so `width` never
+  // collapses below a single empty column's baseline. `computeLayout` is
+  // only ever called once the caller has confirmed at least one node exists
+  // (see the empty-state guard in `ScopedRouteDiagram` below), so this is
+  // belt-and-suspenders, mirroring `RouteDiagram.computeLayout`'s identical
+  // guard.
+  const cols = engineLayout.colCount || 1;
+  const maxRows = engineLayout.maxRows;
   const width = PAD * 2 + cols * NODE_W + (cols - 1) * COL_GAP;
-  const height = PAD * 2 + NODE_H;
-  return { width: Math.max(width, NODE_W + PAD * 2), height, pos };
+  const height = PAD * 2 + maxRows * NODE_H + Math.max(0, maxRows - 1) * ROW_GAP;
+
+  return {
+    width: Math.max(width, NODE_W + PAD * 2),
+    height: Math.max(height, NODE_H + PAD * 2),
+    pos,
+    breakCols: engineLayout.breakCols,
+  };
 }
 
 export function ScopedRouteDiagram({ legs, className }: ScopedRouteDiagramProps) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
   const graph = useMemo(() => buildScopedGraph(legs), [legs]);
-  const orderedNodes = useMemo(
-    () => orderNodesByTopology(graph.nodes, graph.edges),
-    [graph.nodes, graph.edges],
-  );
-  const layout = useMemo(() => computeLayout(orderedNodes), [orderedNodes]);
+  const layout = useMemo(() => computeLayout(graph), [graph]);
 
   if (graph.nodes.length === 0) {
     return (
@@ -213,12 +244,8 @@ export function ScopedRouteDiagram({ legs, className }: ScopedRouteDiagramProps)
     );
   }
 
-  const { width, height, pos } = layout;
-  const rowY = PAD; // single row
+  const { width, height, pos, breakCols } = layout;
   const svgHeight = height + LEGEND_H;
-  const selected = orderedNodes.find((n) => n.pointId === selectedId) ?? null;
-
-  const toggle = (pointId: string) => setSelectedId((cur) => (cur === pointId ? null : pointId));
 
   return (
     <figure
@@ -249,64 +276,53 @@ export function ScopedRouteDiagram({ legs, className }: ScopedRouteDiagramProps)
           <Arrow id="sr-arrow-unset" color="hsl(var(--muted-foreground))" />
         </defs>
 
-        {/* Edges first, so nodes paint on top. */}
+        {/* Break markers first, so they read as quiet background structure
+            behind the edges/nodes rather than a foreground element. */}
+        <g>
+          {breakCols.map((col) => (
+            <BreakMarker
+              key={col}
+              x={PAD + col * (NODE_W + COL_GAP) + NODE_W / 2}
+              top={PAD / 2}
+              bottom={height - PAD / 2}
+            />
+          ))}
+        </g>
+
+        {/* Edges next, so nodes paint on top. */}
         <g>
           {graph.edges.map((edge) => {
-            const x1 = pos.get(edge.fromPointId);
-            const x2 = pos.get(edge.toPointId);
-            if (x1 === undefined || x2 === undefined) return null; // guard, shouldn't happen
-            return (
-              <Edge
-                key={edge.legId}
-                edge={edge}
-                x1={x1 + NODE_W}
-                y1={rowY + NODE_H / 2}
-                x2={x2}
-                y2={rowY + NODE_H / 2}
-              />
-            );
+            const from = pos.get(edge.fromPointId);
+            const to = pos.get(edge.toPointId);
+            if (!from || !to) return null; // guard, shouldn't happen
+            return <Edge key={edge.legId} edge={edge} from={from} to={to} />;
           })}
         </g>
 
-        {/* Nodes — rendered in topological order (see `orderNodesByTopology`), so
-            visual left-to-right order and DOM/tab order agree. */}
+        {/* Nodes. */}
         <g>
-          {orderedNodes.map((node) => {
-            const x = pos.get(node.pointId) ?? 0;
-            return (
-              <Node
-                key={node.pointId}
-                node={node}
-                x={x}
-                y={rowY}
-                selected={node.pointId === selectedId}
-                onToggle={() => toggle(node.pointId)}
-              />
-            );
+          {graph.nodes.map((node) => {
+            const at = pos.get(node.pointId);
+            if (!at) return null; // guard, shouldn't happen
+            return <Node key={node.pointId} node={node} x={at.x} y={at.y} />;
           })}
         </g>
       </svg>
-
-      {selected && <NodeDetail node={selected} />}
     </figure>
   );
 }
 
 // ── edge ─────────────────────────────────────────────────────────────────────
 
-function Edge({
-  edge,
-  x1,
-  y1,
-  x2,
-  y2,
-}: {
-  edge: ScopedEdge;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-}) {
+function Edge({ edge, from, to }: { edge: ScopedEdge; from: Pt; to: Pt }) {
+  // Anchor at the right edge of the origin node and left edge of the
+  // destination node — same anchoring as the executive's Edge, generalized
+  // to per-node y (nodes can now sit on different rows).
+  const x1 = from.x + NODE_W;
+  const y1 = from.y + NODE_H / 2;
+  const x2 = to.x;
+  const y2 = to.y + NODE_H / 2;
+
   // A gentle cubic, same idea as RouteDiagram's edge — guards a negative
   // delta (e.g. a leg that loops back to an earlier column) with a floor.
   const dx = Math.max(40, (x2 - x1) / 2);
@@ -356,43 +372,69 @@ function Edge({
   );
 }
 
+// ── break marker ─────────────────────────────────────────────────────────────
+
+/**
+ * A subtle vertical break between two disconnected components — a dashed
+ * rule spanning the diagram height plus a small glyph badge at its
+ * midpoint — so a non-contiguous FF assignment (legs that don't all chain
+ * into one route) still reads as ONE diagram with a visible gap, not
+ * separate stacked blocks (design decision D2). Purely decorative —
+ * `aria-hidden`, no text alternative needed beyond the diagram itself.
+ */
+function BreakMarker({ x, top, bottom }: { x: number; top: number; bottom: number }) {
+  const midY = (top + bottom) / 2;
+  return (
+    <g data-testid="route-break" aria-hidden="true">
+      <line
+        x1={x}
+        y1={top}
+        x2={x}
+        y2={bottom}
+        stroke="hsl(var(--border))"
+        strokeWidth={1.5}
+        strokeDasharray="4 4"
+      />
+      <g transform={`translate(${x}, ${midY})`}>
+        <circle r={9} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={1} />
+        <text
+          x={0}
+          y={1}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fontSize={10}
+          fill="hsl(var(--muted-foreground))"
+        >
+          ⋯
+        </text>
+      </g>
+    </g>
+  );
+}
+
 // ── node ─────────────────────────────────────────────────────────────────────
 
-function Node({
-  node,
-  x,
-  y,
-  selected,
-  onToggle,
-}: {
-  node: ScopedNode;
-  x: number;
-  y: number;
-  selected: boolean;
-  onToggle: () => void;
-}) {
+function Node({ node, x, y }: { node: ScopedNode; x: number; y: number }) {
   const meta = POINT_GLYPH[node.type] ?? { glyph: "•", label: node.type };
   const name = node.name ?? "—";
+  const code = node.code ?? "";
   const locality = [node.city, node.country].filter(Boolean).join(", ");
+
+  // Masked hover detail, parity with the edge's <title> — same whitelist
+  // rendered on the card (type/code/name/locality), just all on one line.
+  const titleParts = [meta.label];
+  if (code) titleParts.push(code);
+  titleParts.push(name);
+  if (locality) titleParts.push(locality);
 
   return (
     <g
       data-point-id={node.pointId}
       data-type={node.type}
       transform={`translate(${x}, ${y})`}
-      className="cursor-pointer"
-      onClick={onToggle}
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onToggle();
-        }
-      }}
-      aria-label={`${meta.label} ${name}${selected ? " (selected)" : ""}`}
+      aria-label={`${meta.label}${code ? ` ${code}` : ""} ${name}`}
     >
+      <title>{titleParts.join(" · ")}</title>
       <rect
         x={0}
         y={0}
@@ -400,16 +442,16 @@ function Node({
         height={NODE_H}
         rx={7}
         fill="hsl(var(--card))"
-        stroke={selected ? "hsl(var(--primary))" : "hsl(var(--border))"}
-        strokeWidth={selected ? 2 : 1}
+        stroke="hsl(var(--border))"
+        strokeWidth={1}
       />
       {/* Type glyph + label row. */}
-      <text x={12} y={17} fontSize={13} fill="hsl(var(--muted-foreground))">
+      <text x={12} y={19} fontSize={13} fill="hsl(var(--muted-foreground))">
         {meta.glyph}
       </text>
       <text
         x={30}
-        y={17}
+        y={19}
         fontSize={9}
         letterSpacing={0.6}
         fill="hsl(var(--muted-foreground))"
@@ -417,36 +459,30 @@ function Node({
       >
         {meta.label}
       </text>
-      {/* Masked name — never a street address. */}
-      <text x={12} y={35} fontSize={13} fontWeight={600} fill="hsl(var(--foreground))">
-        {truncate(name, 22)}
-      </text>
-      {/* Masked locality — city/country only, never a contact. */}
-      <text x={12} y={49} fontSize={10} fill="hsl(var(--muted-foreground))">
-        {truncate(locality || "—", 24)}
+      {/* Code — the mono co-signature — is the headline (mirrors the
+          executive's Node); falls back to the name when there's no code. */}
+      {code ? (
+        <text
+          x={12}
+          y={39}
+          className="font-mono"
+          fontSize={15}
+          fontWeight={600}
+          fill="hsl(var(--foreground))"
+        >
+          {code}
+        </text>
+      ) : (
+        <text x={12} y={39} fontSize={13} fontWeight={600} fill="hsl(var(--foreground))">
+          {truncate(name, 20)}
+        </text>
+      )}
+      {/* Secondary line: name (if code shown) or locality — never a street
+          address or contact detail (masking whitelist: type/code/name/city/country). */}
+      <text x={12} y={55} fontSize={10} fill="hsl(var(--muted-foreground))">
+        {code ? truncate(name, 24) : truncate(locality || "—", 24)}
       </text>
     </g>
-  );
-}
-
-// ── node detail (click-to-reveal) ────────────────────────────────────────────
-
-function NodeDetail({ node }: { node: ScopedNode }) {
-  const meta = POINT_GLYPH[node.type] ?? { glyph: "•", label: node.type };
-  const locality = [node.city, node.country].filter(Boolean).join(", ");
-
-  return (
-    <div
-      role="status"
-      data-testid="scoped-route-node-detail"
-      className="mt-2 max-w-xs space-y-0.5 rounded-md border bg-popover px-3 py-2 text-xs"
-    >
-      <div className="font-semibold">
-        {meta.glyph} {meta.label}
-      </div>
-      <div>{node.name ?? "—"}</div>
-      <div>{locality || "—"}</div>
-    </div>
   );
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import type { FfPortalLegDto, FfPortalEndpoint } from "@svyft/shared";
 import { ScopedRouteDiagram } from "./ScopedRouteDiagram";
 
@@ -37,6 +37,9 @@ function leg(over: {
   };
 }
 
+// Realistic endpoints: airports/seaports carry a code, warehouses/pickups/
+// deliveries usually don't (mirrors what resolveScope actually produces —
+// see FfPortalEndpoint.code's precedence, packages/shared/src/ff-portal.ts).
 const p1: FfPortalEndpoint = {
   pointId: "p1",
   type: "WAREHOUSE",
@@ -50,7 +53,7 @@ const p2: FfPortalEndpoint = {
   type: "AIRPORT",
   name: "Hub Airport",
   country: "AE",
-  code: null,
+  code: "DXB",
   warehousePosition: null,
 };
 const p3: FfPortalEndpoint = {
@@ -103,14 +106,11 @@ describe("ScopedRouteDiagram", () => {
     expect(container.querySelector('[data-leg-id="L2"]')).not.toBeNull();
   });
 
-  it("orders nodes by route topology, not by the order legs were assigned (regression: finding #1)", () => {
+  it("orders nodes by route topology (x position), not by the order legs were assigned (regression: finding #1)", () => {
     // Legs are supplied in ASSIGNMENT order [L2, L1], but the route topology is
     // L1 (p1->p2) then L2 (p2->p3). The FF must see p1 before p2 before p3 —
     // matching the executive route view's left-to-right ordering — regardless
-    // of the order the legs happen to appear in the `legs` prop. Under the old
-    // "order of first appearance across legs" layout, L2 is processed first so
-    // p2/p3 would be discovered (and placed) before p1 — this assertion fails
-    // under that implementation.
+    // of the order the legs happen to appear in the `legs` prop.
     const legs = [
       leg({
         legId: "L2",
@@ -135,25 +135,8 @@ describe("ScopedRouteDiagram", () => {
       return Number(m![1]);
     };
 
-    // Topological order p1 -> p2 -> p3, regardless of the [L2, L1] input order.
     expect(xOf("p1")).toBeLessThan(xOf("p2"));
     expect(xOf("p2")).toBeLessThan(xOf("p3"));
-
-    // The rendered DOM order (tab order) matches the visual left-to-right order too.
-    const order = Array.from(container.querySelectorAll("[data-point-id]")).map((n) =>
-      n.getAttribute("data-point-id"),
-    );
-    expect(order).toEqual(["p1", "p2", "p3"]);
-
-    // Hover/click detail still works post-fix.
-    fireEvent.click(container.querySelector('[data-point-id="p1"]') as SVGGElement);
-    const detail = screen.getByTestId("scoped-route-node-detail");
-    expect(within(detail).getByText("Origin WH")).toBeInTheDocument();
-
-    // Read-only: a second click on the same node just closes the panel again
-    // (no navigation, no edit affordance — the component has no onEdit* props).
-    fireEvent.click(container.querySelector('[data-point-id="p1"]') as SVGGElement);
-    expect(screen.queryByTestId("scoped-route-node-detail")).toBeNull();
   });
 
   it("renders a lone node (no edge) for a leg with only one endpoint, without crashing", () => {
@@ -163,63 +146,16 @@ describe("ScopedRouteDiagram", () => {
     expect(container.querySelectorAll("[data-leg-id]").length).toBe(0);
   });
 
-  it("reveals a node's masked detail (type, name, country) on click, and hides it on a second click", () => {
-    const legs = [
-      leg({
-        legId: "L1",
-        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
-        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
-        endpoints: [p1, p2],
-      }),
-    ];
-    const { container } = render(<ScopedRouteDiagram legs={legs} />);
-
-    expect(screen.queryByTestId("scoped-route-node-detail")).toBeNull();
-
-    const node = container.querySelector('[data-point-id="p1"]') as SVGGElement;
-    fireEvent.click(node);
-
-    const detail = screen.getByTestId("scoped-route-node-detail");
-    expect(within(detail).getByText(/Warehouse/i)).toBeInTheDocument();
-    expect(within(detail).getByText("Origin WH")).toBeInTheDocument();
-    expect(within(detail).getByText(/Mumbai/)).toBeInTheDocument();
-    expect(within(detail).getByText(/IN/)).toBeInTheDocument();
-
-    fireEvent.click(node);
-    expect(screen.queryByTestId("scoped-route-node-detail")).toBeNull();
-  });
-
-  it("switches the detail to the newly clicked node", () => {
-    const legs = [
-      leg({
-        legId: "L1",
-        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
-        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
-        endpoints: [p1, p2],
-      }),
-    ];
-    const { container } = render(<ScopedRouteDiagram legs={legs} />);
-
-    fireEvent.click(container.querySelector('[data-point-id="p1"]') as SVGGElement);
-    expect(
-      within(screen.getByTestId("scoped-route-node-detail")).getByText("Origin WH"),
-    ).toBeInTheDocument();
-
-    fireEvent.click(container.querySelector('[data-point-id="p2"]') as SVGGElement);
-    expect(
-      within(screen.getByTestId("scoped-route-node-detail")).getByText("Hub Airport"),
-    ).toBeInTheDocument();
-  });
-
   it("never renders a street address or contact detail, even if a future DTO leaked one onto an endpoint", () => {
     // FfPortalEndpoint has no street/contact fields today — that's the masking guarantee.
     // Simulate a hypothetical regression where the DTO grew those fields anyway, and assert
-    // the component still only reads its type/name/country/city whitelist off the endpoint.
+    // the component still only reads its type/code/name/country/city whitelist off the endpoint.
     const leakyEndpoint = {
       pointId: "p1",
       type: "PICKUP",
       name: "Origin WH",
       country: "IN",
+      code: null,
       warehousePosition: null,
       streetAddress: "221B Baker Street",
       contactName: "Jane Contact",
@@ -237,11 +173,6 @@ describe("ScopedRouteDiagram", () => {
     ];
     const { container } = render(<ScopedRouteDiagram legs={legs} />);
 
-    // Open every node's detail panel so any leaked field would have a chance to render.
-    for (const node of Array.from(container.querySelectorAll("[data-point-id]"))) {
-      fireEvent.click(node);
-    }
-
     expect(screen.queryByText(/221B Baker Street/)).toBeNull();
     expect(screen.queryByText(/Jane Contact/)).toBeNull();
     expect(screen.queryByText(/555-0100/)).toBeNull();
@@ -255,5 +186,141 @@ describe("ScopedRouteDiagram", () => {
     const edge = container.querySelector('[data-leg-id="L1"]') as SVGGElement;
     expect(edge.getAttribute("data-mode")).toBe("SEA");
     expect(screen.getByText("SEA-1")).toBeInTheDocument();
+  });
+
+  it("renders the mode legend", () => {
+    const legs = [leg({ legId: "L1", endpoints: [p1, p2] })];
+    render(<ScopedRouteDiagram legs={legs} />);
+    expect(screen.getByText("ROAD")).toBeInTheDocument();
+    expect(screen.getByText("SEA")).toBeInTheDocument();
+    expect(screen.getByText("AIR")).toBeInTheDocument();
+  });
+
+  // ── Task 4 brief, Step 1 (a)–(d) ──────────────────────────────────────────
+
+  it("(a) positions nodes on two rows for a branched graph (two legs sharing an origin) — multi-row, not the old single row", () => {
+    // p1 -> p2 and p1 -> p3: a fork. p2 and p3 land at the same depth (one hop
+    // past p1), so the shared layout engine stacks them as two ROWS in the
+    // same column — the old ScopedRouteDiagram forced every node onto one row
+    // regardless of branching, which this proves is no longer the case.
+    const legs = [
+      leg({
+        legId: "L1",
+        legCode: "LEG-1",
+        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
+        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        endpoints: [p1, p2],
+      }),
+      leg({
+        legId: "L2",
+        legCode: "LEG-2",
+        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
+        destination: { country: "US", name: "Final Delivery", city: "Newark" },
+        endpoints: [p1, p3],
+      }),
+    ];
+    const { container } = render(<ScopedRouteDiagram legs={legs} />);
+
+    const xyOf = (pointId: string) => {
+      const node = container.querySelector(`[data-point-id="${pointId}"]`) as SVGGElement;
+      const m = /translate\(\s*([-\d.]+)[,\s]+([-\d.]+)/.exec(node.getAttribute("transform") ?? "");
+      return { x: Number(m![1]), y: Number(m![2]) };
+    };
+
+    const p1pos = xyOf("p1");
+    const p2pos = xyOf("p2");
+    const p3pos = xyOf("p3");
+
+    // p2 and p3 share a column (both one hop past p1)...
+    expect(p2pos.x).toBe(p3pos.x);
+    // ...but sit on two DIFFERENT rows — the multi-row assertion.
+    expect(p2pos.y).not.toBe(p3pos.y);
+    // p1 sits one column to the left of the fork.
+    expect(p1pos.x).toBeLessThan(p2pos.x);
+  });
+
+  it("(b) renders a break marker between two disconnected legs (no shared point)", () => {
+    const p4: FfPortalEndpoint = {
+      pointId: "p4",
+      type: "PICKUP",
+      name: "Second Pickup",
+      country: "DE",
+      code: null,
+      warehousePosition: null,
+    };
+    const p5: FfPortalEndpoint = {
+      pointId: "p5",
+      type: "DELIVERY",
+      name: "Second Delivery",
+      country: "FR",
+      code: null,
+      warehousePosition: null,
+    };
+    const legs = [
+      leg({
+        legId: "L1",
+        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
+        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        endpoints: [p1, p2],
+      }),
+      leg({
+        legId: "L2",
+        origin: { country: "DE", name: "Second Pickup", city: "Berlin" },
+        destination: { country: "FR", name: "Second Delivery", city: "Paris" },
+        endpoints: [p4, p5],
+      }),
+    ];
+    const { container } = render(<ScopedRouteDiagram legs={legs} />);
+
+    // One diagram (the legend's small mode-color swatches are also <svg>
+    // elements, so scope to the main diagram canvas via role="img"), one
+    // break marker between the two disconnected components — NOT two
+    // separate stacked diagrams.
+    expect(container.querySelectorAll('svg[role="img"]').length).toBe(1);
+    expect(container.querySelectorAll('[data-testid="route-break"]').length).toBe(1);
+  });
+
+  it("(c) shows a node's endpoint code alongside its name", () => {
+    const pvg: FfPortalEndpoint = {
+      pointId: "pPVG",
+      type: "AIRPORT",
+      name: "Shanghai Pudong",
+      country: "CN",
+      code: "PVG",
+      warehousePosition: null,
+    };
+    const legs = [
+      leg({
+        legId: "L1",
+        origin: { country: "CN", name: "Shanghai Pudong", city: "Shanghai" },
+        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        endpoints: [pvg, p2],
+      }),
+    ];
+    render(<ScopedRouteDiagram legs={legs} />);
+
+    expect(screen.getByText("PVG")).toBeInTheDocument();
+    expect(screen.getByText("Shanghai Pudong")).toBeInTheDocument();
+  });
+
+  it("(d) is read-only: a node has no button role, and clicking one renders no detail panel", () => {
+    const legs = [
+      leg({
+        legId: "L1",
+        origin: { country: "IN", name: "Origin WH", city: "Mumbai" },
+        destination: { country: "AE", name: "Hub Airport", city: "Dubai" },
+        endpoints: [p1, p2],
+      }),
+    ];
+    const { container } = render(<ScopedRouteDiagram legs={legs} />);
+
+    const node = container.querySelector('[data-point-id="p1"]') as SVGGElement;
+    expect(node.getAttribute("role")).toBeNull();
+    expect(node.getAttribute("tabindex")).toBeNull();
+    expect(node.getAttribute("aria-pressed")).toBeNull();
+    expect(node.getAttribute("class") ?? "").not.toMatch(/cursor-pointer/);
+
+    fireEvent.click(node);
+    expect(screen.queryByTestId("scoped-route-node-detail")).toBeNull();
   });
 });
