@@ -487,11 +487,20 @@ export function ChargeMatrix({ seededCharges, mode }: ChargeMatrixProps): JSX.El
             <TableCell>Grand total</TableCell>
             {columns.map((v) => {
               const t = totalsByKey.get(columnKey(v));
-              // Blank-rate convention (matches QuoteSummary): a variant whose own freight rate was
-              // never entered shows "–", not a possibly-misleading partial sum. Air has no separate
-              // rate cell (variantRate() always returns null for Air — see quote-engine.ts), so it's
-              // excluded from this check or its total would always read blank.
-              const blank = t != null && t.rateAmount == null && t.key !== "AIR";
+              // Blank convention (matches QuoteSummary/RfqPrintView), Round 4 (reverses the old
+              // "own-rate-only" rule): a variant reads "–" only when NOTHING at all is priced for
+              // it — no own freight rate, no common charge, no warehouse. Once ANY of those is
+              // priced, the real grandTotal shows, even if the variant's OWN rate is still unset
+              // (e.g. a Road/Sea column priced only via a shared common charge) — the total must
+              // never silently hide real money. Air has no separate rate cell (variantRate()
+              // always returns null for Air — see quote-engine.ts), so it's excluded from this
+              // check or its total would always read blank.
+              const blank =
+                t != null &&
+                t.key !== "AIR" &&
+                t.rateAmount == null &&
+                totals.additionalChargeSum === 0 &&
+                totals.warehouseSum === 0;
               return (
                 <TableCell
                   key={columnKey(v)}

@@ -397,7 +397,7 @@ describe("validateQuote — Q_RATE (nothing priced in any column at all)", () =>
     const f = validateQuote(airOkDraft(), deadline, now, airActiveLines);
     expect(f.some((x) => x.rule === "Q_RATE")).toBe(false);
   });
-  it("Round 3 (locked, restored): a common charge alone STARTS a Road leg — no Q_RATE — even with no trucking rate anywhere. Road freight stays optional; contrast with the Sea test below, where freight IS required", () => {
+  it("Round 4: a common charge alone no longer starts a Road leg — Q_RATE fires with no trucking rate anywhere, same as Sea (freight is now required for every mode)", () => {
     const d = roadOkDraft();
     d.trucking = [
       {
@@ -420,7 +420,7 @@ describe("validateQuote — Q_RATE (nothing priced in any column at all)", () =>
       },
     ];
     const f = validateQuote(d, deadline, now, []);
-    expect(f.some((x) => x.rule === "Q_RATE")).toBe(false);
+    expect(f.some((x) => x.rule === "Q_RATE")).toBe(true);
   });
 });
 
@@ -565,13 +565,13 @@ describe("validateQuote — Q_PRICED (common active-line pricing, 0-needs-remark
   });
 });
 
-// ── freight (trucking/seaRates) is per-variant, and Round 3 (locked, unchanged by Round 4) says
-// the freight submit-gate itself is REQUIRED for Air & Sea, OPTIONAL for Road: a Sea/Air leg
-// can't be submitted without its freight (seaRates rate / AIR_MAIN_FREIGHT charge); a Road leg
-// CAN, on the strength of its common charges alone. Sea's "priced" and "has its own rate" are the
-// same test by construction (isVariantPriced), so there's no separate "Sea Freight must be
-// priced" check beyond that — it can't fail once a Sea variant is in `pricedVariants` at all. ──
-describe("validateQuote — freight requirement (Round 3, locked: required for Air & Sea, optional for Road)", () => {
+// ── freight (trucking/seaRates) is per-variant, and Round 4 REVERSES Round 3's Road-optional
+// carve-out: the freight submit-gate is now REQUIRED for every mode — Air, Sea, AND Road. A
+// Road/Sea leg can't be submitted without its own freight rate (trucking/seaRates); common
+// charges alone no longer count. Sea's/Road's "priced" and "has its own rate" are the same test
+// by construction (isVariantPriced), so there's no separate "Freight must be priced" check beyond
+// that — it can't fail once a variant is in `pricedVariants` at all. ──
+describe("validateQuote — freight requirement (Round 4: required for Air, Sea & Road)", () => {
   function seaDraft(): QuoteDraft {
     return {
       legId: "l1",
@@ -645,9 +645,10 @@ describe("validateQuote — freight requirement (Round 3, locked: required for A
     expect(f.some((x) => x.message.includes("LCL"))).toBe(false);
   });
 
-  // The exact scenario Fix 1 pins: a ROAD leg with priced common charges but NO trucking rate
-  // anywhere must be fully submittable — freight stays optional for Road (Round 3, locked).
-  it("Round 3 (locked, restored): a ROAD leg with priced common charges but NO trucking rate is fully submittable", () => {
+  // Round 4 REVERSES this: a ROAD leg with priced common charges but NO trucking rate anywhere is
+  // now BLOCKED — freight is required, symmetric with Sea (contrast with the Sea Q_RATE test
+  // above, which pins the identical shape of finding).
+  it("Round 4: a ROAD leg with priced common charges but NO trucking rate is now BLOCKED — freight is required, same as Sea", () => {
     const xLine: ResolvedChargeLine[] = [
       { definitionKey: "X", role: "STANDARD", inputType: "PLAIN", zone: null, label: "X" },
     ];
@@ -664,13 +665,17 @@ describe("validateQuote — freight requirement (Round 3, locked: required for A
       },
     ];
     const f = validateQuote(d, deadline, now, xLine);
-    expect(f).toHaveLength(0); // fully submittable: common charge priced, no freight required
+    expect(f.some((x) => x.rule === "Q_RATE")).toBe(true);
+    // and since the leg isn't "started" without its own freight rate, the common-charge
+    // completeness gate is skipped too — same progressive-gating philosophy as the Sea case above.
+    expect(f.some((x) => x.rule === "Q_PRICED")).toBe(false);
   });
 
-  it("Round 3 (locked): a Road leg started only via a common charge still needs no Guaranteed Transit Time — an untouched freight variant (no rate of its own) stays untouched even once the leg is started", () => {
-    const d = roadOkDraft();
-    d.trucking = [];
-    d.transit = { ...d.transit!, guaranteedTransitDaysByVariant: {} }; // no GTT anywhere either
+  it("an untouched Road variant (no rate of its own) still needs no Guaranteed Transit Time, even once the OTHER variant's own rate starts the leg and a common charge is also priced", () => {
+    const d = roadOkDraft(); // DEDICATED priced via trucking: 500 — this is what starts the leg now
+    const xLine: ResolvedChargeLine[] = [
+      { definitionKey: "X", role: "STANDARD", inputType: "PLAIN", zone: null, label: "X" },
+    ];
     d.charges = [
       {
         zone: null,
@@ -681,11 +686,13 @@ describe("validateQuote — freight requirement (Round 3, locked: required for A
         amount: 20,
       },
     ];
-    const f = validateQuote(d, deadline, now, []);
+    // GTT set only for DEDICATED (matches roadOkDraft's default) — GROUPAGE has none, and none is
+    // required since GROUPAGE was never priced via its own trucking rate.
+    const f = validateQuote(d, deadline, now, xLine);
     expect(f.some((x) => x.rule === "Q_TRANSIT")).toBe(false);
   });
 
-  it("passes a Road leg once its own trucking rate is set (freight present and sufficient, even though not required)", () => {
+  it("passes a Road leg once its own trucking rate is set (freight now required, and present)", () => {
     const d = roadOkDraft(); // DEDICATED priced via trucking amount: 500
     const f = validateQuote(d, deadline, now, []);
     expect(f).toHaveLength(0);

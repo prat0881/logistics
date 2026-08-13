@@ -187,10 +187,12 @@ const quotedRoadLegWithWarehouse: FfPortalLegDto = {
   },
 };
 
-// finding #3a: a variant whose own freight rate was never entered must read "—" in the grand-total
-// row — the SAME blank convention ChargeMatrix/QuoteSummary use — not a misleading "0.00". Here
-// DEDICATED is priced (tail lift 120 + trucking 500 = 620) while GROUPAGE's OWN freight is
-// untouched — even though the SAME common Tail Lift charge (120) also applies to it.
+// Round 4 (was finding #3a pre-reversal): a variant whose own freight rate was never entered now
+// shows its REAL total in the grand-total row — the SAME rule ChargeMatrix/QuoteSummary use —
+// whenever any input (freight, a common charge, or warehouse) is priced; "—" is reserved for a
+// variant with nothing priced anywhere. Here DEDICATED is priced (tail lift 120 + trucking 500 =
+// 620) while GROUPAGE's OWN freight is untouched — but the SAME common Tail Lift charge (120)
+// also applies to it, so GROUPAGE reads 120.00, not "—".
 const partiallyPricedRoadLeg: FfPortalLegDto = {
   ...quotedRoadLeg,
   legId: "L5",
@@ -373,13 +375,33 @@ describe("RfqPrintView", () => {
     expect(screen.getByText("Handle with care — fragile glassware")).toBeInTheDocument();
   });
 
-  it("shows '—' (not 0.00) in the grand-total row for an untouched/blank-rate variant (finding #3a)", () => {
+  it("shows the real total (not '—') for a variant whose own freight rate is unset but a common charge IS priced (Round 4)", () => {
     render(<RfqPrintView rfq={{ ...rfq, legs: [partiallyPricedRoadLeg] }} />);
     const totalRow = screen.getByText("Grand total").closest("tr")!;
-    // DEDICATED is priced → its real total; GROUPAGE is untouched → blank "—", never "0.00" —
-    // even though the common Tail Lift charge (120) folds into both variants equally.
+    // DEDICATED: 500 (own freight) + 120 (common Tail Lift) = 620. GROUPAGE: its own freight rate
+    // is unset, but the SAME common Tail Lift (120) still applies to it → 0 + 120 = 120, the real
+    // number, not a blank "—" anymore — Round 4 reverses the old "own-rate-only" blank rule.
     expect(within(totalRow).getByText("620.00")).toBeInTheDocument();
-    expect(within(totalRow).getByText("—")).toBeInTheDocument();
+    expect(within(totalRow).getByText("120.00")).toBeInTheDocument();
+    expect(within(totalRow).queryByText("—")).toBeNull();
+  });
+
+  it("still shows '—' (not 0.00) for a variant with nothing priced anywhere — no freight, no common charge, no warehouse", () => {
+    const untouchedLeg: FfPortalLegDto = {
+      ...quotedRoadLeg,
+      legId: "L8",
+      quoteId: "Q8",
+      manifest: { ...quotedRoadLeg.manifest, legId: "L8", legCode: "LEG-08" },
+      draft: {
+        ...quotedRoadDraft,
+        legId: "L8",
+        charges: [],
+        trucking: quotedRoadDraft.trucking.map((t) => ({ ...t, amount: null })),
+      },
+    };
+    render(<RfqPrintView rfq={{ ...rfq, legs: [untouchedLeg] }} />);
+    const totalRow = screen.getByText("Grand total").closest("tr")!;
+    expect(within(totalRow).getAllByText("—")).toHaveLength(2); // both DEDICATED and GROUPAGE blank
     expect(within(totalRow).queryByText("0.00")).toBeNull();
   });
 

@@ -1022,16 +1022,14 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     expect(afterDraft.transit.guaranteedTransitDaysByVariant).toEqual({ SEA: 12 });
   });
 
-  // Task 2 (Round 4) carry-forward proof: Task 1's shared `validateQuote` restored Round 3's
-  // locked rule (freight REQUIRED for Air/Sea, OPTIONAL for Road) via an isLegStarted split — but
-  // ff-portal.service.ts's own hand-mirrored materialize helpers (isVariantPriced/variantRate)
-  // predated that split. If those mirrors were left stale, the API could silently re-impose
-  // "Road freight required" at submit (crashing on a force-unwrapped trucking amount, or simply
-  // never reaching the materialize code because of a wrongly-computed priced-variant set) even
-  // though the shared gate no longer requires it. This pins both halves of the contract end to
-  // end: a Road leg submits successfully on common charges alone (no trucking row at all), and a
-  // Sea leg is still correctly rejected without its own freight rate (Sea/Air stay required).
-  it("submit: ROAD succeeds with priced common charges and NO trucking rate (Round 3, locked); SEA is still rejected without its own freight rate", async () => {
+  // Task 2 (Round 4) carry-forward proof, UPDATED for the Road-mandatory reversal: the user
+  // reversed Round 3's "freight required Air/Sea, optional Road" rule — Road trucking is now
+  // REQUIRED, symmetric with Sea. `validateQuote` is IMPORTED wholesale from `@svyft/shared` into
+  // ff-portal.service.ts (never mirrored), so this propagates to the API automatically — this test
+  // pins the HTTP-level contract end to end: a Road submit with NO trucking rate anywhere is now
+  // REJECTED (422, Q_RATE) exactly like Sea, common charges alone no longer carry it; a Road
+  // submit WITH its own trucking rate still succeeds (201/QUOTED), same as before.
+  it("submit: ROAD is REJECTED without a trucking rate, even with priced common charges (Round 4: freight now required); succeeds once its own trucking rate is set; SEA is still rejected without its own freight rate", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
     const seq = ++fixtureSeq;
 
@@ -1114,23 +1112,51 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .patch(`/api/ff/rfq/${roadToken}/quotes/${roadLeg.id}`)
       .send(roadDraft)
       .expect(200);
-    // THE PROOF: 201, not a 422 Q_RATE / crash — Road freight is optional once a common charge is
-    // priced, and materialize must not silently re-demand a trucking rate.
+    // THE PROOF (Round 4, reversed): 422 Q_RATE, NOT 201 — Road freight is now REQUIRED, so a
+    // priced common charge alone can no longer carry the leg to submission.
+    const roadRejected = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${roadToken}/quotes/${roadLeg.id}/submit`)
+      .expect(422);
+    expect(roadRejected.body.findings.map((f: { rule: string }) => f.rule)).toContain("Q_RATE");
+    expect((await prisma.quote.findFirst({ where: { legId: roadLeg.id } }))?.status).toBe(
+      "RFQ_SENT",
+    );
+
+    // ── ROAD half, continued: priced with its OWN trucking rate now succeeds (unchanged shape,
+    //    just no longer optional) ──
+    const roadDraftWithTrucking = {
+      ...roadDraft,
+      trucking: roadDraft.trucking.map((t: { rateVariant: string | null }) =>
+        t.rateVariant === "DEDICATED" ? { ...t, amount: 400, tonnage: "T_5" } : t,
+      ),
+      transit: { ...roadDraft.transit, guaranteedTransitDaysByVariant: { DEDICATED: 3 } },
+    };
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${roadToken}/quotes/${roadLeg.id}`)
+      .send(roadDraftWithTrucking)
+      .expect(200);
     const roadSubmit = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${roadToken}/quotes/${roadLeg.id}/submit`)
       .expect(201);
     expect(roadSubmit.body.status).toBe("QUOTED");
 
     const roadQuoteId = roadSubmit.body.quoteId as string;
-    expect(await prisma.truckingCharge.count({ where: { quoteId: roadQuoteId } })).toBe(0);
-    expect(await prisma.transitPlan.count({ where: { quoteId: roadQuoteId } })).toBe(0); // no priced freight variant -> no GTT required, no row written
+    expect(await prisma.truckingCharge.count({ where: { quoteId: roadQuoteId } })).toBe(1); // only the priced DEDICATED row materializes
+    const roadTrucking = await prisma.truckingCharge.findFirstOrThrow({
+      where: { quoteId: roadQuoteId },
+    });
+    expect(roadTrucking.rateVariant).toBe("DEDICATED");
+    expect(Number(roadTrucking.amount)).toBe(400);
+    expect(await prisma.transitPlan.count({ where: { quoteId: roadQuoteId } })).toBe(1); // ONE priced freight variant -> ONE GTT row
     const roadCharge = await prisma.chargeLine.findFirstOrThrow({
       where: { quoteId: roadQuoteId },
     });
     expect(roadCharge.rateVariant).toBeNull();
     expect(Number(roadCharge.amount)).toBe(60);
     const roadQuote = await prisma.quote.findUniqueOrThrow({ where: { id: roadQuoteId } });
-    expect(Number(roadQuote.grandTotal)).toBe(60); // both variants: 0 freight + 60 common + 0 warehouse
+    // grandTotal = max variant: DEDICATED = 400 (trucking) + 60 (common) = 460; GROUPAGE (still
+    // untouched) = 0 + 60 = 60. max(460, 60) = 460.
+    expect(Number(roadQuote.grandTotal)).toBe(460);
 
     // ── SEA half: common charges alone do NOT satisfy Q_RATE — Sea freight stays required ──
     const seaQuery = await prisma.query.create({

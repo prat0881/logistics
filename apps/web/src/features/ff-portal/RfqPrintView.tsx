@@ -348,13 +348,20 @@ function ChargeMatrixPrintTable({
             <td className="px-3 py-2">Grand total</td>
             {columns.map((v) => {
               const t = totalByKey.get(columnKey(v));
-              // Blank-rate convention (design §6 finding #3a) — mirror ChargeMatrix/QuoteSummary
-              // exactly so the FF's live matrix, this printed preview, and the stored headline all
-              // agree: a variant whose own freight rate was never entered shows "—", not a
-              // misleading "0.00" for an untouched column. Air has no separate rate cell
+              // Blank convention — mirror ChargeMatrix/QuoteSummary exactly so the FF's live
+              // matrix, this printed preview, and the stored headline all agree. Round 4 (reverses
+              // the old "own-rate-only" rule, design §6 finding #3a): a variant reads "—" only when
+              // NOTHING at all is priced for it — no own freight rate, no common charge, no
+              // warehouse. Once ANY of those is priced, the real grandTotal shows, even if the
+              // variant's OWN freight rate is still unset. Air has no separate rate cell
               // (variantRate always returns null for Air), so it's excluded or it would always
               // read blank. "—" matches this print view's own blank glyph (empty charge cells above).
-              const blank = t != null && t.rateAmount == null && t.key !== "AIR";
+              const blank =
+                t != null &&
+                t.key !== "AIR" &&
+                t.rateAmount == null &&
+                totals.additionalChargeSum === 0 &&
+                totals.warehouseSum === 0;
               return (
                 <td key={columnKey(v)} className="px-3 py-2 text-right font-mono tabular-nums">
                   {t == null || blank ? "—" : fmtAmount(t.grandTotal)}

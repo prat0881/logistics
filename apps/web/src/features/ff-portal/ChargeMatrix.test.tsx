@@ -433,15 +433,20 @@ describe("ChargeMatrix — Additional charges subtotal + Grand total per variant
 
   it("a variant's Grand total = ITS OWN freight rate + the Additional-charges subtotal + warehouse", async () => {
     render(<Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" />);
+    // Fully untouched (no freight, no common charge, no warehouse anywhere): both columns blank.
+    expect(screen.getByTestId("chargematrix-total-DEDICATED")).toHaveTextContent("–");
+    expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("–");
+
     await userEvent.type(screen.getByLabelText(/^road freight — dedicated$/i), "1000");
     await userEvent.type(screen.getByLabelText(/^insurance$/i), "50");
 
     // Dedicated: 1000 (own freight) + 50 (common charge) = 1050.
     expect(screen.getByTestId("chargematrix-total-DEDICATED")).toHaveTextContent("1,050.00");
-    // Groupage's OWN freight rate is still unset → blank "–", even though the SAME common
-    // Insurance charge (50) also folds into its total once priced — the blank-rate convention
-    // keys off the variant's own rate, not whether any money is associated with it at all.
-    expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("–");
+    // Round 4: Groupage's OWN freight rate is still unset, but the SAME common Insurance charge
+    // (50) DOES apply to it — the Grand total now reflects ANY priced input (freight, a common
+    // charge, or warehouse), not just the variant's own rate, so Groupage shows its real total
+    // (0 + 50 + 0), not a blank "–". Contrast with the fully-untouched assertion above.
+    expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("50.00");
 
     await userEvent.type(screen.getByLabelText(/^road freight — groupage$/i), "800");
     expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("850.00");
@@ -580,6 +585,15 @@ const NOW = "2026-01-01T00:00:00.000Z";
 // nothing left to disambiguate once a charge is common (quote-engine.ts, Task 1).
 const ZERO_REMARK_MESSAGE = 'A remark is required to quote "Insurance" at 0';
 
+// Round 4: Road freight is now REQUIRED to "start" the leg (the old charges-alone carve-out is
+// gone) — these two tests care about the $0/no-note Q_PRICED rule specifically, not Q_RATE, so
+// give DEDICATED a real trucking rate to reach a legitimately-started leg.
+function startedRoadDraft(): QuoteDraft {
+  const d = roadDraft();
+  d.trucking = d.trucking.map((t) => (t.rateVariant === "DEDICATED" ? { ...t, amount: 500 } : t));
+  return d;
+}
+
 describe("ChargeMatrix — the charge Note field clears the $0-price Q_PRICED gate", () => {
   it("binds the note to exactly the Insurance cell — not Tail-lift's — and a note clears the zero-price finding", async () => {
     render(
@@ -601,9 +615,9 @@ describe("ChargeMatrix — the charge Note field clears the $0-price Q_PRICED ga
     expect(tailLift?.note ?? "").toBe("");
 
     // Run the REAL gate (unchanged — this test doesn't touch validateQuote) against the draft the
-    // matrix just produced.
+    // matrix just produced, merged onto a legitimately-started Road leg (Round 4).
     const findings = validateQuote(
-      { ...roadDraft(), charges },
+      { ...startedRoadDraft(), charges },
       FAR_FUTURE_DEADLINE,
       NOW,
       activeLinesFrom(ROAD_LINES),
@@ -614,7 +628,7 @@ describe("ChargeMatrix — the charge Note field clears the $0-price Q_PRICED ga
   });
 
   it("still blocks a $0 line with no note (negative control — proves the note, not the zero amount, clears the gate)", () => {
-    const draft = roadDraft();
+    const draft = startedRoadDraft();
     draft.charges = draft.charges.map((c) =>
       c.definitionKey === "ROAD_STD_INSURANCE" ? { ...c, amount: 0 } : c,
     );

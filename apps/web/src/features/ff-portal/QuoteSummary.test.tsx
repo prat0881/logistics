@@ -97,7 +97,7 @@ describe("QuoteSummary", () => {
     expect(screen.getByTestId("total-chargeable")).toHaveTextContent("1500.000");
   });
 
-  it("Road: shows two totals side by side — Dedicated priced, Groupage blank", () => {
+  it("Road: shows two totals side by side — Dedicated priced, Groupage shows its real total too (Round 4)", () => {
     render(<QuoteSummary draft={roadDraft} currency="USD" />);
     expect(screen.getAllByTestId(/^grand-total-/)).toHaveLength(2);
 
@@ -108,11 +108,28 @@ describe("QuoteSummary", () => {
     expect(dedicated).toHaveTextContent("1,000.00");
     expect(dedicated).toHaveTextContent("USD");
 
-    // Groupage: its own freight rate (trucking) is unpriced → rateAmount null → blank ("–")
-    // regardless of the common charges/warehouse that DO apply to it — QuoteSummary's blank rule
-    // keys off rateAmount alone.
+    // Groupage: its own freight rate (trucking) is unpriced, but the common charges (200) and
+    // warehouse (300) DO apply to it — Round 4: the Grand total shows the real number (0 + 200 +
+    // 300 = 500) whenever ANY input is priced, not just the variant's own rate. Contrast with the
+    // genuinely-untouched-variant test below, which still shows "–".
     const groupage = screen.getByTestId("grand-total-GROUPAGE");
     expect(groupage).toHaveTextContent("Groupage total");
+    expect(groupage).toHaveTextContent("500.00");
+    expect(groupage).toHaveTextContent("USD");
+  });
+
+  it("a variant with nothing priced anywhere (no freight, no common charge, no warehouse) stays blank", () => {
+    const untouchedDraft: QuoteDraft = {
+      ...roadDraft,
+      charges: [],
+      warehouse: [],
+      trucking: roadDraft.trucking.map((t) => ({ ...t, amount: null })),
+    };
+    render(<QuoteSummary draft={untouchedDraft} currency="USD" />);
+    const dedicated = screen.getByTestId("grand-total-DEDICATED");
+    const groupage = screen.getByTestId("grand-total-GROUPAGE");
+    expect(dedicated).toHaveTextContent("–");
+    expect(dedicated).not.toHaveTextContent("USD");
     expect(groupage).toHaveTextContent("–");
     expect(groupage).not.toHaveTextContent("USD");
   });
@@ -128,7 +145,7 @@ describe("QuoteSummary", () => {
     expect(air).not.toHaveTextContent("–");
   });
 
-  it("Sea: shows two totals side by side — FCL priced, LCL blank", () => {
+  it("Sea: shows two totals side by side — FCL priced, LCL shows its real total too (Round 4, same rule as Road)", () => {
     render(<QuoteSummary draft={seaDraft} currency="USD" />);
     expect(screen.getAllByTestId(/^grand-total-/)).toHaveLength(2);
 
@@ -138,10 +155,11 @@ describe("QuoteSummary", () => {
     expect(fcl).toHaveTextContent("1,350.00");
     expect(fcl).toHaveTextContent("USD");
 
-    // LCL: unpriced → rateAmount null → blank ("–")
+    // LCL: its own rate is unpriced, but the common Origin THC charge (150) DOES apply to it →
+    // real total (0 + 150 + 0 = 150), not blank — same Round-4 rule as Road's Groupage above.
     const lcl = screen.getByTestId("grand-total-LCL");
     expect(lcl).toHaveTextContent("LCL total");
-    expect(lcl).toHaveTextContent("–");
-    expect(lcl).not.toHaveTextContent("USD");
+    expect(lcl).toHaveTextContent("150.00");
+    expect(lcl).toHaveTextContent("USD");
   });
 });

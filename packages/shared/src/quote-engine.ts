@@ -112,19 +112,16 @@ function isVariantPriced(draft: QuoteDraft, v: ChargeRateVariant | null): boolea
   return draft.charges.some(chargeCellPriced);
 }
 
-// Has the LEG been started at all (Q_RATE, and the common-charge gate's guard) — design §3.2;
-// Round 3 (locked, unchanged by Round 4): the freight submit-gate is REQUIRED for Air & Sea,
-// OPTIONAL for Road. Sea/Air: identical to `pricedVariants.length > 0` (isVariantPriced above) —
-// Sea's freight must be its own seaRates rate to count as anything at all; Air's only signal
-// already IS a common charge. Road is the one case broader than `pricedVariants`: since Road
-// freight is optional, the FF may submit a Road quote on the strength of its common charges
-// alone, with no trucking rate anywhere — so a Road leg ALSO counts as started via any common
-// charge, not only via its own trucking rate. This deliberately does NOT feed `pricedVariants` /
-// requiredTransitKeys — an untouched Road variant (no rate of its own) still needs no GTT, even
-// once the leg overall is "started" by a charge.
-function isLegStarted(draft: QuoteDraft, pricedVariants: (ChargeRateVariant | null)[]): boolean {
-  if (pricedVariants.length > 0) return true;
-  return draft.mode === "ROAD" && draft.charges.some(chargeCellPriced);
+// Has the LEG been started at all (Q_RATE, and the common-charge gate's guard) — design §3.2.
+// Round 4 REVERSES Round 3's Road-optional carve-out: the freight submit-gate is now REQUIRED for
+// every mode — Air, Sea, AND Road — so this is simply `pricedVariants.length > 0` (isVariantPriced
+// above), with no per-mode exception. Sea/Road: a variant only counts once it carries its OWN
+// freight rate (seaRates/trucking); Air's only signal already IS a common charge. (Formerly: Road
+// ALSO counted as started via any common charge alone, with no trucking rate anywhere — that
+// carve-out is removed, so a Road leg now needs its own trucking rate to be "started," exactly
+// like Sea needs its own seaRates rate.)
+function isLegStarted(pricedVariants: (ChargeRateVariant | null)[]): boolean {
+  return pricedVariants.length > 0;
 }
 
 // Guaranteed Transit Time at a resolved TransitVariantKey (Road: a real ChargeRateVariant; Sea:
@@ -150,26 +147,26 @@ function requiredTransitKeys(
   return variantsForTransit(mode); // SEA → [SEA_VARIANT_KEY], AIR/unresolved → [AIR_VARIANT_KEY]
 }
 
-/** Submit-gate v4 (design §3.2; partially reverses v3): blocking rules gating FF portal
- *  submission. Every rule here guards a value that gets force-unwrapped (`!`) at materialize
- *  (ff-portal.service.ts) onto a NOT NULL column — Q_WEIGHT (Quote.chargedWeightKg) and
- *  Q_CUSTOM_AMOUNT (ChargeLine.amount for a custom line) close gaps the base currency/validity/
- *  deadline rules leave open.
+/** Submit-gate v4 (design §3.2; partially reverses v3) — Round 4 reverses Round 3's Road-optional
+ *  carve-out (see isLegStarted): blocking rules gating FF portal submission. Every rule here
+ *  guards a value that gets force-unwrapped (`!`) at materialize (ff-portal.service.ts) onto a
+ *  NOT NULL column — Q_WEIGHT (Quote.chargedWeightKg) and Q_CUSTOM_AMOUNT (ChargeLine.amount for
+ *  a custom line) close gaps the base currency/validity/deadline rules leave open.
  *
  *  v4 replaces v3's per-variant-column charge gate with a split one: charges are COMMON (gated
  *  ONCE, full stop — not per variant); freight is per-variant (Road trucking / Sea seaRates).
- *  Round 3 (locked, unchanged by Round 4): the freight submit-gate is REQUIRED for Air & Sea,
- *  OPTIONAL for Road — so "has the leg been started" (isLegStarted) is Sea/Air's own freight-rate
- *  signal (isVariantPriced/pricedVariants), but Road ALSO accepts a common charge alone, with no
- *  trucking rate anywhere. Once the leg is started, the common-charge completeness gate
- *  (Q_PRICED) runs — same "progressive" philosophy as v3 (an entirely untouched leg isn't yet
- *  yelled at for every blank field), just keyed off the leg as a whole rather than off each
- *  column independently. Q_TRANSIT stays keyed to the NARROWER `pricedVariants` (not
- *  isLegStarted) via requiredTransitKeys (Road per priced variant, Sea/Air one common/single
- *  key) — a Road variant "started" only via a charge, with no rate of its own, still needs no
- *  GTT; that's what "freight optional" means. Q_PAST_DATE and Q_PIECE_WEIGHT (new, design D3/D4)
- *  are unconditional — a wrong date or an over-limit piece weight is wrong regardless of how much
- *  of the rest of the leg is priced. */
+ *  Round 4 (this change): the freight submit-gate is REQUIRED for every mode — Air, Sea, AND
+ *  Road — so "has the leg been started" (isLegStarted) is simply `pricedVariants.length > 0`
+ *  (isVariantPriced/pricedVariants), with no per-mode exception. (Round 3 had let a Road leg start
+ *  via a common charge alone, with no trucking rate anywhere — that carve-out is now removed.)
+ *  Once the leg is started, the common-charge completeness gate (Q_PRICED) runs — same
+ *  "progressive" philosophy as v3 (an entirely untouched leg isn't yet yelled at for every blank
+ *  field), just keyed off the leg as a whole rather than off each column independently. Q_TRANSIT
+ *  stays keyed to the NARROWER `pricedVariants` (not isLegStarted) via requiredTransitKeys (Road
+ *  per priced variant, Sea/Air one common/single key) — an untouched Road/Sea variant (no rate of
+ *  its own) still needs no GTT, even once the leg overall is started via the OTHER variant's own
+ *  rate. Q_PAST_DATE and Q_PIECE_WEIGHT (design D3/D4) are unconditional — a wrong date or an
+ *  over-limit piece weight is wrong regardless of how much of the rest of the leg is priced. */
 export function validateQuote(
   draft: QuoteDraft,
   deadlineIso: string,
@@ -215,16 +212,16 @@ export function validateQuote(
     );
 
   // ── v4: freight is per-variant (Road/Sea). pricedVariants is the NARROW, per-variant signal
-  // (feeds Q_TRANSIT only, below); isLegStarted is the broader submission-gating signal, which
-  // for Road ALSO accepts a common charge alone (Round 3, locked: Road freight is optional). ──
+  // (feeds Q_TRANSIT only, below); isLegStarted is the broader submission-gating signal — Round 4
+  // makes it exactly `pricedVariants.length > 0` for every mode (Road's Round-3 carve-out, which
+  // ALSO accepted a common charge alone with no trucking rate, is removed). ──
   const variants = variantsForMode(draft.mode);
   const pricedVariants = variants.filter((v) => isVariantPriced(draft, v));
-  const legStarted = isLegStarted(draft, pricedVariants);
+  const legStarted = isLegStarted(pricedVariants);
 
-  // Q_RATE: the leg can't be submitted with nothing priced at all — for Sea this means no
-  // variant has its own seaRates rate (a common charge alone doesn't count: Sea freight is
-  // required); for Road, either a trucking rate OR a common charge counts (Road freight is
-  // optional); for Air, no common charge at all.
+  // Q_RATE: the leg can't be submitted with nothing priced at all — for Sea/Road this means no
+  // variant has its own freight rate (a common charge alone doesn't count: freight is required for
+  // every mode as of Round 4); for Air, no common charge at all.
   if (!legStarted)
     f.push(blk("Q_RATE", "Enter at least one rate or charge amount for this leg", leg));
 

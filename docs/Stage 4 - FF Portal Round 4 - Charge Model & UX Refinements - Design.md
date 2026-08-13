@@ -13,6 +13,7 @@ After FF Portal v3 (per-variant quoting) + the route-view rework shipped to PR #
 - **D3 — Dates:** match the FF portal's existing `datetime-local` field pattern (browser-local); **every datetime field in the FF view must reject past date/time** — enforced as both a field `min` and a submit-gate rule.
 - **D4 — Heavy-weight piece weight:** must be ≤ the leg's **total cargo gross weight** (sum of all packages' gross).
 - **D5 (clear items):** custom "Add Charge Line" charges are **common**; the accordion mirrors the executive (first leg open, one at a time).
+- **D6 — Road freight MANDATORY + real total shown (post-final-review decision, 2026-08-13).** The user reversed the earlier "Road freight optional" rule (Round 3): **Road trucking is now REQUIRED** to submit a priced Road variant — symmetric with Sea, so every dual-rate mode requires its freight rate. And the **Grand total displays the real computed value** (freight + additional-charges subtotal + warehouse) whenever a variant has any priced input, instead of the "–" blank-freight placeholder. **Supersedes the Round-3 "required for Air & Sea, optional for Road" gate.**
 
 ## Design by area
 

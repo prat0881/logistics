@@ -30,7 +30,16 @@ export function QuoteSummary({
       </div>
       <div className="border-t pt-2 mt-2 space-y-2">
         {totals.variants.map((v) => {
-          const blank = v.rateAmount == null && v.key !== "AIR";
+          // Round 4 (reverses the old "own-rate-only" rule): blank only when NOTHING at all is
+          // priced for this variant — no own freight rate, no common charge, no warehouse. Once
+          // ANY of those is priced, show the real grandTotal, even if the variant's OWN rate is
+          // still unset (mirrors ChargeMatrix/RfqPrintView). Air is excluded from the check the
+          // same as before — it has no freight-rate cell at all, so rateAmount is always null.
+          const blank =
+            v.rateAmount == null &&
+            v.key !== "AIR" &&
+            totals.additionalChargeSum === 0 &&
+            totals.warehouseSum === 0;
           const label = v.key === "AIR" ? "Air" : rateVariantLabel(v.key as ChargeRateVariant);
           return (
             <div key={v.key} className="flex justify-between" data-testid={`grand-total-${v.key}`}>
