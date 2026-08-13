@@ -10,10 +10,12 @@ import {
   BILL_OF_LADING_TYPES,
   WAREHOUSE_SIDES,
   AIR_VARIANT_KEY,
+  SEA_VARIANT_KEY,
   truckTonnageLabel,
   containerSizeLabel,
   rateVariantLabel,
   variantsForMode,
+  variantsForTransit,
   type QuoteDraftCargo,
   type QuoteDraft,
 } from "./quote";
@@ -89,21 +91,43 @@ describe("variantsForMode", () => {
   });
 });
 
-describe("QuoteDraft (v3 shape)", () => {
-  it("builds a full v3 QuoteDraft including seaRates, per-variant charges, and per-variant transit-days (shape check)", () => {
+// ── v4: variantsForTransit (design §3.1/D2-D3) — Road stays per-variant like variantsForMode;
+// Sea COLLAPSES to one common key (unlike variantsForMode("SEA")'s two freight columns); Air is
+// unchanged. Never returns `null` (unlike variantsForMode) — every result is a real map key. ──
+describe("variantsForTransit", () => {
+  it("Road → the two real ChargeRateVariant members, same as variantsForMode", () => {
+    expect(variantsForTransit("ROAD")).toEqual(["DEDICATED", "GROUPAGE"]);
+  });
+  it("Sea → ONE common key (SEA_VARIANT_KEY) — narrower than variantsForMode('SEA')'s [FCL, LCL]", () => {
+    expect(variantsForTransit("SEA")).toEqual([SEA_VARIANT_KEY]);
+  });
+  it("Air → the single AIR key", () => {
+    expect(variantsForTransit("AIR")).toEqual([AIR_VARIANT_KEY]);
+  });
+  it("an unresolved mode also degrades to the single AIR key", () => {
+    expect(variantsForTransit(null)).toEqual([AIR_VARIANT_KEY]);
+  });
+  it("SEA_VARIANT_KEY is not one of the four real rate variants, and differs from AIR_VARIANT_KEY", () => {
+    expect(CHARGE_RATE_VARIANTS).not.toContain(SEA_VARIANT_KEY);
+    expect(SEA_VARIANT_KEY).not.toBe(AIR_VARIANT_KEY);
+  });
+});
+
+describe("QuoteDraft (v4 shape)", () => {
+  it("builds a full v4 QuoteDraft: common charges (rateVariant null), per-variant freight, and Sea's ONE common transit-days entry (shape check)", () => {
     const draft: QuoteDraft = {
       legId: "l1",
       mode: "SEA",
       currency: "USD",
       quoteValidityUntil: null,
-      chargedWeightKg: 500, // v3: one leg-level chargeable weight, not per-package
+      chargedWeightKg: 500, // one leg-level chargeable weight, not per-package
       notes: null,
       cargo: [{ packageId: "p1", grossWtKg: 500, cbm: 3 }],
       charges: [
         {
           zone: "ORIGIN",
           presetKey: null,
-          rateVariant: "FCL", // v3: each charge cell belongs to a column
+          rateVariant: null, // v4: every charge is common, regardless of mode
           label: "Doc fee",
           amount: 20,
           billOfLadingType: "TELEX",
@@ -135,7 +159,9 @@ describe("QuoteDraft (v3 shape)", () => {
       transit: {
         departureDate: null,
         arrivalDate: null,
-        guaranteedTransitDaysByVariant: { FCL: 10, LCL: 14 }, // v3: per variant, not one shared value
+        // v4: Sea's GTT is ONE common value under SEA_VARIANT_KEY — covers both FCL and LCL, no
+        // more per-variant FCL/LCL split.
+        guaranteedTransitDaysByVariant: { [SEA_VARIANT_KEY]: 10 },
         shippingLine: "Maersk",
         vesselVoyage: "MV1/001",
         etd: null,
@@ -147,8 +173,8 @@ describe("QuoteDraft (v3 shape)", () => {
     expect(draft.seaRates[0].rateVariant).toBe("FCL");
     expect(draft.warehouse[0].side).toBe("DROP");
     expect(draft.trucking[0].tonnage).toBe("T_9");
-    expect(draft.charges[0].rateVariant).toBe("FCL");
-    expect(draft.transit?.guaranteedTransitDaysByVariant.LCL).toBe(14);
+    expect(draft.charges[0].rateVariant).toBeNull();
+    expect(draft.transit?.guaranteedTransitDaysByVariant[SEA_VARIANT_KEY]).toBe(10);
     expect(draft.chargedWeightKg).toBe(500);
   });
 
@@ -165,7 +191,7 @@ describe("QuoteDraft (v3 shape)", () => {
         {
           zone: "MAIN_FREIGHT",
           presetKey: null,
-          rateVariant: null, // v3: Air's charges carry no variant
+          rateVariant: null, // Air's charges carry no variant — unchanged from v3
           label: "Air Freight",
           amount: 900,
         },
@@ -183,5 +209,58 @@ describe("QuoteDraft (v3 shape)", () => {
     };
     expect(draft.transit?.guaranteedTransitDaysByVariant[AIR_VARIANT_KEY]).toBe(5);
     expect(draft.notes).toBe("Handle with care");
+  });
+
+  it("a Road draft's charges are common (rateVariant null) even though its freight (trucking) stays per-variant", () => {
+    const draft: QuoteDraft = {
+      legId: "l1",
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: null,
+      chargedWeightKg: 900,
+      notes: null,
+      cargo: [{ packageId: "p1", grossWtKg: 900, cbm: 4 }],
+      charges: [
+        {
+          zone: null,
+          definitionKey: "DOC",
+          presetKey: null,
+          rateVariant: null,
+          label: "Documentation",
+          amount: 150,
+        },
+      ],
+      trucking: [
+        {
+          legEndpointPointId: "e1",
+          truckingType: "DEDICATED",
+          basis: "PER_TRUCK",
+          amount: 4200,
+          rateVariant: "DEDICATED",
+          tonnage: "T_5",
+        },
+        {
+          legEndpointPointId: "e1",
+          truckingType: "GROUPAGE",
+          basis: "PER_CBM",
+          amount: 3800,
+          rateVariant: "GROUPAGE",
+          tonnage: null,
+        },
+      ],
+      seaRates: [],
+      warehouse: [],
+      // v4: Road's GTT stays per-variant — DEDICATED and GROUPAGE keep independent entries.
+      transit: {
+        departureDate: null,
+        arrivalDate: null,
+        guaranteedTransitDaysByVariant: { DEDICATED: 3, GROUPAGE: 5 },
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+    expect(draft.charges[0].rateVariant).toBeNull();
+    expect(draft.trucking.map((t) => t.rateVariant)).toEqual(["DEDICATED", "GROUPAGE"]);
+    expect(draft.transit?.guaranteedTransitDaysByVariant).toEqual({ DEDICATED: 3, GROUPAGE: 5 });
   });
 });

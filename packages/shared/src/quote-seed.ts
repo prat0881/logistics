@@ -1,5 +1,4 @@
 import {
-  variantsForMode,
   type ChargeZone,
   type QuoteDraft,
   type QuoteDraftCharge,
@@ -10,7 +9,7 @@ import {
 } from "./quote";
 import type { FreightMode } from "./config";
 
-// ── The ONE per-variant pricing seed (FF Portal v3, design §3.1/§5) ──────────────────────────
+// ── The ONE pricing seed (FF Portal, design §3.1/§5; v4 — charges common, freight per-variant) ──
 // A fresh leg's starter QuoteDraft is seeded in TWO places — the server (ff-portal.service.ts's
 // `seedQuoteDraft`, returned by resolveScope's GET when a leg has no `draftJson` yet) and the
 // client (draftFromDto's non-`leg.draft` fallback). Those two used to duplicate the seed logic
@@ -29,35 +28,34 @@ export interface SeedChargeLine {
   label: string;
 }
 
-/** The pricing arrays of a fresh QuoteDraft — the per-variant charge matrix plus the mode's
+/** The pricing arrays of a fresh QuoteDraft — the common charge set plus the mode's per-variant
  *  freight-rate rows (Road → `trucking`, Sea → `seaRates`; Air seeds neither — its freight is the
- *  AIR_MAIN_FREIGHT charge line inside `charges`). Everything else on the draft
- *  (currency/validity/cargo/warehouse/transit/…) is seeded by each caller from its own sources. */
+ *  AIR_MAIN_FREIGHT charge line inside `charges`, common like every other line). Everything else
+ *  on the draft (currency/validity/cargo/warehouse/transit/…) is seeded by each caller from its
+ *  own sources. */
 export type QuoteDraftPricingSeed = Pick<QuoteDraft, "charges" | "trucking" | "seaRates">;
 
 /**
- * Seed the per-variant pricing of a fresh QuoteDraft (design §3.1): fan every seeded charge line
- * out across the mode's rate-variant columns (`variantsForMode` — Road: Dedicated/Groupage, Sea:
- * FCL/LCL, Air: a single implicit `null` column), one `amount: null` cell per (line, variant)
- * pair, plus the mode's blank freight-rate rows (Road → Dedicated+Groupage `trucking`, Sea →
- * FCL+LCL `seaRates`, keyed off the leg's first endpoint for Road). Pure — no I/O, no dates.
+ * Seed the pricing of a fresh QuoteDraft (design §3.1, v4 — partially reverses v3): ONE common
+ * `amount: null` row per seeded charge line (`rateVariant: null`, regardless of mode — v4 dropped
+ * the per-rate-variant fan-out; every charge is priced once, not once per column), plus the
+ * mode's blank freight-rate rows (Road → Dedicated+Groupage `trucking`, Sea → FCL+LCL `seaRates`,
+ * keyed off the leg's first endpoint for Road) — freight is the one thing that STAYS per-variant,
+ * and it was never seeded from `lines`/`charges` to begin with. Pure — no I/O, no dates.
  */
 export function seedQuoteDraftPricing(
   lines: SeedChargeLine[],
   mode: FreightMode | null,
   firstEndpointPointId: string,
 ): QuoteDraftPricingSeed {
-  const variants = variantsForMode(mode);
-  const charges: QuoteDraftCharge[] = lines.flatMap((l) =>
-    variants.map((rateVariant) => ({
-      zone: l.zone,
-      definitionKey: l.definitionKey ?? null,
-      presetKey: l.presetKey ?? null,
-      label: l.label,
-      amount: null,
-      rateVariant,
-    })),
-  );
+  const charges: QuoteDraftCharge[] = lines.map((l) => ({
+    zone: l.zone,
+    definitionKey: l.definitionKey ?? null,
+    presetKey: l.presetKey ?? null,
+    label: l.label,
+    amount: null,
+    rateVariant: null,
+  }));
 
   // Road is dual-rate (design §7): seed both Dedicated + Groupage rows up front so the FF can
   // price either or both — an unpriced row stays `amount: null` (blank rate → "–",

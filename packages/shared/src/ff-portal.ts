@@ -15,16 +15,23 @@ import {
   WAREHOUSE_SIDES,
   BILL_OF_LADING_TYPES,
   AIR_VARIANT_KEY,
+  SEA_VARIANT_KEY,
 } from "./quote";
 
-// Valid keys for `guaranteedTransitDaysByVariant`: the 4 real rate variants + Air's sentinel
-// (quote.ts's AIR_VARIANT_KEY — Air's charges/transit have no real ChargeRateVariant, see
-// quote.ts). `as const` is required here (not just the spread) — without it this separate `const`
-// widens to plain `string[]`, which z.enum's tuple-typed parameter rejects at compile time.
-// Verified z.record(z.enum(TRANSIT_VARIANT_KEYS), z.number())'s inferred output is assignable to
-// `Partial<Record<ChargeRateVariant | typeof AIR_VARIANT_KEY, number>>` under --strict, and at
-// runtime accepts {AIR: n} / {DEDICATED: n} while rejecting {NOPE: n}.
-const TRANSIT_VARIANT_KEYS = [...CHARGE_RATE_VARIANTS, AIR_VARIANT_KEY] as const;
+// Valid keys for `guaranteedTransitDaysByVariant`: the 4 real rate variants + Air's AND Sea's
+// single/common sentinels (quote.ts's AIR_VARIANT_KEY / SEA_VARIANT_KEY — v4/Round 4: Sea's GTT
+// is now ONE common value across FCL/LCL, written under SEA_VARIANT_KEY, same convention as
+// Air's single implicit column — see quote.ts's variantsForTransit). `as const` is required here
+// (not just the spread) — without it this separate `const` widens to plain `string[]`, which
+// z.enum's tuple-typed parameter rejects at compile time. Verified
+// z.record(z.enum(TRANSIT_VARIANT_KEYS), z.number())'s inferred output is assignable to
+// `Partial<Record<TransitVariantKey, number>>` under --strict, and at runtime accepts
+// {AIR: n} / {SEA: n} / {DEDICATED: n} while rejecting {NOPE: n}. This is a SHAPE check only
+// (the file header's own note) — it can't tell "a Sea draft keyed by FCL/LCL instead of
+// SEA_VARIANT_KEY" apart from a legitimate Road submission, since FCL/LCL stay valid keys here
+// (Road never uses them, but the enum is shared). That distinction is validateQuote's job
+// (quote-engine.ts's Q_TRANSIT, via requiredTransitKeys/variantsForTransit), not this schema's.
+const TRANSIT_VARIANT_KEYS = [...CHARGE_RATE_VARIANTS, AIR_VARIANT_KEY, SEA_VARIANT_KEY] as const;
 
 // ── GET /ff/rfq/:token response ──
 export interface FfPortalEndpoint {
@@ -135,14 +142,14 @@ export const quoteDraftSchema: z.ZodType<QuoteDraft> = z.object({
       carrier: z.string().nullable().optional(),
       flightVoyageNo: z.string().nullable().optional(),
       carrierSurcharge: z.number().nullable().optional(),
-      // v3: one Guaranteed Transit Time per rate variant, PLUS Air's single implicit column
-      // (keyed via AIR_VARIANT_KEY — see quote.ts and TRANSIT_VARIANT_KEYS above). The key enum
-      // must include AIR_VARIANT_KEY, not just CHARGE_RATE_VARIANTS: the engine
-      // (quote-engine.ts's transitDaysFor/Q_TRANSIT) reads/writes Air's slot under that literal
-      // "AIR" key, so a schema keyed by CHARGE_RATE_VARIANTS alone would 400 every real Air-mode
-      // submission. z.record with this finite key enum infers as
-      // Partial<Record<ChargeRateVariant | typeof AIR_VARIANT_KEY, number>>, matching
-      // QuoteDraftTransit exactly.
+      // v4/Round 4: Road keeps one Guaranteed Transit Time per real rate variant; Sea COLLAPSED
+      // to one common value (keyed via SEA_VARIANT_KEY — new in Round 4, see quote.ts's
+      // variantsForTransit), same shape as Air's pre-existing single implicit column (keyed via
+      // AIR_VARIANT_KEY). The key enum must include both sentinels, not just CHARGE_RATE_VARIANTS:
+      // the engine (quote-engine.ts's transitDaysAt/Q_TRANSIT) reads/writes Air's and Sea's slots
+      // under those literal "AIR"/"SEA" keys, so a schema keyed by CHARGE_RATE_VARIANTS alone
+      // would 400 every real Air- or Sea-mode submission. z.record with this finite key enum
+      // infers as Partial<Record<TransitVariantKey, number>>, matching QuoteDraftTransit exactly.
       guaranteedTransitDaysByVariant: z.record(z.enum(TRANSIT_VARIANT_KEYS), z.number()),
       plannedPickupDate: z.string().nullable().optional(),
       airline: z.string().nullable().optional(),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { quoteDraftSchema } from "./ff-portal";
-import { AIR_VARIANT_KEY, type QuoteDraft } from "./quote";
+import { AIR_VARIANT_KEY, SEA_VARIANT_KEY, type QuoteDraft } from "./quote";
 
 const valid: QuoteDraft = {
   legId: "l1",
@@ -59,7 +59,21 @@ describe("quoteDraftSchema", () => {
     expect(quoteDraftSchema.safeParse(air).success).toBe(true);
   });
 
-  it("still accepts the 4 real Road/Sea rate-variant keys (DEDICATED/GROUPAGE/FCL/LCL) — widening for Air didn't regress the normal case", () => {
+  // Round 4 fix: Sea's GTT collapsed to ONE common value (quote.ts's SEA_VARIANT_KEY,
+  // variantsForTransit), same shape as Air's. TRANSIT_VARIANT_KEYS originally shipped without it
+  // (Task 1 added the model/engine support but left the wire schema stale), which would have
+  // 400ed every real Sea-mode submission once the engine started writing {SEA: n} — same failure
+  // class as the AIR regression this file already guards above.
+  it("accepts a SEA-mode draft with its transit-days keyed by SEA_VARIANT_KEY (Round 4: Sea's GTT is now ONE common value)", () => {
+    const sea = {
+      ...valid,
+      mode: "SEA" as const,
+      transit: { ...valid.transit, guaranteedTransitDaysByVariant: { [SEA_VARIANT_KEY]: 12 } },
+    };
+    expect(quoteDraftSchema.safeParse(sea).success).toBe(true);
+  });
+
+  it("still accepts the 4 real Road/Sea rate-variant keys (DEDICATED/GROUPAGE/FCL/LCL) — widening for Air/Sea didn't regress the normal case", () => {
     const road = {
       ...valid,
       mode: "ROAD" as const,

@@ -122,7 +122,15 @@ export interface QuoteDraftCharge {
   presetKey: string | null;
   label: string;
   amount: number | null;
-  rateVariant: ChargeRateVariant | null; // v3: which column this cell prices; null = single-column/Air or a non-variant line
+  // v4 (design D1, partially reverses v3): every `charges` row is now COMMON — one row per
+  // definitionKey (or one row per ad-hoc [+ Add Charge] custom line), priced ONCE, not once per
+  // rate variant. `rateVariant` stays on the shape (mirrors the still-nullable `ChargeLine.
+  // rateVariant` DB column 1:1) but is now ALWAYS `null` — narrowed to the literal so writing a
+  // real ChargeRateVariant here is a compile error, not a silent v3 regression. Freight is the
+  // one exception that STAYS per-variant, but it never lived in this array — Road prices it via
+  // `QuoteDraft.trucking`, Sea via `QuoteDraft.seaRates`; Air's freight (AIR_MAIN_FREIGHT) is
+  // simply another common charge here, same as any other line.
+  rateVariant: null;
   note?: string;
   billOfLadingType?: BillOfLadingType | null; // Sea B/L line
   pieceWeightKg?: number | null; // HEAVY_WEIGHT_CALC inputs
@@ -159,15 +167,16 @@ export interface QuoteDraftTransit {
   carrier?: string | null;
   flightVoyageNo?: string | null;
   carrierSurcharge?: number | null;
-  // v3: one Guaranteed Transit Time per rate variant (design §3.1/D3), keyed by ChargeRateVariant
-  // for Road/Sea. Air has a single implicit column — QuoteDraftCharge models Air as
-  // rateVariant: null, but this map needs a concrete, parseable object key (Zod's z.record can't
-  // validate a `null` key), so the key type is widened with the standalone `typeof AIR_VARIANT_KEY`
-  // literal (NOT a 5th ChargeRateVariant member — see the file-level note by variantsForMode) and
-  // Air's one slot is written/read under that fixed technical key.
-  guaranteedTransitDaysByVariant: Partial<
-    Record<ChargeRateVariant | typeof AIR_VARIANT_KEY, number>
-  >;
+  // Guaranteed Transit Time, keyed by TransitVariantKey (design §3.1/D2-D3). v4 (partially
+  // reverses v3): Road STAYS per-variant — DEDICATED and GROUPAGE can each commit to a different
+  // GTT, keyed directly by their ChargeRateVariant. Sea is now COMMON — ONE value covers both
+  // FCL/LCL (a ship doesn't arrive twice), written/read under the fixed SEA_VARIANT_KEY sentinel
+  // rather than "FCL"/"LCL" individually. Air keeps its v3 single implicit column, under
+  // AIR_VARIANT_KEY. Sea/Air's sentinels exist for the same reason: this map needs a concrete,
+  // parseable object key (Zod's z.record can't validate a `null` key) even though both modes
+  // conceptually have "no real variant" here — see variantsForTransit below, and AIR_VARIANT_KEY/
+  // SEA_VARIANT_KEY's own doc comments for the full rationale.
+  guaranteedTransitDaysByVariant: Partial<Record<TransitVariantKey, number>>;
   plannedPickupDate?: string | null; // Road
   airline?: string | null;
   flightNumber?: string | null;
@@ -186,7 +195,7 @@ export interface QuoteDraft {
   chargedWeightKg: number | null; // v3: one leg-level chargeable weight (kg), informational (design §3.1/D2)
   notes: string | null; // v3: FF free-text notes (design §3.1, distinct from dgSurchargeNote/termsConditions)
   cargo: QuoteDraftCargo[];
-  charges: QuoteDraftCharge[]; // Air/Sea zone lines, now per-variant via QuoteDraftCharge.rateVariant
+  charges: QuoteDraftCharge[]; // v4: ONE common row per definitionKey (rateVariant always null) — Air/Road/Sea zone lines, Bill-of-Lading, HEAVY_WEIGHT_CALC, and ad-hoc [+ Add Charge] lines
   trucking: QuoteDraftTrucking[]; // Road blocks
   seaRates: QuoteDraftSeaRate[]; // Sea FCL/LCL rate rows
   warehouse: QuoteDraftWarehouse[];
@@ -195,30 +204,77 @@ export interface QuoteDraft {
   termsConditions: string | null;
 }
 
-// ── v3 per-variant columns (design §3.1/D1) ──
-// Air has no dual-rate columns to compare — the matrix degrades to a single implicit column.
+// ── v4 per-mode columns (design §3.1/D1-D3; partially reverses v3) ──
+// Two DIFFERENT column concepts now exist, and they diverge for Sea:
+//  - variantsForMode: the FREIGHT-RATE columns (QuoteDraft.trucking/seaRates), and historically
+//    the charge-matrix columns too — since v4 makes `charges` common (one row, full stop), this is
+//    now used for freight only. Road → Dedicated/Groupage, Sea → FCL/LCL, Air (or an unset mode) →
+//    a single implicit column (`null`).
+//  - variantsForTransit: the Guaranteed Transit Time columns (QuoteDraftTransit.
+//    guaranteedTransitDaysByVariant). Road still matches variantsForMode (a Dedicated truck and a
+//    Groupage truck can genuinely have different transit times) — but Sea COLLAPSES to one common
+//    value (unlike variantsForMode("SEA")'s two columns: an FCL and an LCL booking on the same
+//    vessel/voyage arrive on the same day, so tracking two independent GTTs was never meaningful).
+//    Air is unchanged, one implicit column either way.
 // `ChargeRateVariant` deliberately stays 4-valued (DEDICATED|GROUPAGE|FCL|LCL): Air's charges use
-// `rateVariant: null` (see QuoteDraftCharge) and variantsForMode("AIR") returns [null] rather than
-// adding a 5th "AIR" member — QuoteDraftTrucking/QuoteDraftSeaRate's non-nullable
-// `rateVariant: ChargeRateVariant` would then structurally (if nonsensically) admit it too.
-// `guaranteedTransitDaysByVariant` is the one exception: it needs an actual object key for Air's
-// slot (see AIR_VARIANT_KEY below), so ONLY that field's key type is widened with a standalone
-// `"AIR"` literal via a union (`ChargeRateVariant | typeof AIR_VARIANT_KEY`) — `ChargeRateVariant`
-// itself, and every other field typed with it, is untouched.
-/** The columns a mode's charge/transit matrix renders, in display order. Road → Dedicated/Groupage,
- *  Sea → FCL/LCL, Air (or an unset mode) → a single implicit column (`null`). */
+// `rateVariant: null` (see QuoteDraftCharge — v4: ALL charges do) and variantsForMode("AIR")
+// returns [null] rather than adding a 5th "AIR" member — QuoteDraftTrucking/QuoteDraftSeaRate's
+// non-nullable `rateVariant: ChargeRateVariant` would then structurally (if nonsensically) admit
+// it too. `guaranteedTransitDaysByVariant` is the exception: it needs an actual object key for
+// Air's AND Sea's single/common slot (Zod's z.record can't validate a `null` key), so ONLY that
+// field's key type is widened into `TransitVariantKey` (`ChargeRateVariant | typeof
+// AIR_VARIANT_KEY | typeof SEA_VARIANT_KEY`) — `ChargeRateVariant` itself, and every other field
+// typed with it, is untouched.
+/** The columns a mode's FREIGHT-RATE matrix renders (`QuoteDraft.trucking`/`seaRates`), in display
+ *  order. Road → Dedicated/Groupage, Sea → FCL/LCL, Air (or an unset mode) → a single implicit
+ *  column (`null`) — Air has no separate rate cell at all; see AIR_VARIANT_KEY. v4: `charges` no
+ *  longer fans out over these columns (every charge is common) — this function is now purely
+ *  about freight + the historical Air/null single-column convention. */
 export function variantsForMode(mode: FreightMode | null): (ChargeRateVariant | null)[] {
   if (mode === "ROAD") return [ChargeRateVariant.DEDICATED, ChargeRateVariant.GROUPAGE];
   if (mode === "SEA") return [ChargeRateVariant.FCL, ChargeRateVariant.LCL];
   return [null]; // AIR, and a not-yet-resolved mode: single column
 }
 
-/** Air's fixed technical key into `guaranteedTransitDaysByVariant` (a `Partial<Record<
- *  ChargeRateVariant | typeof AIR_VARIANT_KEY, number>>`). Air has exactly one implicit column
- *  (`variantsForMode("AIR") === [null]`) but that map needs a real, parseable object key (not
- *  `null`), so Air's single transit-days value is written/read under this constant instead —
+/** Air's fixed technical key into `guaranteedTransitDaysByVariant`. Air has exactly one implicit
+ *  column (`variantsForMode("AIR") === [null]`, and no separate freight-rate cell at all — its
+ *  freight is the AIR_MAIN_FREIGHT charge line), but the map needs a real, parseable object key
+ *  (not `null`), so Air's single transit-days value is written/read under this constant instead —
  *  never compared against a real Road/Sea variant. Own literal type `"AIR"` (NOT cast to
  *  `ChargeRateVariant` — that type stays exactly 4-valued everywhere else, see the file-level
  *  note above); `quoteDraftSchema` (ff-portal.ts) widens its `guaranteedTransitDaysByVariant` key
  *  enum with this same constant so a submitted `{AIR: n}` map parses instead of 400ing. */
 export const AIR_VARIANT_KEY = "AIR";
+
+/** Sea's fixed technical key into `guaranteedTransitDaysByVariant` (design D2, v4 — NEW, partially
+ *  reverses v3's per-FCL/LCL transit days). Sea still has TWO freight-rate columns
+ *  (`variantsForMode("SEA") === [FCL, LCL]` — an FCL and an LCL booking can carry very different
+ *  rates), but only ONE Guaranteed Transit Time: both ride the same vessel/voyage, so a second,
+ *  independently-editable GTT field had no real-world meaning and just invited the two to drift.
+ *  Same rationale/shape as AIR_VARIANT_KEY (a real, parseable object key standing in for "no real
+ *  per-variant split here"), own literal type `"SEA"` (not a 5th ChargeRateVariant member, for the
+ *  same reason AIR_VARIANT_KEY isn't — see the file-level note above). The DB mirrors this at
+ *  materialize: Sea is expected to write exactly one `TransitPlan` row with `rateVariant: null`
+ *  (the same convention Air's single row already uses) — `SEA_VARIANT_KEY` is the in-memory/
+ *  wire-format address for that one row; `null` is its DB address. NOT YET added to
+ *  `ff-portal.ts`'s `TRANSIT_VARIANT_KEYS` — a submitted `{SEA: n}` map will 400 at the PATCH
+ *  endpoint until that follow-up lands (flagged in Task 1's report; out of this task's file list). */
+export const SEA_VARIANT_KEY = "SEA";
+
+/** The technical keys `guaranteedTransitDaysByVariant` can be addressed by (design §3.1/D2-D3,
+ *  v4): Road's two real ChargeRateVariant members, plus the two single/common-slot sentinels
+ *  above. Real object keys only (never `null`) — see AIR_VARIANT_KEY's doc comment for why. */
+export type TransitVariantKey = ChargeRateVariant | typeof AIR_VARIANT_KEY | typeof SEA_VARIANT_KEY;
+
+/** The technical keys `guaranteedTransitDaysByVariant` must be populated under for a given mode
+ *  (design §3.1/D2-D3, v4). Road → its two real ChargeRateVariant members (still per-variant,
+ *  matching variantsForMode). Sea → ONE common key (SEA_VARIANT_KEY) regardless of which of
+ *  FCL/LCL is priced — DELIBERATELY narrower than variantsForMode("SEA")'s two freight columns.
+ *  Air (or an unset mode) → ONE common key (AIR_VARIANT_KEY), same shape as v3. Unlike
+ *  variantsForMode, never returns `null` — every result here is a real, parseable object key,
+ *  ready to index `guaranteedTransitDaysByVariant` directly. */
+export function variantsForTransit(mode: FreightMode | null): TransitVariantKey[] {
+  if (mode === "ROAD") return [ChargeRateVariant.DEDICATED, ChargeRateVariant.GROUPAGE];
+  if (mode === "SEA") return [SEA_VARIANT_KEY];
+  return [AIR_VARIANT_KEY]; // AIR, and a not-yet-resolved mode: one common slot
+}

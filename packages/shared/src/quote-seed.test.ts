@@ -13,34 +13,63 @@ const line: SeedChargeLine = {
   label: "Origin handling",
 };
 
-describe("seedQuoteDraftPricing — per-variant charge matrix", () => {
-  it("Road fans each line across Dedicated + Groupage, amount null", () => {
+// v4 (partially reverses v3): charges are COMMON — ONE row per line, `rateVariant: null`,
+// regardless of mode. The old per-mode fan-out (Road/Sea → 2 rows, Air → 1) is gone; every mode
+// now seeds exactly one row per line.
+describe("seedQuoteDraftPricing — common charges (v4: one row per line, regardless of mode)", () => {
+  it("Road seeds ONE common row per line (rateVariant null) — no longer fanned across Dedicated/Groupage", () => {
     const { charges } = seedQuoteDraftPricing([line], "ROAD", "e1");
-    expect(charges).toHaveLength(2);
-    expect(charges.map((c) => c.rateVariant).sort()).toEqual(["DEDICATED", "GROUPAGE"]);
-    expect(charges.every((c) => c.amount === null && c.definitionKey === "X_ORIGIN_HANDLING")).toBe(
-      true,
-    );
+    expect(charges).toHaveLength(1);
+    expect(charges[0]).toMatchObject({
+      definitionKey: "X_ORIGIN_HANDLING",
+      amount: null,
+      rateVariant: null,
+    });
   });
 
-  it("Sea fans each line across FCL + LCL", () => {
+  it("Sea seeds ONE common row per line (rateVariant null) — no longer fanned across FCL/LCL", () => {
     const { charges } = seedQuoteDraftPricing([line], "SEA", "e1");
-    expect(charges.map((c) => c.rateVariant).sort()).toEqual(["FCL", "LCL"]);
+    expect(charges).toHaveLength(1);
+    expect(charges[0].rateVariant).toBeNull();
   });
 
-  it("Air keeps a single implicit column (rateVariant null)", () => {
+  it("Air seeds ONE common row per line — unchanged from v3 (Air was already a single implicit column)", () => {
     const { charges } = seedQuoteDraftPricing([line], "AIR", "e1");
     expect(charges).toHaveLength(1);
     expect(charges[0].rateVariant).toBeNull();
   });
 
+  it("an unresolved mode also seeds one common row per line", () => {
+    const { charges } = seedQuoteDraftPricing([line], null, "e1");
+    expect(charges).toHaveLength(1);
+    expect(charges[0].rateVariant).toBeNull();
+  });
+
+  it("seeds exactly one row per line, however many lines are given — never fanned out", () => {
+    const line2: SeedChargeLine = {
+      zone: "DESTINATION",
+      definitionKey: "Y_DEST_HANDLING",
+      presetKey: null,
+      label: "Destination handling",
+    };
+    const { charges } = seedQuoteDraftPricing([line, line2], "ROAD", "e1");
+    expect(charges).toHaveLength(2);
+    expect(charges.map((c) => c.definitionKey)).toEqual(["X_ORIGIN_HANDLING", "Y_DEST_HANDLING"]);
+    expect(charges.every((c) => c.rateVariant === null && c.amount === null)).toBe(true);
+  });
+
   it("defaults a missing definitionKey/presetKey to null (server ResolvedChargeLine shape)", () => {
     const { charges } = seedQuoteDraftPricing([{ zone: null, label: "Ad hoc" }], "AIR", "e1");
-    expect(charges[0]).toMatchObject({ definitionKey: null, presetKey: null, amount: null });
+    expect(charges[0]).toMatchObject({
+      definitionKey: null,
+      presetKey: null,
+      amount: null,
+      rateVariant: null,
+    });
   });
 });
 
-describe("seedQuoteDraftPricing — freight-rate rows (finding #1)", () => {
+describe("seedQuoteDraftPricing — freight-rate rows (finding #1; v4: unchanged, still per-variant)", () => {
   it("Road seeds both Dedicated + Groupage trucking rows off the leg's first endpoint, unpriced", () => {
     const { trucking, seaRates } = seedQuoteDraftPricing([], "ROAD", "endpoint-1");
     expect(trucking).toEqual([
@@ -113,8 +142,6 @@ describe("seedQuoteDraftWarehouse — shared warehouse rows (finding #1 sibling)
   });
 
   it("seeds nothing when no endpoint classified to a warehouse position", () => {
-    expect(
-      seedQuoteDraftWarehouse(true, [{ pointId: "p", warehousePosition: null }]),
-    ).toEqual([]);
+    expect(seedQuoteDraftWarehouse(true, [{ pointId: "p", warehousePosition: null }])).toEqual([]);
   });
 });
