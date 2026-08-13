@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -96,6 +96,8 @@ describe("LegSection submit gate", () => {
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={false}
+          open={true}
+          onOpen={() => {}}
         />,
       ),
     );
@@ -116,6 +118,8 @@ describe("LegSection QUOTED branch", () => {
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={false}
+          open={true}
+          onOpen={() => {}}
         />,
       ),
     );
@@ -140,6 +144,8 @@ describe("LegSection legacy (pre-v2) manifest guard", () => {
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={false}
+          open={true}
+          onOpen={() => {}}
         />,
       ),
     );
@@ -160,6 +166,8 @@ describe("LegSection readOnly", () => {
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={true}
+          open={true}
+          onOpen={() => {}}
         />,
       ),
     );
@@ -181,6 +189,8 @@ describe("LegSection sections & layout (design §6 finding #7)", () => {
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={false}
+          open={true}
+          onOpen={() => {}}
         />,
       ),
     );
@@ -204,6 +214,8 @@ describe("LegSection warehouse section (design §6C finding #7)", () => {
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={false}
+          open={true}
+          onOpen={() => {}}
         />,
       ),
     );
@@ -220,6 +232,8 @@ describe("LegSection warehouse section (design §6C finding #7)", () => {
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={false}
+          open={true}
+          onOpen={() => {}}
         />,
       ),
     );
@@ -238,6 +252,8 @@ describe("LegSection notes (design §6 finding #5)", () => {
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={false}
+          open={true}
+          onOpen={() => {}}
         />,
       ),
     );
@@ -267,6 +283,8 @@ describe("LegSection notes (design §6 finding #5)", () => {
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={false}
+          open={true}
+          onOpen={() => {}}
         />,
       ),
     );
@@ -277,5 +295,148 @@ describe("LegSection notes (design §6 finding #5)", () => {
     const [, init] = fx.mock.calls[0];
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.notes).toBe("Fragile");
+  });
+});
+
+// ── Round 4, #1/#2: accordion header + open-gating (design §4.8) ────────────────────────────
+describe("LegSection accordion header (design §4.8 finding #1)", () => {
+  // The base `leg` fixture above only populates manifest.cargo (irrelevant to the header) — build
+  // a fuller one here so the header's leg-code/route/status text is actually checkable.
+  const legWithHeader = {
+    ...leg,
+    manifest: {
+      ...leg.manifest,
+      legCode: "AIR-1",
+      origin: { country: "IN", name: "Mumbai WH", city: "Mumbai" },
+      destination: { country: "AE", name: "Dubai Airport", city: "Dubai" },
+    },
+  } as unknown as FfPortalLegDto;
+
+  it("shows the header (leg code, route, status) even when collapsed (open=false)", () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={legWithHeader}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={false}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    const header = screen.getByRole("button", { name: /AIR-1/, expanded: false });
+    expect(header).toHaveTextContent("AIR-1");
+    expect(header).toHaveTextContent(/Mumbai WH.*Dubai Airport/);
+    expect(header).toHaveTextContent(/open for quoting/i);
+  });
+
+  it("hides the leg body when collapsed (open=false) — no Submit button, no form sections", () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={legWithHeader}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={false}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    expect(screen.queryByRole("button", { name: /submit quote/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /cargo & weight/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the leg body when open=true (the header stays too)", () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={legWithHeader}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={true}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    expect(screen.getByRole("button", { name: /submit quote/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /AIR-1/, expanded: true })).toBeInTheDocument();
+  });
+
+  it("calls onOpen when the collapsed header is clicked", async () => {
+    const onOpen = vi.fn();
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={legWithHeader}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={false}
+          onOpen={onOpen}
+        />,
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /AIR-1/ }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("a QUOTED (terminal) leg is also collapsible — header shows even when closed, summary hidden", () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={quotedLeg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={false}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    // Header renders (an aria-expanded=false toggle exists) even though the leg is QUOTED...
+    expect(screen.getByRole("button", { expanded: false })).toBeInTheDocument();
+    // ...but AlreadySubmittedSummary's own body is hidden until opened.
+    expect(screen.queryByText(/quote submitted/i)).not.toBeInTheDocument();
+  });
+});
+
+// ── Round 4, #1: findingNav force-opens a leg before scrolling ──────────────────────────────
+describe("LegSection findingNav force-open (design §4.8 finding #1)", () => {
+  it("calls onOpen when a validation finding is clicked (force-open before scroll)", async () => {
+    const onOpen = vi.fn();
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={leg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={true}
+          onOpen={onOpen}
+        />,
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /submit quote/i }));
+    const alert = await screen.findByRole("alert");
+    const findingButton = within(alert).getAllByRole("button")[0];
+
+    await userEvent.click(findingButton);
+
+    expect(onOpen).toHaveBeenCalled();
   });
 });

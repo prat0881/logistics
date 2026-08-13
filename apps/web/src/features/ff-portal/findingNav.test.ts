@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { Finding } from "@svyft/shared";
-import { findingSection } from "./findingNav";
+import { findingSection, navigateToFindingSection, sectionAnchorId } from "./findingNav";
 
 const f = (rule: string, scope: Finding["scope"], message = "m"): Finding => ({
   rule,
@@ -78,5 +78,74 @@ describe("findingSection", () => {
 
   it("defaults unknown scope to charges", () => {
     expect(findingSection(f("UNKNOWN", { type: "query" }))).toBe("charges");
+  });
+});
+
+// ── Round 4, #1: force-open the finding's leg before scrolling ──────────────────────────────
+describe("navigateToFindingSection", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  // The lookup+scroll is deferred one requestAnimationFrame tick (matching the executive
+  // RfqWorkspace.jumpToLeg's identical deferral) so a real React state-setter `openLeg` has a
+  // chance to commit before `document.getElementById` runs — awaited here so tests observe the
+  // post-frame state rather than the synchronous-return state.
+  const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+  it("force-opens the leg BEFORE scrolling, so a target that only exists once opened is still found", async () => {
+    // Simulates a COLLAPSED leg: LegSection gates its body on `{open && <body>}`, so the section
+    // anchor isn't in the DOM at all until the leg opens. `openLeg` here plays that role — it
+    // mounts the element, mirroring what re-rendering with open=true would do.
+    const scrollSpy = vi.fn();
+    const openLeg = vi.fn(() => {
+      const el = document.createElement("div");
+      el.id = sectionAnchorId("L2", "charges");
+      (el as unknown as { scrollIntoView: () => void }).scrollIntoView = scrollSpy;
+      document.body.appendChild(el);
+    });
+
+    expect(document.getElementById(sectionAnchorId("L2", "charges"))).toBeNull(); // collapsed: not mounted
+
+    navigateToFindingSection("L2", "charges", openLeg);
+    expect(openLeg).toHaveBeenCalledTimes(1); // force-open itself IS synchronous
+
+    await nextFrame();
+
+    expect(scrollSpy).toHaveBeenCalledTimes(1); // only reachable because openLeg ran first
+  });
+
+  it("still calls openLeg (idempotent force-open) when the leg is already open/mounted", async () => {
+    const el = document.createElement("div");
+    el.id = sectionAnchorId("L1", "density");
+    const scrollSpy = vi.fn();
+    (el as unknown as { scrollIntoView: () => void }).scrollIntoView = scrollSpy;
+    document.body.appendChild(el);
+    const openLeg = vi.fn();
+
+    navigateToFindingSection("L1", "density", openLeg);
+    expect(openLeg).toHaveBeenCalledTimes(1);
+
+    await nextFrame();
+
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("scrolls to the page-level #rfq-fields anchor for the 'rfq' section (not a per-leg anchor)", async () => {
+    const el = document.createElement("div");
+    el.id = "rfq-fields";
+    const scrollSpy = vi.fn();
+    (el as unknown as { scrollIntoView: () => void }).scrollIntoView = scrollSpy;
+    document.body.appendChild(el);
+
+    navigateToFindingSection("L1", "rfq", () => {});
+    await nextFrame();
+
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw synchronously, nor once the deferred frame runs, when the target section genuinely doesn't exist", async () => {
+    expect(() => navigateToFindingSection("L1", "charges", () => {})).not.toThrow();
+    await nextFrame(); // the deferred getElementById()?.scrollIntoView() no-ops via optional chaining
   });
 });

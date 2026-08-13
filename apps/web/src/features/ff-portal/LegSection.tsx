@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useForm, FormProvider, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type {
   FfPortalLegDto,
   FfPortalRfqDto,
@@ -10,6 +11,8 @@ import type {
 } from "@svyft/shared";
 import { quoteDraftSchema, validateQuote, computeQuoteTotals } from "@svyft/shared";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import type { BadgeProps } from "@/components/ui/badge";
 import { draftFromDto } from "./draftFromDto";
 import { useSaveDraft, useSubmit } from "./useFfPortal";
 import { PortalError } from "./portalClient";
@@ -23,7 +26,7 @@ import { QuoteFindingsSummary } from "./QuoteFindingsSummary";
 import { SubmissionBar } from "./SubmissionBar";
 import { AlreadySubmittedSummary, ManifestUnavailableCard } from "./terminalStates";
 import { isV2Manifest } from "./manifestGuard";
-import { sectionAnchorId } from "./findingNav";
+import { sectionAnchorId, navigateToFindingSection } from "./findingNav";
 import type { PortalSection } from "./findingNav";
 
 export interface LegSectionProps {
@@ -33,6 +36,8 @@ export interface LegSectionProps {
   currency: string | null; // page-level (source of truth)
   quoteValidityUntil: string | null; // page-level (source of truth)
   readOnly: boolean; // deadline passed OR leg not RFQ_SENT
+  open: boolean; // accordion: is this leg's body expanded (design §4.8 finding #1)
+  onOpen: () => void; // force this leg open — header click, or a finding's force-open
 }
 
 export function LegSection({
@@ -42,7 +47,111 @@ export function LegSection({
   currency,
   quoteValidityUntil,
   readOnly,
+  open,
+  onOpen,
 }: LegSectionProps): JSX.Element {
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <LegSectionHeader leg={leg} open={open} onOpen={onOpen} />
+      {open && (
+        <div className="border-t border-border p-4">
+          <LegSectionBody
+            token={token}
+            rfq={rfq}
+            leg={leg}
+            currency={currency}
+            quoteValidityUntil={quoteValidityUntil}
+            readOnly={readOnly}
+            onOpen={onOpen}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Accordion header — leg code · route summary · status (design §4.8, port of the executive
+//    RfqWorkspace/LegPanel header pattern). Always rendered, regardless of `open` — even a
+//    QUOTED/terminal leg is collapsible (design §4.8 finding #1) — only the body below is gated.
+function LegSectionHeader({
+  leg,
+  open,
+  onOpen,
+}: {
+  leg: FfPortalLegDto;
+  open: boolean;
+  onOpen: () => void;
+}): JSX.Element {
+  const status = legStatusBadge(leg.status);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-expanded={open}
+      className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
+    >
+      {open ? (
+        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+      ) : (
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+      )}
+      <span className="shrink-0 rounded bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold text-primary">
+        {leg.manifest.legCode}
+      </span>
+      <span className="truncate text-sm font-medium">{routeSummary(leg)}</span>
+      <span className="ml-auto shrink-0">
+        <Badge variant={status.variant}>{status.label}</Badge>
+      </span>
+    </button>
+  );
+}
+
+/** name → city → country fallback, matching the executive LegPanel's own point-label precedence
+ *  (packages/shared re-exposes nothing street/contact-level here — ManifestSnapshot's origin /
+ *  destination are already the same masked whitelist ScopedRouteDiagram / RfqPrintView use). */
+function routeSummary(leg: FfPortalLegDto): string {
+  const label = (
+    loc: { name: string | null; city: string | null; country: string | null } | null,
+  ): string => loc?.name ?? loc?.city ?? loc?.country ?? "—";
+  return `${label(leg.manifest.origin)} → ${label(leg.manifest.destination)}`;
+}
+
+const LEG_STATUS_BADGE: Record<string, { label: string; variant: BadgeProps["variant"] }> = {
+  RFQ_SENT: { label: "Open for quoting", variant: "secondary" },
+  QUOTED: { label: "Quoted", variant: "success" }, // distinct from AlreadySubmittedSummary's own
+  // "Quote submitted" badge text (inside the gated body) so the two don't collide when both render
+  SELECT: { label: "Not yet sent", variant: "pending" },
+  EXPIRED: { label: "Expired", variant: "warning" },
+  INVALID: { label: "Invalid", variant: "destructive" },
+  REQUOTED: { label: "Requote requested", variant: "warning" },
+  CLOSED: { label: "Closed", variant: "pending" },
+  APPROVED: { label: "Approved", variant: "success" },
+};
+function legStatusBadge(status: string): { label: string; variant: BadgeProps["variant"] } {
+  return LEG_STATUS_BADGE[status] ?? { label: status, variant: "outline" };
+}
+
+// ── Body — the original per-status branches (Round-4 Task 4's warehouse conditional, the charge
+//    table, etc.), unchanged; only mounted while the accordion header above is open. ───────────
+interface LegSectionBodyProps {
+  token: string;
+  rfq: FfPortalRfqDto;
+  leg: FfPortalLegDto;
+  currency: string | null;
+  quoteValidityUntil: string | null;
+  readOnly: boolean;
+  onOpen: () => void;
+}
+
+function LegSectionBody({
+  token,
+  rfq,
+  leg,
+  currency,
+  quoteValidityUntil,
+  readOnly,
+  onOpen,
+}: LegSectionBodyProps): JSX.Element {
   // ── Guard: pre-v2 (legacy) manifest snapshot ───────────────────────────
   // RFQs distributed before the Cargo→Package re-model can carry a frozen manifest.cargo in the
   // old shape. Every branch below (QUOTED's AlreadySubmittedSummary, "not open for quoting", and
@@ -77,6 +186,7 @@ export function LegSection({
       currency={currency}
       quoteValidityUntil={quoteValidityUntil}
       readOnly={readOnly}
+      onOpen={onOpen}
     />
   );
 }
@@ -89,7 +199,8 @@ function LegSectionForm({
   currency,
   quoteValidityUntil,
   readOnly,
-}: LegSectionProps): JSX.Element {
+  onOpen,
+}: LegSectionBodyProps): JSX.Element {
   const form = useForm<QuoteDraft>({
     resolver: zodResolver(quoteDraftSchema),
     defaultValues: draftFromDto(leg, rfq),
@@ -171,11 +282,11 @@ function LegSectionForm({
     }
   };
 
-  // Anchor navigation handler
-  const handleNavigate = (section: PortalSection) => {
-    const id = section === "rfq" ? "rfq-fields" : sectionAnchorId(leg.legId, section);
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
-  };
+  // Anchor navigation handler — force-opens this leg (design §4.8 finding #1: the accordion
+  // gates the body below on `open`, so a collapsed leg's section anchors aren't mounted at all)
+  // before scrolling to the target section.
+  const handleNavigate = (section: PortalSection) =>
+    navigateToFindingSection(leg.legId, section, onOpen);
 
   // DG note visibility — DG is a package reference tag (frozen manifest), not a cargo-draft field
   const showDgNote = leg.manifest.cargo.some((c) => c.tags.includes("DG"));

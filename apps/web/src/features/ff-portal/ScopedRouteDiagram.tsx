@@ -90,7 +90,7 @@ const MODES: FreightMode[] = [FreightMode.ROAD, FreightMode.SEA, FreightMode.AIR
 
 // ── masked node/edge model, built straight from the portal DTO ──────────────
 
-interface ScopedNode {
+export interface ScopedNode {
   pointId: string;
   type: string;
   name: string | null;
@@ -99,7 +99,7 @@ interface ScopedNode {
   city: string | null;
 }
 
-interface ScopedEdge {
+export interface ScopedEdge {
   legId: string;
   legCode: string;
   mode: FreightMode | null;
@@ -107,7 +107,7 @@ interface ScopedEdge {
   toPointId: string;
 }
 
-interface ScopedGraph {
+export interface ScopedGraph {
   nodes: ScopedNode[];
   edges: ScopedEdge[];
 }
@@ -118,8 +118,12 @@ interface ScopedGraph {
  * destination — that's the order the api builds `FfPortalLegDto.endpoints`
  * in (origin, then destination). A leg with fewer than 2 endpoints
  * contributes what it can (a lone node, or nothing) rather than throwing.
+ *
+ * Exported (Round 4, #2) so `legOrder.ts`'s `orderLegsByRoute` can build the
+ * SAME graph this diagram lays out from — leg render order and diagram node
+ * order reuse one graph-construction so they can't silently drift apart.
  */
-function buildScopedGraph(legs: FfPortalLegDto[]): ScopedGraph {
+export function buildScopedGraph(legs: FfPortalLegDto[]): ScopedGraph {
   const nodes = new Map<string, ScopedNode>();
   const edges: ScopedEdge[] = [];
 
