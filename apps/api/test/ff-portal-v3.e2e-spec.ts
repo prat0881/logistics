@@ -672,10 +672,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
       })),
-      // v4: every charge is a common row (rateVariant: null) — this test only cares about
-      // Q_WEIGHT, so the leg is left "started" via the common charge alone (Road-optional, Round
-      // 3 locked); the extra guaranteedTransitDaysByVariant entry below is harmless unused data
-      // since no freight variant is actually priced (trucking: []).
+      // v4: every charge is a common row (rateVariant: null). This test only asserts Q_WEIGHT
+      // (via arrayContaining), so it doesn't matter that with trucking: [] a Q_RATE also fires now
+      // (Round-4 D6: Road freight mandatory) — the extra guaranteedTransitDaysByVariant entry
+      // below is likewise harmless unused data.
       charges: legDto.seededCharges.map((c) => ({
         zone: c.zone,
         definitionKey: c.definitionKey,

@@ -347,8 +347,8 @@ export class FfPortalService {
       });
 
     // ── validate (design §3.2, submit-gate v4/Round 4 — common charges gated once, freight
-    // per-variant, Sea/Air freight required + Road optional) — imported wholesale from
-    // @svyft/shared, never mirrored, so this gate can't drift from the client's. ──
+    // per-variant, every dual-rate mode requires its freight — Round-4 D6 made Road mandatory
+    // too) — imported wholesale from @svyft/shared, never mirrored, so this gate can't drift. ──
     const findings: Finding[] = validateQuote(
       draft,
       scope.rfq.submissionDeadline.toISOString(),
