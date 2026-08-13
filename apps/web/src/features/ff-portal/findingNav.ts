@@ -36,6 +36,29 @@ export function findingSection(f: Finding): PortalSection {
     if (scope.id === "dgSurchargeNote") return "terms";
     if (scope.id === "guaranteedTransitDays") return "transit"; // Q_TRANSIT (submit-gate v3)
     if (scope.id === "chargedWeightKg") return "density"; // Q_WEIGHT (submit-gate v3, leg-level)
+
+    // Q_PAST_DATE (design D3, Round 4): quote-engine.ts's `pastDateField` scopes each stale-date
+    // finding to the specific transit-plan field id it came from — all 7 live in the Transit
+    // section regardless of mode (Road/Air/Sea each populate a different subset).
+    if (
+      scope.id === "departureDate" ||
+      scope.id === "arrivalDate" ||
+      scope.id === "plannedPickupDate" || // Road
+      scope.id === "plannedDeparture" || // Air
+      scope.id === "plannedArrival" || // Air
+      scope.id === "etd" || // Sea
+      scope.id === "eta" // Sea
+    )
+      return "transit";
+    // Q_PAST_DATE's warehouse counterpart: one finding per warehouse line, scoped to
+    // `cargoAcceptanceWindow:${warehousePointId}` — prefixed, so startsWith not ===. FindingScope's
+    // `id` is optional (`id?: string`), so `?.` is needed even inside this `type === "field"`
+    // branch — the interface doesn't narrow id to required per scope type.
+    if (scope.id?.startsWith("cargoAcceptanceWindow")) return "warehouse";
+    // Q_PIECE_WEIGHT: `pieceWeightKg:${definitionKey|label}` — the HeavyWeight input IS in the
+    // charges matrix, so this is the same section the "charges" default below already gives it;
+    // spelled out explicitly for clarity now that this block has other id-prefix checks.
+    if (scope.id?.startsWith("pieceWeightKg")) return "charges";
   }
 
   if (scope.type === "leg") {

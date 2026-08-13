@@ -4,6 +4,19 @@ import userEvent from "@testing-library/user-event";
 import { useForm, FormProvider, useWatch } from "react-hook-form";
 import type { QuoteDraft } from "@svyft/shared";
 import { WarehouseStaging } from "./WarehouseStaging";
+import { toDatetimeLocal } from "./format";
+
+// Relative-to-now fixture for the round-trip tests below — a hardcoded absolute date would
+// eventually sit behind the field's own `min=now` (design D3) as real time advances, the same
+// CI-time-bomb pattern fixed across this round's e2e specs (quote-engine.ts's Q_PAST_DATE).
+const DAY = 24 * 60 * 60 * 1000;
+// Zeroed to the minute: toDatetimeLocal (like the datetime-local input itself) is minute-granular,
+// and the round-trip test below re-parses the truncated value and compares it back against
+// FUTURE_ISO — that only holds exactly if FUTURE_ISO had no sub-minute remainder to begin with.
+const futureDate = new Date(Date.now() + 30 * DAY);
+futureDate.setSeconds(0, 0);
+const FUTURE_ISO = futureDate.toISOString();
+const FUTURE_DATETIME_LOCAL = toDatetimeLocal(FUTURE_ISO);
 
 function baseDefaults(wh: QuoteDraft["warehouse"]): QuoteDraft {
   return {
@@ -110,7 +123,7 @@ describe("WarehouseStaging", () => {
     );
     await userEvent.type(
       screen.getByLabelText(/cargo acceptance window for warehouse/i),
-      "2026-09-10T09:00",
+      FUTURE_DATETIME_LOCAL,
     );
     const written = screen.getByTestId("window-0").textContent ?? "";
     expect(written).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
@@ -126,7 +139,7 @@ describe("WarehouseStaging", () => {
             position: "ORIGIN",
             label: "Origin warehouse",
             amount: null,
-            cargoAcceptanceWindow: "2026-09-10T09:00:00.000Z",
+            cargoAcceptanceWindow: FUTURE_ISO,
           },
         ]}
       />,
@@ -135,6 +148,6 @@ describe("WarehouseStaging", () => {
       /cargo acceptance window for warehouse/i,
     ) as HTMLInputElement;
     expect(input.value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
-    expect(new Date(input.value).getTime()).toBe(new Date("2026-09-10T09:00:00.000Z").getTime());
+    expect(new Date(input.value).getTime()).toBe(new Date(FUTURE_ISO).getTime());
   });
 });

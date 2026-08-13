@@ -305,8 +305,11 @@ describe(`${PREFIX} (e2e)`, () => {
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-09-01T00:00:00.000Z",
-        arrivalDate: "2026-09-03T00:00:00.000Z",
+        // Relative to submit-time "now" (Round 4's Q_PAST_DATE, design D3, is unconditional and
+        // uses the real wall clock) — a hardcoded absolute date would eventually fall into the
+        // past and turn this 201-expecting submit test red. See quote-engine.ts's validateQuote.
+        departureDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+        arrivalDate: new Date(Date.now() + 32 * 86400000).toISOString(),
         // one Guaranteed Transit Time per rate-variant column (v3) — Air's single implicit column
         // is keyed by AIR_VARIANT_KEY (its ChargeRateVariant is `null`, which can't be an object key).
         guaranteedTransitDaysByVariant: Object.fromEntries(

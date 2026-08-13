@@ -256,9 +256,10 @@ export const AIR_VARIANT_KEY = "AIR";
  *  same reason AIR_VARIANT_KEY isn't — see the file-level note above). The DB mirrors this at
  *  materialize: Sea is expected to write exactly one `TransitPlan` row with `rateVariant: null`
  *  (the same convention Air's single row already uses) — `SEA_VARIANT_KEY` is the in-memory/
- *  wire-format address for that one row; `null` is its DB address. NOT YET added to
- *  `ff-portal.ts`'s `TRANSIT_VARIANT_KEYS` — a submitted `{SEA: n}` map will 400 at the PATCH
- *  endpoint until that follow-up lands (flagged in Task 1's report; out of this task's file list). */
+ *  wire-format address for that one row; `null` is its DB address. IS included in `ff-portal.ts`'s
+ *  `TRANSIT_VARIANT_KEYS` (`quoteDraftSchema`'s `guaranteedTransitDaysByVariant` accepts it as a
+ *  key) — a submitted `{SEA: n}` map is accepted at the PATCH endpoint and materializes to that
+ *  single `rateVariant: null` row, same as Air. */
 export const SEA_VARIANT_KEY = "SEA";
 
 /** The technical keys `guaranteedTransitDaysByVariant` can be addressed by (design §3.1/D2-D3,

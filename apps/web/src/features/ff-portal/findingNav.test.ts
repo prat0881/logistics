@@ -79,6 +79,51 @@ describe("findingSection", () => {
   it("defaults unknown scope to charges", () => {
     expect(findingSection(f("UNKNOWN", { type: "query" }))).toBe("charges");
   });
+
+  // ── Round 4 fix: Q_PAST_DATE (design D3) field ids were never taught to findingSection, so
+  // they all fell through to the "charges" default even though every one of them lives in the
+  // Transit or Warehouse section (quote-engine.ts's `pastDateField` helper). ──────────────────
+  it("routes every Q_PAST_DATE transit-plan field id to transit", () => {
+    const transitDateIds = [
+      "departureDate",
+      "arrivalDate",
+      "plannedPickupDate", // Road
+      "plannedDeparture", // Air
+      "plannedArrival", // Air
+      "etd", // Sea
+      "eta", // Sea
+    ];
+    for (const id of transitDateIds) {
+      expect(findingSection(f("Q_PAST_DATE", { type: "field", id }))).toBe("transit");
+    }
+  });
+
+  it("routes the Q_PAST_DATE warehouse cargo-acceptance-window finding to warehouse (prefixed id, startsWith not ===)", () => {
+    // scope.id is `cargoAcceptanceWindow:${warehousePointId}` — one per warehouse line — so the
+    // match must be a prefix check, not an exact-string match.
+    expect(
+      findingSection(f("Q_PAST_DATE", { type: "field", id: "cargoAcceptanceWindow:pt1" })),
+    ).toBe("warehouse");
+    expect(
+      findingSection(f("Q_PAST_DATE", { type: "field", id: "cargoAcceptanceWindow:pt2" })),
+    ).toBe("warehouse");
+  });
+
+  it("still routes Q_PIECE_WEIGHT's prefixed field id (pieceWeightKg:*) to charges (regression)", () => {
+    // The HeavyWeight input IS in the charges matrix, so the pre-existing "charges" default is
+    // correct for it — this locks that in now that findingSection gains explicit id-prefix checks.
+    expect(
+      findingSection(f("Q_PIECE_WEIGHT", { type: "field", id: "pieceWeightKg:HEAVY_WEIGHT_CALC" })),
+    ).toBe("charges");
+  });
+
+  it("still routes currency/validity/DG findings as before (regression)", () => {
+    expect(findingSection(f("Q_CURRENCY", { type: "field", id: "currency" }))).toBe("rfq");
+    expect(findingSection(f("Q_VALIDITY", { type: "field", id: "quoteValidityUntil" }))).toBe(
+      "rfq",
+    );
+    expect(findingSection(f("Q_DG_NOTE", { type: "field", id: "dgSurchargeNote" }))).toBe("terms");
+  });
 });
 
 // ── Round 4, #1: force-open the finding's leg before scrolling ──────────────────────────────

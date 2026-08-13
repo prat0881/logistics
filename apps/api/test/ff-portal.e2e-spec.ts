@@ -245,8 +245,8 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-09-01T00:00:00.000Z",
-        arrivalDate: "2026-09-03T00:00:00.000Z",
+        departureDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+        arrivalDate: new Date(Date.now() + 32 * 86400000).toISOString(),
         guaranteedTransitDaysByVariant: { AIR: 2 },
       },
       dgSurchargeNote: null,
@@ -797,8 +797,10 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       ],
       warehouse: [],
       transit: {
-        departureDate: "2026-09-01T00:00:00.000Z",
-        arrivalDate: "2026-09-10T00:00:00.000Z",
+        // Relative to submit-time "now" (unconditional Q_PAST_DATE, design D3) — see the
+        // 86400000 note on fullValidDraft's transit block above.
+        departureDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+        arrivalDate: new Date(Date.now() + 39 * 86400000).toISOString(),
         // v4 (Round 4): Sea's Guaranteed Transit Time is now ONE common value (keyed by
         // SEA_VARIANT_KEY = "SEA"), not per-FCL/LCL — a single vessel/voyage doesn't arrive twice.
         guaranteedTransitDaysByVariant: { SEA: 9 },
@@ -955,8 +957,10 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       ],
       warehouse: [],
       transit: {
-        departureDate: "2026-09-01T00:00:00.000Z",
-        arrivalDate: "2026-09-10T00:00:00.000Z",
+        // Relative to submit-time "now" (unconditional Q_PAST_DATE, design D3) — see the
+        // 86400000 note on fullValidDraft's transit block above.
+        departureDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+        arrivalDate: new Date(Date.now() + 39 * 86400000).toISOString(),
         // ONE common Sea GTT (SEA_VARIANT_KEY) covering both FCL and LCL.
         guaranteedTransitDaysByVariant: { SEA: 12 },
       },

@@ -18,9 +18,19 @@ import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { FfPortalPage } from "./FfPortalPage";
+import { toDatetimeLocal } from "./format";
 import type { FfPortalRfqDto, FfPortalLegDto, QuoteDraft } from "@svyft/shared";
 
 afterEach(() => vi.unstubAllGlobals());
+
+// Relative-to-now datetime-local strings for the transit fields typed during the happy-path test
+// below — Round 4's Q_PAST_DATE (design D3, quote-engine.ts) is unconditional and reads the real
+// wall clock, so a hardcoded absolute date (e.g. a literal "2026-09-05T10:00") would eventually
+// fall into the past and turn that submit test red. DAY matches the ms-per-day this file's own
+// leg fixtures don't otherwise need to name.
+const DAY = 24 * 60 * 60 * 1000;
+const FUTURE_DEPARTURE = toDatetimeLocal(new Date(Date.now() + 30 * DAY).toISOString());
+const FUTURE_ARRIVAL = toDatetimeLocal(new Date(Date.now() + 32 * DAY).toISOString());
 
 // ── Render helper ─────────────────────────────────────────────────────────────
 const renderAt = (token: string) =>
@@ -333,14 +343,16 @@ describe("FfPortal integration — happy path", () => {
 
     // 2. Set transit departure date
     // Q_PAST_DATE (design D3, Task 1 of this round) unconditionally rejects any FF datetime
-    // earlier than "now" — these must stay safely in the future as real time advances, same fix
-    // Task 2 applied across the e2e specs it touched (see its report's collateral-fallout note).
+    // earlier than "now" — FUTURE_DEPARTURE/FUTURE_ARRIVAL (module scope, above) are computed
+    // relative to Date.now() so this stays valid as real time advances, rather than a hardcoded
+    // absolute date that would eventually expire (the CI-time-bomb fix applied across the e2e
+    // specs it touched — see its report's collateral-fallout note).
     const departureInput = screen.getByLabelText(/departure/i);
-    fireEvent.change(departureInput, { target: { value: "2026-09-05T10:00" } });
+    fireEvent.change(departureInput, { target: { value: FUTURE_DEPARTURE } });
 
     // 3. Set transit arrival date
     const arrivalInput = screen.getByLabelText(/arrival/i);
-    fireEvent.change(arrivalInput, { target: { value: "2026-09-07T10:00" } });
+    fireEvent.change(arrivalInput, { target: { value: FUTURE_ARRIVAL } });
 
     // 4. Check the T&C checkbox
     const checkbox = screen.getByRole("checkbox");
@@ -430,10 +442,10 @@ describe("FfPortal integration — 422 surfacing", () => {
     await userEvent.type(amountInput, "2000");
 
     const departureInput = screen.getByLabelText(/departure/i);
-    fireEvent.change(departureInput, { target: { value: "2026-09-05T10:00" } });
+    fireEvent.change(departureInput, { target: { value: FUTURE_DEPARTURE } });
 
     const arrivalInput = screen.getByLabelText(/arrival/i);
-    fireEvent.change(arrivalInput, { target: { value: "2026-09-07T10:00" } });
+    fireEvent.change(arrivalInput, { target: { value: FUTURE_ARRIVAL } });
 
     const checkbox = screen.getByRole("checkbox");
     await userEvent.click(checkbox);

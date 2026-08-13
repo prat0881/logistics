@@ -4,6 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { useForm, FormProvider, useWatch } from "react-hook-form";
 import type { QuoteDraft, FreightMode } from "@svyft/shared";
 import { TransitPlanForm } from "./TransitPlanForm";
+import { toDatetimeLocal } from "./format";
+
+// Relative-to-now datetime-local fixtures for the "writes an ISO instant" tests below — a
+// hardcoded absolute date (e.g. a literal "2026-09-05T10:00") would eventually sit behind the
+// field's own `min=now` (design D3) as real time advances, which is exactly the pattern Round 4's
+// unconditional Q_PAST_DATE gate (quote-engine.ts's validateQuote) exists to enforce.
+const DAY = 24 * 60 * 60 * 1000;
+const FUTURE_DATETIME_LOCAL = toDatetimeLocal(new Date(Date.now() + 30 * DAY).toISOString());
 
 function baseDefaults(mode: FreightMode | null): QuoteDraft {
   return {
@@ -134,9 +142,10 @@ describe("TransitPlanForm — Air", () => {
 
   it("writes an ISO instant to transit.plannedDeparture when a departure datetime is chosen", async () => {
     render(<Harness mode="AIR" />);
-    // Future fixture date (not a hardcoded near-past one) — a past value would now be rejected by
-    // the field's own `min` (design D3) and would trip the engine's unconditional Q_PAST_DATE gate.
-    await userEvent.type(screen.getByLabelText(/planned departure/i), "2026-09-05T10:00");
+    // Relative-to-now fixture date (module-level FUTURE_DATETIME_LOCAL, above) — a hardcoded
+    // absolute date would eventually fall behind the field's own `min` (design D3) and trip the
+    // engine's unconditional Q_PAST_DATE gate as real time advances.
+    await userEvent.type(screen.getByLabelText(/planned departure/i), FUTURE_DATETIME_LOCAL);
     const written = screen.getByTestId("planned-departure").textContent ?? "";
     expect(written).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(Number.isFinite(new Date(written).getTime())).toBe(true);
@@ -176,7 +185,7 @@ describe("TransitPlanForm — Sea", () => {
     render(<SeaHarness />);
     await userEvent.type(screen.getByLabelText(/shipping line/i), "Maersk");
     await userEvent.type(screen.getByLabelText(/vessel \/ voyage/i), "MSC Anna / 123W");
-    await userEvent.type(screen.getByLabelText(/^etd/i), "2026-09-01T08:00");
+    await userEvent.type(screen.getByLabelText(/^etd/i), FUTURE_DATETIME_LOCAL);
 
     expect(screen.getByLabelText(/shipping line/i)).toHaveValue("Maersk");
     expect(screen.getByLabelText(/vessel \/ voyage/i)).toHaveValue("MSC Anna / 123W");

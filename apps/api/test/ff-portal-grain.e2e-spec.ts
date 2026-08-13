@@ -266,9 +266,13 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-09-01T00:00:00.000Z",
-        arrivalDate: "2026-09-03T00:00:00.000Z",
-        plannedPickupDate: "2026-08-31T00:00:00.000Z",
+        // Relative to submit-time "now" — Round 4's Q_PAST_DATE (design D3, quote-engine.ts) is
+        // unconditional and uses the real wall clock, so a hardcoded absolute date would
+        // eventually fall into the past and turn this test's 201-expecting submit red. Ordering
+        // preserved: pickup < departure < arrival.
+        plannedPickupDate: new Date(Date.now() + 29 * 86400000).toISOString(),
+        departureDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+        arrivalDate: new Date(Date.now() + 32 * 86400000).toISOString(),
         guaranteedTransitDaysByVariant: {}, // <-- the gap under test
       },
       dgSurchargeNote: "Handled per IATA/ADR DG regulations",
@@ -454,12 +458,15 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-09-01T00:00:00.000Z",
-        arrivalDate: "2026-09-03T00:00:00.000Z",
+        // Relative to submit-time "now" (unconditional Q_PAST_DATE, design D3) — see the
+        // pickup-date fixture above for why. Same day/hour spacing as before: departure day at
+        // 00:00, plannedDeparture +10h, plannedArrival +18h, arrival day two days later.
+        departureDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+        arrivalDate: new Date(Date.now() + 32 * 86400000).toISOString(),
         airline: "Emirates SkyCargo",
         flightNumber: "EK9821",
-        plannedDeparture: "2026-09-01T10:00:00.000Z",
-        plannedArrival: "2026-09-01T18:00:00.000Z",
+        plannedDeparture: new Date(Date.now() + 30 * 86400000 + 10 * 3600000).toISOString(),
+        plannedArrival: new Date(Date.now() + 30 * 86400000 + 18 * 3600000).toISOString(),
         guaranteedTransitDaysByVariant: { AIR: 2 },
       },
       dgSurchargeNote: null,
@@ -614,8 +621,10 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-09-01T00:00:00.000Z",
-        arrivalDate: "2026-09-03T00:00:00.000Z",
+        // Relative to submit-time "now" (unconditional Q_PAST_DATE, design D3) — see the
+        // pickup-date fixture earlier in this file for why.
+        departureDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+        arrivalDate: new Date(Date.now() + 32 * 86400000).toISOString(),
         guaranteedTransitDaysByVariant: { DEDICATED: 4 },
       },
       dgSurchargeNote: null,
@@ -716,6 +725,10 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     // arrivalDate — only the Road-specific plannedPickupDate. This is a fully valid draft:
     // guaranteedTransitDaysByVariant is mandatory (per priced variant) and every mode-specific
     // date field is optional.
+    // Relative to submit-time "now" (unconditional Q_PAST_DATE, design D3, quote-engine.ts) —
+    // captured once so the draft below and the persisted-value assertion after submit stay in
+    // sync, instead of two independent hardcoded literals that could drift.
+    const plannedPickupIso = new Date(Date.now() + 29 * 86400000).toISOString();
     const draft: QuoteDraft = {
       legId: leg.id,
       mode: "ROAD",
@@ -745,7 +758,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       transit: {
         departureDate: null,
         arrivalDate: null,
-        plannedPickupDate: "2026-08-31T00:00:00.000Z",
+        plannedPickupDate: plannedPickupIso,
         guaranteedTransitDaysByVariant: { DEDICATED: 5 }, // only Dedicated is priced
       },
       dgSurchargeNote: null,
@@ -767,6 +780,6 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     expect(transitPlan.departureDate).toBeNull(); // NOT 1970-01-01T00:00:00.000Z
     expect(transitPlan.arrivalDate).toBeNull();
     expect(transitPlan.guaranteedTransitDays).toBe(5);
-    expect(transitPlan.plannedPickupDate?.toISOString()).toBe("2026-08-31T00:00:00.000Z");
+    expect(transitPlan.plannedPickupDate?.toISOString()).toBe(plannedPickupIso);
   });
 });

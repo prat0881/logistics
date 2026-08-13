@@ -508,8 +508,11 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
           : { ...t, amount: 150 },
       ),
       transit: {
-        departureDate: "2026-09-01T00:00:00.000Z",
-        arrivalDate: "2026-09-03T00:00:00.000Z",
+        // Relative to submit-time "now" — Round 4's Q_PAST_DATE (design D3, quote-engine.ts) is
+        // unconditional and uses the real wall clock, so a hardcoded absolute date would
+        // eventually fall into the past and turn this 201-expecting submit test red.
+        departureDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+        arrivalDate: new Date(Date.now() + 32 * 86400000).toISOString(),
         guaranteedTransitDaysByVariant: { DEDICATED: 3, GROUPAGE: 5 },
       },
     };
@@ -572,8 +575,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
           : { ...t, amount: 150 },
       ),
       transit: {
-        departureDate: "2026-09-01T00:00:00.000Z",
-        arrivalDate: "2026-09-03T00:00:00.000Z",
+        // Relative to submit-time "now" — see the sibling test above for why this can't be a
+        // hardcoded absolute date.
+        departureDate: new Date(Date.now() + 30 * 86400000).toISOString(),
+        arrivalDate: new Date(Date.now() + 32 * 86400000).toISOString(),
         guaranteedTransitDaysByVariant: { DEDICATED: 3, GROUPAGE: 5 },
       },
     };
