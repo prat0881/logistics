@@ -2,8 +2,13 @@ import { describe, it, expect } from "vitest";
 import { toUsd, latestRateByCurrency, fxRateCreateSchema, type FxRateDto } from "./fx";
 
 const rate = (currency: string, unitsPerUsd: number, effectiveFrom: string): FxRateDto => ({
-  id: `${currency}-${effectiveFrom}`, currency, unitsPerUsd, effectiveFrom,
-  note: null, createdById: null, createdAt: effectiveFrom,
+  id: `${currency}-${effectiveFrom}`,
+  currency,
+  unitsPerUsd,
+  effectiveFrom,
+  note: null,
+  createdById: null,
+  createdAt: effectiveFrom,
 });
 
 describe("toUsd", () => {

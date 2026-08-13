@@ -2,7 +2,11 @@ import { z } from "zod";
 import { CURRENCY_CODES } from "./reference";
 
 export const fxRateCreateSchema = z.object({
-  currency: z.enum(CURRENCY_CODES).refine((c) => c !== "USD", { message: "USD is the base currency (rate ≡ 1) and is never stored" }),
+  currency: z
+    .enum(CURRENCY_CODES)
+    .refine((c) => c !== "USD", {
+      message: "USD is the base currency (rate ≡ 1) and is never stored",
+    }),
   unitsPerUsd: z.number().positive(),
   effectiveFrom: z.string().datetime({ offset: true }).optional(),
   note: z.string().trim().max(500).optional(),
@@ -20,7 +24,11 @@ export type FxRateDto = {
 };
 
 /** Normalise a native amount to USD. USD passes through; a foreign currency needs a rate. */
-export function toUsd(amount: number, currency: string, rate: Pick<FxRateDto, "unitsPerUsd"> | null): number | null {
+export function toUsd(
+  amount: number,
+  currency: string,
+  rate: Pick<FxRateDto, "unitsPerUsd"> | null,
+): number | null {
   if (currency === "USD") return amount;
   if (!rate) return null;
   return Math.round((amount / rate.unitsPerUsd) * 100) / 100;

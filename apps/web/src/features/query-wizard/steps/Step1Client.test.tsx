@@ -340,7 +340,8 @@ describe("Step1Client", () => {
   it("new query (no detail) renders Query Date with today's date as default", async () => {
     // Fix 1: for a brand-new query the Query Date field must not be empty — it should
     // default to the real local now() so the pre-save UI shows the correct time.
-    const todayPrefix = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+    const _now = new Date();
+    const todayPrefix = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, "0")}-${String(_now.getDate()).padStart(2, "0")}`;
 
     vi.stubGlobal(
       "fetch",
