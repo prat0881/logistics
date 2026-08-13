@@ -1,11 +1,7 @@
-import { useMemo, useState } from "react";
-import {
-  FreightMode,
-  PointType,
-  type Finding,
-  type QueryDetail,
-} from "@svyft/shared";
+import { useMemo, useRef, useState } from "react";
+import { FreightMode, PointType, type Finding, type QueryDetail } from "@svyft/shared";
 import { cn } from "@/lib/utils";
+import { computeRouteLayout } from "@/lib/routeLayering";
 import { toRouteGraph } from "./routeGraph";
 
 /**
@@ -80,6 +76,12 @@ export function RouteDiagram({
   className,
 }: RouteDiagramProps) {
   const [hovered, setHovered] = useState<{ kind: "point" | "leg"; id: string } | null>(null);
+  // Horizontal scroll offset of the inner scroll wrapper (see the `figure`
+  // JSX below): the tooltip renders outside that wrapper so it can't be
+  // clipped, but its left/top are computed in SVG content-coordinate space,
+  // so we translate by scrollLeft to keep it pinned to the hovered node.
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const graph = useMemo(() => toRouteGraph(detail), [detail]);
 
@@ -96,10 +98,7 @@ export function RouteDiagram({
   const layout = useMemo(() => computeLayout(graph, vBulge), [graph, vBulge]);
 
   // Resolve findings → per-point / per-leg highlight severity.
-  const highlights = useMemo(
-    () => resolveHighlights(graph, findings),
-    [graph, findings],
-  );
+  const highlights = useMemo(() => resolveHighlights(graph, findings), [graph, findings]);
 
   const prefersReducedMotion = useMemo(
     () =>
@@ -134,10 +133,7 @@ export function RouteDiagram({
   return (
     <figure
       data-slot="route-diagram"
-      className={cn(
-        "relative overflow-x-auto rounded-md border bg-card p-3",
-        className,
-      )}
+      className={cn("relative rounded-md border bg-card p-3", className)}
       aria-label="Route diagram"
     >
       <figcaption className="mb-2 flex items-center justify-between gap-2">
@@ -147,77 +143,90 @@ export function RouteDiagram({
         <Legend />
       </figcaption>
 
-      <svg
-        role="img"
-        aria-label="Route as a node graph — port nodes wired by leg edges"
-        width={width}
-        height={svgHeight}
-        viewBox={`0 0 ${width} ${svgHeight}`}
-        className="max-w-full"
-        style={{ minWidth: Math.min(width, 320) }}
+      {/*
+       * `overflow-x-auto` lives on THIS wrapper (not the `figure`) so it only
+       * clips/scrolls the SVG. The `figure` stays a plain, non-clipping
+       * `relative` positioning context so the absolutely-positioned
+       * `RouteTooltip` below — rendered as this wrapper's sibling — can never
+       * be clipped, no matter how far right a node/leg sits in a wide,
+       * scrolled diagram.
+       */}
+      <div
+        ref={scrollRef}
+        onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
+        className="overflow-x-auto"
+        data-slot="route-diagram-scroll"
       >
-        <defs>
-          {/* One arrowhead marker per mode color + the highlight variants. */}
-          {MODES.map((m) => (
-            <Arrow key={m} id={`arrow-${m}`} color={modeColor(m)} />
-          ))}
-          <Arrow id="arrow-unset" color="hsl(var(--muted-foreground))" />
-          <Arrow id="arrow-blocking" color="hsl(var(--destructive))" />
-          <Arrow id="arrow-warning" color="hsl(var(--warning))" />
-        </defs>
+        <svg
+          role="img"
+          aria-label="Route as a node graph — port nodes wired by leg edges"
+          width={width}
+          height={svgHeight}
+          viewBox={`0 0 ${width} ${svgHeight}`}
+          className="max-w-full"
+          style={{ minWidth: Math.min(width, 320) }}
+        >
+          <defs>
+            {/* One arrowhead marker per mode color + the highlight variants. */}
+            {MODES.map((m) => (
+              <Arrow key={m} id={`arrow-${m}`} color={modeColor(m)} />
+            ))}
+            <Arrow id="arrow-unset" color="hsl(var(--muted-foreground))" />
+            <Arrow id="arrow-blocking" color="hsl(var(--destructive))" />
+            <Arrow id="arrow-warning" color="hsl(var(--warning))" />
+          </defs>
 
-        {/* Edges first, so nodes paint on top. */}
-        <g>
-          {graph.legs.map((leg) => {
-            const o = leg.originPointId ? pos.get(leg.originPointId) : undefined;
-            const d = leg.destinationPointId
-              ? pos.get(leg.destinationPointId)
-              : undefined;
-            if (!o || !d) return null; // incomplete leg — C1 flags it in the panel
-            const hl = highlights.legs.get(leg.id) ?? { finding: null };
-            return (
-              <Edge
-                key={leg.id}
-                leg={leg}
-                from={o}
-                to={d}
-                bow={bows.get(leg.id) ?? 0}
-                highlight={hl}
-                messages={highlights.legMsgs.get(leg.id) ?? []}
-                reducedMotion={prefersReducedMotion}
-                onEditLeg={onEditLeg}
-                onHover={() => setHovered({ kind: "leg", id: leg.id })}
-                onLeave={() => setHovered(null)}
-              />
-            );
-          })}
-        </g>
+          {/* Edges first, so nodes paint on top. */}
+          <g>
+            {graph.legs.map((leg) => {
+              const o = leg.originPointId ? pos.get(leg.originPointId) : undefined;
+              const d = leg.destinationPointId ? pos.get(leg.destinationPointId) : undefined;
+              if (!o || !d) return null; // incomplete leg — C1 flags it in the panel
+              const hl = highlights.legs.get(leg.id) ?? { finding: null };
+              return (
+                <Edge
+                  key={leg.id}
+                  leg={leg}
+                  from={o}
+                  to={d}
+                  bow={bows.get(leg.id) ?? 0}
+                  highlight={hl}
+                  messages={highlights.legMsgs.get(leg.id) ?? []}
+                  reducedMotion={prefersReducedMotion}
+                  onEditLeg={onEditLeg}
+                  onHover={() => setHovered({ kind: "leg", id: leg.id })}
+                  onLeave={() => setHovered(null)}
+                />
+              );
+            })}
+          </g>
 
-        {/* Nodes. */}
-        <g>
-          {graph.points.map((p) => {
-            const at = pos.get(p.id);
-            if (!at) return null;
-            const hl = highlights.points.get(p.id) ?? { finding: null };
-            const orphan = highlights.orphans.has(p.id);
-            return (
-              <Node
-                key={p.id}
-                point={p}
-                x={at.x}
-                y={at.y}
-                highlight={hl}
-                messages={highlights.pointMsgs.get(p.id) ?? []}
-                orphan={orphan}
-                reducedMotion={prefersReducedMotion}
-                onEditPoint={onEditPoint}
-                onHover={() => setHovered({ kind: "point", id: p.id })}
-                onLeave={() => setHovered(null)}
-              />
-            );
-          })}
-        </g>
-      </svg>
+          {/* Nodes. */}
+          <g>
+            {graph.points.map((p) => {
+              const at = pos.get(p.id);
+              if (!at) return null;
+              const hl = highlights.points.get(p.id) ?? { finding: null };
+              const orphan = highlights.orphans.has(p.id);
+              return (
+                <Node
+                  key={p.id}
+                  point={p}
+                  x={at.x}
+                  y={at.y}
+                  highlight={hl}
+                  messages={highlights.pointMsgs.get(p.id) ?? []}
+                  orphan={orphan}
+                  reducedMotion={prefersReducedMotion}
+                  onEditPoint={onEditPoint}
+                  onHover={() => setHovered({ kind: "point", id: p.id })}
+                  onLeave={() => setHovered(null)}
+                />
+              );
+            })}
+          </g>
+        </svg>
+      </div>
 
       {hovered && (
         <RouteTooltip
@@ -226,6 +235,7 @@ export function RouteDiagram({
           pos={pos}
           pointMsgs={highlights.pointMsgs}
           legMsgs={highlights.legMsgs}
+          scrollLeft={scrollLeft}
         />
       )}
     </figure>
@@ -401,8 +411,7 @@ function Node({
   onLeave?: () => void;
 }) {
   const meta = POINT_GLYPH[point.type] ?? { glyph: "•", label: point.type };
-  const code =
-    point.unLocode ?? point.iataCode ?? point.icaoCode ?? point.terminal ?? "";
+  const code = point.unLocode ?? point.iataCode ?? point.icaoCode ?? point.terminal ?? "";
   const name = point.name ?? point.city ?? "—";
   const locality = [point.city, point.country].filter(Boolean).join(", ");
 
@@ -493,13 +502,7 @@ function Node({
           {code}
         </text>
       ) : (
-        <text
-          x={12}
-          y={39}
-          fontSize={13}
-          fontWeight={600}
-          fill="hsl(var(--foreground))"
-        >
+        <text x={12} y={39} fontSize={13} fontWeight={600} fill="hsl(var(--foreground))">
           {truncate(name, 20)}
         </text>
       )}
@@ -519,12 +522,18 @@ function RouteTooltip({
   pos,
   pointMsgs,
   legMsgs,
+  scrollLeft,
 }: {
   detail: QueryDetail;
   hovered: { kind: "point" | "leg"; id: string };
   pos: Map<string, Pt>;
   pointMsgs: Map<string, string[]>;
   legMsgs: Map<string, string[]>;
+  /** Current `scrollLeft` of the diagram's horizontal scroll wrapper. The
+   * tooltip renders outside that wrapper (so it isn't clipped), but `pos`
+   * coordinates are in unscrolled SVG content space — subtract scrollLeft to
+   * keep the tooltip pinned to the hovered node while scrolled. */
+  scrollLeft: number;
 }) {
   const GLYPH_LABELS: Record<string, string> = {
     [PointType.PICKUP]: "Pickup",
@@ -539,7 +548,7 @@ function RouteTooltip({
     if (!point) return null;
 
     const at = pos.get(hovered.id);
-    const left = Math.max(0, (at?.x ?? 0) + NODE_W + 8);
+    const left = Math.max(0, (at?.x ?? 0) + NODE_W + 8 - scrollLeft);
     const top = Math.max(0, at?.y ?? 0);
 
     const cityPostal = [point.city, point.postalCode].filter(Boolean).join(" ");
@@ -553,7 +562,10 @@ function RouteTooltip({
         className="pointer-events-none z-10 rounded-md border bg-popover px-3 py-2 text-xs shadow-md max-w-[240px] space-y-1"
         style={{ position: "absolute", left, top }}
       >
-        <div className="font-semibold">{typeLabel}{code ? ` · ${code}` : ""}</div>
+        <div className="font-semibold">
+          {typeLabel}
+          {code ? ` · ${code}` : ""}
+        </div>
         {point.name && <div>{point.name}</div>}
         {point.streetAddress && <div>{point.streetAddress}</div>}
         {cityPostal && <div>{cityPostal}</div>}
@@ -562,7 +574,9 @@ function RouteTooltip({
         {point.contactPhone && <div>{point.contactPhone}</div>}
         {point.contactEmail && <div>{point.contactEmail}</div>}
         {msgs.map((m, i) => (
-          <div key={i} className="text-destructive">{m}</div>
+          <div key={i} className="text-destructive">
+            {m}
+          </div>
         ))}
       </div>
     );
@@ -575,8 +589,9 @@ function RouteTooltip({
   const oPos = leg.originPointId ? pos.get(leg.originPointId) : undefined;
   const dPos = leg.destinationPointId ? pos.get(leg.destinationPointId) : undefined;
   const midX = oPos && dPos ? (oPos.x + NODE_W + dPos.x) / 2 : (oPos?.x ?? 0) + NODE_W;
-  const midY = oPos && dPos ? (oPos.y + NODE_H / 2 + dPos.y + NODE_H / 2) / 2 : (oPos?.y ?? 0) + NODE_H / 2;
-  const left = Math.max(0, midX + 8);
+  const midY =
+    oPos && dPos ? (oPos.y + NODE_H / 2 + dPos.y + NODE_H / 2) / 2 : (oPos?.y ?? 0) + NODE_H / 2;
+  const left = Math.max(0, midX + 8 - scrollLeft);
   const top = Math.max(0, midY - 20);
 
   const originName = leg.originPointId
@@ -596,13 +611,19 @@ function RouteTooltip({
       className="pointer-events-none z-10 rounded-md border bg-popover px-3 py-2 text-xs shadow-md max-w-[240px] space-y-1"
       style={{ position: "absolute", left, top }}
     >
-      <div className="font-semibold">{leg.legCode} · {leg.mode ?? "no mode"}</div>
+      <div className="font-semibold">
+        {leg.legCode} · {leg.mode ?? "no mode"}
+      </div>
       <div>{leg.status}</div>
-      <div>{originName} → {destName}</div>
-      <div>{leg.assignedCargoIds.length} cargo</div>
+      <div>
+        {originName} → {destName}
+      </div>
+      <div>{leg.assignedPackageIds.length} packages</div>
       <div>{rollupLine}</div>
       {msgs.map((m, i) => (
-        <div key={i} className="text-destructive">{m}</div>
+        <div key={i} className="text-destructive">
+          {m}
+        </div>
       ))}
     </div>
   );
@@ -669,89 +690,48 @@ interface Layout {
 }
 
 /**
- * computeLayout — a simple longest-path layering (Stage-3 graphs are small).
- * Depth 0 = points that are never a destination (sources). Each leg pushes its
- * destination to `max(existing, depth[origin] + 1)`. Points sharing a depth are
- * stacked vertically. Isolated points (no leg) go in a trailing column so
- * orphans are still drawn.
+ * computeLayout — SVG pixel math on top of the shared `computeRouteLayout`
+ * grid engine (`@/lib/routeLayering`, shared with the FF-portal
+ * `ScopedRouteDiagram`, which needs the identical source→sink ordering over
+ * its masked, assignment-scoped subgraph — design §6 finding #1).
+ *
+ * The engine owns the topology: longest-path depth → orphan-trailing
+ * (isolated points, touched by no leg, trail one column past the deepest
+ * touched point) → column-RANK grouping (never the raw depth — a cycle can
+ * inflate raw depths past the actual column count via the relaxation's
+ * iteration cap, so rank collapses columns back to a compact 0..n-1 range
+ * that always fits the computed width) → row-stacking within each column.
+ * Called here with `splitComponents: false`, which reproduces this
+ * function's original single-grid layout exactly (verified in Task 1's
+ * review). This function only converts the resulting `{col,row}` grid into
+ * SVG coordinates and derives the viewBox `width`/`height` — including the
+ * `vBulge` room reserved for fanned edge curves and the 320px minimum width
+ * floor for very small routes.
  */
 function computeLayout(graph: ReturnType<typeof toRouteGraph>, vBulge = 0): Layout {
   const pointIds = graph.points.map((p) => p.id);
-  const depth = new Map<string, number>(pointIds.map((id) => [id, 0]));
+  const edges = graph.legs.map((l) => ({
+    originId: l.originPointId,
+    destinationId: l.destinationPointId,
+  }));
 
-  const isDestination = new Set(
-    graph.legs.map((l) => l.destinationPointId).filter(Boolean) as string[],
-  );
-  const touched = new Set<string>();
-  for (const l of graph.legs) {
-    if (l.originPointId) touched.add(l.originPointId);
-    if (l.destinationPointId) touched.add(l.destinationPointId);
-  }
+  const engineLayout = computeRouteLayout(pointIds, edges, { splitComponents: false });
 
-  // Sources (never a destination) start at 0; everything else derives.
-  // Relax depths to a fixpoint. Cap iterations to guard against a cycle
-  // (validateRoute flags cycles; we just avoid an infinite loop here).
-  const maxIter = graph.legs.length + 2;
-  for (let i = 0; i < maxIter; i++) {
-    let changed = false;
-    for (const l of graph.legs) {
-      if (!l.originPointId || !l.destinationPointId) continue;
-      const od = depth.get(l.originPointId) ?? 0;
-      const cur = depth.get(l.destinationPointId) ?? 0;
-      const next = od + 1;
-      if (next > cur) {
-        depth.set(l.destinationPointId, next);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-  // A point that IS a destination but also (erroneously) kept depth 0 through a
-  // cycle still renders; nothing else to do.
-  void isDestination;
-
-  // Orphans (no leg touches them) trail to the right after the deepest column.
-  let maxDepth = 0;
-  for (const d of depth.values()) maxDepth = Math.max(maxDepth, d);
-  const orphanDepth = graph.legs.length > 0 ? maxDepth + 1 : 0;
-  for (const id of pointIds) {
-    if (!touched.has(id)) depth.set(id, orphanDepth);
-  }
-
-  // Group by depth (stable order = point order within each column).
-  const columns = new Map<number, string[]>();
-  for (const id of pointIds) {
-    const d = depth.get(id) ?? 0;
-    const arr = columns.get(d);
-    if (arr) arr.push(id);
-    else columns.set(d, [id]);
-  }
-
-  // Position by COLUMN RANK (index in the sorted-depth list), never the raw depth.
-  // A cycle makes the relaxation loop above run to its iteration cap and inflate
-  // raw depths (e.g. 9,10,11,12), so raw depth != column index. Since `width`
-  // below derives from the column COUNT, using the raw depth for x would place
-  // nodes far outside the viewBox and clip them → a blank canvas the user can no
-  // longer click to fix the bad leg. Ranking collapses the columns back to a
-  // compact 0..n-1 range that always fits the computed width.
   const pos = new Map<string, Pt>();
-  let maxRows = 0;
-  const sortedDepths = [...columns.keys()].sort((a, b) => a - b);
-  sortedDepths.forEach((d, col) => {
-    const ids = columns.get(d)!;
-    maxRows = Math.max(maxRows, ids.length);
-    ids.forEach((id, row) => {
-      pos.set(id, {
-        x: PAD + col * (NODE_W + COL_GAP),
-        y: PAD + vBulge + row * (NODE_H + ROW_GAP),
-      });
+  for (const [id, node] of engineLayout.nodes) {
+    pos.set(id, {
+      x: PAD + node.col * (NODE_W + COL_GAP),
+      y: PAD + vBulge + node.row * (NODE_H + ROW_GAP),
     });
-  });
+  }
 
-  const cols = sortedDepths.length || 1;
+  // Unlike this renderer, the engine doesn't floor colCount to 1 for an
+  // empty graph (0 points/edges) — keep that floor here so `width` below
+  // never collapses below a single empty column's baseline.
+  const cols = engineLayout.colCount || 1;
+  const maxRows = engineLayout.maxRows;
   const width = PAD * 2 + cols * NODE_W + (cols - 1) * COL_GAP;
-  const height =
-    PAD * 2 + vBulge * 2 + maxRows * NODE_H + Math.max(0, maxRows - 1) * ROW_GAP;
+  const height = PAD * 2 + vBulge * 2 + maxRows * NODE_H + Math.max(0, maxRows - 1) * ROW_GAP;
 
   return {
     width: Math.max(width, 320),
@@ -770,9 +750,7 @@ function computeLayout(graph: ReturnType<typeof toRouteGraph>, vBulge = 0): Layo
  * group fans apart. A group of one keeps bow 0 (a straight edge). The key is unordered
  * so opposite-direction legs land in the same group and separate too.
  */
-function computeEdgeBows(
-  legs: ReturnType<typeof toRouteGraph>["legs"],
-): Map<string, number> {
+function computeEdgeBows(legs: ReturnType<typeof toRouteGraph>["legs"]): Map<string, number> {
   const groups = new Map<string, string[]>();
   for (const l of legs) {
     if (!l.originPointId || !l.destinationPointId) continue;

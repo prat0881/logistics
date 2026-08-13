@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { FfPortalLegDto, FfPortalRfqDto } from "@svyft/shared";
+import type { FfPortalLegDto, FfPortalRfqDto, QuoteDraft } from "@svyft/shared";
 import { InvalidTokenCard, ExpiredBanner, AlreadySubmittedSummary } from "./terminalStates";
 
 describe("terminalStates", () => {
@@ -34,19 +34,17 @@ describe("terminalStates", () => {
       manifest: {
         cargo: [
           {
-            cargoItemId: "c1",
-            poReference: "PO-1",
-            productName: "Pumps",
-            hsCode: "8413",
+            packageId: "pk1",
+            packageNo: "PK-1",
             packageType: "Crate",
-            isDangerous: false,
-            qty: 2,
+            packageCount: 2,
             dimL: "1.2",
             dimW: "1.0",
             dimH: "0.8",
             netWt: "900",
             grossWt: "1500",
             volumeCbm: "2.5",
+            tags: [],
           },
         ],
       } as never,
@@ -60,7 +58,6 @@ describe("terminalStates", () => {
         },
       ],
       seededCharges: [],
-      seededDensity: [{ cargoItemId: "c1", freightDensity: 1000 }],
       draft: {
         legId: "L1",
         mode: "AIR",
@@ -68,21 +65,21 @@ describe("terminalStates", () => {
         quoteValidityUntil: "2026-09-30T00:00:00.000Z",
         cargo: [
           {
-            cargoItemId: "c1",
-            grossWtT: 1.5,
+            packageId: "pk1",
+            grossWtKg: 1500,
             cbm: 2.5,
-            isDangerous: false,
-            freightDensity: 1000,
+            chargedWeightKg: 1500,
           },
         ],
         charges: [
           { zone: "MAIN_FREIGHT", presetKey: "air_freight", label: "Air Freight", amount: 3500 },
         ],
         trucking: [],
+        seaRates: [],
         warehouse: [
           { warehousePointId: "w1", position: "ORIGIN", label: "Origin warehouse", amount: 200 },
         ],
-        transit: { departureDate: null, arrivalDate: null },
+        transit: { departureDate: null, arrivalDate: null, guaranteedTransitDays: null },
         dgSurchargeNote: null,
         termsConditions: null,
       },
@@ -90,7 +87,8 @@ describe("terminalStates", () => {
 
     render(<AlreadySubmittedSummary leg={leg} rfq={rfq} />);
     expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
-    expect(screen.getByTestId("grand-total")).toBeInTheDocument();
+    // Single-variant (AIR) grand total — QuoteSummary keys the testid per rate variant.
+    expect(screen.getByTestId("grand-total-AIR")).toBeInTheDocument();
   });
 
   it("AlreadySubmittedSummary falls back to draftFromDto when leg.draft is null", () => {
@@ -112,19 +110,17 @@ describe("terminalStates", () => {
       manifest: {
         cargo: [
           {
-            cargoItemId: "c2",
-            poReference: "PO-2",
-            productName: "Valves",
-            hsCode: "8481",
+            packageId: "pk2",
+            packageNo: "PK-2",
             packageType: "Pallet",
-            isDangerous: false,
-            qty: 4,
+            packageCount: 4,
             dimL: "1.0",
             dimW: "0.8",
             dimH: "0.6",
             netWt: "800",
             grossWt: "2000",
             volumeCbm: "3.0",
+            tags: [],
           },
         ],
       } as never,
@@ -137,17 +133,140 @@ describe("terminalStates", () => {
           warehousePosition: "ORIGIN",
         },
       ],
-      seededCharges: [
-        { zone: "MAIN_FREIGHT", presetKey: "air_freight", label: "Air Freight" },
-      ],
-      seededDensity: [{ cargoItemId: "c2", freightDensity: 600 }],
+      seededCharges: [{ zone: "MAIN_FREIGHT", presetKey: "air_freight", label: "Air Freight" }],
       draft: null,
     } as never;
 
     render(<AlreadySubmittedSummary leg={leg} rfq={rfq} />);
     expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
-    const grandTotal = screen.getByTestId("grand-total");
+    // Single-variant (AIR) grand total — QuoteSummary keys the testid per rate variant.
+    const grandTotal = screen.getByTestId("grand-total-AIR");
     expect(grandTotal).toBeInTheDocument();
     expect(grandTotal).toHaveTextContent(rfq.currency!);
+  });
+
+  // ── finding #8 companion check (Task 8 follow-up): AlreadySubmittedSummary reads `leg.draft`
+  // the same way RfqPrintView does — this proves it renders the SUBMITTED totals for a real draft
+  // (the shape ff-portal.service.ts's submit() now persists onto Quote.draftJson instead of
+  // nulling it), not just that a testid element exists. A blank/reseeded draft (the pre-fix bug
+  // shape — same field, all amounts null) would render "–" here instead of these figures, so this
+  // genuinely discriminates fixed vs. broken upstream data.
+  // v4 (design D1): `charges` is common — ONE row (`rateVariant: null`), folded into EVERY
+  // variant's total equally; freight (`trucking`) is the one thing that stays per-variant, so the
+  // two variants' Grand totals now differ ONLY by their own freight rate.
+  it("AlreadySubmittedSummary renders the SUBMITTED totals (common charge + per-variant freight) for a QUOTED leg (Round 4)", () => {
+    const rfq: FfPortalRfqDto = {
+      rfqNumber: "R-3",
+      incoterms: "FOB",
+      submissionDeadline: "2026-09-01T00:00:00.000Z",
+      currency: "USD",
+      quoteValidityUntil: "2026-09-30T00:00:00.000Z",
+      freightForwarder: { companyName: "Gamma FF" },
+      legs: [],
+    };
+
+    const draft: QuoteDraft = {
+      legId: "L3",
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: "2026-09-30T00:00:00.000Z",
+      chargedWeightKg: 482.75,
+      notes: "Handle with care",
+      cargo: [{ packageId: "pk3", grossWtKg: 900, cbm: 2.5 }],
+      charges: [
+        {
+          zone: "ORIGIN",
+          definitionKey: "ROAD_STD_TAIL_LIFT",
+          presetKey: "ROAD_STD_TAIL_LIFT",
+          label: "Tail Lift",
+          amount: 100,
+          rateVariant: null,
+        },
+      ],
+      trucking: [
+        {
+          legEndpointPointId: "P1",
+          truckingType: "DEDICATED",
+          basis: "PER_TRUCK",
+          amount: 500,
+          rateVariant: "DEDICATED",
+          tonnage: null,
+        },
+        {
+          legEndpointPointId: "P1",
+          truckingType: "GROUPAGE",
+          basis: "PER_TRUCK",
+          amount: 300,
+          rateVariant: "GROUPAGE",
+          tonnage: null,
+        },
+      ],
+      seaRates: [],
+      warehouse: [],
+      transit: {
+        departureDate: "2026-08-12T00:00:00.000Z",
+        arrivalDate: "2026-08-14T00:00:00.000Z",
+        guaranteedTransitDaysByVariant: { DEDICATED: 3, GROUPAGE: 5 },
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+
+    const leg: FfPortalLegDto = {
+      legId: "L3",
+      quoteId: "Q3",
+      status: "QUOTED",
+      mode: "ROAD",
+      manifest: {
+        legId: "L3",
+        legCode: "LEG-03",
+        legName: null,
+        mode: "ROAD",
+        incoterms: null,
+        origin: { name: "Origin WH", city: "Shenzhen", country: "CN" },
+        destination: { name: "Dest WH", city: "Dubai", country: "AE" },
+        readyDate: null,
+        targetDelivery: null,
+        cargo: [
+          {
+            packageId: "pk3",
+            packageNo: "PK-3",
+            packageType: "CRATE",
+            packageCount: 1,
+            dimL: "100",
+            dimW: "50",
+            dimH: "40",
+            netWt: "800",
+            grossWt: "900",
+            volumeCbm: "2.5",
+            tags: [],
+          },
+        ],
+        frozenAt: "2026-08-01T00:00:00.000Z",
+      },
+      endpoints: [],
+      seededCharges: [
+        {
+          zone: "ORIGIN",
+          definitionKey: "ROAD_STD_TAIL_LIFT",
+          inputType: "PLAIN",
+          presetKey: "ROAD_STD_TAIL_LIFT",
+          label: "Tail Lift",
+          isPreset: true,
+          amount: null,
+        },
+      ],
+      warehouseIncluded: false,
+      draft,
+    };
+
+    render(<AlreadySubmittedSummary leg={leg} rfq={rfq} />);
+    expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
+
+    // 500 (Dedicated's own freight) + 100 (the ONE common Tail Lift charge, same for both
+    // variants) = 600; 300 (Groupage's own freight) + 100 = 400 — real arithmetic, not an echoed
+    // input, so this fails if leg.draft were the blank reseed.
+    expect(screen.getByTestId("grand-total-DEDICATED")).toHaveTextContent("600.00");
+    expect(screen.getByTestId("grand-total-GROUPAGE")).toHaveTextContent("400.00");
   });
 });

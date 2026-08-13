@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor, within, render, fireEvent } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
+import type { CargoDto } from "@svyft/shared";
 import { QueryWizardPage } from "../QueryWizardPage";
 import { renderWithProviders } from "@/test/renderWithProviders";
-import { CargoRowForm } from "./cargo/CargoRowForm";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -13,7 +13,13 @@ afterEach(() => {
 
 const QUERY_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const CARGO_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+const PACKAGE_ID_1 = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+const PACKAGE_ID_2 = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+const ITEM_ID_1 = "11111111-1111-1111-1111-111111111111";
 
+// Every QueryDetail field the wizard shell / other steps touch on mount, so the page
+// renders without unrelated crashes. `cargos` (not `cargo` — the API's actual key,
+// see shapeQuery in queries.service.ts) is overridden per-test via renderStep3().
 const baseDetail = {
   id: QUERY_ID,
   queryCode: "YAL26-0099",
@@ -47,7 +53,7 @@ const baseDetail = {
   assignedUserId: null,
   createdAt: "2026-01-01T00:00:00+00:00",
   updatedAt: "2026-01-01T00:00:00+00:00",
-  cargo: [],
+  cargos: [] as CargoDto[],
   checklist: [],
   files: [],
   points: [],
@@ -57,258 +63,317 @@ const baseDetail = {
   destination: [],
 };
 
-const cargoRowDto = {
-  id: CARGO_ID,
-  rowIndex: 0,
-  poReference: "PO-001",
-  productName: "Widget A",
-  referenceTags: [],
-  hsCode: null,
-  packageType: "Carton",
-  isDangerous: false,
-  msdsFileId: null,
-  qty: 10,
-  dimL: "100",
-  dimW: "50",
-  dimH: "50",
-  netWt: "50",
-  grossWt: "60",
-  volumeCbm: "2.5000",
-  dimUnit: "CM" as const,
-  weightUnit: "KG" as const,
-};
+/** One Cargo ("PO-1", CM/KG) with two packages: P-1 (one item, "Deck paint" x8) and P-2 (no items). */
+function oneCargoWithTwoPackages(): CargoDto {
+  return {
+    id: CARGO_ID,
+    rowIndex: 0,
+    poReference: "PO-1",
+    label: null,
+    dimUnit: "CM",
+    weightUnit: "KG",
+    packages: [
+      {
+        id: PACKAGE_ID_1,
+        rowIndex: 0,
+        packageNo: "P-1",
+        packageType: "CARTON",
+        dimL: "100",
+        dimW: "50",
+        dimH: "50",
+        grossWt: "60",
+        netWt: "50",
+        volumeCbm: "0.2500",
+        tags: [],
+        effectiveTags: [],
+        msdsFileId: null,
+        items: [
+          {
+            id: ITEM_ID_1,
+            rowIndex: 0,
+            product: "Deck paint",
+            qty: "8",
+            uom: "PC",
+            hsCode: null,
+            tags: [],
+          },
+        ],
+      },
+      {
+        id: PACKAGE_ID_2,
+        rowIndex: 1,
+        packageNo: "P-2",
+        packageType: "PALLET",
+        dimL: "80",
+        dimW: "40",
+        dimH: "40",
+        grossWt: "30",
+        netWt: "25",
+        volumeCbm: "0.1280",
+        tags: [],
+        effectiveTags: [],
+        msdsFileId: null,
+        items: [],
+      },
+    ],
+    packageCount: 2,
+    grossWeightKg: "90",
+    volumeCbm: "0.3780",
+    tags: [],
+    chargeableWeight: null,
+  };
+}
 
-const detailWithCargo = { ...baseDetail, cargo: [cargoRowDto] };
+/**
+ * One Cargo ("PO-2", MM/GM — deliberately NON-canonical units) with one package, one
+ * item. Canonical storage is always cm/kg; dimUnit/weightUnit here are chosen so
+ * `fromCanonicalDim`/`fromCanonicalWeight` are NOT identity functions, unlike
+ * `oneCargoWithTwoPackages` above (CM/KG, where conversion is a no-op and the display
+ * test can't distinguish "converted correctly" from "raw canonical value echoed as-is").
+ * Canonical dims 15/9/4 cm -> 150/90/40 mm; canonical gross 2.75 kg -> 2750 g — chosen to
+ * be distinctive from both the canonical values and from each other.
+ */
+function oneCargoWithNonCanonicalUnits(): CargoDto {
+  return {
+    id: CARGO_ID,
+    rowIndex: 0,
+    poReference: "PO-2",
+    label: null,
+    dimUnit: "MM",
+    weightUnit: "GM",
+    packages: [
+      {
+        id: PACKAGE_ID_1,
+        rowIndex: 0,
+        packageNo: "P-9",
+        packageType: "CRATE",
+        dimL: "15",
+        dimW: "9",
+        dimH: "4",
+        grossWt: "2.75",
+        netWt: null,
+        volumeCbm: "0.0005",
+        tags: [],
+        effectiveTags: [],
+        msdsFileId: null,
+        items: [
+          {
+            id: ITEM_ID_1,
+            rowIndex: 0,
+            product: "Deck paint",
+            qty: "8",
+            uom: "PC",
+            hsCode: null,
+            tags: [],
+          },
+        ],
+      },
+    ],
+    packageCount: 1,
+    grossWeightKg: "2.75",
+    volumeCbm: "0.0005",
+    tags: [],
+    chargeableWeight: null,
+  };
+}
 
-/** Navigate to Step 3 (Cargo) in the wizard */
+function jsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+    blob: () => Promise.resolve(new Blob()),
+  } as Response;
+}
+
+/**
+ * Navigate to Step 3 (Cargo) in the wizard. Scoped to the Stepper's own <nav> (not a
+ * bare `getByRole("button", { name: /cargo/i })`) because the new cargo table's own
+ * "+ Add Cargo" button also matches that name once Step3Cargo is on screen.
+ */
 async function navigateToStep3() {
   await screen.findByText("YAL26-0099");
-  const cargoTab = screen.getByRole("button", { name: /cargo/i });
+  const stepper = screen.getByRole("navigation", { name: /progress/i });
+  const cargoTab = within(stepper).getByRole("button", { name: /cargo/i });
   await userEvent.click(cargoTab);
 }
 
+/**
+ * Render the wizard routed to an existing query's Cargo step, with `detail.cargos`
+ * seeded from `cargos`. Mirrors how earlier Step3Cargo tests inject `detail` (mock
+ * /api/auth/me + GET /api/queries/:id, then navigate via QueryWizardPage), packaged
+ * as a reusable helper. `extra` lets a test layer in additional routes (export,
+ * delete, ...) — return a Response to handle a call, or undefined to fall through.
+ */
+async function renderStep3(
+  opts: {
+    cargos?: CargoDto[];
+    extra?: (url: string, init?: RequestInit) => Response | undefined;
+  } = {},
+) {
+  const detail = { ...baseDetail, cargos: opts.cargos ?? [] };
+  const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+    if (url.includes("/api/auth/me"))
+      return Promise.resolve(
+        jsonResponse({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
+      );
+    if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET"))
+      return Promise.resolve(jsonResponse(detail));
+    const extraRes = opts.extra?.(url, init);
+    if (extraRes) return Promise.resolve(extraRes);
+    return Promise.resolve(jsonResponse({}));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  renderWithProviders(
+    <Routes>
+      <Route path="/queries/:id" element={<QueryWizardPage />} />
+    </Routes>,
+    { route: `/queries/${QUERY_ID}?step=2` },
+  );
+  await navigateToStep3();
+  return { fetchMock };
+}
+
 describe("Step3Cargo", () => {
-  it("opens the Add-cargo dialog with Save + Cancel", async () => {
+  it("shows a cargo row with derived totals and expands to packages then items", async () => {
     const user = userEvent.setup();
+    await renderStep3({ cargos: [oneCargoWithTwoPackages()] });
 
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}`)
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(baseDetail),
-          text: () => Promise.resolve(JSON.stringify(baseDetail)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
+    const cargoRow = (await screen.findByText("PO-1")).closest("tr")!;
+    expect(within(cargoRow).getByText("2")).toBeInTheDocument(); // package count
 
-    vi.stubGlobal("fetch", fetchMock);
+    await user.click(screen.getByLabelText("Expand cargo PO-1"));
+    expect(await screen.findByText("P-1")).toBeInTheDocument(); // package row
 
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=2` },
-    );
-
-    await navigateToStep3();
-
-    await user.click(screen.getByRole("button", { name: /add row/i }));
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("button", { name: /^save$/i })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Expand package P-1"));
+    expect(await screen.findByText("Deck paint")).toBeInTheDocument(); // item row
   });
 
-  it("adds a cargo row: POSTs with poReference + grossWt + dims then shows the row in the table", async () => {
+  it("converts non-canonical units (MM/GM) for display instead of echoing raw canonical cm/kg", async () => {
     const user = userEvent.setup();
+    await renderStep3({ cargos: [oneCargoWithNonCanonicalUnits()] });
 
-    // After POST, the query GET should return the updated detail with cargo
-    let callCount = 0;
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
+    const cargoRow = (await screen.findByText("PO-2")).closest("tr")!;
+    // Σ Gross: canonical 2.75 kg -> 2750 g (GM) — a stub identity conversion would show "2.75"
+    expect(within(cargoRow).getByText("2750.00")).toBeInTheDocument();
+    expect(within(cargoRow).getByText("GM")).toBeInTheDocument();
+    expect(within(cargoRow).getByText("Deck paint ×8")).toBeInTheDocument(); // Contents cell
 
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET")) {
-        callCount++;
-        // First load: no cargo. After POST invalidation: with cargo
-        const body = callCount > 1 ? detailWithCargo : baseDetail;
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(body),
-          text: () => Promise.resolve(JSON.stringify(body)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      }
+    await user.click(screen.getByLabelText("Expand cargo PO-2"));
+    const pkgRow = (await screen.findByText("P-9")).closest("tr")!;
 
-      if (url === `/api/queries/${QUERY_ID}/cargo` && init?.method === "POST")
-        return Promise.resolve({
-          ok: true, status: 201,
-          json: () => Promise.resolve(cargoRowDto),
-          text: () => Promise.resolve(JSON.stringify(cargoRowDto)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
+    // L/W/H: canonical 15/9/4 cm -> 150/90/40 mm — a stub identity conversion would show 15/9/4
+    expect(within(pkgRow).getByText("150")).toBeInTheDocument(); // L
+    expect(within(pkgRow).getByText("90")).toBeInTheDocument(); // W
+    expect(within(pkgRow).getByText("40")).toBeInTheDocument(); // H
+    expect(within(pkgRow).getAllByText("MM")).toHaveLength(3);
 
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
+    // Gross: canonical 2.75 kg -> 2750 g, same math as the cargo-row rollup above
+    expect(within(pkgRow).getByText("2750.00")).toBeInTheDocument();
+    expect(within(pkgRow).getByText("GM")).toBeInTheDocument();
+  });
 
-    vi.stubGlobal("fetch", fetchMock);
+  it("shows an empty state when there are no cargo rows", async () => {
+    await renderStep3({ cargos: [] });
+    expect(screen.getByText(/no cargo rows yet/i)).toBeInTheDocument();
+  });
 
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=2` },
+  it("removes a cargo row: DELETEs /cargo/:cid after confirmation", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
     );
 
-    await navigateToStep3();
+    const { fetchMock } = await renderStep3({
+      cargos: [oneCargoWithTwoPackages()],
+      extra: (url, init) =>
+        url === `/api/queries/${QUERY_ID}/cargo/${CARGO_ID}` && init?.method === "DELETE"
+          ? jsonResponse({}, 204)
+          : undefined,
+    });
 
-    // Click "+ Add Row" button to open the add form
-    const addRowBtn = await screen.findByRole("button", { name: /add row/i });
-    await user.click(addRowBtn);
+    await screen.findByText("PO-1");
+    await user.click(screen.getByRole("button", { name: /remove/i }));
 
-    // Fill in required fields
-    const poInput = await screen.findByPlaceholderText(/PO-001/);
-    await user.type(poInput, "PO-001");
+    await waitFor(() => {
+      const deleteCall = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          url === `/api/queries/${QUERY_ID}/cargo/${CARGO_ID}` &&
+          (init as RequestInit)?.method === "DELETE",
+      );
+      expect(deleteCall).toBeTruthy();
+    });
+  });
 
-    const productInput = screen.getByPlaceholderText(/product name/i);
-    await user.type(productInput, "Widget A");
+  it("opens CargoPopup from + Add Cargo with unit selectors defaulting CM/KG, and Save POSTs dimUnit/weightUnit (Task 13)", async () => {
+    const user = userEvent.setup();
+    const posted: Record<string, unknown>[] = [];
+    const createdCargo: CargoDto = {
+      id: "new-cargo-id",
+      rowIndex: 0,
+      poReference: "PO-9",
+      label: null,
+      dimUnit: "CM",
+      weightUnit: "KG",
+      packages: [],
+      packageCount: 0,
+      grossWeightKg: "0",
+      volumeCbm: "0",
+      tags: [],
+      chargeableWeight: null,
+    };
 
-    const pkgInput = screen.getByPlaceholderText(/carton/i);
-    await user.type(pkgInput, "Carton");
+    await renderStep3({
+      cargos: [],
+      extra: (url, init) => {
+        if (url === `/api/queries/${QUERY_ID}/cargo` && init?.method === "POST") {
+          posted.push(JSON.parse(init.body as string));
+          return jsonResponse(createdCargo, 201);
+        }
+        return undefined;
+      },
+    });
 
-    // Fill numeric fields
-    const qtyInput = await screen.findByPlaceholderText("1");
-    await user.type(qtyInput, "10");
+    await user.click(screen.getByRole("button", { name: /\+ add cargo/i }));
+    const dialog = await screen.findByRole("dialog");
 
-    const lInput = screen.getByPlaceholderText("100");
-    await user.type(lInput, "100");
+    // Radix Select renders a hidden native <select> for accessibility/form purposes —
+    // drive/read those directly (jsdom can't do real pointer-driven popups). DOM order:
+    // Dimension Unit, then Weight Unit.
+    const hiddenSelects = dialog.querySelectorAll<HTMLSelectElement>('select[aria-hidden="true"]');
+    expect(hiddenSelects).toHaveLength(2);
+    expect(hiddenSelects[0].value).toBe("CM");
+    expect(hiddenSelects[1].value).toBe("KG");
 
-    // W and H both have placeholder "50" — use getAllByPlaceholderText
-    const fiftyInputs = screen.getAllByPlaceholderText("50");
-    await user.type(fiftyInputs[0], "50");
-    await user.type(fiftyInputs[1], "50");
-
-    const grossWtInput = screen.getByPlaceholderText("60");
-    await user.type(grossWtInput, "60");
-
-    // Submit — the dialog's form submit button is "Save"
-    const dialog = screen.getByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: /^save$/i }));
 
-    // Verify POST was called with required fields
-    await waitFor(() => {
-      const postCall = fetchMock.mock.calls.find(
-        ([url, init]) =>
-          url === `/api/queries/${QUERY_ID}/cargo` && (init as RequestInit)?.method === "POST",
-      );
-      expect(postCall).toBeTruthy();
-      const body = JSON.parse((postCall![1] as RequestInit).body as string);
-      expect(body.poReference).toBe("PO-001");
-      expect(body.grossWt).toBe(60);
-      expect(body.dimL).toBe(100);
-      expect(body.dimW).toBe(50);
-      expect(body.dimH).toBe(50);
-    });
-
-    // The row should now appear in the table after cache invalidation + refetch
-    await waitFor(() => {
-      expect(screen.getByText("PO-001")).toBeInTheDocument();
-    });
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toMatchObject({ dimUnit: "CM", weightUnit: "KG" });
   });
 
-  it("ticking DG on a saved row's edit form reveals the MSDS file input", async () => {
+  it("Edit opens CargoPopup pre-filled with the cargo's own PO/label/units (Task 13)", async () => {
     const user = userEvent.setup();
+    await renderStep3({ cargos: [oneCargoWithTwoPackages()] });
 
-    const dgCargoRow = { ...cargoRowDto, isDangerous: false };
-    const detailWithDgCargo = { ...baseDetail, cargo: [dgCargoRow] };
+    await screen.findByText("PO-1");
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    const dialog = await screen.findByRole("dialog");
 
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}`)
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(detailWithDgCargo),
-          text: () => Promise.resolve(JSON.stringify(detailWithDgCargo)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=2` },
-    );
-
-    await navigateToStep3();
-
-    // Wait for the cargo table row to appear
-    await screen.findByText("PO-001");
-
-    // Click Edit on the row
-    const editBtn = screen.getByRole("button", { name: /edit/i });
-    await user.click(editBtn);
-
-    // DG checkbox should not be checked initially
-    const dgCheckboxes = screen.getAllByRole("checkbox");
-    const dgCheckbox = dgCheckboxes.find((cb) => {
-      const label = cb.closest("div")?.querySelector("label");
-      return label?.textContent?.includes("Dangerous");
-    });
-    expect(dgCheckbox).toBeTruthy();
-
-    // MSDS input should not be visible yet
-    expect(screen.queryByLabelText(/upload msds/i)).toBeNull();
-
-    // Tick the DG checkbox
-    await user.click(dgCheckbox!);
-
-    // MSDS file input should now be visible
-    await waitFor(() => {
-      expect(screen.getByLabelText(/upload msds/i)).toBeInTheDocument();
-    });
+    expect(within(dialog).getByDisplayValue("PO-1")).toBeInTheDocument();
+    const hiddenSelects = dialog.querySelectorAll<HTMLSelectElement>('select[aria-hidden="true"]');
+    expect(hiddenSelects[0].value).toBe("CM");
+    expect(hiddenSelects[1].value).toBe("KG");
   });
 
   it("clicking Export triggers the blob download flow (POST + createObjectURL + <a>.click)", async () => {
     const user = userEvent.setup();
 
-    const fakeBlob = new Blob(["xlsx"], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const fakeBlob = new Blob(["xlsx"], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
     const fakeObjectUrl = "blob:http://localhost/export-uuid";
 
     const createObjectURLMock = vi.fn(() => fakeObjectUrl);
@@ -330,428 +395,34 @@ describe("Step3Cargo", () => {
       return origCreate(tag);
     });
 
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}`)
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(baseDetail),
-          text: () => Promise.resolve(JSON.stringify(baseDetail)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}/cargo/export` && init?.method === "POST")
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({}),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(fakeBlob),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
+    const { fetchMock } = await renderStep3({
+      extra: (url, init) =>
+        url === `/api/queries/${QUERY_ID}/cargo/export` && init?.method === "POST"
+          ? ({
+              ok: true,
+              status: 200,
+              json: () => Promise.resolve({}),
+              text: () => Promise.resolve(""),
+              blob: () => Promise.resolve(fakeBlob),
+            } as Response)
+          : undefined,
     });
 
-    vi.stubGlobal("fetch", fetchMock);
+    await user.click(screen.getByRole("button", { name: /export to excel/i }));
 
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=2` },
-    );
-
-    await navigateToStep3();
-
-    // Click Export
-    const exportBtn = await screen.findByRole("button", { name: /export to excel/i });
-    await user.click(exportBtn);
-
-    // Assert export POST was made
     await waitFor(() => {
       const exportCall = fetchMock.mock.calls.find(
         ([url, init]) =>
-          url === `/api/queries/${QUERY_ID}/cargo/export` && (init as RequestInit)?.method === "POST",
+          url === `/api/queries/${QUERY_ID}/cargo/export` &&
+          (init as RequestInit)?.method === "POST",
       );
       expect(exportCall).toBeTruthy();
     });
 
-    // Assert createObjectURL was called and click triggered
     await waitFor(() => {
       expect(createObjectURLMock).toHaveBeenCalledWith(fakeBlob);
       expect(clickMock).toHaveBeenCalled();
       expect(revokeObjectURLMock).toHaveBeenCalledWith(fakeObjectUrl);
-    });
-  });
-
-  it("saves a cargo row with a blank PO and offers the Out of Gauge Cargo tag", async () => {
-    const submit = vi.fn().mockResolvedValue(undefined);
-
-    // Track what was POSTed to the cargo endpoint
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}`)
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(baseDetail),
-          text: () => Promise.resolve(JSON.stringify(baseDetail)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}/cargo` && init?.method === "POST") {
-        const body = JSON.parse((init as RequestInit).body as string);
-        submit(body);
-        return Promise.resolve({
-          ok: true, status: 201,
-          json: () => Promise.resolve({ ...cargoRowDto, poReference: "" }),
-          text: () => Promise.resolve(JSON.stringify(cargoRowDto)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      }
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=2` },
-    );
-
-    await navigateToStep3();
-
-    // Open add-cargo dialog
-    const addRowBtn = await screen.findByRole("button", { name: /add row/i });
-    await userEvent.click(addRowBtn);
-
-    // Fill required fields — leave PO blank
-    const productInput = await screen.findByPlaceholderText(/product name/i);
-    await userEvent.type(productInput, "Widget");
-
-    const pkgInput = screen.getByPlaceholderText(/carton/i);
-    await userEvent.type(pkgInput, "Box");
-
-    const qtyInput = screen.getByPlaceholderText("1");
-    await userEvent.type(qtyInput, "1");
-
-    const lInput = screen.getByPlaceholderText("100");
-    await userEvent.type(lInput, "1");
-
-    const fiftyInputs = screen.getAllByPlaceholderText("50");
-    await userEvent.type(fiftyInputs[0], "1");
-    await userEvent.type(fiftyInputs[1], "1");
-
-    const grossWtInput = screen.getByPlaceholderText("60");
-    await userEvent.type(grossWtInput, "1");
-
-    // The "Out of Gauge Cargo" label should be visible (tag label via referenceTagLabel)
-    expect(screen.getByText("Out of Gauge Cargo")).toBeInTheDocument();
-
-    // Submit without filling PO
-    const dialog = screen.getByRole("dialog");
-    await userEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
-
-    // Submit should have been called with poReference: ""
-    await waitFor(() => {
-      expect(submit).toHaveBeenCalledWith(expect.objectContaining({ poReference: "" }));
-    });
-  });
-
-  it("removes a cargo row: DELETEs /cargo/:cid after confirmation", async () => {
-    const user = userEvent.setup();
-
-    // Stub window.confirm to always return true
-    vi.stubGlobal("confirm", vi.fn(() => true));
-
-    let callCount = 0;
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}` && (!init?.method || init.method === "GET")) {
-        callCount++;
-        const body = callCount > 1 ? baseDetail : detailWithCargo;
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(body),
-          text: () => Promise.resolve(JSON.stringify(body)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      }
-      if (url === `/api/queries/${QUERY_ID}/cargo/${CARGO_ID}` && init?.method === "DELETE")
-        return Promise.resolve({
-          ok: true, status: 204,
-          json: () => Promise.resolve({}),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=2` },
-    );
-
-    await navigateToStep3();
-
-    // Wait for cargo row to appear
-    await screen.findByText("PO-001");
-
-    // Click the remove button
-    const removeBtn = screen.getByRole("button", { name: /remove/i });
-    await user.click(removeBtn);
-
-    // Verify DELETE was called
-    await waitFor(() => {
-      const deleteCall = fetchMock.mock.calls.find(
-        ([url, init]) =>
-          url === `/api/queries/${QUERY_ID}/cargo/${CARGO_ID}` &&
-          (init as RequestInit)?.method === "DELETE",
-      );
-      expect(deleteCall).toBeTruthy();
-    });
-  });
-
-  it("S3.1: renders a Reference Tags icon column (tags + DG) and drops the DG Yes/No text", async () => {
-    const heavyRow = { ...cargoRowDto, id: "aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa", rowIndex: 0, poReference: "PO-HEAVY", referenceTags: ["HEAVY"], isDangerous: false };
-    const dgRow = { ...cargoRowDto, id: "bbbb2222-bbbb-bbbb-bbbb-bbbbbbbbbbbb", rowIndex: 1, poReference: "PO-DG", referenceTags: [], isDangerous: true };
-    const detailWithTagged = { ...baseDetail, cargo: [heavyRow, dgRow] };
-
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }), text: () => Promise.resolve(""), blob: () => Promise.resolve(new Blob()) } as Response);
-      if (url === `/api/queries/${QUERY_ID}`)
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(detailWithTagged), text: () => Promise.resolve(JSON.stringify(detailWithTagged)), blob: () => Promise.resolve(new Blob()) } as Response);
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), text: () => Promise.resolve(""), blob: () => Promise.resolve(new Blob()) } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=2` },
-    );
-
-    await navigateToStep3();
-    await screen.findByText("PO-HEAVY");
-
-    expect(screen.getByRole("columnheader", { name: /reference tags/i })).toBeInTheDocument();
-    expect(screen.queryByRole("columnheader", { name: "DG" })).toBeNull();
-
-    const heavyRowEl = screen.getByText("PO-HEAVY").closest("tr")!;
-    expect(within(heavyRowEl).getByLabelText("Heavy")).toBeInTheDocument();
-    expect(within(heavyRowEl).queryByText("No")).toBeNull();
-
-    const dgRowEl = screen.getByText("PO-DG").closest("tr")!;
-    expect(within(dgRowEl).getByLabelText("Dangerous goods")).toBeInTheDocument();
-    expect(within(dgRowEl).queryByText("Yes")).toBeNull();
-  });
-});
-
-  it("I1: cargo review table shows dim and weight units alongside raw values", async () => {
-    const mmCargoRow = {
-      ...cargoRowDto,
-      dimL: "1000",
-      dimW: "500",
-      dimH: "400",
-      grossWt: "5000",
-      netWt: "4000",
-      dimUnit: "MM" as const,
-      weightUnit: "GM" as const,
-      volumeCbm: "0.4000",
-    };
-    const detailWithMmCargo = { ...baseDetail, cargo: [mmCargoRow] };
-
-    const fetchMock = vi.fn((url: string, _init?: RequestInit) => {
-      if (url.includes("/api/auth/me"))
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve({ user: { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" } }),
-          text: () => Promise.resolve(""),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      if (url === `/api/queries/${QUERY_ID}`)
-        return Promise.resolve({
-          ok: true, status: 200,
-          json: () => Promise.resolve(detailWithMmCargo),
-          text: () => Promise.resolve(JSON.stringify(detailWithMmCargo)),
-          blob: () => Promise.resolve(new Blob()),
-        } as Response);
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({}),
-        text: () => Promise.resolve(""),
-        blob: () => Promise.resolve(new Blob()),
-      } as Response);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id" element={<QueryWizardPage />} />
-      </Routes>,
-      { route: `/queries/${QUERY_ID}?step=2` },
-    );
-    await navigateToStep3();
-    await screen.findByText("Widget A");
-
-    // Unit labels "MM" should appear alongside dim values, "GM" alongside weights
-    const allMm = screen.getAllByText("MM");
-    expect(allMm.length).toBeGreaterThanOrEqual(3); // L, W, H each have MM label
-    const allGm = screen.getAllByText("GM");
-    expect(allGm.length).toBeGreaterThanOrEqual(1); // gross wt has GM label
-  });
-
-// ── Direct CargoRowForm unit tests (unit dropdowns + CBM preview) ──────────────
-
-/** Render the Add form in isolation and return a { submit } spy. */
-function renderAddCargo() {
-  const submit = vi.fn().mockResolvedValue(undefined);
-  render(
-    <CargoRowForm mode="add" onSubmit={submit} onCancel={() => {}} />,
-  );
-  return { submit };
-}
-
-/** Fill the minimum required fields in the Add form. */
-async function fillRequired(fields: {
-  productName: string;
-  packageType: string;
-  qty: string;
-  dimL: string;
-  dimW: string;
-  dimH: string;
-  grossWt: string;
-}) {
-  await userEvent.type(screen.getByPlaceholderText(/product name/i), fields.productName);
-  await userEvent.type(screen.getByPlaceholderText(/carton/i), fields.packageType);
-  await userEvent.type(screen.getByPlaceholderText("1"), fields.qty);
-  await userEvent.type(screen.getByPlaceholderText("100"), fields.dimL);
-  const fiftyInputs = screen.getAllByPlaceholderText("50");
-  await userEvent.type(fiftyInputs[0], fields.dimW);
-  await userEvent.type(fiftyInputs[1], fields.dimH);
-  await userEvent.type(screen.getByPlaceholderText("60"), fields.grossWt);
-}
-
-/**
- * Drive a Radix Select by changing the hidden native <select aria-hidden="true">
- * that is a sibling of the SelectTrigger.
- * el is the SelectTrigger (found via getByLabelText on aria-label).
- * We walk up the DOM to the closest FormItem container and then find
- * the hidden native select within it.
- */
-function selectOption(el: HTMLElement, value: string) {
-  // The Radix SelectTrigger is inside a FormItem div.
-  // The native <select aria-hidden="true"> is in the same FormItem (rendered by Radix).
-  // Walk up to the FormItem container and search within it.
-  const container = el.closest(".space-y-2") ?? el.closest('[class*="space-y"]') ?? el.parentElement?.parentElement ?? el.parentElement;
-  const nativeSelect = container
-    ? container.querySelector<HTMLSelectElement>('select[aria-hidden="true"]')
-    : null;
-  if (nativeSelect) {
-    fireEvent.change(nativeSelect, { target: { value } });
-  } else {
-    // Fallback: fire directly on el (may not update RHF but at least doesn't throw)
-    fireEvent.change(el, { target: { value } });
-  }
-}
-
-/** Click the Save button. */
-async function clickSave() {
-  await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
-}
-
-describe("CargoRowForm — unit dropdowns + CBM preview", () => {
-  it("has one dim-unit (CM/MM) + one weight-unit (KG/GM) selector and CBM tracks the unit", async () => {
-    const { submit } = renderAddCargo();
-    // one dropdown each (default CM/KG)
-    const dimUnit = screen.getByLabelText("Dimension unit");
-    const wtUnit = screen.getByLabelText("Weight unit");
-    await fillRequired({ productName: "W", packageType: "Box", qty: "2", dimL: "1000", dimW: "500", dimH: "400", grossWt: "1" });
-    selectOption(dimUnit, "MM");          // drive the hidden native <select>
-    // CBM preview shows 0.4000 for the mm box
-    expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("0.4000");
-    selectOption(wtUnit, "GM");
-    await clickSave();
-    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ dimUnit: "MM", weightUnit: "GM" }));
-  });
-
-  it("T13: edit form CBM preview is live — changing dims updates the preview", async () => {
-    const row: typeof cargoRowDto = {
-      ...cargoRowDto,
-      qty: 2,
-      dimL: "100",
-      dimW: "50",
-      dimH: "40",
-      dimUnit: "CM",
-      weightUnit: "KG",
-      volumeCbm: "0.4000",
-    };
-    const onSubmit = vi.fn().mockResolvedValue(undefined);
-    render(
-      <CargoRowForm
-        mode="edit"
-        row={row}
-        onSubmit={onSubmit}
-        onCancel={() => {}}
-        uploadMsds={vi.fn()}
-      />,
-    );
-
-    // Initial CBM: 100×50×40×2 / 1e6 = 0.4 m³ — loaded from form defaultValues
-    const cbmInput = screen.getByLabelText("Volume (CBM)");
-    expect(cbmInput).toHaveValue("0.4000");
-
-    // Change L to 200 using fireEvent.change for reliable numeric field update
-    // dimL is the only input with value "100" (qty=2, dimW=50, dimH=40, grossWt=from row)
-    const lInput = screen.getByDisplayValue("100");
-    fireEvent.change(lInput, { target: { value: "200" } });
-    // 200×50×40×2 / 1e6 = 0.8 m³
-    await waitFor(() => {
-      expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("0.8000");
-    });
-
-    // Switch dim unit from CM to MM via the hidden native select
-    const dimUnitTrigger = screen.getByLabelText("Dimension unit");
-    selectOption(dimUnitTrigger, "MM");
-    // Same dims in MM: 200×50×40×2 / 1e9 = 0.0008 m³
-    await waitFor(() => {
-      expect(screen.getByLabelText("Volume (CBM)")).toHaveValue("0.0008");
     });
   });
 });

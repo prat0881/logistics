@@ -12,9 +12,9 @@ describe("ReferenceTagIcons", () => {
     expect(screen.queryByLabelText("Dangerous goods")).toBeNull();
   });
 
-  it("renders the DG icon when isDangerous is true", () => {
-    render(<ReferenceTagIcons tags={[]} isDangerous />);
-    expect(screen.getByLabelText("Dangerous goods")).toBeInTheDocument();
+  it("renders the DG icon when DG is in tags", () => {
+    render(<ReferenceTagIcons tags={["DG"]} />);
+    expect(screen.getByLabelText("Dangerous Goods")).toBeInTheDocument();
   });
 
   it("returns null (empty) when tags=[] and not dangerous", () => {

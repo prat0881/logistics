@@ -9,14 +9,21 @@ import type {
 
 /**
  * toRouteGraph — pure mapper from the wizard's `QueryDetail` into the shared
- * `RouteGraph` shape consumed by `validateRoute` (browser-safe engine).
+ * `RouteGraph` shape consumed by `validateRoute` (browser-safe engine). This is
+ * the CLIENT mirror of the API's `routing.service.ts` `buildGraph` — keep the
+ * two in sync.
  *
  * Field mapping is 1:1 with the shared `RouteGraph` contract:
  *   - `query`      ← id / readyDate / targetDelivery
  *   - `points`     ← every point endpoint field (types/codes/contacts)
  *   - `legs`       ← legCode / mode / endpoints / dates
- *   - `cargo`      ← poReference / isDangerous / msdsFileId / grossWt / volumeCbm
- *   - `legCargo`   ← flat-mapped from each leg's `assignedCargoIds`
+ *   - `cargo`      ← one RouteCargo per Package (the atomic unit that rides legs):
+ *                    poReference from the parent Cargo grouping, productName/rowIndex/
+ *                    msdsFileId/grossWt/volumeCbm from the Package, isDangerous from the
+ *                    Package's effectiveTags (own ∪ item tags)
+ *   - `legCargo`   ← flat-mapped from each leg's `assignedPackageIds` (packageId rides the
+ *                    legacy `cargoItemId` slot — RouteGraph is grain-agnostic, so no shared
+ *                    type change is needed for the new grain)
  *
  * Prisma `Decimal` columns arrive as strings in the DTO; they are passed
  * through untouched — `validateRoute` coerces them itself.
@@ -51,19 +58,21 @@ export function toRouteGraph(detail: QueryDetail): RouteGraph {
     targetDelivery: l.targetDelivery,
   }));
 
-  const cargo: RouteCargo[] = detail.cargo.map((c) => ({
-    id: c.id,
-    poReference: c.poReference,
-    productName: c.productName,
-    rowIndex: c.rowIndex,
-    isDangerous: c.isDangerous,
-    msdsFileId: c.msdsFileId,
-    grossWt: c.grossWt,
-    volumeCbm: c.volumeCbm,
-  }));
+  const cargo: RouteCargo[] = detail.cargos.flatMap((c) =>
+    c.packages.map((p) => ({
+      id: p.id,
+      poReference: c.poReference ?? "", // parent cargo's PO; RouteCargo.poReference is `string`
+      productName: p.packageNo, // best per-package label (cargoLabel fallback)
+      rowIndex: p.rowIndex,
+      isDangerous: p.effectiveTags.includes("DG"),
+      msdsFileId: p.msdsFileId,
+      grossWt: p.grossWt, // string DTO value, passed through (validateRoute coerces)
+      volumeCbm: p.volumeCbm,
+    })),
+  );
 
   const legCargo = detail.legs.flatMap((l) =>
-    l.assignedCargoIds.map((cid) => ({ legId: l.id, cargoItemId: cid })),
+    l.assignedPackageIds.map((pid) => ({ legId: l.id, cargoItemId: pid })),
   );
 
   return {

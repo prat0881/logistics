@@ -3,7 +3,19 @@ import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 
 // ── FfScope types ──────────────────────────────────────────────────────────────
-type PointLite = { id: string; type: string; name: string | null; country: string | null };
+// The 4 code columns are all non-sensitive (public location codes, unlike street
+// address/contact fields) — ff-portal.service.ts's resolveScope reads them off the live point
+// to set FfPortalEndpoint.code, same precedence as the executive RouteDiagram.
+type PointLite = {
+  id: string;
+  type: string;
+  name: string | null;
+  country: string | null;
+  iataCode: string | null;
+  unLocode: string | null;
+  icaoCode: string | null;
+  terminal: string | null;
+};
 
 export interface ScopedQuote {
   id: string;
@@ -63,8 +75,30 @@ export class RfqTokenService {
                 id: true,
                 legCode: true,
                 mode: true,
-                originPoint: { select: { id: true, type: true, name: true, country: true } },
-                destinationPoint: { select: { id: true, type: true, name: true, country: true } },
+                originPoint: {
+                  select: {
+                    id: true,
+                    type: true,
+                    name: true,
+                    country: true,
+                    iataCode: true,
+                    unLocode: true,
+                    icaoCode: true,
+                    terminal: true,
+                  },
+                },
+                destinationPoint: {
+                  select: {
+                    id: true,
+                    type: true,
+                    name: true,
+                    country: true,
+                    iataCode: true,
+                    unLocode: true,
+                    icaoCode: true,
+                    terminal: true,
+                  },
+                },
               },
             },
           },

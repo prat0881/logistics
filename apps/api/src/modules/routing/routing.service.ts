@@ -2,8 +2,10 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import {
+  effectiveTags,
   validateRoute,
   type Finding,
+  type ReferenceTag,
   type RouteCargo,
   type RouteGraph,
   type RouteLeg,
@@ -24,61 +26,66 @@ export class RoutingService {
       select: { id: true, readyDate: true, targetDelivery: true },
     });
     if (!query) throw new NotFoundException("Query not found");
-    const [points, legs, cargo, legCargo] = await Promise.all([
+    const [points, legs, packages, legPackages] = await Promise.all([
       client.point.findMany({ where: { queryId } }),
       client.leg.findMany({ where: { queryId } }),
-      client.cargoItem.findMany({
+      client.package.findMany({
         where: { queryId },
-        select: { id: true, poReference: true, productName: true, rowIndex: true, isDangerous: true, msdsFileId: true, grossWt: true, volumeCbm: true },
+        include: { cargo: { select: { poReference: true } }, items: { select: { tags: true } } },
       }),
-      client.legCargo.findMany({ where: { leg: { queryId } }, select: { legId: true, cargoItemId: true } }),
+      client.legPackage.findMany({
+        where: { package: { queryId } },
+        select: { legId: true, packageId: true },
+      }),
     ]);
     return {
       query: { id: query.id, readyDate: query.readyDate, targetDelivery: query.targetDelivery },
-      points: points.map(
-        (p): RoutePoint => ({
-          id: p.id,
-          type: p.type,
-          name: p.name,
-          streetAddress: p.streetAddress,
-          city: p.city,
-          postalCode: p.postalCode,
-          country: p.country,
-          contactName: p.contactName,
-          contactPhone: p.contactPhone,
-          contactEmail: p.contactEmail,
-          warehouseType: p.warehouseType,
-          iataCode: p.iataCode,
-          icaoCode: p.icaoCode,
-          unLocode: p.unLocode,
-          terminal: p.terminal,
-          timezone: p.timezone,
-        }),
-      ),
-      legs: legs.map(
-        (l): RouteLeg => ({
-          id: l.id,
-          legCode: l.legCode,
-          mode: l.mode,
-          originPointId: l.originPointId,
-          destinationPointId: l.destinationPointId,
-          readyDate: l.readyDate,
-          targetDelivery: l.targetDelivery,
-        }),
-      ),
-      cargo: cargo.map(
-        (c): RouteCargo => ({
-          id: c.id,
-          poReference: c.poReference,
-          productName: c.productName,
-          rowIndex: c.rowIndex,
-          isDangerous: c.isDangerous,
-          msdsFileId: c.msdsFileId,
-          grossWt: c.grossWt == null ? null : Number(c.grossWt),
-          volumeCbm: c.volumeCbm == null ? null : Number(c.volumeCbm),
-        }),
-      ),
-      legCargo,
+      points: points.map((p): RoutePoint => ({
+        id: p.id,
+        type: p.type,
+        name: p.name,
+        streetAddress: p.streetAddress,
+        city: p.city,
+        postalCode: p.postalCode,
+        country: p.country,
+        contactName: p.contactName,
+        contactPhone: p.contactPhone,
+        contactEmail: p.contactEmail,
+        warehouseType: p.warehouseType,
+        iataCode: p.iataCode,
+        icaoCode: p.icaoCode,
+        unLocode: p.unLocode,
+        terminal: p.terminal,
+        timezone: p.timezone,
+      })),
+      legs: legs.map((l): RouteLeg => ({
+        id: l.id,
+        legCode: l.legCode,
+        mode: l.mode,
+        originPointId: l.originPointId,
+        destinationPointId: l.destinationPointId,
+        readyDate: l.readyDate,
+        targetDelivery: l.targetDelivery,
+      })),
+      // Grain decision (T10): one RouteCargo per Package (the atomic unit that rides legs, via
+      // LegPackage) — not per Cargo header, which is just a grouping/PO-label row with no
+      // dims/weight/DG-tag of its own anymore. RouteGraph.legCargo keeps its legacy shape
+      // ({legId, cargoItemId}); packageId goes in the cargoItemId slot — it's an opaque id key
+      // to validateRoute's rules, so no @svyft/shared change is needed for the new grain.
+      cargo: packages.map((p): RouteCargo => ({
+        id: p.id,
+        poReference: p.cargo.poReference ?? "", // RouteCargo.poReference is `string`; cargoLabel prefers it
+        productName: p.packageNo, // best per-package human label (cargoLabel fallback)
+        rowIndex: p.rowIndex,
+        isDangerous: effectiveTags({
+          tags: p.tags as ReferenceTag[],
+          items: p.items.map((i) => ({ tags: i.tags as ReferenceTag[] })),
+        }).includes("DG"),
+        msdsFileId: p.msdsFileId,
+        grossWt: Number(p.grossWt),
+        volumeCbm: p.volumeCbm === null ? null : Number(p.volumeCbm),
+      })),
+      legCargo: legPackages.map((lp) => ({ legId: lp.legId, cargoItemId: lp.packageId })),
     };
   }
 
@@ -88,8 +95,23 @@ export class RoutingService {
   }
 
   // The legs carrying a cargo row — used by the ImpactClassifier's cargo→leg fan-out (Task 8).
+  // A Cargo header has no direct leg assignment (Package does, via LegPackage), so this fans out
+  // cargo → its packages → their legs, deduped (a cargo's packages may share a leg).
   async legsCarryingCargo(cargoId: string, client: Db = this.prisma): Promise<string[]> {
-    const rows = await client.legCargo.findMany({ where: { cargoItemId: cargoId }, select: { legId: true } });
+    const rows = await client.legPackage.findMany({
+      where: { package: { cargoId } },
+      select: { legId: true },
+    });
+    return [...new Set(rows.map((r) => r.legId))];
+  }
+
+  // The legs carrying a package — used by the ImpactClassifier's package→leg fan-out (Task 10).
+  // (legId, packageId) is unique (LegPackage @@unique), so the rows are already distinct.
+  async legsCarryingPackage(packageId: string, client: Db = this.prisma): Promise<string[]> {
+    const rows = await client.legPackage.findMany({
+      where: { packageId },
+      select: { legId: true },
+    });
     return rows.map((r) => r.legId);
   }
 

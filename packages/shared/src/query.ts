@@ -5,7 +5,7 @@ import { FREIGHT_MODES } from "./config";
 import type { FreightMode } from "./config";
 import type { LegStatus } from "./status";
 import type { LegExecutionStatus } from "./legs";
-import type { CargoDto } from "./cargo";
+import type { CargoDto, ReferenceTag } from "./cargo";
 import { isValidIanaZone } from "./timezone";
 
 export const Priority = { LOW: "LOW", MEDIUM: "MEDIUM", HIGH: "HIGH", URGENT: "URGENT" } as const;
@@ -91,8 +91,12 @@ export const querySaveSchema = z
     dgIndicator: z.boolean(),
     readyDate: isoDate,
     targetDelivery: isoDate,
-    readyDateTimezone: z.string().refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
-    targetDeliveryTimezone: z.string().refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
+    readyDateTimezone: z
+      .string()
+      .refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
+    targetDeliveryTimezone: z
+      .string()
+      .refine(isValidIanaZone, { message: "Must be a valid IANA timezone" }),
     internalNotes: z.string().max(500),
     assignedUserId: z.string().uuid(),
     // Stage 4 (SB6 §7.2): justification for a mediated PATCH that lands on the change-order
@@ -158,16 +162,20 @@ export interface QueryForValidation {
   targetDelivery: Date | string | null;
   incoterms: Incoterms | null;
 }
-export interface CargoForValidation {
+export interface PackageForValidation {
   id: string;
-  isDangerous: boolean;
+  effectiveTags: ReferenceTag[];
   msdsFileId: string | null;
-  poReference: string;
+  packageNo: string;
+  dimL: number;
+  dimW: number;
+  dimH: number;
+  grossWt: number;
 }
 
 export function collectCreateFindings(
   q: QueryForValidation,
-  cargo: CargoForValidation[],
+  packages: PackageForValidation[],
 ): Finding[] {
   const findings: Finding[] = [];
   const need = (present: unknown, message: string) => {
@@ -203,13 +211,13 @@ export function collectCreateFindings(
       });
     }
   }
-  for (const c of cargo) {
-    if (c.isDangerous && !c.msdsFileId) {
+  for (const p of packages) {
+    if (p.effectiveTags.includes("DG") && !p.msdsFileId) {
       findings.push({
         rule: "F6",
         severity: "blocking",
-        scope: { type: "cargo", id: c.id },
-        message: `Cargo ${c.poReference}: a dangerous-goods row requires an MSDS (PDF)`,
+        scope: { type: "package", id: p.id },
+        message: `Package ${p.packageNo}: a dangerous-goods package requires an MSDS (PDF)`,
       });
     }
   }
@@ -266,38 +274,39 @@ export interface QueryDto {
 
 // ── Plan-6 list & detail types ────────────────────────────────────────────────
 
-export const queryListQuerySchema = z.object({
-  q: z.string().trim().min(1).optional(),
-  status: z.enum(QUERY_STATUSES).optional(),
-  priority: z.enum(PRIORITIES).optional(),
-  assignedUserId: z.string().uuid().optional(),
-  freightMode: z
-    .string()
-    .optional()
-    .refine(
-      (v) =>
-        v === undefined ||
-        v
-          .split(",")
-          .map((t) => t.trim())
-          .every((t) => (FREIGHT_MODES as readonly string[]).includes(t)),
-      {
-        message: `freightMode must be a single or comma-separated list of: ${FREIGHT_MODES.join(", ")}`,
-      },
-    ),       // single value or CSV, each token validated against FREIGHT_MODES
-  dateField: z.enum(["queryDate", "updatedAt"]).optional(),
-  dateFrom: z.string().datetime({ offset: true }).optional(),
-  dateTo: z.string().datetime({ offset: true }).optional(),
-  sort: z.string().optional(),             // "<column>:<asc|desc>"
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(10),
-}).refine(
-  // G11: dateFrom must be on or before dateTo (when both are present).
-  (p) =>
-    !(p.dateFrom && p.dateTo) ||
-    new Date(p.dateFrom).getTime() <= new Date(p.dateTo).getTime(),
-  { message: "dateFrom must be on or before dateTo", path: ["dateTo"] },
-);
+export const queryListQuerySchema = z
+  .object({
+    q: z.string().trim().min(1).optional(),
+    status: z.enum(QUERY_STATUSES).optional(),
+    priority: z.enum(PRIORITIES).optional(),
+    assignedUserId: z.string().uuid().optional(),
+    freightMode: z
+      .string()
+      .optional()
+      .refine(
+        (v) =>
+          v === undefined ||
+          v
+            .split(",")
+            .map((t) => t.trim())
+            .every((t) => (FREIGHT_MODES as readonly string[]).includes(t)),
+        {
+          message: `freightMode must be a single or comma-separated list of: ${FREIGHT_MODES.join(", ")}`,
+        },
+      ), // single value or CSV, each token validated against FREIGHT_MODES
+    dateField: z.enum(["queryDate", "updatedAt"]).optional(),
+    dateFrom: z.string().datetime({ offset: true }).optional(),
+    dateTo: z.string().datetime({ offset: true }).optional(),
+    sort: z.string().optional(), // "<column>:<asc|desc>"
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(10),
+  })
+  .refine(
+    // G11: dateFrom must be on or before dateTo (when both are present).
+    (p) =>
+      !(p.dateFrom && p.dateTo) || new Date(p.dateFrom).getTime() <= new Date(p.dateTo).getTime(),
+    { message: "dateFrom must be on or before dateTo", path: ["dateTo"] },
+  );
 export type QueryListParams = z.infer<typeof queryListQuerySchema>;
 
 export type QueryListRow = {
@@ -342,14 +351,14 @@ export type QueryLegDto = {
   originPointId: string | null;
   destinationPointId: string | null;
   mode: FreightMode | null;
-  readyDate: string | null;       // DateTime → ISO string in JSON
-  targetDelivery: string | null;  // DateTime → ISO string in JSON
+  readyDate: string | null; // DateTime → ISO string in JSON
+  targetDelivery: string | null; // DateTime → ISO string in JSON
   status: LegStatus;
   executionStatus: LegExecutionStatus;
   createdAt: string;
   updatedAt: string;
   // Derived fields added by shapeQuery
-  assignedCargoIds: string[];
+  assignedPackageIds: string[];
   rollup: LegRollup;
   // Task 11 (Charge Configuration & Warehouse Attribution, Phase E): current warehouse toggle
   // + charge-line selection set, so the web UI (Phase F/G) can render state.
@@ -433,8 +442,10 @@ export type QueryDetail = {
   assignedUserId: string | null;
   createdAt: string;
   updatedAt: string;
-  // Derived-on-read graph
-  cargo: CargoDto[];
+  // Derived-on-read graph. Named `cargos` (not `cargo`) to match the API's actual
+  // shapeQuery() output (queries.service.ts) — the old flat `cargo` relation/key is
+  // gone from both the schema and the response since the Cargo->Package->Item re-model.
+  cargos: CargoDto[];
   checklist: QueryChecklistItemDto[];
   files: QueryFileDto[];
   points: QueryPointDto[];

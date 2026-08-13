@@ -9,6 +9,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 const PREFIX = "RFQ-DALL";
 const CODE = `YAL00-${PREFIX}`;
@@ -50,9 +51,11 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -86,24 +89,17 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // Helper to build a ready leg with cargo
     const mkReadyLeg = async (legCode: string) => {
-      const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-      const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-      const cargo = await prisma.cargoItem.create({
-        data: {
-          queryId: query.id,
-          rowIndex: 0,
-          poReference: `PO-${legCode}`,
-          productName: "Widget",
-          packageType: "BOX",
-          qty: 1,
-          dimL: 10,
-          dimW: 10,
-          dimH: 10,
-          grossWt: 1,
-          isDangerous: false, // non-DG
-        },
+      const origin = await prisma.point.create({
+        data: { queryId: query.id, type: "PICKUP", country: "CN" },
       });
-      return prisma.leg.create({
+      const dest = await prisma.point.create({
+        data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+      });
+      const { packageIds } = await createCargoWithPackages(prisma, {
+        queryId: query.id,
+        packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 1 }], // non-DG
+      });
+      const leg = await prisma.leg.create({
         data: {
           queryId: query.id,
           legCode,
@@ -113,33 +109,28 @@ describe(`${PREFIX} (e2e)`, () => {
           destinationPointId: dest.id,
           readyDate: new Date(),
           targetDelivery: new Date(Date.now() + 86400000),
-          legCargo: { create: { cargoItemId: cargo.id } },
         },
       });
+      await assignPackagesToLeg(prisma, leg.id, packageIds);
+      return leg;
     };
 
     const l1 = await mkReadyLeg("L-DALL-1");
     const l2 = await mkReadyLeg("L-DALL-2");
 
     // L3: READY_FOR_RFQ with NO selection — exercises the "nothing-selected" skip
-    const originL3 = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const destL3 = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargoL3 = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 1,
-        poReference: "PO-DALL-3",
-        productName: "Widget-3",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 1,
-        isDangerous: false,
-      },
+    const originL3 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
     });
-    await prisma.leg.create({
+    const destL3 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const { packageIds: packageIdsL3 } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      rowIndex: 1,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 1 }],
+    });
+    const legL3 = await prisma.leg.create({
       data: {
         queryId: query.id,
         legCode: "L-DALL-3",
@@ -149,27 +140,21 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: destL3.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargoL3.id } },
       },
     });
+    await assignPackagesToLeg(prisma, legL3.id, packageIdsL3);
 
     // L4: DRAFT + FF selected → reaches validateLegForDistribution, fails F4 — exercises the gate-skip branch
-    const originL4 = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const destL4 = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargoL4 = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 2,
-        poReference: "PO-DALL-4",
-        productName: "Widget-4",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 1,
-        isDangerous: false,
-      },
+    const originL4 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const destL4 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const { packageIds: packageIdsL4 } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      rowIndex: 2,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 1 }],
     });
     const l4 = await prisma.leg.create({
       data: {
@@ -181,9 +166,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: destL4.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargoL4.id } },
       },
     });
+    await assignPackagesToLeg(prisma, l4.id, packageIdsL4);
 
     // Select FF-X on L1, L2, and L4 via ff-selection endpoint
     await request(app.getHttpServer())

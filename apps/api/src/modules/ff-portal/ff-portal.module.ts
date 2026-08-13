@@ -1,5 +1,4 @@
 import { Module } from "@nestjs/common";
-import { ConfigDataModule } from "../config/config-data.module";
 import { StatusModule } from "../status/status.module";
 import { CommsModule } from "../comms/comms.module";
 import { RfqTokenService } from "../rfq/rfq-token.service";
@@ -13,8 +12,10 @@ import { RfqTokenGuard } from "./rfq-token.guard";
 // RfqTokenService is provided directly — PrismaService is already global.
 // StatusModule is imported for T6 submit (exports StatusService; does NOT contribute status edges).
 // CommsModule is imported for T11 submit comms (NotificationDispatcher + ScheduledEventService).
+// ConfigDataModule dropped in Task 9 (FF Portal v2) — resolveScope no longer reads
+// FreightDensityFactor (the portal now seeds no density; the FF enters Charged Wt directly).
 @Module({
-  imports: [ConfigDataModule, StatusModule, CommsModule],
+  imports: [StatusModule, CommsModule],
   controllers: [FfPortalController],
   providers: [FfPortalService, RfqTokenGuard, RfqTokenService],
 })

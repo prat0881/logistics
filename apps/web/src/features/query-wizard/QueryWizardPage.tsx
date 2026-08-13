@@ -5,7 +5,8 @@ import { StageRail, isRfqStageEnabled } from "@/features/rfq-workspace/StageRail
 import type {
   Finding,
   QueryForValidation,
-  CargoForValidation,
+  PackageForValidation,
+  PackageDto,
   QuerySaveInput,
   QueryDetail,
 } from "@svyft/shared";
@@ -19,13 +20,7 @@ import { ApiError } from "@/lib/api";
 import { WizardProvider, STEPS, useWizard } from "./WizardContext";
 import { WizardShell } from "./WizardShell";
 import { useQueryDetail, useSaveQuery, useCreateQuery } from "./useQueryDetail";
-import {
-  Step1Client,
-  Step2Shipment,
-  Step3Cargo,
-  LegsStep,
-  Step5Notes,
-} from "./steps";
+import { Step1Client, Step2Shipment, Step3Cargo, LegsStep, Step5Notes } from "./steps";
 import type { StepSaveFn } from "./steps";
 import { toRouteGraph } from "./steps/legs/routeGraph";
 import { CHECKLIST_LABELS } from "./steps/Step5Notes";
@@ -63,14 +58,16 @@ function toQueryForValidation(
   };
 }
 
-function toCargoForValidation(
-  cargo: NonNullable<ReturnType<typeof useWizard>["detail"]>["cargo"][number],
-): CargoForValidation {
+function toPackageForValidation(p: PackageDto): PackageForValidation {
   return {
-    id: cargo.id,
-    isDangerous: cargo.isDangerous,
-    msdsFileId: cargo.msdsFileId,
-    poReference: cargo.poReference,
+    id: p.id,
+    packageNo: p.packageNo,
+    effectiveTags: p.effectiveTags, // already the union (own ∪ items) from shapePackage
+    msdsFileId: p.msdsFileId,
+    dimL: Number(p.dimL),
+    dimW: Number(p.dimW),
+    dimH: Number(p.dimH),
+    grossWt: Number(p.grossWt),
   };
 }
 
@@ -102,30 +99,27 @@ function WizardInner({ id }: { id?: string }) {
    *   same branch but never calls goNext, so it still stays put on the new query.)
    * - existing query: call the step's save (step returns a QuerySaveInput patch or void)
    */
-  const handleSave = useCallback(
-    async () => {
-      if (isNew) {
-        // A new query mints on the first Save/Next even if the step's own format
-        // validation rejected (Next never blocks; the query must exist before we can
-        // advance). Inline field errors still surface the format issue.
-        let input: QuerySaveInput | void;
-        try {
-          input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
-        } catch {
-          input = undefined;
-        }
-        const d = await create(input ?? {});
-        navigate(`/queries/${d.id}`, { replace: true });
-        return;
+  const handleSave = useCallback(async () => {
+    if (isNew) {
+      // A new query mints on the first Save/Next even if the step's own format
+      // validation rejected (Next never blocks; the query must exist before we can
+      // advance). Inline field errors still surface the format issue.
+      let input: QuerySaveInput | void;
+      try {
+        input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
+      } catch {
+        input = undefined;
       }
-      const input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
-      if (id && input) {
-        await patch(id, input);
-        await refresh();
-      }
-    },
-    [isNew, id, create, patch, navigate, refresh],
-  );
+      const d = await create(input ?? {});
+      navigate(`/queries/${d.id}`, { replace: true });
+      return;
+    }
+    const input = stepSaveRef.current ? await stepSaveRef.current() : undefined;
+    if (id && input) {
+      await patch(id, input);
+      await refresh();
+    }
+  }, [isNew, id, create, patch, navigate, refresh]);
 
   /**
    * handleCreateQuery — fired on the final step's "Create Query" button.
@@ -167,7 +161,7 @@ function WizardInner({ id }: { id?: string }) {
     const preview = dedupeFindings([
       ...collectCreateFindings(
         toQueryForValidation(fresh),
-        fresh.cargo.map(toCargoForValidation),
+        fresh.cargos.flatMap((c) => c.packages).map(toPackageForValidation),
       ),
       ...validateRoute(graph, "create"),
       ...collectChecklistFindings(checklistItems, fresh.internalNotes),
@@ -229,7 +223,11 @@ export function QueryWizardPage() {
     <>
       {id && railDetail && (
         <div className="mb-4">
-          <StageRail queryId={id} active="create" rfqEnabled={isRfqStageEnabled(railDetail.status)} />
+          <StageRail
+            queryId={id}
+            active="create"
+            rfqEnabled={isRfqStageEnabled(railDetail.status)}
+          />
         </div>
       )}
       <WizardProvider id={id}>

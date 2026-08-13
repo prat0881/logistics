@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import type { CargoCreateInput, CargoUpdateInput, CargoDto, Finding } from "@svyft/shared";
+import type { CargoCreateInput, CargoUpdateInput, CargoDto } from "@svyft/shared";
 import { postJson, patchJson, del, ApiError } from "@/lib/api";
 
 export function useCargo(queryId: string) {
@@ -24,34 +24,8 @@ export function useCargo(queryId: string) {
       await bust();
     },
 
-    uploadMsds: async (cid: string, file: File): Promise<CargoDto> => {
-      const fd = new FormData();
-      fd.append("file", file); // field name MUST be "file"; do NOT set Content-Type
-      const res = await fetch(`/api/queries/${queryId}/cargo/${cid}/msds`, {
-        method: "POST",
-        credentials: "include",
-        body: fd,
-        // deliberately no Content-Type header — browser sets multipart boundary
-      });
-      if (!res.ok) {
-        let b: Record<string, unknown> | undefined;
-        try {
-          b = await res.json();
-        } catch {
-          // ignore parse errors
-        }
-        throw new ApiError(
-          res.status,
-          (b?.message as string) ?? "Upload failed",
-          b?.findings as Finding[] | undefined,
-          b?.issues as unknown[] | undefined,
-          b,
-        );
-      }
-      await bust();
-      return res.json() as Promise<CargoDto>;
-    },
-
+    // MSDS is a package concern now (Unit W1) — see usePackages().uploadMsds. Cargo no longer
+    // carries productName/qty/isDangerous/dims/msdsFileId.
     exportXlsx: async (): Promise<void> => {
       const res = await fetch(`/api/queries/${queryId}/cargo/export`, {
         method: "POST",

@@ -1,11 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import {
-  legSaveSchema,
-  FREIGHT_MODES,
-  checkModeEndpoints,
-} from "@svyft/shared";
+import { legSaveSchema, FREIGHT_MODES, checkModeEndpoints } from "@svyft/shared";
 import type {
   LegSaveInput,
   QueryDetail,
@@ -44,7 +40,7 @@ import { ZonedDateTimeField } from "@/components/ZonedDateTimeField";
 import { useLegs } from "./useLegs";
 import { PointEditor } from "./PointEditor";
 import { CargoAssignmentControl } from "./CargoAssignmentControl";
-import { computeCargoConflicts } from "./cargoConflicts";
+import { computePackageConflicts } from "./cargoConflicts";
 
 interface LegEditorProps {
   open: boolean;
@@ -70,19 +66,12 @@ function pointLabel(p: QueryPointDto): string {
  *   - Origin / Destination: <Select> over detail.points + "+ New point" → <PointEditor>
  *   - Mode: <Select> over FREIGHT_MODES
  *   - Live V-M1 client-side check (non-blocking warning; server 422 is authoritative)
- *   - Assigned Cargo: <CargoAssignmentControl> (≥1 required)
+ *   - Assigned Packages: <CargoAssignmentControl> (≥1 required)
  *   - Ready Date / Target Delivery: datetime-local using floating-wall-clock helpers
  *
  * On save: catches ApiError 422 → surfaces findings inside dialog (keeps it open).
  */
-export function LegEditor({
-  open,
-  leg,
-  detail,
-  queryId,
-  onSaved,
-  onClose,
-}: LegEditorProps) {
+export function LegEditor({ open, leg, detail, queryId, onSaved, onClose }: LegEditorProps) {
   const isEdit = Boolean(leg);
   const { add, update, remove } = useLegs(queryId);
   const { orgZone } = useOrgTimezone();
@@ -96,7 +85,7 @@ export function LegEditor({
     mode: leg?.mode ?? undefined,
     readyDate: leg?.readyDate ?? undefined,
     targetDelivery: leg?.targetDelivery ?? undefined,
-    assignedCargoIds: leg?.assignedCargoIds ?? [],
+    assignedPackageIds: leg?.assignedPackageIds ?? [],
   };
 
   const form = useForm<LegSaveInput>({
@@ -114,7 +103,7 @@ export function LegEditor({
         mode: leg?.mode ?? undefined,
         readyDate: leg?.readyDate ?? undefined,
         targetDelivery: leg?.targetDelivery ?? undefined,
-        assignedCargoIds: leg?.assignedCargoIds ?? [],
+        assignedPackageIds: leg?.assignedPackageIds ?? [],
       });
     }
   }, [open, leg?.id]); // Only reset when dialog opens or the leg being edited changes
@@ -129,12 +118,12 @@ export function LegEditor({
 
   const legLike = { originPointId: watchedOriginId, destinationPointId: watchedDestId };
 
-  // Cargo already carried by another leg sharing this leg's origin (parallel drop) or
-  // destination (merge) — assigning it here would break the single-chain rule (D5/R1),
-  // so the CargoAssignmentControl disables it with an "already on L#" note.
-  const cargoConflicts = useMemo(
+  // Packages already carried by another leg sharing this leg's origin (parallel drop) or
+  // destination (merge) — assigning them here would break the single-chain rule (D5/R1),
+  // so the CargoAssignmentControl disables them with an "already on L#" note.
+  const packageConflicts = useMemo(
     () =>
-      computeCargoConflicts(detail.legs, {
+      computePackageConflicts(detail.legs, {
         id: leg?.id,
         originPointId: watchedOriginId,
         destinationPointId: watchedDestId,
@@ -196,10 +185,7 @@ export function LegEditor({
   });
 
   // When a new point is saved from PointEditor, select it in the relevant field
-  const handlePointSaved = (
-    role: "origin" | "destination",
-    saved: Record<string, unknown>,
-  ) => {
+  const handlePointSaved = (role: "origin" | "destination", saved: Record<string, unknown>) => {
     const id = saved.id as string;
     if (role === "origin") {
       form.setValue("originPointId", id, { shouldValidate: true });
@@ -211,7 +197,12 @@ export function LegEditor({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (!o) onClose();
+        }}
+      >
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{isEdit ? "Edit Leg" : "Add Leg"}</DialogTitle>
@@ -228,10 +219,7 @@ export function LegEditor({
                     <FormLabel>Origin</FormLabel>
                     <div className="flex gap-2">
                       <FormControl>
-                        <Select
-                          value={field.value ?? ""}
-                          onValueChange={field.onChange}
-                        >
+                        <Select value={field.value ?? ""} onValueChange={field.onChange}>
                           <SelectTrigger className="flex-1">
                             <SelectValue placeholder="Select origin point" />
                           </SelectTrigger>
@@ -267,10 +255,7 @@ export function LegEditor({
                     <FormLabel>Destination</FormLabel>
                     <div className="flex gap-2">
                       <FormControl>
-                        <Select
-                          value={field.value ?? ""}
-                          onValueChange={field.onChange}
-                        >
+                        <Select value={field.value ?? ""} onValueChange={field.onChange}>
                           <SelectTrigger className="flex-1">
                             <SelectValue placeholder="Select destination point" />
                           </SelectTrigger>
@@ -305,10 +290,7 @@ export function LegEditor({
                   <FormItem>
                     <FormLabel>Mode</FormLabel>
                     <FormControl>
-                      <Select
-                        value={field.value ?? ""}
-                        onValueChange={field.onChange}
-                      >
+                      <Select value={field.value ?? ""} onValueChange={field.onChange}>
                         <SelectTrigger>
                           <SelectValue placeholder="Select freight mode" />
                         </SelectTrigger>
@@ -336,30 +318,31 @@ export function LegEditor({
                   {watchedMode === "AIR"
                     ? "An Air leg needs airport endpoints."
                     : watchedMode === "SEA"
-                    ? "A Sea leg needs seaport endpoints."
-                    : "Endpoint types are incompatible with the selected mode."}
-                  {" "}This is a warning — you can save, but the server will block if the constraint is violated.
+                      ? "A Sea leg needs seaport endpoints."
+                      : "Endpoint types are incompatible with the selected mode."}{" "}
+                  This is a warning — you can save, but the server will block if the constraint is
+                  violated.
                 </div>
               )}
 
-              {/* Assigned Cargo */}
+              {/* Assigned Packages */}
               <div className="space-y-2">
-                <label className="text-sm font-medium">Assigned Cargo</label>
+                <label className="text-sm font-medium">Assigned Packages</label>
                 <Controller
                   control={form.control}
-                  name="assignedCargoIds"
+                  name="assignedPackageIds"
                   render={({ field }) => (
                     <CargoAssignmentControl
-                      cargo={detail.cargo}
+                      cargo={detail.cargos}
                       value={field.value ?? []}
                       onChange={field.onChange}
-                      conflicts={cargoConflicts}
+                      conflicts={packageConflicts}
                     />
                   )}
                 />
-                {form.formState.errors.assignedCargoIds && (
+                {form.formState.errors.assignedPackageIds && (
                   <p className="text-sm font-medium text-destructive">
-                    {form.formState.errors.assignedCargoIds.message}
+                    {form.formState.errors.assignedPackageIds.message}
                   </p>
                 )}
               </div>
@@ -398,7 +381,12 @@ export function LegEditor({
 
               <DialogFooter>
                 {isEdit && (
-                  <Button type="button" variant="destructive" onClick={handleDelete} className="mr-auto">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={handleDelete}
+                    className="mr-auto"
+                  >
                     Delete
                   </Button>
                 )}

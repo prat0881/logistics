@@ -11,6 +11,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 const PFX = "p4-queries-";
 
@@ -138,37 +139,90 @@ describe("Queries (e2e)", () => {
 
   it("422s Create Query with F1/F6 findings when mandatory fields are missing", async () => {
     const created = await request(app.getHttpServer())
-      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ shipmentDescription: `${PFX}incomplete` }).expect(201);
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ shipmentDescription: `${PFX}incomplete` })
+      .expect(201);
     const res = await request(app.getHttpServer())
-      .post(`/api/queries/${created.body.id}/create`).set("Cookie", cookie(Role.EXECUTIVE))
+      .post(`/api/queries/${created.body.id}/create`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
       .expect(422);
     expect(res.body.findings.length).toBeGreaterThan(0);
-    expect(res.body.findings.every((f: { severity: string }) => f.severity === "blocking")).toBe(true);
+    expect(res.body.findings.every((f: { severity: string }) => f.severity === "blocking")).toBe(
+      true,
+    );
     const still = await prisma.query.findUnique({ where: { id: created.body.id } });
     expect(still!.status).toBe("DRAFT"); // unchanged on block
   });
 
   it("sets RFQ_READY through the projector when all mandatory fields are present", async () => {
     const created = await request(app.getHttpServer())
-      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
       .send({
-        clientId, shipmentDescription: `${PFX}complete`, incoterms: "FOB",
-        contactName: "Jo", contactEmail: "jo@acme.test", contactPhone: "+911234567890",
-        readyDate: "2026-08-01T00:00:00.000Z", targetDelivery: "2026-08-20T00:00:00.000Z",
-      }).expect(201);
+        clientId,
+        shipmentDescription: `${PFX}complete`,
+        incoterms: "FOB",
+        contactName: "Jo",
+        contactEmail: "jo@acme.test",
+        contactPhone: "+911234567890",
+        readyDate: "2026-08-01T00:00:00.000Z",
+        targetDelivery: "2026-08-20T00:00:00.000Z",
+      })
+      .expect(201);
     // Plan 5: Create Query also gates on the full route catalogue (R1-R9/T/C), so this query
     // needs a complete Pickup->Delivery route (one cargo row on one leg) to pass — leg dates
     // happen to match the query's readyDate/targetDelivery here (T2 was removed; the match is
     // now incidental and is NOT required for the route to be valid).
-    const pu = await prisma.point.create({ data: { queryId: created.body.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", timezone: "Asia/Kolkata" } });
-    const de = await prisma.point.create({ data: { queryId: created.body.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" } });
-    const cargo = await prisma.cargoItem.create({ data: { queryId: created.body.id, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } });
-    const leg = await prisma.leg.create({ data: { queryId: created.body.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: "2026-08-01T00:00:00.000Z", targetDelivery: "2026-08-20T00:00:00.000Z" } });
-    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo.id } });
+    const pu = await prisma.point.create({
+      data: {
+        queryId: created.body.id,
+        type: "PICKUP",
+        name: "PU",
+        streetAddress: "1",
+        city: "Mumbai",
+        postalCode: "400001",
+        country: "IN",
+        contactName: "A",
+        contactPhone: "+911234567",
+        contactEmail: "a@x.com",
+        timezone: "Asia/Kolkata",
+      },
+    });
+    const de = await prisma.point.create({
+      data: {
+        queryId: created.body.id,
+        type: "DELIVERY",
+        name: "DE",
+        streetAddress: "9",
+        city: "Pune",
+        postalCode: "411001",
+        country: "IN",
+        contactName: "B",
+        contactPhone: "+915555555",
+        timezone: "Asia/Kolkata",
+      },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: created.body.id,
+      packages: [{ dimL: 1, dimW: 1, dimH: 1, grossWt: 1 }],
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: created.body.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: pu.id,
+        destinationPointId: de.id,
+        readyDate: "2026-08-01T00:00:00.000Z",
+        targetDelivery: "2026-08-20T00:00:00.000Z",
+      },
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     const res = await request(app.getHttpServer())
-      .post(`/api/queries/${created.body.id}/create`).set("Cookie", cookie(Role.EXECUTIVE))
+      .post(`/api/queries/${created.body.id}/create`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
       .expect(201);
     expect(res.body.status).toBe("RFQ_READY");
     const row = await prisma.query.findUnique({ where: { id: created.body.id } });
@@ -180,11 +234,18 @@ describe("Queries (e2e)", () => {
 
   it("round-trips readyDateTimezone / targetDeliveryTimezone", async () => {
     const res = await request(app.getHttpServer())
-      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ shipmentDescription: `${PFX}tz`, readyDateTimezone: "Asia/Singapore", targetDeliveryTimezone: "Europe/London" })
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({
+        shipmentDescription: `${PFX}tz`,
+        readyDateTimezone: "Asia/Singapore",
+        targetDeliveryTimezone: "Europe/London",
+      })
       .expect(201);
     const got = await request(app.getHttpServer())
-      .get(`/api/queries/${res.body.id}`).set("Cookie", cookie(Role.EXECUTIVE)).expect(200);
+      .get(`/api/queries/${res.body.id}`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .expect(200);
     expect(got.body.readyDateTimezone).toBe("Asia/Singapore");
     expect(got.body.targetDeliveryTimezone).toBe("Europe/London");
   });
@@ -195,44 +256,106 @@ describe("Queries (e2e)", () => {
     // query's dates. T2 (first/last leg dates = query dates) was removed; /create must return
     // 201 RFQ_READY rather than the 422 that T2 would have produced.
     const created = await request(app.getHttpServer())
-      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
       .send({
-        clientId, shipmentDescription: `${PFX}decouple`, incoterms: "FOB",
-        contactName: "Jo", contactEmail: "jo@acme.test", contactPhone: "+911234567890",
-        readyDate: "2026-08-01T00:00:00.000Z", targetDelivery: "2026-08-20T00:00:00.000Z",
-      }).expect(201);
-    const pu = await prisma.point.create({ data: { queryId: created.body.id, type: "PICKUP", name: "PU", streetAddress: "1", city: "Mumbai", postalCode: "400001", country: "IN", contactName: "A", contactPhone: "+911234567", contactEmail: "a@x.com", timezone: "Asia/Kolkata" } });
-    const de = await prisma.point.create({ data: { queryId: created.body.id, type: "DELIVERY", name: "DE", streetAddress: "9", city: "Pune", postalCode: "411001", country: "IN", contactName: "B", contactPhone: "+915555555", timezone: "Asia/Kolkata" } });
-    const cargo = await prisma.cargoItem.create({ data: { queryId: created.body.id, rowIndex: 1, poReference: "PO", productName: "P", packageType: "Box", qty: 1, dimL: 1, dimW: 1, dimH: 1, grossWt: 1 } });
+        clientId,
+        shipmentDescription: `${PFX}decouple`,
+        incoterms: "FOB",
+        contactName: "Jo",
+        contactEmail: "jo@acme.test",
+        contactPhone: "+911234567890",
+        readyDate: "2026-08-01T00:00:00.000Z",
+        targetDelivery: "2026-08-20T00:00:00.000Z",
+      })
+      .expect(201);
+    const pu = await prisma.point.create({
+      data: {
+        queryId: created.body.id,
+        type: "PICKUP",
+        name: "PU",
+        streetAddress: "1",
+        city: "Mumbai",
+        postalCode: "400001",
+        country: "IN",
+        contactName: "A",
+        contactPhone: "+911234567",
+        contactEmail: "a@x.com",
+        timezone: "Asia/Kolkata",
+      },
+    });
+    const de = await prisma.point.create({
+      data: {
+        queryId: created.body.id,
+        type: "DELIVERY",
+        name: "DE",
+        streetAddress: "9",
+        city: "Pune",
+        postalCode: "411001",
+        country: "IN",
+        contactName: "B",
+        contactPhone: "+915555555",
+        timezone: "Asia/Kolkata",
+      },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: created.body.id,
+      packages: [{ dimL: 1, dimW: 1, dimH: 1, grossWt: 1 }],
+    });
     // Leg dates DIFFER from query dates: query ready=2026-08-01, leg ready=2026-08-03
     // query targetDelivery=2026-08-20, leg targetDelivery=2026-08-18
-    const leg = await prisma.leg.create({ data: { queryId: created.body.id, legCode: "L1", mode: "ROAD", originPointId: pu.id, destinationPointId: de.id, readyDate: "2026-08-03T00:00:00.000Z", targetDelivery: "2026-08-18T00:00:00.000Z" } });
-    await prisma.legCargo.create({ data: { legId: leg.id, cargoItemId: cargo.id } });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: created.body.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: pu.id,
+        destinationPointId: de.id,
+        readyDate: "2026-08-03T00:00:00.000Z",
+        targetDelivery: "2026-08-18T00:00:00.000Z",
+      },
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     const res = await request(app.getHttpServer())
-      .post(`/api/queries/${created.body.id}/create`).set("Cookie", cookie(Role.EXECUTIVE))
+      .post(`/api/queries/${created.body.id}/create`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
       .expect(201);
     expect(res.body.status).toBe("RFQ_READY");
   });
 
   it("toggles checklist item checked state", async () => {
     const created = await request(app.getHttpServer())
-      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ clientId, shipmentDescription: `${PFX}checklist` }).expect(201);
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ clientId, shipmentDescription: `${PFX}checklist` })
+      .expect(201);
     const res = await request(app.getHttpServer())
-      .patch(`/api/queries/${created.body.id}/checklist`).set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ items: [{ itemKey: "weight-confirmed", checked: true }, { itemKey: "packing-list", checked: true }] })
+      .patch(`/api/queries/${created.body.id}/checklist`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({
+        items: [
+          { itemKey: "weight-confirmed", checked: true },
+          { itemKey: "packing-list", checked: true },
+        ],
+      })
       .expect(200);
-    const checked = res.body.checklist.filter((c: { checked: boolean }) => c.checked).map((c: { itemKey: string }) => c.itemKey).sort();
+    const checked = res.body.checklist
+      .filter((c: { checked: boolean }) => c.checked)
+      .map((c: { itemKey: string }) => c.itemKey)
+      .sort();
     expect(checked).toEqual(["packing-list", "weight-confirmed"]);
   });
 
   it("400s an unknown checklist itemKey", async () => {
     const created = await request(app.getHttpServer())
-      .post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ shipmentDescription: `${PFX}checklist2` }).expect(201);
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ shipmentDescription: `${PFX}checklist2` })
+      .expect(201);
     await request(app.getHttpServer())
-      .patch(`/api/queries/${created.body.id}/checklist`).set("Cookie", cookie(Role.EXECUTIVE))
+      .patch(`/api/queries/${created.body.id}/checklist`)
+      .set("Cookie", cookie(Role.EXECUTIVE))
       .send({ items: [{ itemKey: "not-a-real-item", checked: true }] })
       .expect(400);
   });
@@ -257,12 +380,17 @@ describe("Queries (e2e)", () => {
   });
 
   it("creating a query schedules 3 escalations; a rfq_ready event cancels them", async () => {
-    const created = await request(app.getHttpServer()).post("/api/queries").set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ shipmentDescription: `${PFX}esc` }).expect(201);
+    const created = await request(app.getHttpServer())
+      .post("/api/queries")
+      .set("Cookie", cookie(Role.EXECUTIVE))
+      .send({ shipmentDescription: `${PFX}esc` })
+      .expect(201);
     const id = created.body.id;
     const where = { entityType: "QUERY", entityId: id, eventKey: "query.escalation" };
     expect(await prisma.scheduledEvent.count({ where: { ...where, cancelledAt: null } })).toBe(3);
     await app.get(EventEmitter2).emitAsync("query.rfq_ready", { queryId: id });
-    expect(await prisma.scheduledEvent.count({ where: { ...where, cancelledAt: { not: null } } })).toBe(3);
+    expect(
+      await prisma.scheduledEvent.count({ where: { ...where, cancelledAt: { not: null } } }),
+    ).toBe(3);
   });
 });

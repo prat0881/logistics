@@ -1,12 +1,12 @@
 import { NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import { QuoteStatus, resolveCountryCode } from "@svyft/shared";
+import { QuoteStatus, resolveCountryCode, effectiveTags } from "@svyft/shared";
 import type { PrismaService } from "../../prisma/prisma.service";
 
 export const LEG_RFQ_INCLUDE = {
   originPoint: { select: { id: true, type: true, country: true, name: true, city: true } },
   destinationPoint: { select: { id: true, type: true, country: true, name: true, city: true } },
-  legCargo: { include: { cargoItem: true } },
+  legPackages: { include: { package: { include: { items: true } } } },
   quotes: { select: { id: true, freightForwarderId: true, status: true } },
   chargeSelections: { select: { definition: { select: { key: true } } } },
 } satisfies Prisma.LegInclude;
@@ -39,7 +39,10 @@ export async function loadLegForRfq(
   queryId: string,
   legId: string,
 ): Promise<LegRfqContext> {
-  const leg = await prisma.leg.findFirst({ where: { id: legId, queryId }, include: LEG_RFQ_INCLUDE });
+  const leg = await prisma.leg.findFirst({
+    where: { id: legId, queryId },
+    include: LEG_RFQ_INCLUDE,
+  });
   if (!leg) throw new NotFoundException("Leg not found");
   // Resolve each endpoint's free-text country (a name OR code, any case) to its ISO
   // code, so it can be compared against FF `availableCountries` (which are ISO codes).
@@ -51,7 +54,9 @@ export async function loadLegForRfq(
   const endpointCountries = [
     ...new Set([originCountry, destinationCountry].filter((c): c is string => !!c)),
   ];
-  const hasDg = leg.legCargo.some((lc) => lc.cargoItem.isDangerous);
+  const hasDg = leg.legPackages.some((lp) =>
+    effectiveTags({ tags: lp.package.tags, items: lp.package.items }).includes("DG"),
+  );
   const freshQuotes = leg.quotes
     .filter((q) => q.status === QuoteStatus.SELECT)
     .map((q) => ({ id: q.id, freightForwarderId: q.freightForwarderId }));

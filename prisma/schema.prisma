@@ -205,11 +205,16 @@ model Quote {
   termsConditions        String?
   draftJson              Json?
 
+  // v3 (FF Portal per-variant quoting): leg-level chargeable weight (was per-QuoteCargoLine) + notes.
+  chargedWeightKg Decimal? @db.Decimal(12, 3)
+  notes           String?
+
   quoteCargoLines       QuoteCargoLine[]
   chargeLines           ChargeLine[]
   truckingCharges       TruckingCharge[]
+  seaFreightRates       SeaFreightRate[]
   warehouseStagingLines WarehouseStagingLine[]
-  transitPlan           TransitPlan?
+  transitPlans          TransitPlan[]
 
   @@unique([legId, freightForwarderId])
   @@index([queryId])
@@ -225,18 +230,16 @@ model RfqSequence {
 }
 
 model QuoteCargoLine {
-  id                String    @id @default(uuid()) @db.Uuid
-  tenantId          String?   @db.Uuid
-  quoteId           String    @db.Uuid
-  quote             Quote     @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  cargoItemId       String    @db.Uuid
-  cargoItem         CargoItem @relation(fields: [cargoItemId], references: [id], onDelete: Restrict)
-  freightDensity    Decimal   @db.Decimal(12, 3)
-  chargeableWeightT Decimal   @db.Decimal(12, 3)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String?  @db.Uuid
+  quoteId   String   @db.Uuid
+  quote     Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  packageId String   @db.Uuid
+  package   Package  @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@unique([quoteId, cargoItemId])
+  @@unique([quoteId, packageId])
   @@index([quoteId])
   @@index([tenantId])
 }
@@ -254,6 +257,14 @@ model ChargeLine {
   note      String?
   sortOrder Int        @default(0)
   definitionKey String?
+  pieceWeightKg    Decimal?          @db.Decimal(12, 3)
+  airlineLimitKg   Decimal?          @db.Decimal(12, 3)
+  ratePerExcessKg  Decimal?          @db.Decimal(14, 2)
+  billOfLadingType BillOfLadingType?
+  // v3 (FF Portal per-variant quoting): the matrix column this charge belongs to.
+  // NULL = Air's single implicit column (or a non-variant line); DEDICATED/GROUPAGE/FCL/LCL
+  // for Road/Sea. Mirrors TruckingCharge/SeaFreightRate/TransitPlan.rateVariant.
+  rateVariant ChargeRateVariant?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
@@ -262,19 +273,37 @@ model ChargeLine {
 }
 
 model TruckingCharge {
-  id                 String        @id @default(uuid()) @db.Uuid
-  tenantId           String?       @db.Uuid
-  quoteId            String        @db.Uuid
-  quote              Quote         @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  legEndpointPointId String        @db.Uuid
-  legEndpointPoint   Point         @relation(fields: [legEndpointPointId], references: [id], onDelete: Restrict)
+  id                 String            @id @default(uuid()) @db.Uuid
+  tenantId           String?           @db.Uuid
+  quoteId            String            @db.Uuid
+  quote              Quote             @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  legEndpointPointId String            @db.Uuid
+  legEndpointPoint   Point             @relation(fields: [legEndpointPointId], references: [id], onDelete: Restrict)
   truckingType       TruckingType
   basis              TruckingBasis
-  amount             Decimal       @db.Decimal(14, 2)
+  amount             Decimal           @db.Decimal(14, 2)
   remarks            String?
   definitionKey      String?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  rateVariant        ChargeRateVariant @default(DEDICATED)
+  tonnage            TruckTonnage?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([quoteId])
+  @@index([tenantId])
+}
+
+model SeaFreightRate {
+  id            String            @id @default(uuid()) @db.Uuid
+  tenantId      String?           @db.Uuid
+  quoteId       String            @db.Uuid
+  quote         Quote             @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  rateVariant   ChargeRateVariant // FCL | LCL
+  containerSize ContainerSize?    // FCL only
+  amount        Decimal           @db.Decimal(14, 2)
+  remarks       String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
   @@index([quoteId])
   @@index([tenantId])
@@ -294,6 +323,8 @@ model WarehouseStagingLine {
   note                  String?
   cargoAcceptanceWindow String?
   definitionKey         String?
+  cfsCode               String?
+  side                  WarehouseSide?
   createdAt             DateTime          @default(now())
   updatedAt             DateTime          @updatedAt
 
@@ -336,17 +367,32 @@ model LegChargeLineSelection {
 model TransitPlan {
   id                    String   @id @default(uuid()) @db.Uuid
   tenantId              String?  @db.Uuid
-  quoteId               String   @unique @db.Uuid
+  quoteId               String   @db.Uuid
   quote                 Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  // v3 (FF Portal per-variant quoting): one TransitPlan row per priced variant (was one per quote).
+  // NULL = Air's single implicit column; DEDICATED/GROUPAGE/FCL/LCL for Road/Sea. The non-days
+  // schedule fields below repeat per row (each variant's row is self-contained).
+  rateVariant           ChargeRateVariant?
   carrier               String?
   flightVoyageNo        String?
-  departureDate         DateTime
-  arrivalDate           DateTime
+  departureDate         DateTime?
+  arrivalDate           DateTime?
   carrierSurcharge      Decimal? @db.Decimal(14, 2)
   guaranteedTransitDays Int?
+  plannedPickupDate     DateTime?
+  airline               String?
+  flightNumber          String?
+  plannedDeparture      DateTime?
+  plannedArrival        DateTime?
+  shippingLine          String?
+  vesselVoyage          String?
+  etd                   DateTime?
+  eta                   DateTime?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
+  @@unique([quoteId, rateVariant])
+  @@index([quoteId])
   @@index([tenantId])
 }
 
@@ -455,6 +501,7 @@ enum ReferenceTag {
   FRAGILE
   NON_STACKABLE
   OUT_OF_GAUGE
+  DG
 }
 
 enum DimUnit {
@@ -464,7 +511,26 @@ enum DimUnit {
 
 enum WeightUnit {
   KG
+  TONNE
   GM
+}
+
+enum PackageType {
+  BOX
+  PALLET
+  CRATE
+  CARTON
+  DRUM
+  BUNDLE
+}
+
+enum UnitOfMeasure {
+  PC
+  SET
+  BOX
+  KG
+  M
+  ROLL
 }
 
 enum FileKind {
@@ -519,6 +585,44 @@ enum ChargeLineInputType {
   PLAIN
   TRUCKING
   WAREHOUSE_STAGING
+  HEAVY_WEIGHT_CALC
+}
+
+enum ChargeRateVariant {
+  DEDICATED
+  GROUPAGE
+  FCL
+  LCL
+}
+
+enum TruckTonnage {
+  T_1
+  T_2
+  T_3_5
+  T_5
+  T_7
+  T_9
+  T_12
+  T_16
+  T_20
+  T_25
+  TRAILER_30_40T
+}
+
+enum ContainerSize {
+  TWENTY
+  FORTY
+  FORTY_FIVE_HC
+}
+
+enum BillOfLadingType {
+  ORIGINAL
+  TELEX
+}
+
+enum WarehouseSide {
+  DROP
+  PICKUP
 }
 
 enum TruckingType {
@@ -594,7 +698,8 @@ model Query {
   createdAt               DateTime    @default(now())
   updatedAt               DateTime    @updatedAt
 
-  cargo      CargoItem[]
+  cargos     Cargo[]
+  packages   Package[]
   checklist  QueryChecklistItem[]
   files      FileAsset[]
   points     Point[]
@@ -610,38 +715,68 @@ model Query {
   @@index([assignedUserId])
 }
 
-model CargoItem {
+model Cargo {
+  id         String     @id @default(uuid()) @db.Uuid
+  tenantId   String?    @db.Uuid
+  queryId    String     @db.Uuid
+  query      Query      @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  rowIndex   Int
+  poReference String?
+  label      String?
+  dimUnit    DimUnit    @default(CM)
+  weightUnit WeightUnit @default(KG)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  packages   Package[]
+  @@index([queryId])
+  @@index([tenantId])
+}
+
+model Package {
   id            String         @id @default(uuid()) @db.Uuid
   tenantId      String?        @db.Uuid
   queryId       String         @db.Uuid
   query         Query          @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  cargoId       String         @db.Uuid
+  cargo         Cargo          @relation(fields: [cargoId], references: [id], onDelete: Cascade)
   rowIndex      Int
-  poReference   String
-  productName   String
-  referenceTags ReferenceTag[]
-  hsCode        String?
-  packageType   String
-  isDangerous   Boolean        @default(false)
-  msdsFileId    String?        @db.Uuid
-  msdsFile      FileAsset?     @relation("CargoMsds", fields: [msdsFileId], references: [id])
-  qty           Int
+  packageNo     String
+  packageType   PackageType
   dimL          Decimal        @db.Decimal(10, 2)
   dimW          Decimal        @db.Decimal(10, 2)
   dimH          Decimal        @db.Decimal(10, 2)
-  dimUnit       DimUnit        @default(CM)
-  netWt         Decimal?       @db.Decimal(12, 3)
   grossWt       Decimal        @db.Decimal(12, 3)
-  weightUnit    WeightUnit     @default(KG)
-  // GENERATED ALWAYS AS ((dimL*dimW*dimH*qty)/divisor) STORED — unit-aware; see the hand-edited migration.
-  // @default(dbgenerated(...)) is the exact `db pull` form → drift-free; never written by the app.
-  volumeCbm     Decimal?       @default(dbgenerated("((((\"dimL\" * \"dimW\") * \"dimH\") * (qty)::numeric) / (CASE WHEN (\"dimUnit\" = 'MM'::\"DimUnit\") THEN (1000000000)::numeric ELSE (1000000)::numeric END))")) @db.Decimal(14, 6)
+  netWt         Decimal?       @db.Decimal(12, 3)
+  tags          ReferenceTag[] @default([])
+  msdsFileId    String?        @db.Uuid
+  msdsFile      FileAsset?     @relation("PackageMsds", fields: [msdsFileId], references: [id])
+  volumeCbm     Decimal?       @default(dbgenerated("(((\"dimL\" * \"dimW\") * \"dimH\") / (1000000)::numeric)")) @db.Decimal(14, 6)
+  packageCount  Int            @default(1)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
-
-  legCargo        LegCargo[]
+  items           Item[]
+  legPackages     LegPackage[]
   quoteCargoLines QuoteCargoLine[]
-
+  @@unique([queryId, packageNo])
   @@index([queryId])
+  @@index([cargoId])
+  @@index([tenantId])
+}
+
+model Item {
+  id        String         @id @default(uuid()) @db.Uuid
+  tenantId  String?        @db.Uuid
+  packageId String         @db.Uuid
+  package   Package        @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  rowIndex  Int
+  product   String?
+  qty       Decimal?       @db.Decimal(14, 3)
+  uom       UnitOfMeasure?
+  hsCode    String?
+  tags      ReferenceTag[] @default([])
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  @@index([packageId])
   @@index([tenantId])
 }
 
@@ -700,7 +835,7 @@ model Leg {
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
-  legCargo LegCargo[]
+  legPackages LegPackage[]
   quotes   Quote[]
   chargeSelections LegChargeLineSelection[]
 
@@ -711,19 +846,19 @@ model Leg {
   @@index([destinationPointId])
 }
 
-model LegCargo {
+model LegPackage {
   id          String    @id @default(uuid()) @db.Uuid
   tenantId    String?   @db.Uuid
   legId       String    @db.Uuid
   leg         Leg       @relation(fields: [legId], references: [id], onDelete: Cascade)
-  cargoItemId String    @db.Uuid
-  cargoItem   CargoItem @relation(fields: [cargoItemId], references: [id], onDelete: Cascade)
+  packageId   String    @db.Uuid
+  package     Package   @relation(fields: [packageId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  @@unique([legId, cargoItemId])
+  @@unique([legId, packageId])
   @@index([legId])
-  @@index([cargoItemId])
+  @@index([packageId])
   @@index([tenantId])
 }
 
@@ -755,7 +890,7 @@ model FileAsset {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  msdsForCargo CargoItem[] @relation("CargoMsds")
+  msdsForPackage Package[] @relation("PackageMsds")
 
   @@index([queryId])
   @@index([tenantId])

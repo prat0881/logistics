@@ -1,6 +1,6 @@
-import type { QuoteDraft } from "@svyft/shared";
-import { computeQuoteTotals } from "@svyft/shared";
-import { fmtAmount, fmtWeight } from "./format";
+import type { QuoteDraft, ChargeRateVariant } from "@svyft/shared";
+import { computeQuoteTotals, rateVariantLabel } from "@svyft/shared";
+import { fmtAmount } from "./format";
 
 export function QuoteSummary({
   draft,
@@ -10,53 +10,53 @@ export function QuoteSummary({
   currency: string | null;
 }): JSX.Element {
   const totals = computeQuoteTotals(draft);
-  const hasCharges = draft.charges.length > 0;
-  const hasTrucking = draft.trucking.length > 0;
-  const hasWarehouse = draft.warehouse.length > 0;
-
   return (
     <dl className="space-y-2 text-sm">
-      {hasCharges && (
-        <>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Origin subtotal</dt>
-            <dd className="font-mono tabular-nums">{fmtAmount(totals.zoneSubtotals.origin)}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Main freight subtotal</dt>
-            <dd className="font-mono tabular-nums">{fmtAmount(totals.zoneSubtotals.mainFreight)}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Destination subtotal</dt>
-            <dd className="font-mono tabular-nums">{fmtAmount(totals.zoneSubtotals.destination)}</dd>
-          </div>
-        </>
-      )}
-      {hasTrucking && (
-        <div className="flex justify-between">
-          <dt className="text-muted-foreground">Trucking subtotal</dt>
-          <dd className="font-mono tabular-nums">{fmtAmount(totals.truckingSubtotal)}</dd>
-        </div>
-      )}
-      {hasWarehouse && (
-        <div className="flex justify-between">
-          <dt className="text-muted-foreground">Warehouse subtotal</dt>
-          <dd className="font-mono tabular-nums">{fmtAmount(totals.warehouseSubtotal)}</dd>
-        </div>
-      )}
-      <div className="flex justify-between" data-testid="total-chargeable">
-        <dt className="text-muted-foreground">Total chargeable weight (t)</dt>
-        <dd className="font-mono tabular-nums">{fmtWeight(totals.totalChargeableWeightT)}</dd>
+      {/* v4 (design D1): "Shared subtotal" (warehouse-only, v3) split into the two figures that
+          actually feed every variant's Grand total — Additional charges (the COMMON `charges`
+          sum ChargeMatrix's own subtotal row shows) and Warehouse — so this headline stays
+          consistent with the charge table instead of collapsing them into one unlabeled number. */}
+      <div className="flex justify-between" data-testid="total-additional-charges">
+        <dt className="text-muted-foreground">Additional charges</dt>
+        <dd className="font-mono tabular-nums">{fmtAmount(totals.additionalChargeSum)}</dd>
       </div>
-      <div
-        className="flex justify-between border-t pt-2 mt-2"
-        data-testid="grand-total"
-      >
-        <dt className="font-display font-semibold">Grand total</dt>
-        <dd className="font-mono tabular-nums text-lg font-bold">
-          {fmtAmount(totals.grandTotal)}
-          {currency && <span className="ml-1 text-sm font-normal">{currency}</span>}
-        </dd>
+      <div className="flex justify-between" data-testid="total-warehouse">
+        <dt className="text-muted-foreground">Warehouse</dt>
+        <dd className="font-mono tabular-nums">{fmtAmount(totals.warehouseSum)}</dd>
+      </div>
+      <div className="flex justify-between" data-testid="total-chargeable">
+        <dt className="text-muted-foreground">Chargeable weight (kg)</dt>
+        <dd className="font-mono tabular-nums">{totals.chargeableWeightKg.toFixed(3)}</dd>
+      </div>
+      <div className="border-t pt-2 mt-2 space-y-2">
+        {totals.variants.map((v) => {
+          // Round 4 (reverses the old "own-rate-only" rule): blank only when NOTHING at all is
+          // priced for this variant — no own freight rate, no common charge, no warehouse. Once
+          // ANY of those is priced, show the real grandTotal, even if the variant's OWN rate is
+          // still unset (mirrors ChargeMatrix/RfqPrintView). Air is excluded from the check the
+          // same as before — it has no freight-rate cell at all, so rateAmount is always null.
+          const blank =
+            v.rateAmount == null &&
+            v.key !== "AIR" &&
+            totals.additionalChargeSum === 0 &&
+            totals.warehouseSum === 0;
+          const label = v.key === "AIR" ? "Air" : rateVariantLabel(v.key as ChargeRateVariant);
+          return (
+            <div key={v.key} className="flex justify-between" data-testid={`grand-total-${v.key}`}>
+              <dt className="font-display font-semibold">{label} total</dt>
+              <dd className="font-mono tabular-nums text-lg font-bold">
+                {blank ? (
+                  "–"
+                ) : (
+                  <>
+                    {fmtAmount(v.grandTotal)}
+                    {currency && <span className="ml-1 text-sm font-normal">{currency}</span>}
+                  </>
+                )}
+              </dd>
+            </div>
+          );
+        })}
       </div>
     </dl>
   );

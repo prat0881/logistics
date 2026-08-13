@@ -23,6 +23,7 @@ const LEG_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const PICKUP_POINT_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const DELIVERY_POINT_ID = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const CARGO_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+const PACKAGE_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 
 const testUser = { id: "u1", name: "Agent", email: "a@x", role: "EXECUTIVE" as const };
 
@@ -59,24 +60,37 @@ const baseDetail = {
   assignedUserId: null,
   createdAt: "2026-01-01T00:00:00+00:00",
   updatedAt: "2026-01-01T00:00:00+00:00",
-  cargo: [
+  cargos: [
     {
       id: CARGO_ID,
       rowIndex: 0,
       poReference: "PO-001",
-      productName: "Widget A",
-      referenceTags: [],
-      hsCode: null,
-      packageType: "Carton",
-      isDangerous: false,
-      msdsFileId: null,
-      qty: 2,
-      dimL: "40",
-      dimW: "30",
-      dimH: "20",
-      netWt: null,
-      grossWt: "10",
+      label: null,
+      dimUnit: "CM" as const,
+      weightUnit: "KG" as const,
+      packages: [
+        {
+          id: PACKAGE_ID,
+          rowIndex: 0,
+          packageNo: "PKG-001",
+          packageType: "CARTON" as const,
+          dimL: "40",
+          dimW: "30",
+          dimH: "20",
+          grossWt: "10",
+          netWt: null,
+          volumeCbm: "0.024",
+          tags: [],
+          effectiveTags: [],
+          msdsFileId: null,
+          items: [],
+        },
+      ],
+      packageCount: 1,
+      grossWeightKg: "10",
       volumeCbm: "0.024",
+      tags: [],
+      chargeableWeight: null,
     },
   ],
   checklist: [],
@@ -146,7 +160,7 @@ const legDto = {
   executionStatus: "PENDING",
   createdAt: "2026-01-01T00:00:00+00:00",
   updatedAt: "2026-01-01T00:00:00+00:00",
-  assignedCargoIds: [CARGO_ID],
+  assignedPackageIds: [PACKAGE_ID],
   rollup: {
     totalPackages: 2,
     totalCbm: 0.024,
@@ -165,7 +179,7 @@ const danglingLegDto = {
   legCode: "L2",
   originPointId: null,
   destinationPointId: DELIVERY_POINT_ID,
-  assignedCargoIds: [],
+  assignedPackageIds: [],
   rollup: { totalPackages: 0, totalCbm: 0, totalGrossWt: 0, totalNetWt: 0 },
 };
 const detailWithDangling = { ...baseDetail, legs: [danglingLegDto] };
@@ -239,9 +253,7 @@ describe("LegsStep", () => {
       expect(document.querySelector(`[data-point-id="${PICKUP_POINT_ID}"]`)).toBeInTheDocument();
     });
 
-    const pointNode = document.querySelector(
-      `[data-point-id="${PICKUP_POINT_ID}"]`,
-    ) as SVGGElement;
+    const pointNode = document.querySelector(`[data-point-id="${PICKUP_POINT_ID}"]`) as SVGGElement;
     await userEvent.click(pointNode);
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
@@ -324,8 +336,7 @@ describe("LegsStep", () => {
       const calls: unknown[][] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
       const mintCall = calls.find(
         (args) =>
-          (args[0] as string) === "/api/queries" &&
-          (args[1] as RequestInit)?.method === "POST",
+          (args[0] as string) === "/api/queries" && (args[1] as RequestInit)?.method === "POST",
       );
       expect(mintCall).toBeTruthy();
     });
@@ -348,7 +359,9 @@ describe("LegsStep", () => {
       { route: `/queries/${QUERY_ID}?step=3` },
     );
     await navigateToStep4();
-    await waitFor(() => expect(document.querySelector('[data-slot="route-diagram"]')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="route-diagram"]')).toBeInTheDocument(),
+    );
     expect(screen.queryByText(/hover the highlighted boxes/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/issues? to resolve/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: /incomplete legs/i })).not.toBeInTheDocument();
@@ -374,7 +387,9 @@ describe("LegsStep", () => {
       { route: `/queries/${QUERY_ID}?step=3` },
     );
     await navigateToStep4();
-    await waitFor(() => expect(document.querySelector(`[data-leg-id="${LEG_ID}"]`)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(document.querySelector(`[data-leg-id="${LEG_ID}"]`)).toBeInTheDocument(),
+    );
     expect(document.querySelector("[data-leg-id][data-finding]")).toBeNull();
   });
 
@@ -430,9 +445,7 @@ describe("LegsStep", () => {
     await navigateToStep4();
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/add a point or leg to start the route/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/add a point or leg to start the route/i)).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: "Leg & Route" })).toBeInTheDocument();
     });
   });
@@ -461,7 +474,11 @@ describe("LegsStep", () => {
             <>
               <QueryWizardPage />
               {/* Location probe: captures current search string on every render */}
-              <LocationProbe onSearch={(s) => { capturedSearch = s; }} />
+              <LocationProbe
+                onSearch={(s) => {
+                  capturedSearch = s;
+                }}
+              />
             </>
           }
         />
@@ -500,7 +517,11 @@ describe("LegsStep", () => {
           element={
             <>
               <QueryWizardPage />
-              <LocationProbe onSearch={(s) => { capturedSearch = s; }} />
+              <LocationProbe
+                onSearch={(s) => {
+                  capturedSearch = s;
+                }}
+              />
             </>
           }
         />

@@ -7,6 +7,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { ChangeMediator } from "../src/modules/changes/change-mediator";
 import { ScopeResolver } from "../src/modules/changes/scope.resolver";
 import { ImpactRegistry } from "../src/modules/changes/impact.registry";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 const PFX = "p8-change-mediator-";
 
@@ -28,7 +29,7 @@ describe("Change Mediator (integration)", () => {
   });
 
   afterAll(async () => {
-    await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } }); // cascades cargo/leg/legCargo
+    await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } }); // cascades legs/legPackages/cargo/packages/items
     await app.close();
   });
 
@@ -40,6 +41,15 @@ describe("Change Mediator (integration)", () => {
     expect(registry.classOf("leg", "originPointId")).toBe("RfqDefining");
     expect(registry.classOf("leg", "legName")).toBe("Corrective");
     expect(registry.classOf("leg", "@create")).toBe("Structural");
+  });
+
+  // Cargo→Package re-model: Package (not Cargo) now carries the dims/weights an FF quotes
+  // against, so the package-grain impact map is what gates the change-order fork — pin its
+  // declaration at startup the same way the leg one above is pinned.
+  it("declares the package impact classes at startup (restored package-grain gating)", () => {
+    expect(registry.classOf("package", "grossWt")).toBe("RfqDefining");
+    expect(registry.classOf("package", "packageNo")).toBe("Corrective");
+    expect(registry.classOf("package", "@create")).toBe("Structural");
   });
 
   it("routes an RfqDefining leg edit down the FREE path (no downstream work), running the uow", async () => {
@@ -102,39 +112,36 @@ describe("Change Mediator (integration)", () => {
     expect(uow).not.toHaveBeenCalled(); // no reason ⇒ preview only, nothing applied (Task 7)
   });
 
-  // Real Query + CargoItem, self-cleaned via shipmentDescription's PFX (see afterAll).
+  // Real Query + Cargo + Package (v2 grain, via the shared helper), self-cleaned via
+  // shipmentDescription's PFX (see afterAll).
   async function createCargoRow(suffix: string) {
     const q = await prisma.query.create({
       data: { queryCode: `${PFX}${Date.now()}-${suffix}`, shipmentDescription: `${PFX}q` },
     });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: q.id,
-        rowIndex: 1,
-        poReference: `PO-${suffix}`,
-        productName: "Widget",
-        packageType: "Box",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 100,
-      },
+    const { cargoId, packageIds } = await createCargoWithPackages(prisma, {
+      queryId: q.id,
+      packages: [{ packageNo: `PK-${suffix}`, grossWt: 100 }],
     });
-    return { queryId: q.id, cargoId: cargo.id };
+    return { queryId: q.id, cargoId, packageId: packageIds[0] };
   }
 
-  it("fans a cargo edit's scope out to the legs carrying it via LegCargo (Task 8)", async () => {
-    const { queryId, cargoId } = await createCargoRow("fanout");
+  it("fans a cargo edit's scope out to the legs carrying its packages via LegPackage (Task 8)", async () => {
+    const { queryId, cargoId, packageId } = await createCargoRow("fanout");
     const legA = await prisma.leg.create({ data: { queryId, legCode: "LA" } });
     const legB = await prisma.leg.create({ data: { queryId, legCode: "LB" } });
-    await prisma.legCargo.create({ data: { legId: legA.id, cargoItemId: cargoId } });
-    await prisma.legCargo.create({ data: { legId: legB.id, cargoItemId: cargoId } });
+    await assignPackagesToLeg(prisma, legA.id, [packageId]);
+    await assignPackagesToLeg(prisma, legB.id, [packageId]);
 
     const res = await mediator.apply(
-      { entity: "cargo", id: cargoId, field: "grossWt", patch: { grossWt: 200 }, queryId },
+      {
+        entity: "cargo",
+        id: cargoId,
+        field: "poReference",
+        patch: { poReference: "PO-CHANGED" },
+        queryId,
+      },
       async (tx) => {
-        await tx.cargoItem.update({ where: { id: cargoId }, data: { grossWt: 200 } });
+        await tx.cargo.update({ where: { id: cargoId }, data: { poReference: "PO-CHANGED" } });
       },
     );
 
@@ -143,16 +150,63 @@ describe("Change Mediator (integration)", () => {
     expect(legIdSet).toEqual(new Set([legA.id, legB.id]));
   });
 
-  it("keeps a cargo edit self-scoped when the cargo isn't assigned to any leg (Task 8)", async () => {
+  it("keeps a cargo edit self-scoped when none of its packages are assigned to a leg (Task 8)", async () => {
     const { queryId, cargoId } = await createCargoRow("unassigned");
 
     const res = await mediator.apply(
-      { entity: "cargo", id: cargoId, field: "grossWt", patch: { grossWt: 200 }, queryId },
+      {
+        entity: "cargo",
+        id: cargoId,
+        field: "poReference",
+        patch: { poReference: "PO-CHANGED" },
+        queryId,
+      },
       async (tx) => {
-        await tx.cargoItem.update({ where: { id: cargoId }, data: { grossWt: 200 } });
+        await tx.cargo.update({ where: { id: cargoId }, data: { poReference: "PO-CHANGED" } });
       },
     );
 
     expect(res.scope).toEqual([{ type: "cargo", id: cargoId }]);
+  });
+
+  // Package-grain SCOPE RESOLUTION (restored gating, Unit 2): `case "package"` in
+  // ImpactClassifier now resolves scope via routing.legsCarryingPackage (LegPackage) — the SAME
+  // shape as the cargo fan-out above, but one level down the tree. This is a distinct classifier
+  // branch from "cargo" (which fans via a package's cargoId, not the package's own id), so it
+  // needs its own direct coverage. These two tests assert only the scope-resolution INPUT to the
+  // fork decision (class + scoped legs); the end-to-end change-order FORK itself — a package edit
+  // on a leg with a LIVE quote returning needsChangeOrder — is proven separately against the real
+  // mediated-service path in change-order-cascade.e2e-spec.ts.
+  it("fans a package edit's scope out to the legs carrying it via LegPackage (restored package-grain gating)", async () => {
+    const { queryId, packageId } = await createCargoRow("pkg-fanout");
+    const legC = await prisma.leg.create({ data: { queryId, legCode: "LC" } });
+    const legD = await prisma.leg.create({ data: { queryId, legCode: "LD" } });
+    await assignPackagesToLeg(prisma, legC.id, [packageId]);
+    await assignPackagesToLeg(prisma, legD.id, [packageId]);
+
+    const res = await mediator.apply(
+      { entity: "package", id: packageId, field: "grossWt", patch: { grossWt: 200 }, queryId },
+      async (tx) => {
+        await tx.package.update({ where: { id: packageId }, data: { grossWt: 200 } });
+      },
+    );
+
+    expect(res.class).toBe("RfqDefining");
+    const legIdSet = new Set(res.scope.map((s: { type: string; id?: string }) => s.id));
+    expect(res.scope.every((s: { type: string }) => s.type === "leg")).toBe(true);
+    expect(legIdSet).toEqual(new Set([legC.id, legD.id]));
+  });
+
+  it("keeps a package edit self-scoped when it isn't assigned to any leg (package-grain fallback)", async () => {
+    const { queryId, packageId } = await createCargoRow("pkg-unassigned");
+
+    const res = await mediator.apply(
+      { entity: "package", id: packageId, field: "grossWt", patch: { grossWt: 200 }, queryId },
+      async (tx) => {
+        await tx.package.update({ where: { id: packageId }, data: { grossWt: 200 } });
+      },
+    );
+
+    expect(res.scope).toEqual([{ type: "package", id: packageId }]);
   });
 });

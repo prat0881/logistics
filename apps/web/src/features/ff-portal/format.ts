@@ -17,7 +17,9 @@ export function fmtCbm(v: string | number | null | undefined): string {
   return fmtDecimal(v, 4);
 }
 
-function pad(n: number): string { return String(n).padStart(2, "0"); }
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
 
 export function toDatetimeLocal(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -28,6 +30,16 @@ export function toDatetimeLocal(iso: string | null | undefined): string {
 
 export function fromDatetimeLocal(local: string): string | null {
   if (!local) return null;
-  const d = new Date(local);            // interpreted as viewer-local wall time
+  const d = new Date(local); // interpreted as viewer-local wall time
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** "Now" in the same `datetime-local` wall-clock format `toDatetimeLocal` produces (design D3) —
+ *  the `min` every FF datetime field (TransitPlanForm, WarehouseStaging) sets so the browser
+ *  picker can't offer a past moment in the first place. Client-side UX only; the engine's
+ *  unconditional Q_PAST_DATE rule (quote-engine.ts's validateQuote) is the enforcement half this
+ *  can't be bypassed by editing the DOM. Callers compute this once per render and reuse it across
+ *  every field on that pass, rather than calling it separately per field. */
+export function nowDatetimeLocal(): string {
+  return toDatetimeLocal(new Date().toISOString());
 }

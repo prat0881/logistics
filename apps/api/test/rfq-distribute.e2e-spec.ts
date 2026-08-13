@@ -6,10 +6,11 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
-import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
+import { Role, ACCESS_TOKEN_COOKIE, type ManifestSnapshot } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 const PREFIX = "RFQ-DIST";
 const CODE = `YAL00-${PREFIX}`;
@@ -52,9 +53,11 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -91,7 +94,7 @@ describe(`${PREFIX} (e2e)`, () => {
       isDangerous?: boolean;
       skipTargetDelivery?: boolean;
       skipCargo?: boolean;
-      cargoItemId?: string;
+      packageIds?: string[];
     },
   ) => {
     const origin = await prisma.point.create({
@@ -101,24 +104,15 @@ describe(`${PREFIX} (e2e)`, () => {
       data: { queryId, type: "DELIVERY", country: "AE" },
     });
 
-    let cargoId = opts.cargoItemId;
-    if (!cargoId && !opts.skipCargo) {
-      const cargo = await prisma.cargoItem.create({
-        data: {
-          queryId,
-          rowIndex: 0,
-          poReference: `PO-${opts.legCode}`,
-          productName: "Widget",
-          packageType: "BOX",
-          qty: 1,
-          dimL: 10,
-          dimW: 10,
-          dimH: 10,
-          grossWt: 1,
-          isDangerous: opts.isDangerous ?? false,
-        },
+    let packageIds = opts.packageIds;
+    if (!packageIds && !opts.skipCargo) {
+      const built = await createCargoWithPackages(prisma, {
+        queryId,
+        packages: [
+          { dimL: 10, dimW: 10, dimH: 10, grossWt: 1, tags: opts.isDangerous ? ["DG"] : [] },
+        ],
       });
-      cargoId = cargo.id;
+      packageIds = built.packageIds;
     }
 
     const leg = await prisma.leg.create({
@@ -131,9 +125,11 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: opts.skipTargetDelivery ? undefined : new Date(Date.now() + 86400000),
-        ...(cargoId ? { legCargo: { create: { cargoItemId: cargoId } } } : {}),
       },
     });
+    if (packageIds && packageIds.length > 0) {
+      await assignPackagesToLeg(prisma, leg.id, packageIds);
+    }
     return leg;
   };
 
@@ -142,22 +138,15 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- build self-contained fixtures ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-DIST-1",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 2,
-        dimL: 10,
-        dimW: 20,
-        dimH: 30,
-        grossWt: 5,
-        isDangerous: false,
-      },
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 20, dimH: 30, grossWt: 5 }],
     });
     const leg = await prisma.leg.create({
       data: {
@@ -169,9 +158,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await mkFf(`FF-${PREFIX}-A`, ["CN", "AE"], ["AIR"], "ACTIVE");
 
     // Select FF via ff-selection endpoint to mint the SELECT quote
@@ -211,14 +200,12 @@ describe(`${PREFIX} (e2e)`, () => {
       incoterms: "FOB",
       origin: { country: "CN" },
       destination: { country: "AE" },
-      cargo: expect.arrayContaining([
-        expect.objectContaining({
-          cargoItemId: cargo.id,
-          qty: 2,
-          grossWt: "5",
-        }),
-      ]),
     });
+    const snap = quote?.manifestSnapshot as unknown as ManifestSnapshot;
+    expect(snap.cargo).toEqual(
+      expect.arrayContaining([expect.objectContaining({ packageId: packageIds[0] })]),
+    );
+    expect(Number(snap.cargo[0]!.grossWt)).toBe(5);
 
     // --- verify status rollup ---
     expect((await prisma.leg.findUnique({ where: { id: leg.id } }))?.status).toBe("RFQ_SENT");
@@ -231,7 +218,9 @@ describe(`${PREFIX} (e2e)`, () => {
   it("amend: 2nd leg to same FF reuses the same Rfq (minted=false, same rfqNumber)", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-AMD`, incoterms: "FOB" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-AMD`, incoterms: "FOB" },
+    });
     // A separate cleanup entry so afterAll handles it
     const amdFF = await mkFf(`FF-${PREFIX}-AMD`, ["CN", "AE"], ["AIR"], "ACTIVE");
     const legA = await mkLeg(query.id, { legCode: "L-AMD-A" });
@@ -252,7 +241,8 @@ describe(`${PREFIX} (e2e)`, () => {
 
     const entry1 = res1.body.rfqs[0];
     expect(entry1.minted).toBe(true);
-    const originalDeadline = (await prisma.rfq.findUnique({ where: { id: entry1.rfqId } }))!.submissionDeadline;
+    const originalDeadline = (await prisma.rfq.findUnique({ where: { id: entry1.rfqId } }))!
+      .submissionDeadline;
 
     // Select FF for leg B (same FF) and distribute → must AMEND (reuse same Rfq)
     await request(app.getHttpServer())
@@ -273,7 +263,9 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(entry2.rfqNumber).toBe(entry1.rfqNumber);
 
     // FF has exactly ONE Rfq for this query
-    const rfqCount = await prisma.rfq.count({ where: { queryId: query.id, freightForwarderId: amdFF.id } });
+    const rfqCount = await prisma.rfq.count({
+      where: { queryId: query.id, freightForwarderId: amdFF.id },
+    });
     expect(rfqCount).toBe(1);
 
     // leg B quote is RFQ_SENT
@@ -297,7 +289,9 @@ describe(`${PREFIX} (e2e)`, () => {
   it("F6 dup-guard: 409 on re-distribute; 201+skipped with confirm:true", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-DUP`, incoterms: "FOB" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-DUP`, incoterms: "FOB" },
+    });
     const dupFF = await mkFf(`FF-${PREFIX}-DUP`, ["CN", "AE"], ["AIR"], "ACTIVE");
     const leg = await mkLeg(query.id, { legCode: "L-DUP-A" });
 
@@ -344,8 +338,16 @@ describe(`${PREFIX} (e2e)`, () => {
   it("F5: DG cargo + FF handleDg:false → 400 with code F5_DG_FF_CANNOT_HANDLE", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-DG`, incoterms: "FOB" } });
-    const dgFF = await mkFf(`FF-${PREFIX}-DG`, ["CN", "AE"], ["AIR"], "ACTIVE", false /* handleDg=false */);
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-DG`, incoterms: "FOB" },
+    });
+    const dgFF = await mkFf(
+      `FF-${PREFIX}-DG`,
+      ["CN", "AE"],
+      ["AIR"],
+      "ACTIVE",
+      false /* handleDg=false */,
+    );
     const leg = await mkLeg(query.id, { legCode: "L-DG-A", isDangerous: true });
 
     await request(app.getHttpServer())
@@ -375,7 +377,9 @@ describe(`${PREFIX} (e2e)`, () => {
   it("F1: leg missing mode → 400 with code F1_INCOMPLETE_LEG", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-F1`, incoterms: "FOB" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-F1`, incoterms: "FOB" },
+    });
     const f1FF = await mkFf(`FF-${PREFIX}-F1`, ["CN", "AE"], ["AIR"], "ACTIVE");
     const leg = await mkLeg(query.id, { legCode: "L-F1-A", mode: null });
 
@@ -406,7 +410,9 @@ describe(`${PREFIX} (e2e)`, () => {
   it("F4: leg in DRAFT status → 400 with code F4_LEG_NOT_READY", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-F4`, incoterms: "FOB" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-F4`, incoterms: "FOB" },
+    });
     const f4FF = await mkFf(`FF-${PREFIX}-F4`, ["CN", "AE"], ["AIR"], "ACTIVE");
     // Leg is otherwise complete (origin+dest, mode, cargo, dates) but status is DRAFT
     const leg = await mkLeg(query.id, { legCode: "L-F4-A", status: "DRAFT" });
@@ -438,7 +444,9 @@ describe(`${PREFIX} (e2e)`, () => {
   it("override: future submissionDeadline is stored; past deadline → 400", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-OVR`, incoterms: "FOB" } });
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-OVR`, incoterms: "FOB" },
+    });
     const ovrFF = await mkFf(`FF-${PREFIX}-OVR`, ["CN", "AE"], ["AIR"], "ACTIVE");
     const leg = await mkLeg(query.id, { legCode: "L-OVR-A" });
 

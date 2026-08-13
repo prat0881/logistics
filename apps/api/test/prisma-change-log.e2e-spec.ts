@@ -76,27 +76,28 @@ describe("PrismaChangeLog + ChangeLogPolicy (integration)", () => {
     // ChangeLogPolicy → CHANGE_LOG sink — nothing mocked. Pre-RFQ, cargo isn't on any leg, so
     // ScopeResolver.downstreamWork is false and the edit is guaranteed FREE (same fixture shape
     // as change-mediator.e2e-spec.ts's createCargoRow / "keeps a cargo edit self-scoped" case).
+    // grossWt moved off Cargo onto Package (RfqDefining there) in the Stage-3 re-model — Cargo
+    // is now a Corrective-only grouping row (poReference/label/dimUnit/weightUnit), same field
+    // swap change-mediator.e2e-spec.ts's cargo-entity tests already made (Task 22). The point of
+    // this test — a mediated pre-RFQ edit with no downstream leg/quotes resolves FREE and
+    // PrismaChangeLog never fires — doesn't depend on which Corrective field is edited.
     it("writes zero ChangeLog rows for a mediated pre-RFQ cargo edit", async () => {
       const queryId = await createQuery("free-guard");
-      const cargo = await prisma.cargoItem.create({
-        data: {
-          queryId,
-          rowIndex: 1,
-          poReference: "PO-1",
-          productName: "Widget",
-          packageType: "Box",
-          qty: 1,
-          dimL: 10,
-          dimW: 10,
-          dimH: 10,
-          grossWt: 100,
-        },
+      const cargo = await prisma.cargo.create({
+        data: { queryId, rowIndex: 0, poReference: "PO-1" },
       });
 
       const res = await mediator.apply(
-        { entity: "cargo", id: cargo.id, field: "grossWt", patch: { grossWt: 200 }, queryId, actorId: null },
+        {
+          entity: "cargo",
+          id: cargo.id,
+          field: "poReference",
+          patch: { poReference: "PO-2" },
+          queryId,
+          actorId: null,
+        },
         async (tx) => {
-          await tx.cargoItem.update({ where: { id: cargo.id }, data: { grossWt: 200 } });
+          await tx.cargo.update({ where: { id: cargo.id }, data: { poReference: "PO-2" } });
         },
       );
 

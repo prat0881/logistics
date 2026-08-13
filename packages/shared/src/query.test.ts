@@ -15,7 +15,20 @@ import {
 
 describe("Query vocabularies", () => {
   it("pins the 12 Incoterms", () => {
-    expect(INCOTERMS).toEqual(["EXW","FCA","FAS","FOB","CFR","CIF","CPT","CIP","DAP","DPU","DDP","NA"]);
+    expect(INCOTERMS).toEqual([
+      "EXW",
+      "FCA",
+      "FAS",
+      "FOB",
+      "CFR",
+      "CIF",
+      "CPT",
+      "CIP",
+      "DAP",
+      "DPU",
+      "DDP",
+      "NA",
+    ]);
   });
   it("accepts NA as a valid incoterms value", () => {
     expect(querySaveSchema.safeParse({ incoterms: "NA" }).success).toBe(true);
@@ -31,7 +44,20 @@ describe("Query vocabularies", () => {
 describe("incoterms NA", () => {
   it("stores NA (no slash) and pins the 12-value array", () => {
     expect(Incoterms.NA).toBe("NA");
-    expect(INCOTERMS).toEqual(["EXW","FCA","FAS","FOB","CFR","CIF","CPT","CIP","DAP","DPU","DDP","NA"]);
+    expect(INCOTERMS).toEqual([
+      "EXW",
+      "FCA",
+      "FAS",
+      "FOB",
+      "CFR",
+      "CIF",
+      "CPT",
+      "CIP",
+      "DAP",
+      "DPU",
+      "DDP",
+      "NA",
+    ]);
   });
   it("displays NA as 'N/A'", () => {
     expect(incotermsLabel("NA")).toBe("N/A");
@@ -167,7 +193,9 @@ describe("querySaveSchema (draft — lenient, format-validated)", () => {
       });
       expect(res.success).toBe(false);
       if (!res.success) {
-        expect(res.error.issues[0].message).toBe("Target Pickup must be on or before Target Delivery");
+        expect(res.error.issues[0].message).toBe(
+          "Target Pickup must be on or before Target Delivery",
+        );
       }
     });
   });
@@ -187,8 +215,13 @@ describe("querySaveSchema (draft — lenient, format-validated)", () => {
 describe("queryListQuerySchema", () => {
   it("coerces page/pageSize and passes through filters", () => {
     const parsed = queryListQuerySchema.parse({
-      q: "YAL26", status: "DRAFT", priority: "HIGH",
-      freightMode: "SEA,ROAD", page: "2", pageSize: "25", sort: "updatedAt:desc",
+      q: "YAL26",
+      status: "DRAFT",
+      priority: "HIGH",
+      freightMode: "SEA,ROAD",
+      page: "2",
+      pageSize: "25",
+      sort: "updatedAt:desc",
     });
     expect(parsed.page).toBe(2);
     expect(parsed.pageSize).toBe(25);
@@ -269,7 +302,7 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
     targetDelivery: new Date(),
     incoterms: "FOB" as const,
   };
-  it("returns no findings when all mandatory fields present + no DG cargo", () => {
+  it("returns no findings when all mandatory fields present + no DG package", () => {
     expect(collectCreateFindings(ready, [])).toEqual([]);
   });
   it("flags each missing mandatory field with rule F1", () => {
@@ -277,15 +310,80 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
     expect(f.map((x) => x.rule)).toEqual(["F1", "F1"]);
     expect(f.every((x) => x.severity === "blocking")).toBe(true);
   });
-  it("flags a DG cargo row missing its MSDS with rule F6", () => {
+  // Packing-list re-model: the cargo arm of collectCreateFindings moved from cargo-grain
+  // (isDangerous/poReference) to package-grain (effectiveTags/packageNo), scope "package".
+  // Adapted from the old "flags a DG cargo row missing its MSDS" test — now also exercises
+  // multi-package arrays (only the DG-and-uncovered package is flagged; a non-DG package and
+  // a DG-but-MSDS-covered package are both silent).
+  it("flags only the DG package missing its MSDS with rule F6 (per-package scope, multi-package array)", () => {
     const f = collectCreateFindings(ready, [
-      { id: "cg1", isDangerous: true, msdsFileId: null, poReference: "PO-9" },
+      {
+        id: "pk-dg",
+        effectiveTags: ["DG"],
+        msdsFileId: null,
+        packageNo: "P-1",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      },
+      {
+        id: "pk-heavy",
+        effectiveTags: ["HEAVY"],
+        msdsFileId: null,
+        packageNo: "P-2",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      },
+      {
+        id: "pk-dg-covered",
+        effectiveTags: ["DG"],
+        msdsFileId: "file-1",
+        packageNo: "P-3",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      },
     ]);
     expect(f).toHaveLength(1);
     expect(f[0]).toMatchObject({
       rule: "F6",
       severity: "blocking",
-      scope: { type: "cargo", id: "cg1" },
+      scope: { type: "package", id: "pk-dg" },
+    });
+    expect(f[0].message).toMatch(/P-1/);
+  });
+  it("flags a package with a DG item but no MSDS (F6, per package)", () => {
+    const ready = {
+      id: "q1",
+      clientId: "c1",
+      contactName: "Jo",
+      contactEmail: "j@a.co",
+      contactPhone: "+911234567890",
+      readyDate: new Date(),
+      targetDelivery: new Date(),
+      incoterms: "FOB" as const,
+    };
+    const f = collectCreateFindings(ready, [
+      {
+        id: "pk1",
+        effectiveTags: ["DG"],
+        msdsFileId: null,
+        packageNo: "P-1",
+        dimL: 1,
+        dimW: 1,
+        dimH: 1,
+        grossWt: 1,
+      },
+    ]);
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({
+      rule: "F6",
+      severity: "blocking",
+      scope: { type: "package", id: "pk1" },
     });
   });
   it("treats a whitespace-only contactName as missing (F1) (G8)", () => {
@@ -294,7 +392,16 @@ describe("collectCreateFindings (F1 mandatory + F6 DG→MSDS; route rules are Pl
   });
   it("emits the incoterms finding with a field/incoterms scope (buckets to Shipment)", () => {
     const findings = collectCreateFindings(
-      { id: "q1", clientId: "c", contactName: "n", contactEmail: "e@x.com", contactPhone: "+6591234567", readyDate: "2026-08-01T00:00:00Z", targetDelivery: "2026-08-02T00:00:00Z", incoterms: null },
+      {
+        id: "q1",
+        clientId: "c",
+        contactName: "n",
+        contactEmail: "e@x.com",
+        contactPhone: "+6591234567",
+        readyDate: "2026-08-01T00:00:00Z",
+        targetDelivery: "2026-08-02T00:00:00Z",
+        incoterms: null,
+      },
       [],
     );
     const inco = findings.find((f) => f.message === "Incoterms is required");
@@ -314,7 +421,8 @@ describe("defaultResponseDeadline (priority → deadline offset)", () => {
   });
   it("adds 48/18/12h for LOW/HIGH/URGENT", () => {
     const base = "2026-07-22T00:00:00.000Z";
-    const t = (p: "LOW" | "HIGH" | "URGENT") => new Date(defaultResponseDeadline(base, p)).getTime();
+    const t = (p: "LOW" | "HIGH" | "URGENT") =>
+      new Date(defaultResponseDeadline(base, p)).getTime();
     expect(t("LOW")).toBe(new Date("2026-07-24T00:00:00.000Z").getTime());
     expect(t("HIGH")).toBe(new Date("2026-07-22T18:00:00.000Z").getTime());
     expect(t("URGENT")).toBe(new Date("2026-07-22T12:00:00.000Z").getTime());
@@ -342,7 +450,12 @@ describe("F3 compares real instants across zones", () => {
 
 describe("Query timezone fields", () => {
   it("accepts valid IANA zones on readyDate/targetDelivery timezone; rejects junk", () => {
-    expect(querySaveSchema.safeParse({ readyDateTimezone: "Asia/Singapore", targetDeliveryTimezone: "Europe/London" }).success).toBe(true);
+    expect(
+      querySaveSchema.safeParse({
+        readyDateTimezone: "Asia/Singapore",
+        targetDeliveryTimezone: "Europe/London",
+      }).success,
+    ).toBe(true);
     expect(querySaveSchema.safeParse({ readyDateTimezone: "Not/AZone" }).success).toBe(false);
   });
   it("leaves them optional (empty draft still valid)", () => {
@@ -351,20 +464,32 @@ describe("Query timezone fields", () => {
 });
 
 describe("collectChecklistFindings (Notes + all boxes mandatory, Create-enforced)", () => {
-  const items = (checked: boolean) =>
-    [{ key: "weight-confirmed", checked, label: "Weight confirmed" }, { key: "packing-list", checked, label: "Packing list received" }];
+  const items = (checked: boolean) => [
+    { key: "weight-confirmed", checked, label: "Weight confirmed" },
+    { key: "packing-list", checked, label: "Packing list received" },
+  ];
   it("no findings when all boxes checked + notes present", () => {
     expect(collectChecklistFindings(items(true), "ok").length).toBe(0);
   });
   it("one blocking finding per unchecked box (field/checklist scope)", () => {
     const f = collectChecklistFindings(items(false), "ok");
     expect(f).toHaveLength(2);
-    expect(f[0]).toMatchObject({ rule: "F7", severity: "blocking", scope: { type: "field", id: "checklist:weight-confirmed" } });
+    expect(f[0]).toMatchObject({
+      rule: "F7",
+      severity: "blocking",
+      scope: { type: "field", id: "checklist:weight-confirmed" },
+    });
     expect(f[0].message).toMatch(/Weight confirmed/);
   });
   it("blocking finding for empty / whitespace notes (field/notes scope)", () => {
-    expect(collectChecklistFindings(items(true), "").some((f) => f.scope.id === "notes")).toBe(true);
-    expect(collectChecklistFindings(items(true), "   ").some((f) => f.scope.id === "notes")).toBe(true);
-    expect(collectChecklistFindings(items(true), null).some((f) => f.scope.id === "notes")).toBe(true);
+    expect(collectChecklistFindings(items(true), "").some((f) => f.scope.id === "notes")).toBe(
+      true,
+    );
+    expect(collectChecklistFindings(items(true), "   ").some((f) => f.scope.id === "notes")).toBe(
+      true,
+    );
+    expect(collectChecklistFindings(items(true), null).some((f) => f.scope.id === "notes")).toBe(
+      true,
+    );
   });
 });

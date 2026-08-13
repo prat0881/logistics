@@ -8,7 +8,7 @@ import {
   type FindingScope,
   type ImpactDecision,
 } from "@svyft/shared";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type { ChangeResult, UnitOfWork } from "./free-path.strategy";
 import { PrismaService } from "../../prisma/prisma.service";
 import { CHANGE_LOG, type ChangeLog } from "./change-log";
@@ -152,12 +152,21 @@ export class ChangeOrderStrategy {
         // carries NO charge/warehouse data, so without this a refreshed FF keeps a STALE charge
         // set and the portal (seeding + Q1) mis-prices. Built from the SAME tx-reloaded leg
         // (ctx.leg carries chargeSelections/mode/warehouseHandlingIncluded via LEG_RFQ_INCLUDE).
-        const chargeConfig = await buildChargeConfigSnapshot(tx, ctx.leg);
+        const chargeConfig = await buildChargeConfigSnapshot(tx, ctx.leg, snap.cargo);
         await tx.quote.updateMany({
           where: { legId, id: { in: refreshingIds } },
           data: {
             manifestSnapshot: snap as unknown as Prisma.InputJsonValue,
             chargeConfigSnapshot: chargeConfig as unknown as Prisma.InputJsonValue,
+            // Any change-order (mode/dates/cargo/charge-config/...) makes the FF's saved draft
+            // stale — a mode change would otherwise leave stale trucking rows, a charge-config
+            // change would leave a stale-priced or now-missing charge line (see ff-portal.service.ts
+            // submit()'s stale-draft filter for the defense-in-depth half of this fix). Clearing
+            // draftJson to SQL NULL (Prisma.DbNull, not JsonNull — this is a nullable Json column
+            // going to DB NULL) makes the reopened FF re-seed cleanly from the fresh
+            // manifestSnapshot/chargeConfigSnapshot: the client's draftFromDto takes the
+            // non-draft seeding branch whenever leg.draft is absent.
+            draftJson: Prisma.DbNull,
           },
         });
       }
@@ -218,7 +227,11 @@ export class ChangeOrderStrategy {
       freightForwarderId,
       legIds: [...legs],
     }));
-    const event: ChangeOrderReopenedEvent = { queryId: req.queryId!, reason: req.reason ?? "", perFf };
+    const event: ChangeOrderReopenedEvent = {
+      queryId: req.queryId!,
+      reason: req.reason ?? "",
+      perFf,
+    };
     try {
       await this.events.emitAsync("changeorder.leg.reopened", event);
     } catch (err) {

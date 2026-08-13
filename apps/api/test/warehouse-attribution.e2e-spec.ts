@@ -10,6 +10,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 // Task 10 (Charge Configuration & Warehouse Attribution), Phase D: a leg that touches a
 // WAREHOUSE point cannot be distributed while warehouseHandlingIncluded is undecided (F7), and
@@ -33,9 +34,11 @@ describe(`${PREFIX} (e2e)`, () => {
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -63,28 +66,15 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- query + points: P1 (pickup), W (warehouse), P2 (delivery) ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const p1 = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const w = await prisma.point.create({ data: { queryId: query.id, type: "WAREHOUSE", country: "CN" } });
-    const p2 = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-
-    const mkCargo = (poReference: string) =>
-      prisma.cargoItem.create({
-        data: {
-          queryId: query.id,
-          rowIndex: 0,
-          poReference,
-          productName: "Widget",
-          packageType: "BOX",
-          qty: 1,
-          dimL: 10,
-          dimW: 10,
-          dimH: 10,
-          grossWt: 5,
-          isDangerous: false,
-        },
-      });
-    const cargoA = await mkCargo(`PO-${PREFIX}-A`);
-    const cargoB = await mkCargo(`PO-${PREFIX}-B`);
+    const p1 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const w = await prisma.point.create({
+      data: { queryId: query.id, type: "WAREHOUSE", country: "CN" },
+    });
+    const p2 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
 
     // --- two ROAD legs, both F1-complete + READY_FOR_RFQ: A = P1→W, B = W→P2 ---
     const legA = await prisma.leg.create({
@@ -97,7 +87,6 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: w.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargoA.id } },
       },
     });
     const legB = await prisma.leg.create({
@@ -110,9 +99,22 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: p2.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargoB.id } },
       },
     });
+
+    // F1 (leg completeness) now gates on >=1 assigned package via LegPackage, not the dropped
+    // flat CargoItem/LegCargo model — see helpers/cargo.ts. One package per leg, each in its own
+    // Cargo grouping (mirrors the original's two independent CargoItem rows, cargoA/cargoB).
+    const { packageIds: pkgA } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: `PO-${PREFIX}-A`, dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
+    });
+    const { packageIds: pkgB } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: `PO-${PREFIX}-B`, dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
+    });
+    await assignPackagesToLeg(prisma, legA.id, pkgA);
+    await assignPackagesToLeg(prisma, legB.id, pkgB);
 
     // --- FF (ROAD) selected on both legs, so each has a SELECT quote (F2/F6 gate) ---
     const ff = await prisma.freightForwarder.create({

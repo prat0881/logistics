@@ -28,6 +28,8 @@ const CARGO_ID = "33333333-3333-3333-3333-333333333333";
 const PICKUP_ID = "44444444-4444-4444-4444-444444444444";
 const DELIVERY_ID = "55555555-5555-5555-5555-555555555555";
 const LEG_ID = "66666666-6666-6666-6666-666666666666";
+const PACKAGE_ID = "77777777-7777-7777-7777-777777777777";
+const ITEM_ID = "88888888-8888-8888-8888-888888888888";
 
 // ── Shared response fixtures ─────────────────────────────────────────────────
 const READY_DATE = "2026-09-01T00:00:00+00:00";
@@ -67,24 +69,47 @@ const fullDraftDetail = {
   assignedUserId: null,
   createdAt: "2026-07-01T00:00:00+00:00",
   updatedAt: "2026-07-01T00:00:00+00:00",
-  cargo: [
+  cargos: [
     {
       id: CARGO_ID,
       rowIndex: 0,
       poReference: "PO-E2E-001",
-      productName: "Test Widget",
-      referenceTags: [],
-      hsCode: null,
-      packageType: "Carton",
-      isDangerous: false,
-      msdsFileId: null,
-      qty: 10,
-      dimL: "50",
-      dimW: "40",
-      dimH: "30",
-      netWt: "45",
-      grossWt: "50",
+      label: null,
+      dimUnit: "CM" as const,
+      weightUnit: "KG" as const,
+      packages: [
+        {
+          id: PACKAGE_ID,
+          rowIndex: 0,
+          packageNo: "PKG-E2E-001",
+          packageType: "CARTON" as const,
+          dimL: "50",
+          dimW: "40",
+          dimH: "30",
+          grossWt: "50",
+          netWt: "45",
+          volumeCbm: "0.06",
+          tags: [],
+          effectiveTags: [],
+          msdsFileId: null,
+          items: [
+            {
+              id: ITEM_ID,
+              rowIndex: 0,
+              product: "Test Widget",
+              qty: "10",
+              uom: null,
+              hsCode: null,
+              tags: [],
+            },
+          ],
+        },
+      ],
+      packageCount: 1,
+      grossWeightKg: "50",
       volumeCbm: "0.06",
+      tags: [],
+      chargeableWeight: null,
     },
   ],
   checklist: [],
@@ -151,7 +176,7 @@ const fullDraftDetail = {
       executionStatus: "NOT_STARTED",
       createdAt: "2026-07-01T00:00:00+00:00",
       updatedAt: "2026-07-01T00:00:00+00:00",
-      assignedCargoIds: [CARGO_ID],
+      assignedPackageIds: [PACKAGE_ID],
       rollup: { totalPackages: 10, totalCbm: 0.06, totalGrossWt: 50, totalNetWt: 45 },
     },
   ],
@@ -194,7 +219,7 @@ const mintedDraft = {
   assignedUserId: null,
   createdAt: "2026-07-01T00:00:00+00:00",
   updatedAt: "2026-07-01T00:00:00+00:00",
-  cargo: [],
+  cargos: [],
   checklist: [],
   files: [],
   points: [],
@@ -206,7 +231,12 @@ const mintedDraft = {
 
 const rfqReadyDetail = { ...fullDraftDetail, status: "RFQ_READY" };
 
-const testUser = { id: "u1", name: "Alice Exec", email: "alice@svyft.ai", role: "EXECUTIVE" as const };
+const testUser = {
+  id: "u1",
+  name: "Alice Exec",
+  email: "alice@svyft.ai",
+  role: "EXECUTIVE" as const,
+};
 
 // ── Scenario 1: Happy path — mint → navigate to final step → Create → RFQ_READY ────
 describe("QueryWizard e2e — happy path", () => {
@@ -218,8 +248,7 @@ describe("QueryWizard e2e — happy path", () => {
       "fetch",
       mockFetch((url, init) => {
         // Auth
-        if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: testUser } };
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
 
         // POST /api/queries → mint
         if (url === "/api/queries" && init?.method === "POST")
@@ -258,9 +287,7 @@ describe("QueryWizard e2e — happy path", () => {
     await user.click(saveBtn);
 
     // Assert query code appears (mint succeeded)
-    await waitFor(() =>
-      expect(screen.getByText("YAL26-0042")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("YAL26-0042")).toBeInTheDocument());
 
     // ── Jump to the final step (step=4) — stepper jump is available now ──────
     // After mint, we navigate to /queries/:id?step=0. Navigate directly to step 4.
@@ -287,9 +314,7 @@ describe("QueryWizard e2e — happy path", () => {
     );
 
     // Assert header badge flips to RFQ_READY
-    await waitFor(() =>
-      expect(screen.getByText("RFQ_READY")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("RFQ_READY")).toBeInTheDocument());
   });
 });
 
@@ -303,21 +328,20 @@ describe("QueryWizard e2e — 422 server block", () => {
         rule: "R2",
         severity: "blocking",
         scope: { type: "cargo", id: CARGO_ID },
-        message: "Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins",
+        message:
+          "Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins",
       },
     ];
 
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
-        if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: testUser } };
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
 
         if (url.includes(`/api/queries/${Q_ID}/create`) && init?.method === "POST")
           return { status: 422, body: { findings: serverFindings } };
 
-        if (url.includes(`/api/queries/${Q_ID}`))
-          return { status: 200, body: fullDraftDetail };
+        if (url.includes(`/api/queries/${Q_ID}`)) return { status: 200, body: fullDraftDetail };
 
         return { status: 200, body: {} };
       }),
@@ -341,7 +365,9 @@ describe("QueryWizard e2e — 422 server block", () => {
     // The server 422 finding should render
     await waitFor(() =>
       expect(
-        screen.getByText("Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins"),
+        screen.getByText(
+          "Cargo PO-E2E-001: chain can't start at a Delivery point — a Delivery is where cargo arrives, not where it begins",
+        ),
       ).toBeInTheDocument(),
     );
 
@@ -369,16 +395,14 @@ describe("QueryWizard e2e — client preview blocks missing fields", () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
-        if (url.includes("/api/auth/me"))
-          return { status: 200, body: { user: testUser } };
+        if (url.includes("/api/auth/me")) return { status: 200, body: { user: testUser } };
 
         if (url.includes(`/api/queries/${Q_ID}/create`) && init?.method === "POST") {
           createCalls.push(url);
           return { status: 201, body: { id: Q_ID, status: "RFQ_READY" } };
         }
 
-        if (url.includes(`/api/queries/${Q_ID}`))
-          return { status: 200, body: incompleteDraft };
+        if (url.includes(`/api/queries/${Q_ID}`)) return { status: 200, body: incompleteDraft };
 
         return { status: 200, body: {} };
       }),
@@ -397,9 +421,7 @@ describe("QueryWizard e2e — client preview blocks missing fields", () => {
     await user.click(createBtn);
 
     // Client-side blocking finding should appear (F1 — Client is required)
-    await waitFor(() =>
-      expect(screen.getByText("Client is required")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("Client is required")).toBeInTheDocument());
 
     // /create should NOT have been called
     expect(createCalls.length).toBe(0);
@@ -408,4 +430,3 @@ describe("QueryWizard e2e — client preview blocks missing fields", () => {
     expect(screen.getByText("DRAFT")).toBeInTheDocument();
   });
 });
-

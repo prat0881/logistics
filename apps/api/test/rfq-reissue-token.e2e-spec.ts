@@ -10,6 +10,7 @@ import { Role, ACCESS_TOKEN_COOKIE, QuoteStatus } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 const PREFIX = "RFQ-REISS";
 const CODE = `YAL00-${PREFIX}`;
@@ -84,20 +85,9 @@ describe(`${PREFIX} (e2e)`, () => {
     const dest = await prisma.point.create({
       data: { queryId: query.id, type: "DELIVERY", country: "AE" },
     });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 1,
-        isDangerous: false,
-      },
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 1 }],
     });
     const leg = await prisma.leg.create({
       data: {
@@ -109,9 +99,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await mkFf(`FF-${PREFIX}-${suffix}`);
     await request(app.getHttpServer())
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
@@ -149,7 +139,9 @@ describe(`${PREFIX} (e2e)`, () => {
     const after = await prisma.rfq.findUnique({ where: { id: entry.rfqId } });
     // hash rotated to sha256 of the new token
     expect(after!.accessTokenHash).not.toBe(originalHash);
-    expect(createHash("sha256").update(res.body.accessToken).digest("hex")).toBe(after!.accessTokenHash);
+    expect(createHash("sha256").update(res.body.accessToken).digest("hex")).toBe(
+      after!.accessTokenHash,
+    );
     // deadline + number untouched
     expect(after!.submissionDeadline.getTime()).toBe(originalDeadline);
     expect(after!.rfqNumber).toBe(entry.rfqNumber);

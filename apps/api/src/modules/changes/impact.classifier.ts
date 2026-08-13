@@ -10,11 +10,15 @@ export interface Classification {
 
 // Maps (entity, field|action) → impact class + the minimal touched scope (§11.3). The leg is
 // the biddable unit, so scope is always fanned out to the affected leg(s) before the Stage-4
-// change-order cascade reopens them: cargo→legs carrying that row (LegCargo), point→legs using
-// it as an endpoint, query→all its legs, quote→its leg, leg→itself. An entity with no legs in
-// scope (unassigned/pre-RFQ, or an entity with no fan-out rule) falls back to self-scope —
-// EXCEPT quotes: Quote.legId is non-nullable, so `legOfQuote` returning null can only mean the
-// quote id doesn't exist (never a legitimate pre-RFQ "unassigned quote" state), so that 404s.
+// change-order cascade reopens them: package→legs carrying it (LegPackage), cargo→legs carrying
+// any of its packages, point→legs using it as an endpoint, query→all its legs, quote→its leg,
+// leg→itself. An entity with no legs in scope (unassigned/pre-RFQ, or an entity with no fan-out
+// rule) falls back to self-scope — EXCEPT quotes: Quote.legId is non-nullable, so `legOfQuote`
+// returning null can only mean the quote id doesn't exist (never a legitimate pre-RFQ "unassigned
+// quote" state), so that 404s. Items get no `case "item"` here, on purpose — every Item impact
+// class is Corrective (item.impact.ts), and Corrective changes stay Free regardless of scope
+// (decidePath only forks to change-order at RfqDefining-or-heavier), so an item's self-scope
+// fallback is correct and a leg fan-out for it would be dead code.
 @Injectable()
 export class ImpactClassifier {
   constructor(
@@ -31,17 +35,29 @@ export class ImpactClassifier {
 
     let legIds: string[];
     switch (req.entity) {
-      case "cargo": legIds = await this.routing.legsCarryingCargo(req.id); break;
-      case "point": legIds = await this.routing.legsUsingPoint(req.id); break;
-      case "query": legIds = await this.routing.legsOfQuery(req.id); break;
+      case "cargo":
+        legIds = await this.routing.legsCarryingCargo(req.id);
+        break;
+      case "package":
+        legIds = await this.routing.legsCarryingPackage(req.id);
+        break;
+      case "point":
+        legIds = await this.routing.legsUsingPoint(req.id);
+        break;
+      case "query":
+        legIds = await this.routing.legsOfQuery(req.id);
+        break;
       case "quotes": {
         const l = await this.routing.legOfQuote(req.id);
         if (!l) throw new NotFoundException("Quote not found"); // no such quote — never self-scoped
         legIds = [l];
         break;
       }
-      case "leg": legIds = [req.id]; break;
-      default: legIds = [];
+      case "leg":
+        legIds = [req.id];
+        break;
+      default:
+        legIds = [];
     }
     const scope: FindingScope[] =
       legIds.length > 0

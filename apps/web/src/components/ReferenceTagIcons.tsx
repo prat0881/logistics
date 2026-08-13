@@ -7,15 +7,14 @@ const TAG_ICON: Record<ReferenceTag, React.ReactElement> = {
   FRAGILE: <Wine className="h-4 w-4" />,
   NON_STACKABLE: <Layers className="h-4 w-4" />,
   OUT_OF_GAUGE: <Ruler className="h-4 w-4" />,
+  DG: <TriangleAlert className="h-4 w-4 text-warning" />,
 };
 
 export function ReferenceTagIcons({
   tags,
-  isDangerous = false,
   className,
 }: {
   tags: readonly ReferenceTag[];
-  isDangerous?: boolean;
   className?: string;
 }): React.ReactElement | null {
   const items: { key: string; label: string; icon: React.ReactElement }[] = [];
@@ -23,8 +22,6 @@ export function ReferenceTagIcons({
     if (tags.includes(tag))
       items.push({ key: tag, label: referenceTagLabel(tag), icon: TAG_ICON[tag] });
   }
-  if (isDangerous)
-    items.push({ key: "DG", label: "Dangerous goods", icon: <TriangleAlert className="h-4 w-4 text-warning" /> });
 
   if (items.length === 0) return null;
 

@@ -18,7 +18,7 @@ const isoDate = z.string().datetime({ offset: true });
 
 // All optional — legs are saved individually and may be partial/draft (D8, spec §7.4.3).
 // legCode is minted server-side (never client-supplied). mode reuses FreightMode (D3).
-// assignedCargoIds are the D7 tick → LegCargo rows.
+// assignedPackageIds are the D7 tick → LegPackage rows.
 export const legSaveSchema = z
   .object({
     legName: z.string().max(120).optional(),
@@ -27,7 +27,7 @@ export const legSaveSchema = z
     mode: z.enum(FREIGHT_MODES).optional(),
     readyDate: isoDate.optional(),
     targetDelivery: isoDate.optional(),
-    assignedCargoIds: z.array(z.string().uuid()).optional(),
+    assignedPackageIds: z.array(z.string().uuid()).optional(),
     // Task 11 (Charge Configuration & Warehouse Attribution, Phase E): per-leg warehouse
     // toggle + charge-line selection set, both routed through the mediated update below as
     // RfqDefining (leg.impact.ts) — free pre-distribute, change-order-gated post-distribute.
@@ -49,9 +49,7 @@ export const legSaveSchema = z
   )
   // G12: a leg's origin and destination must be different points (no self-loop).
   .refine(
-    (l) =>
-      !(l.originPointId && l.destinationPointId) ||
-      l.originPointId !== l.destinationPointId,
+    (l) => !(l.originPointId && l.destinationPointId) || l.originPointId !== l.destinationPointId,
     {
       message: "A leg's origin and destination must be different points",
       path: ["destinationPointId"],

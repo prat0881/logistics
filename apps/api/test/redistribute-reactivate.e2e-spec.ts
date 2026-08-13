@@ -7,11 +7,19 @@ import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
 import type { Prisma } from "@prisma/client";
-import { Role, ACCESS_TOKEN_COOKIE, QuoteStatus, type ManifestSnapshot } from "@svyft/shared";
+import {
+  Role,
+  ACCESS_TOKEN_COOKIE,
+  QuoteStatus,
+  type ManifestSnapshot,
+  type FfPortalRfqDto,
+  type QuoteDraft,
+} from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 
 // Task 11 (SB6): re-distributing a REOPENED leg (READY_FOR_RFQ, post-change-order) must
 // reactivate its INVALID quote(s) — the SAME row (Quote @@unique([legId, freightForwarderId])
@@ -61,17 +69,23 @@ describe(`${PREFIX} (e2e)`, () => {
     const rfqIds = rfqs.map((r) => r.id);
 
     if (rfqIds.length) {
-      await prisma.scheduledEvent.deleteMany({ where: { entityType: "RFQ", entityId: { in: rfqIds } } });
+      await prisma.scheduledEvent.deleteMany({
+        where: { entityType: "RFQ", entityId: { in: rfqIds } },
+      });
     }
     if (queryIds.length) {
-      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: { in: queryIds } } });
+      await prisma.messageLog.deleteMany({
+        where: { entityType: "QUERY", entityId: { in: queryIds } },
+      });
     }
     for (const q of qs) {
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.rfq.deleteMany({ where: { queryId: q.id } });
-      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/cargo/legCargo
+      await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs/legPackages/cargo/packages/items
     }
-    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } } });
+    await prisma.freightForwarder.deleteMany({
+      where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
+    });
   };
 
   beforeAll(async () => {
@@ -99,11 +113,11 @@ describe(`${PREFIX} (e2e)`, () => {
 
   // A stale manifest snapshot, as the ORIGINAL distribution would have frozen it before the
   // change-order invalidated this quote (mirrors change-order-apply.e2e-spec.ts's oldSnapshot).
-  const oldSnapshot = (legId: string, cargoItemId: string) => ({
+  const oldSnapshot = (legId: string, packageId: string) => ({
     legId,
     frozenAt: "2020-01-01T00:00:00.000Z",
     mode: "SEA", // the live leg is AIR — proves the whole snapshot is rebuilt, not patched
-    cargo: [{ cargoItemId, grossWt: String(OLD_GROSS_WT) }],
+    cargo: [{ packageId, grossWt: String(OLD_GROSS_WT) }],
   });
 
   it("reactivates an INVALID quote on re-distribute: RFQ_SENT, manifest refreshed, deadline reset, FF notified", async () => {
@@ -111,23 +125,17 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- fixtures: the "post-change-order" state (what Task 8's apply saga would have left) ---
     const query = await prisma.query.create({ data: { queryCode: CODE, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-REDIST-1",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 250,
-        isDangerous: false,
-      },
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
     });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 250 }],
+    });
+    const [packageId] = packageIds;
     const leg = await prisma.leg.create({
       data: {
         queryId: query.id,
@@ -138,9 +146,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await mkFf(`FF-${PREFIX}-A`);
 
     // The FF's Rfq from the ORIGINAL distribution — invalidation never deletes it (non-
@@ -164,7 +172,7 @@ describe(`${PREFIX} (e2e)`, () => {
         freightForwarderId: ff.id,
         rfqId: rfq.id,
         status: QuoteStatus.INVALID,
-        manifestSnapshot: oldSnapshot(leg.id, cargo.id) as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: oldSnapshot(leg.id, packageId) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -181,13 +189,20 @@ describe(`${PREFIX} (e2e)`, () => {
     // it could never even touch this row).
     const staleReminder = await prisma.scheduledEvent.create({
       data: {
-        entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.reminder", tier: "T24H",
+        entityType: "RFQ",
+        entityId: rfq.id,
+        eventKey: "rfq.reminder",
+        tier: "T24H",
         dueAt: new Date(oldDeadline.getTime() - 24 * 3600_000),
       },
     });
     const staleExpiry = await prisma.scheduledEvent.create({
       data: {
-        entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.expiry", tier: "DEADLINE", dueAt: oldDeadline,
+        entityType: "RFQ",
+        entityId: rfq.id,
+        eventKey: "rfq.expiry",
+        tier: "DEADLINE",
+        dueAt: oldDeadline,
         firedAt: oldDeadline,
       },
     });
@@ -210,7 +225,9 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(entry.accessToken).toBeUndefined();
 
     // --- assert: quote reactivated INVALID → RFQ_SENT, SAME row (no 2nd quote created) ---
-    const quotesForFf = await prisma.quote.findMany({ where: { legId: leg.id, freightForwarderId: ff.id } });
+    const quotesForFf = await prisma.quote.findMany({
+      where: { legId: leg.id, freightForwarderId: ff.id },
+    });
     expect(quotesForFf).toHaveLength(1);
     const quoteAfter = quotesForFf[0];
     expect(quoteAfter.id).toBe(quote.id);
@@ -256,32 +273,154 @@ describe(`${PREFIX} (e2e)`, () => {
     // --- assert: the FF was notified. The Rfq pre-existed (amend, not mint), so this reuses
     //     the SAME "RFQ Updated" path an ordinary amend uses (D3) — no new template needed. ---
     const msg = await prisma.messageLog.findFirst({
-      where: { entityType: "QUERY", entityId: query.id, eventKey: "rfq.updated", toAddress: ff.email },
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.updated",
+        toAddress: ff.email,
+      },
     });
     expect(msg).not.toBeNull();
     expect(msg?.subject).toContain(rfq.rfqNumber);
   });
 
+  it("clears a reactivated quote's STALE draftJson so re-distribution re-seeds clean, not the old bid (finding #2)", async () => {
+    const admin = cookie(Role.ADMINISTRATOR);
+
+    // --- fixtures: post-change-order state — an INVALID (AIR) quote carrying a STALE bid on
+    //     draftJson (submit now persists the bid, finding #8), plus its Rfq with a KNOWN raw
+    //     token so we can GET the portal after reactivation. ---
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-DRAFT`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 250 }],
+    });
+    const [packageId] = packageIds;
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L-REDIST-DRAFT",
+        mode: "AIR",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+      },
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
+    const ff = await mkFf(`FF-${PREFIX}-DRAFT`);
+
+    const rawToken = randomUUID();
+    const rfq = await prisma.rfq.create({
+      data: {
+        queryId: query.id,
+        freightForwarderId: ff.id,
+        rfqNumber: `${CODE}-DRAFT-RFQ001`,
+        accessTokenHash: createHash("sha256").update(rawToken).digest("hex"),
+        submissionDeadline: new Date(Date.now() - 3600_000),
+        incoterms: "FOB",
+        currency: "USD",
+      },
+    });
+
+    // The stale pre-change bid: a fully-priced ROAD-shaped draft (trucking rows + priced charges +
+    // a leg weight + notes) — deliberately mode-mismatched vs. the live AIR leg, so a clean re-seed
+    // is unmistakable (fresh AIR seed has NO trucking at all).
+    const staleDraft = {
+      legId: leg.id,
+      mode: "ROAD",
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 777,
+      notes: "STALE pre-change bid",
+      cargo: [{ packageId, grossWtKg: 111, cbm: 1 }],
+      charges: [
+        {
+          zone: null,
+          definitionKey: "ROAD_STD_TAIL_LIFT",
+          presetKey: null,
+          label: "Tail Lift",
+          amount: 999,
+          rateVariant: "DEDICATED",
+        },
+      ],
+      trucking: [
+        {
+          legEndpointPointId: origin.id,
+          truckingType: "DEDICATED",
+          basis: "PER_TRUCK",
+          amount: 4200,
+          rateVariant: "DEDICATED",
+          tonnage: "T_5",
+        },
+      ],
+      seaRates: [],
+      warehouse: [],
+      transit: { departureDate: null, arrivalDate: null, guaranteedTransitDaysByVariant: { DEDICATED: 3 } },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+    const quote = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ff.id,
+        rfqId: rfq.id,
+        status: QuoteStatus.INVALID,
+        manifestSnapshot: oldSnapshot(leg.id, packageId) as unknown as Prisma.InputJsonValue,
+        draftJson: staleDraft as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // --- act: re-distribute the reopened leg (reactivates the INVALID quote). ---
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+
+    // --- assert: the reactivated quote's draftJson was CLEARED (SQL NULL), not carried over. ---
+    const quoteAfter = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
+    expect(quoteAfter.status).toBe(QuoteStatus.RFQ_SENT);
+    expect(quoteAfter.draftJson).toBeNull();
+
+    // --- assert: a fresh GET re-seeds clean from the CURRENT AIR snapshot — none of the stale
+    //     ROAD bid survives (this is exactly what resolveScope serves the reopened FF). ---
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${rawToken}`).expect(200);
+    const legDto = (got.body as FfPortalRfqDto).legs[0];
+    expect(legDto.status).toBe("RFQ_SENT");
+    const draft = legDto.draft as QuoteDraft;
+    expect(draft.mode).toBe("AIR"); // re-seeded for the live leg, not the stale ROAD bid
+    expect(draft.chargedWeightKg).toBeNull(); // stale said 777
+    expect(draft.notes).toBeNull(); // stale said "STALE pre-change bid"
+    expect(draft.trucking).toEqual([]); // stale carried a priced DEDICATED trucking row
+    expect(draft.charges.every((c) => c.amount == null)).toBe(true); // stale had amount 999
+  });
+
   it("a SELECT (fresh) quote still distributes normally (unaffected by the reactivation path)", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-FRESH`, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-REDIST-FRESH",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 5,
-        isDangerous: false,
-      },
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-FRESH`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 5 }],
     });
     const leg = await prisma.leg.create({
       data: {
@@ -293,9 +432,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await mkFf(`FF-${PREFIX}-FRESH`);
 
     await request(app.getHttpServer())
@@ -313,7 +452,9 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(res.body.rfqs).toHaveLength(1);
     expect(res.body.rfqs[0].minted).toBe(true); // brand-new FF on this query → mints
 
-    const quote = await prisma.quote.findFirst({ where: { legId: leg.id, freightForwarderId: ff.id } });
+    const quote = await prisma.quote.findFirst({
+      where: { legId: leg.id, freightForwarderId: ff.id },
+    });
     expect(quote?.status).toBe("RFQ_SENT");
     expect(quote?.manifestSnapshot).toMatchObject({ legId: leg.id, mode: "AIR" });
   });
@@ -321,24 +462,20 @@ describe(`${PREFIX} (e2e)`, () => {
   it("distribute-all reactivates a reopened INVALID-only leg instead of skipping it as already-distributed", async () => {
     const admin = cookie(Role.ADMINISTRATOR);
 
-    const query = await prisma.query.create({ data: { queryCode: `${CODE}-ALL`, incoterms: "FOB" } });
-    const origin = await prisma.point.create({ data: { queryId: query.id, type: "PICKUP", country: "CN" } });
-    const dest = await prisma.point.create({ data: { queryId: query.id, type: "DELIVERY", country: "AE" } });
-    const cargo = await prisma.cargoItem.create({
-      data: {
-        queryId: query.id,
-        rowIndex: 0,
-        poReference: "PO-REDIST-ALL",
-        productName: "Widget",
-        packageType: "BOX",
-        qty: 1,
-        dimL: 10,
-        dimW: 10,
-        dimH: 10,
-        grossWt: 42,
-        isDangerous: false,
-      },
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-ALL`, incoterms: "FOB" },
     });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: 42 }],
+    });
+    const [packageId] = packageIds;
     // Reopened leg (READY_FOR_RFQ) whose ONLY quote is INVALID — the "distributeAll silently
     // skips this" bug the fix closes: without `&& ctx.invalidQuotes.length === 0` on the gate,
     // `ctx.freshQuotes.length === 0` alone would mark it "already-distributed" and never call
@@ -353,9 +490,9 @@ describe(`${PREFIX} (e2e)`, () => {
         destinationPointId: dest.id,
         readyDate: new Date(),
         targetDelivery: new Date(Date.now() + 86400000),
-        legCargo: { create: { cargoItemId: cargo.id } },
       },
     });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await mkFf(`FF-${PREFIX}-ALL`);
     const oldDeadline = new Date(Date.now() - 3600_000);
     const rfq = await prisma.rfq.create({
@@ -376,7 +513,7 @@ describe(`${PREFIX} (e2e)`, () => {
         freightForwarderId: ff.id,
         rfqId: rfq.id,
         status: QuoteStatus.INVALID,
-        manifestSnapshot: oldSnapshot(leg.id, cargo.id) as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: oldSnapshot(leg.id, packageId) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -387,7 +524,9 @@ describe(`${PREFIX} (e2e)`, () => {
       .expect(201);
 
     // NOT skipped — actually distributed
-    expect(res.body.skipped).not.toEqual(expect.arrayContaining([expect.objectContaining({ legId: leg.id })]));
+    expect(res.body.skipped).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ legId: leg.id })]),
+    );
     expect(res.body.distributedLegIds).toContain(leg.id);
 
     const quoteAfter = await prisma.quote.findUnique({ where: { id: quote.id } });

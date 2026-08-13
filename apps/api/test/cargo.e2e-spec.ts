@@ -1,9 +1,4 @@
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? "test-access-secret";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join as joinPath } from "node:path";
-process.env.UPLOADS_DIR =
-  process.env.UPLOADS_DIR ?? mkdtempSync(joinPath(tmpdir(), "svyft-uploads-"));
 
 import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
@@ -18,25 +13,19 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 
 const PFX = "p4-cargo-";
 
-describe("Cargo (e2e)", () => {
+// Cargo GROUPING CRUD (Task 4, re-modelled Query -> Cargo -> Package -> Item). Package/item/
+// MSDS/export coverage is added in Tasks 5/7/9 once those endpoints exist.
+describe("Cargo grouping (e2e)", () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let jwt: JwtService;
-  let queryId: string;
-  // UUID sub — user.userId lands in @db.Uuid columns (FileAsset.uploadedById on MSDS upload).
+  let seq = 0;
+  // UUID sub — user.userId lands in @db.Uuid columns (Cargo.tenantId is nullable but the
+  // ChangeLog actor column is not; keep it a real UUID like every other spec's synthetic user).
   const USER_ID = "22222222-2222-2222-2222-222222222222";
-  const cookie = (role: Role) =>
+  const cookie = (role: Role = Role.EXECUTIVE) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: USER_ID, role, tenantId: null })}`;
-  const baseRow = {
-    poReference: "PO-1",
-    productName: "Widget",
-    packageType: "Pallet",
-    qty: 10,
-    dimL: 120,
-    dimW: 80,
-    dimH: 100,
-    grossWt: 500,
-  };
+  const api = () => request(app.getHttpServer());
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -48,151 +37,98 @@ describe("Cargo (e2e)", () => {
     prisma = moduleRef.get(PrismaService);
     jwt = moduleRef.get(JwtService);
     await seedReferenceData(prisma);
-    const q = await prisma.query.create({
-      data: { queryCode: `Z${Date.now()}`.slice(0, 12), shipmentDescription: `${PFX}q` },
-    });
-    queryId = q.id;
   });
   afterAll(async () => {
     await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } });
     await app.close();
   });
 
-  it("creates a cargo row (mediated @create), auto-numbers rowIndex, computes volumeCbm", async () => {
-    const r1 = await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send(baseRow)
-      .expect(201);
-    expect(r1.body.rowIndex).toBe(1);
-    expect(Number(r1.body.volumeCbm)).toBeCloseTo(9.6, 3);
-    const r2 = await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send(baseRow)
-      .expect(201);
-    expect(r2.body.rowIndex).toBe(2);
-  });
+  // Mints an isolated query per test so rowIndex/list assertions never see another test's rows.
+  async function freshQuery(): Promise<{ queryId: string }> {
+    seq += 1;
+    const q = await prisma.query.create({
+      data: {
+        queryCode: `Z4${Date.now()}${seq}`.slice(0, 24),
+        shipmentDescription: `${PFX}${seq}`,
+      },
+    });
+    return { queryId: q.id };
+  }
 
-  it("auto-sets the query dgIndicator when a DG cargo row is added", async () => {
-    await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ ...baseRow, isDangerous: true })
-      .expect(201);
-    const q = await prisma.query.findUnique({ where: { id: queryId } });
-    expect(q!.dgIndicator).toBe(true);
-  });
+  // Thin POST wrapper — reused by Tasks 5/7/9's specs once package/item/export endpoints exist.
+  function addCargo(queryId: string, body: Record<string, unknown> = {}) {
+    return api().post(`/api/queries/${queryId}/cargo`).set("Cookie", cookie()).send(body);
+  }
 
-  it("updates a row (mediated) and rejects qty <= 0", async () => {
-    const created = await request(app.getHttpServer())
+  it("creates a cargo and returns a zeroed derived header before any packages exist", async () => {
+    const { queryId } = await freshQuery();
+    const cargo = await api()
       .post(`/api/queries/${queryId}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send(baseRow)
+      .set("Cookie", cookie())
+      .send({ poReference: "PO-1", dimUnit: "CM", weightUnit: "KG" })
       .expect(201);
-    await request(app.getHttpServer())
-      .patch(`/api/queries/${queryId}/cargo/${created.body.id}`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ productName: "Renamed" })
+    expect(cargo.body.packageCount).toBe(0);
+    expect(Number(cargo.body.grossWeightKg)).toBe(0);
+    expect(cargo.body.chargeableWeight).toBeNull(); // H7 blank at Stage 3
+    const list = await api()
+      .get(`/api/queries/${queryId}/cargo`)
+      .set("Cookie", cookie())
       .expect(200);
-    await request(app.getHttpServer())
+    expect(list.body.find((x: { id: string }) => x.id === cargo.body.id).poReference).toBe("PO-1");
+  });
+  // The POPULATED header (Σ gross/volume, packageCount, unioned tags over real packages) is
+  // verified in Task 5's package test, once the package-create endpoint + shapePackage exist.
+
+  it("auto-numbers rowIndex across multiple creates and applies dimUnit/weightUnit defaults", async () => {
+    const { queryId } = await freshQuery();
+    const r1 = await addCargo(queryId, { poReference: "A" }).expect(201);
+    const r2 = await addCargo(queryId, { poReference: "B" }).expect(201);
+    expect(r2.body.rowIndex).toBe(r1.body.rowIndex + 1);
+    expect(r1.body.dimUnit).toBe("CM");
+    expect(r1.body.weightUnit).toBe("KG");
+    expect(r1.body.label).toBeNull();
+    expect(r1.body.packages).toEqual([]);
+    expect(r1.body.tags).toEqual([]);
+  });
+
+  it("updates a cargo's header fields (mediated, partial) and rejects an unknown dimUnit", async () => {
+    const { queryId } = await freshQuery();
+    const created = await addCargo(queryId, { poReference: "PO-1" }).expect(201);
+    const updated = await api()
       .patch(`/api/queries/${queryId}/cargo/${created.body.id}`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ qty: 0 })
+      .set("Cookie", cookie())
+      .send({ label: "Machinery parts" })
+      .expect(200);
+    expect(updated.body.label).toBe("Machinery parts");
+    expect(updated.body.poReference).toBe("PO-1"); // untouched fields survive a partial patch
+    await api()
+      .patch(`/api/queries/${queryId}/cargo/${created.body.id}`)
+      .set("Cookie", cookie())
+      .send({ dimUnit: "INCH" })
       .expect(400);
   });
 
-  it("deletes a row (mediated @delete)", async () => {
-    const created = await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send(baseRow)
-      .expect(201);
-    await request(app.getHttpServer())
+  it("deletes a cargo (mediated @delete)", async () => {
+    const { queryId } = await freshQuery();
+    const created = await addCargo(queryId, { poReference: "PO-1" }).expect(201);
+    await api()
       .delete(`/api/queries/${queryId}/cargo/${created.body.id}`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
+      .set("Cookie", cookie())
       .expect(204);
-    expect(await prisma.cargoItem.findUnique({ where: { id: created.body.id } })).toBeNull();
+    expect(await prisma.cargo.findUnique({ where: { id: created.body.id } })).toBeNull();
   });
 
-  it("404s cargo under a mismatched query", async () => {
-    const created = await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send(baseRow)
-      .expect(201);
-    await request(app.getHttpServer())
+  it("404s a cargo row looked up under a mismatched query", async () => {
+    const { queryId } = await freshQuery();
+    const created = await addCargo(queryId, { poReference: "PO-1" }).expect(201);
+    await api()
       .patch(`/api/queries/00000000-0000-0000-0000-000000000000/cargo/${created.body.id}`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ productName: "X" })
+      .set("Cookie", cookie())
+      .send({ label: "X" })
       .expect(404);
   });
 
-  it("uploads an MSDS PDF, links it to the row, and rejects a non-PDF", async () => {
-    const created = await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ ...baseRow, isDangerous: true })
-      .expect(201);
-    const pdf = Buffer.from("%PDF-1.4\n%mock\n");
-    const up = await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo/${created.body.id}/msds`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .attach("file", pdf, "msds.pdf")
-      .expect(201);
-    expect(up.body.msdsFileId).toBeTruthy();
-    const asset = await prisma.fileAsset.findUnique({ where: { id: up.body.msdsFileId } });
-    expect(asset!.kind).toBe("MSDS");
-    await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo/${created.body.id}/msds`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .attach("file", Buffer.from("PNG"), "x.png")
-      .expect(400);
-  });
-
-  it("round-trips dimUnit/weightUnit and computes volumeCbm in m³ for CM and MM", async () => {
-    const q = await prisma.query.create({
-      data: { queryCode: `Z${Date.now()}U`.slice(0, 12), shipmentDescription: `${PFX}unit-q` },
-    });
-    // CM: 100×50×40 cm, qty 2 → 100*50*40*2 / 1e6 = 0.4 m³
-    const cm = await request(app.getHttpServer())
-      .post(`/api/queries/${q.id}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ productName: "A", packageType: "Box", qty: 2, dimL: 100, dimW: 50, dimH: 40, grossWt: 1, dimUnit: "CM", weightUnit: "KG" })
-      .expect(201);
-    expect(cm.body.dimUnit).toBe("CM");
-    expect(Number(cm.body.volumeCbm)).toBeCloseTo(0.4, 4);
-    // MM: 1000×500×400 mm = same physical box, qty 2 → 1000*500*400*2 / 1e9 = 0.4 m³
-    const mm = await request(app.getHttpServer())
-      .post(`/api/queries/${q.id}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ productName: "B", packageType: "Box", qty: 2, dimL: 1000, dimW: 500, dimH: 400, grossWt: 1, dimUnit: "MM", weightUnit: "GM" })
-      .expect(201);
-    expect(mm.body.weightUnit).toBe("GM");
-    expect(Number(mm.body.volumeCbm)).toBeCloseTo(0.4, 4);
-  });
-
-  it("exports cargo to an .xlsx workbook whose single worksheet is named Product", async () => {
-    await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .send(baseRow)
-      .expect(201);
-    const res = await request(app.getHttpServer())
-      .post(`/api/queries/${queryId}/cargo/export`)
-      .set("Cookie", cookie(Role.EXECUTIVE))
-      .buffer(true)
-      .parse((r, cb) => {
-        const chunks: Buffer[] = [];
-        r.on("data", (c: Buffer) => chunks.push(c));
-        r.on("end", () => cb(null, Buffer.concat(chunks)));
-      })
-      .expect(201);
-    expect(res.headers["content-type"]).toContain("spreadsheetml");
-    const ExcelJS = (await import("exceljs")).default;
-    const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(res.body);
-    expect(wb.worksheets.map((w) => w.name)).toEqual(["Product"]);
-    expect(wb.getWorksheet("Product")!.getRow(1).getCell(1).value).toBe("#");
+  it("404s creating a cargo under a query that does not exist", async () => {
+    await addCargo("00000000-0000-0000-0000-000000000000", { poReference: "PO-1" }).expect(404);
   });
 });

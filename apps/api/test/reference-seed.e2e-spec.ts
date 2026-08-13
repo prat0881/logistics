@@ -1,5 +1,6 @@
 import { Test } from "@nestjs/testing";
 import { INestApplication } from "@nestjs/common";
+import { resolveChargeConfig, REFERENCE_TAGS, type ChargeLineDefinitionDto } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { seedReferenceData } from "../src/seed/reference-seed";
@@ -25,5 +26,72 @@ describe("seedReferenceData", () => {
       (await prisma.freightDensityFactor.findUnique({ where: { mode: "AIR" } }))!.kgPerCbm,
     ).toBe(999); // not overwritten
     expect(await prisma.codeSequence.findUnique({ where: { key: "CLIENT" } })).not.toBeNull();
+  });
+
+  // Task 8: Air FSC/Peak cores + Heavy-Weight flipped to a calc line; SEA_MAIN_FREIGHT retired
+  // (design §5.2 replaces the flat Sea line with the structured seaRates[] dual-rate — leaving
+  // it active would double-count via draft.charges AND seaRates in computeQuoteTotals).
+  it("seeds AIR_MAIN_FSC / AIR_MAIN_PEAK_SEASON cores and flips AIR_MAIN_HEAVY_WEIGHT to HEAVY_WEIGHT_CALC", async () => {
+    await seedReferenceData(prisma);
+
+    const fsc = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "AIR_MAIN_FSC" },
+    });
+    expect(fsc.mode).toBe("AIR");
+    expect(fsc.role).toBe("CORE");
+    expect(fsc.isActive).toBe(true);
+
+    const peak = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "AIR_MAIN_PEAK_SEASON" },
+    });
+    expect(peak.mode).toBe("AIR");
+    expect(peak.role).toBe("CORE");
+    expect(peak.isActive).toBe(true);
+
+    const heavy = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "AIR_MAIN_HEAVY_WEIGHT" },
+    });
+    expect(heavy.inputType).toBe("HEAVY_WEIGHT_CALC");
+
+    // Regression: AIR_MAIN_FSC/AIR_MAIN_PEAK_SEASON were briefly seeded with fractional
+    // sortOrder (9.1/9.2), silently truncated to 9 by Postgres (sortOrder is Int) — a 3-way tie
+    // with AIR_MAIN_HEAVY_WEIGHT. Must now be distinct whole integers in ascending order.
+    expect(heavy.sortOrder).toBeLessThan(fsc.sortOrder);
+    expect(fsc.sortOrder).toBeLessThan(peak.sortOrder);
+    expect(new Set([heavy.sortOrder, fsc.sortOrder, peak.sortOrder]).size).toBe(3);
+    expect([heavy.sortOrder, fsc.sortOrder, peak.sortOrder]).toEqual([9, 10, 11]);
+  });
+
+  it("retires SEA_MAIN_FREIGHT (isActive:false) and excludes it from a resolved Sea chargeConfigSnapshot", async () => {
+    await seedReferenceData(prisma); // create-only — does NOT flip an already-seeded row; the data migration does
+
+    const seaFreight = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "SEA_MAIN_FREIGHT" },
+    });
+    expect(seaFreight.isActive).toBe(false);
+
+    // Integration check: resolveChargeConfig over the live seeded Sea catalogue must never
+    // surface SEA_MAIN_FREIGHT, even when every Sea key is "selected" and every reference tag
+    // is present — inactive definitions are excluded regardless of role/selection.
+    const seaDefs = await prisma.chargeLineDefinition.findMany({ where: { mode: "SEA" } });
+    const dtos: ChargeLineDefinitionDto[] = seaDefs.map((d) => ({
+      id: d.id,
+      key: d.key,
+      mode: d.mode,
+      role: d.role,
+      inputType: d.inputType,
+      zone: d.zone,
+      tagKey: d.tagKey,
+      label: d.label,
+      sortOrder: d.sortOrder,
+      isActive: d.isActive,
+    }));
+    const snap = resolveChargeConfig(
+      dtos,
+      seaDefs.map((d) => d.key),
+      true,
+      REFERENCE_TAGS,
+    );
+    expect(snap.lines.map((l) => l.definitionKey)).not.toContain("SEA_MAIN_FREIGHT");
   });
 });
