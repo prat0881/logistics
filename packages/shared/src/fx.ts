@@ -30,7 +30,7 @@ export function toUsd(
   rate: Pick<FxRateDto, "unitsPerUsd"> | null,
 ): number | null {
   if (currency === "USD") return amount;
-  if (!rate) return null;
+  if (!rate || rate.unitsPerUsd <= 0) return null;
   return Math.round((amount / rate.unitsPerUsd) * 100) / 100;
 }
 
@@ -39,7 +39,13 @@ export function latestRateByCurrency(rates: FxRateDto[]): Map<string, FxRateDto>
   const m = new Map<string, FxRateDto>();
   for (const r of rates) {
     const cur = m.get(r.currency);
-    if (!cur || r.effectiveFrom > cur.effectiveFrom) m.set(r.currency, r);
+    if (
+      !cur ||
+      r.effectiveFrom > cur.effectiveFrom ||
+      (r.effectiveFrom === cur.effectiveFrom && r.createdAt > cur.createdAt)
+    ) {
+      m.set(r.currency, r);
+    }
   }
   return m;
 }
