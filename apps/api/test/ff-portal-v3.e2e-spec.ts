@@ -320,8 +320,9 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
       chargedWeightKg: 500,
-      // price DEDICATED only: its trucking rate + its one seeded charge cell.
-      charges: draft.charges.map((c) => (c.rateVariant === "DEDICATED" ? { ...c, amount: 100 } : c)),
+      // v4 (Round 4): the seeded TAIL_LIFT charge is now ONE common row (not fanned per variant)
+      // — price it directly; only the DEDICATED trucking rate is what makes DEDICATED "priced".
+      charges: draft.charges.map((c) => ({ ...c, amount: 100 })),
       trucking: draft.trucking.map((t) =>
         t.rateVariant === "DEDICATED" ? { ...t, amount: 4200, tonnage: "T_5" } : t,
       ),
@@ -352,12 +353,14 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
       chargedWeightKg: 800,
-      // price FCL: every seeded CORE charge cell for FCL + the sea freight rate itself.
-      charges: draft.charges.map((c) => (c.rateVariant === "FCL" ? { ...c, amount: 100 } : c)),
+      // v4 (Round 4): the seeded CORE charges are now ONE common row each — price them directly;
+      // only the FCL seaRates amount is what makes FCL the priced freight variant.
+      charges: draft.charges.map((c) => ({ ...c, amount: 100 })),
       seaRates: draft.seaRates.map((r) =>
         r.rateVariant === "FCL" ? { ...r, amount: 9000, containerSize: "FORTY" } : r,
       ),
-      transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { FCL: 18 } },
+      // v4: Sea's Guaranteed Transit Time is ONE common value (SEA_VARIANT_KEY), not per-FCL/LCL.
+      transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { SEA: 18 } },
     };
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(priced).expect(200);
     const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
@@ -370,28 +373,29 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     expect(seaRates[0].containerSize).toBe("FORTY");
   });
 
-  it("Sea: submit-gate blocks a priced FCL variant with no sea-freight rate, then passes once it's set (finding #3b)", async () => {
+  // v4 (Round 4) supersedes finding #3b: v3's Sea-specific "Sea Freight must be priced" Q_PRICED
+  // check is GONE (quote-engine.ts's Task-1 report calls it "tautological" post-common-charges —
+  // "priced" now literally means "has its own freight rate" for Road/Sea, so there's no reachable
+  // state where a variant is priced but its rate is missing). What replaces it: since charges no
+  // longer carry a rateVariant, a common charge alone can no longer make ANY Sea column "started"
+  // — Sea freight stays required (Round 3, locked) via a plain Q_RATE, not a Sea-specific finding.
+  it("Sea: a priced common charge alone does not satisfy Q_RATE — Sea freight remains required (Round 3, locked)", async () => {
     const { token, legId } = await distributeSeaFixture();
     const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
     const draft = (got.body as FfPortalRfqDto).legs[0].draft as QuoteDraft;
 
-    // FCL "priced" via its charge cells only — seaRates[FCL].amount left null.
+    // every common charge priced; BOTH seaRates rows left exactly as seeded (untouched).
     const base: QuoteDraft = {
       ...draft,
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
       chargedWeightKg: 800,
-      charges: draft.charges.map((c) => (c.rateVariant === "FCL" ? { ...c, amount: 100 } : c)),
-      transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { FCL: 18 } },
+      charges: draft.charges.map((c) => ({ ...c, amount: 100 })),
+      transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { SEA: 18 } },
     };
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(base).expect(200);
     const blocked = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(422);
-    const seaFreightFinding = (
-      blocked.body.findings as { rule: string; message: string; scope: { type: string } }[]
-    ).find((f) => f.message.includes("Sea Freight"));
-    expect(seaFreightFinding).toBeDefined();
-    expect(seaFreightFinding?.rule).toBe("Q_PRICED");
-    expect(seaFreightFinding?.scope.type).toBe("leg"); // findingNav → Charges section
+    expect(blocked.body.findings.map((f: { rule: string }) => f.rule)).toContain("Q_RATE");
     expect((await prisma.quote.findFirst({ where: { legId } }))?.status).toBe("RFQ_SENT");
 
     // set the sea freight rate → passes.
@@ -450,7 +454,7 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     expect(Number(quote.grandTotal)).toBe(4500);
   });
 
-  it("resolveScope seeds the per-variant charge matrix (DEDICATED + GROUPAGE cells, amount null) instead of a null draft", async () => {
+  it("resolveScope seeds ONE common charge row per line (v4/Round 4: charges are common, not fanned across rate-variant columns) instead of a null draft", async () => {
     const { token } = await distributeRoadFixture();
 
     const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
@@ -463,9 +467,9 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     expect(draft.transit?.guaranteedTransitDaysByVariant).toEqual({});
 
     const tailLiftCells = draft.charges.filter((c) => c.definitionKey === "ROAD_STD_TAIL_LIFT");
-    expect(tailLiftCells).toHaveLength(2); // ROAD -> variantsForMode = [DEDICATED, GROUPAGE]
-    expect(tailLiftCells.map((c) => c.rateVariant).sort()).toEqual(["DEDICATED", "GROUPAGE"]);
-    expect(tailLiftCells.every((c) => c.amount === null)).toBe(true);
+    expect(tailLiftCells).toHaveLength(1); // v4: ONE common row, not one per rate-variant column
+    expect(tailLiftCells[0]!.rateVariant).toBeNull();
+    expect(tailLiftCells[0]!.amount).toBeNull();
   });
 
   // Task 3 (ff-scoped route-diagram rework): resolveScope's endpoint map must expose the
@@ -482,53 +486,32 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     expect(legDto.endpoints[0].code).toBe("PVG");
   });
 
-  it("submit: prices both variants' charges + per-variant transit-days + leg weight + notes -> per-variant ChargeLine/TransitPlan rows, one Quote.chargedWeightKg/notes, grandTotal = max variant column, no QuoteCargoLine.chargedWeightKg", async () => {
+  it("submit: prices ONE common charge + per-variant trucking + per-variant transit-days + leg weight + notes -> ONE common ChargeLine, per-variant TransitPlan rows, Quote.chargedWeightKg/notes, grandTotal = max variant column, no QuoteCargoLine.chargedWeightKg", async () => {
     const { token, legId } = await distributeRoadFixture();
     const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
     const legDto = (got.body as FfPortalRfqDto).legs[0];
+    const seedDraft = legDto.draft as QuoteDraft;
 
     const draft: QuoteDraft = {
-      legId,
-      mode: "ROAD",
+      ...seedDraft,
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
       chargedWeightKg: 482.75,
       notes: "Handle with care -- fragile glassware",
-      cargo: legDto.manifest.cargo.map((c) => ({
-        packageId: c.packageId,
-        grossWtKg: Number(c.grossWt),
-        cbm: Number(c.volumeCbm ?? 0),
-      })),
-      // one seeded line (ROAD_STD_TAIL_LIFT) x both variant columns, priced differently so
-      // grandTotal's max() is unambiguous.
-      charges: legDto.seededCharges.flatMap((c) => [
-        {
-          zone: c.zone,
-          definitionKey: c.definitionKey,
-          presetKey: c.presetKey,
-          label: c.label,
-          amount: 100,
-          rateVariant: "DEDICATED" as const,
-        },
-        {
-          zone: c.zone,
-          definitionKey: c.definitionKey,
-          presetKey: c.presetKey,
-          label: c.label,
-          amount: 150,
-          rateVariant: "GROUPAGE" as const,
-        },
-      ]),
-      trucking: [],
-      seaRates: [],
-      warehouse: [],
+      // v4: the one seeded line (ROAD_STD_TAIL_LIFT) is ONE common row — priced once.
+      charges: seedDraft.charges.map((c) => ({ ...c, amount: 90 })),
+      // freight stays per-variant (unaffected by Round 4) — priced differently so grandTotal's
+      // max() is unambiguous.
+      trucking: seedDraft.trucking.map((t) =>
+        t.rateVariant === "DEDICATED"
+          ? { ...t, amount: 100, tonnage: "T_5" as const }
+          : { ...t, amount: 150 },
+      ),
       transit: {
-        departureDate: "2026-08-12T00:00:00.000Z",
-        arrivalDate: "2026-08-14T00:00:00.000Z",
+        departureDate: "2026-09-01T00:00:00.000Z",
+        arrivalDate: "2026-09-03T00:00:00.000Z",
         guaranteedTransitDaysByVariant: { DEDICATED: 3, GROUPAGE: 5 },
       },
-      dgSurchargeNote: null,
-      termsConditions: null,
     };
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(draft).expect(200);
@@ -539,20 +522,18 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     const quote = await prisma.quote.findUniqueOrThrow({ where: { id: quoteId } });
     expect(Number(quote.chargedWeightKg)).toBe(482.75);
     expect(quote.notes).toBe("Handle with care -- fragile glassware");
-    // grandTotal = max(variant totals): DEDICATED = 100 (no trucking/warehouse), GROUPAGE = 150
-    // -> max(100, 150) = 150.
-    expect(Number(quote.grandTotal)).toBe(150);
+    // grandTotal = max(variant totals): DEDICATED = 100 (trucking) + 90 (common charge) = 190;
+    // GROUPAGE = 150 + 90 = 240 -> max(190, 240) = 240.
+    expect(Number(quote.grandTotal)).toBe(240);
 
+    // v4: ONE common ChargeLine (rateVariant: null) — not one per rate-variant column.
     const chargeLines = await prisma.chargeLine.findMany({ where: { quoteId } });
-    expect(chargeLines).toHaveLength(2);
-    expect(chargeLines.map((c) => c.rateVariant).sort()).toEqual(["DEDICATED", "GROUPAGE"]);
-    const dedicated = chargeLines.find((c) => c.rateVariant === "DEDICATED")!;
-    const groupage = chargeLines.find((c) => c.rateVariant === "GROUPAGE")!;
-    expect(Number(dedicated.amount)).toBe(100);
-    expect(Number(groupage.amount)).toBe(150);
-    expect(dedicated.definitionKey).toBe("ROAD_STD_TAIL_LIFT");
-    expect(groupage.definitionKey).toBe("ROAD_STD_TAIL_LIFT");
+    expect(chargeLines).toHaveLength(1);
+    expect(chargeLines[0]!.rateVariant).toBeNull();
+    expect(Number(chargeLines[0]!.amount)).toBe(90);
+    expect(chargeLines[0]!.definitionKey).toBe("ROAD_STD_TAIL_LIFT");
 
+    // Road's TransitPlan stays per-variant (unaffected by Round 4) — both columns priced.
     const transitPlans = await prisma.transitPlan.findMany({ where: { quoteId } });
     expect(transitPlans).toHaveLength(2);
     expect(transitPlans.map((t) => t.rateVariant).sort()).toEqual(["DEDICATED", "GROUPAGE"]);
@@ -571,51 +552,30 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
   // end-to-end over real HTTP: distribute -> PATCH (price both variants + weight + notes) ->
   // POST submit -> a FRESH GET (a new request, not reading anything cached from the PATCH/submit
   // responses) must return leg.draft carrying those exact submitted figures, not nulls.
-  it("GET after submit: leg.draft carries the SUBMITTED per-variant charges + chargedWeightKg + notes, not a blank reseed (finding #8)", async () => {
+  it("GET after submit: leg.draft carries the SUBMITTED common charge + per-variant trucking + chargedWeightKg + notes, not a blank reseed (finding #8)", async () => {
     const { token, legId } = await distributeRoadFixture();
     const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
     const legDto = (got.body as FfPortalRfqDto).legs[0];
+    const seedDraft = legDto.draft as QuoteDraft;
 
     const draft: QuoteDraft = {
-      legId,
-      mode: "ROAD",
+      ...seedDraft,
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
       chargedWeightKg: 482.75,
       notes: "Handle with care -- fragile glassware",
-      cargo: legDto.manifest.cargo.map((c) => ({
-        packageId: c.packageId,
-        grossWtKg: Number(c.grossWt),
-        cbm: Number(c.volumeCbm ?? 0),
-      })),
-      charges: legDto.seededCharges.flatMap((c) => [
-        {
-          zone: c.zone,
-          definitionKey: c.definitionKey,
-          presetKey: c.presetKey,
-          label: c.label,
-          amount: 100,
-          rateVariant: "DEDICATED" as const,
-        },
-        {
-          zone: c.zone,
-          definitionKey: c.definitionKey,
-          presetKey: c.presetKey,
-          label: c.label,
-          amount: 150,
-          rateVariant: "GROUPAGE" as const,
-        },
-      ]),
-      trucking: [],
-      seaRates: [],
-      warehouse: [],
+      // v4: the one seeded line (ROAD_STD_TAIL_LIFT) is ONE common row — priced once.
+      charges: seedDraft.charges.map((c) => ({ ...c, amount: 90 })),
+      trucking: seedDraft.trucking.map((t) =>
+        t.rateVariant === "DEDICATED"
+          ? { ...t, amount: 100, tonnage: "T_5" as const }
+          : { ...t, amount: 150 },
+      ),
       transit: {
-        departureDate: "2026-08-12T00:00:00.000Z",
-        arrivalDate: "2026-08-14T00:00:00.000Z",
+        departureDate: "2026-09-01T00:00:00.000Z",
+        arrivalDate: "2026-09-03T00:00:00.000Z",
         guaranteedTransitDaysByVariant: { DEDICATED: 3, GROUPAGE: 5 },
       },
-      dgSurchargeNote: null,
-      termsConditions: null,
     };
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(draft).expect(200);
@@ -633,12 +593,17 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     expect(afterDraft.chargedWeightKg).toBe(482.75);
     expect(afterDraft.notes).toBe("Handle with care -- fragile glassware");
 
+    // v4: ONE common charge row round-trips (rateVariant: null, not one cell per variant).
     const tailLiftCells = afterDraft.charges.filter(
       (c) => c.definitionKey === "ROAD_STD_TAIL_LIFT",
     );
-    expect(tailLiftCells).toHaveLength(2);
-    const dedicated = tailLiftCells.find((c) => c.rateVariant === "DEDICATED");
-    const groupage = tailLiftCells.find((c) => c.rateVariant === "GROUPAGE");
+    expect(tailLiftCells).toHaveLength(1);
+    expect(tailLiftCells[0]!.rateVariant).toBeNull();
+    expect(tailLiftCells[0]!.amount).toBe(90);
+
+    // Road's dual-rate trucking (unaffected by Round 4) round-trips per variant.
+    const dedicated = afterDraft.trucking.find((t) => t.rateVariant === "DEDICATED");
+    const groupage = afterDraft.trucking.find((t) => t.rateVariant === "GROUPAGE");
     expect(dedicated?.amount).toBe(100);
     expect(groupage?.amount).toBe(150);
 
@@ -652,39 +617,26 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     const { token, legId } = await distributeRoadFixture();
     const got = await api().get(`/api/ff/rfq/${token}`).expect(200);
     const legDto = (got.body as FfPortalRfqDto).legs[0];
+    const seedDraft = legDto.draft as QuoteDraft;
 
+    // v4: DEDICATED becomes a "priced variant" via its OWN trucking rate — charges no longer
+    // carry a rateVariant, so a common charge alone can no longer make a specific freight column
+    // "priced" (see quote-engine.ts's isVariantPriced). Its transit-days is left out of the
+    // (otherwise valid, non-empty) map; GROUPAGE stays entirely untouched (needs no GTT either).
     const draft: QuoteDraft = {
-      legId,
-      mode: "ROAD",
+      ...seedDraft,
       currency: "USD",
       quoteValidityUntil: "2099-01-01T00:00:00.000Z",
       chargedWeightKg: 200,
-      notes: null,
-      cargo: legDto.manifest.cargo.map((c) => ({
-        packageId: c.packageId,
-        grossWtKg: Number(c.grossWt),
-        cbm: Number(c.volumeCbm ?? 0),
-      })),
-      // only DEDICATED is priced -> only DEDICATED is a "priced variant"; its transit-days is
-      // left out of the (otherwise valid, non-empty) map.
-      charges: legDto.seededCharges.map((c) => ({
-        zone: c.zone,
-        definitionKey: c.definitionKey,
-        presetKey: c.presetKey,
-        label: c.label,
-        amount: 100,
-        rateVariant: "DEDICATED" as const,
-      })),
-      trucking: [],
-      seaRates: [],
-      warehouse: [],
+      charges: seedDraft.charges.map((c) => ({ ...c, amount: 100 })),
+      trucking: seedDraft.trucking.map((t) =>
+        t.rateVariant === "DEDICATED" ? { ...t, amount: 4200, tonnage: "T_5" as const } : t,
+      ),
       transit: {
         departureDate: null,
         arrivalDate: null,
         guaranteedTransitDaysByVariant: {}, // <-- the gap under test
       },
-      dgSurchargeNote: null,
-      termsConditions: null,
     };
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(draft).expect(200);
@@ -715,13 +667,17 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
       })),
+      // v4: every charge is a common row (rateVariant: null) — this test only cares about
+      // Q_WEIGHT, so the leg is left "started" via the common charge alone (Road-optional, Round
+      // 3 locked); the extra guaranteedTransitDaysByVariant entry below is harmless unused data
+      // since no freight variant is actually priced (trucking: []).
       charges: legDto.seededCharges.map((c) => ({
         zone: c.zone,
         definitionKey: c.definitionKey,
         presetKey: c.presetKey,
         label: c.label,
         amount: 100,
-        rateVariant: "DEDICATED" as const,
+        rateVariant: null,
       })),
       trucking: [],
       seaRates: [],

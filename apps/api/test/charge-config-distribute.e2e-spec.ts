@@ -270,39 +270,43 @@ describe(`${PREFIX} (e2e)`, () => {
         grossWtKg: Number(c.grossWt),
         cbm: Number(c.volumeCbm ?? 0),
       })),
+      // v4 (Round 4): every charge is a COMMON row (rateVariant: null) — ONE per seeded line,
+      // priced once, not once per rate-variant column (this helper is only ever called with AIR,
+      // whose single implicit column made this fan a no-op anyway, but v4 makes it common for
+      // every mode, full stop — see quote-seed.ts's seedQuoteDraftPricing). pieceWeightKg is kept
+      // <= this file's fixture package gross weight (5kg) — Round 4's Q_PIECE_WEIGHT (design D4)
+      // blocks a piece heavier than the whole manifested shipment.
       charges: leg.seededCharges
         .filter((c) => c.definitionKey !== opts?.omitKey)
-        .flatMap((c, i) =>
-          variants.map((rateVariant) =>
-            c.inputType === "HEAVY_WEIGHT_CALC"
-              ? {
-                  zone: c.zone,
-                  definitionKey: c.definitionKey,
-                  presetKey: null,
-                  label: c.label,
-                  amount: null,
-                  rateVariant,
-                  pieceWeightKg: 180,
-                  airlineLimitKg: 100,
-                  ratePerExcessKg: 2.5,
-                }
-              : {
-                  zone: c.zone,
-                  definitionKey: c.definitionKey,
-                  presetKey: null,
-                  label: c.label,
-                  amount: i === 0 ? 0 : 10, // 0 is a valid price — Q_PRICED treats amount != null as "priced"
-                  rateVariant,
-                  note: i === 0 ? "quoted at 0 by agreement" : undefined, // Q_PRICED requires a remark to accept 0
-                },
-          ),
+        .map((c, i) =>
+          c.inputType === "HEAVY_WEIGHT_CALC"
+            ? {
+                zone: c.zone,
+                definitionKey: c.definitionKey,
+                presetKey: null,
+                label: c.label,
+                amount: null,
+                rateVariant: null,
+                pieceWeightKg: 4,
+                airlineLimitKg: 2,
+                ratePerExcessKg: 2.5,
+              }
+            : {
+                zone: c.zone,
+                definitionKey: c.definitionKey,
+                presetKey: null,
+                label: c.label,
+                amount: i === 0 ? 0 : 10, // 0 is a valid price — Q_PRICED treats amount != null as "priced"
+                rateVariant: null,
+                note: i === 0 ? "quoted at 0 by agreement" : undefined, // Q_PRICED requires a remark to accept 0
+              },
         ),
       trucking: [],
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-08-12T00:00:00.000Z",
-        arrivalDate: "2026-08-14T00:00:00.000Z",
+        departureDate: "2026-09-01T00:00:00.000Z",
+        arrivalDate: "2026-09-03T00:00:00.000Z",
         // one Guaranteed Transit Time per rate-variant column (v3) — Air's single implicit column
         // is keyed by AIR_VARIANT_KEY (its ChargeRateVariant is `null`, which can't be an object key).
         guaranteedTransitDaysByVariant: Object.fromEntries(

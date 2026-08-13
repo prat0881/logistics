@@ -266,9 +266,9 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-08-12T00:00:00.000Z",
-        arrivalDate: "2026-08-14T00:00:00.000Z",
-        plannedPickupDate: "2026-08-11T00:00:00.000Z",
+        departureDate: "2026-09-01T00:00:00.000Z",
+        arrivalDate: "2026-09-03T00:00:00.000Z",
+        plannedPickupDate: "2026-08-31T00:00:00.000Z",
         guaranteedTransitDaysByVariant: {}, // <-- the gap under test
       },
       dgSurchargeNote: "Handled per IATA/ADR DG regulations",
@@ -614,8 +614,8 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-08-12T00:00:00.000Z",
-        arrivalDate: "2026-08-14T00:00:00.000Z",
+        departureDate: "2026-09-01T00:00:00.000Z",
+        arrivalDate: "2026-09-03T00:00:00.000Z",
         guaranteedTransitDaysByVariant: { DEDICATED: 4 },
       },
       dgSurchargeNote: null,
@@ -745,7 +745,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
       transit: {
         departureDate: null,
         arrivalDate: null,
-        plannedPickupDate: "2026-08-11T00:00:00.000Z",
+        plannedPickupDate: "2026-08-31T00:00:00.000Z",
         guaranteedTransitDaysByVariant: { DEDICATED: 5 }, // only Dedicated is priced
       },
       dgSurchargeNote: null,
@@ -767,6 +767,6 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     expect(transitPlan.departureDate).toBeNull(); // NOT 1970-01-01T00:00:00.000Z
     expect(transitPlan.arrivalDate).toBeNull();
     expect(transitPlan.guaranteedTransitDays).toBe(5);
-    expect(transitPlan.plannedPickupDate?.toISOString()).toBe("2026-08-11T00:00:00.000Z");
+    expect(transitPlan.plannedPickupDate?.toISOString()).toBe("2026-08-31T00:00:00.000Z");
   });
 });

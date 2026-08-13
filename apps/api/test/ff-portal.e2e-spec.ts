@@ -170,11 +170,16 @@ describe("GET /ff/rfq/:token (e2e)", () => {
    *   stay display-only, re-derived from the manifest server-side at submit regardless of what's
    *   sent here (satisfies Q_WEIGHT)
    * - charges: every PLAIN preset priced at amount=10, each carrying rateVariant: null (Air's
-   *   single implicit column); the HEAVY_WEIGHT_CALC line (AIR_MAIN_HEAVY_WEIGHT) priced via its 3
-   *   calc inputs instead (satisfies Q_PRICED)
+   *   single implicit column, unchanged by Round 4 — Air's charges were always common); the
+   *   HEAVY_WEIGHT_CALC line (AIR_MAIN_HEAVY_WEIGHT) priced via its 3 calc inputs instead
+   *   (satisfies Q_PRICED). pieceWeightKg is kept <= distributeFixture's package grossWt (5kg) —
+   *   Round 4's Q_PIECE_WEIGHT (design D4, quote-engine.ts) blocks a piece heavier than the whole
+   *   manifested shipment.
    * - trucking/seaRates/warehouse: empty (no trucking/warehouse endpoints in fixture; mode AIR
    *   never gates on Q_RATE)
-   * - transit: departure + arrival + guaranteedTransitDaysByVariant.AIR set (satisfies Q_TRANSIT)
+   * - transit: departure + arrival + guaranteedTransitDaysByVariant.AIR set (satisfies Q_TRANSIT).
+   *   Dates are kept ahead of "now" — Round 4's Q_PAST_DATE (design D3) unconditionally blocks any
+   *   FF-entered datetime earlier than the real submit-time clock.
    * - currency: USD (satisfies Q_CURRENCY)
    * - quoteValidityUntil: after the RFQ deadline (satisfies Q_VALIDITY)
    * - no DG-specific submit gate (QuoteDraftCargo has no isDangerous field) → dgSurchargeNote: null
@@ -223,8 +228,8 @@ describe("GET /ff/rfq/:token (e2e)", () => {
               label: c.label,
               amount: null,
               rateVariant: null,
-              pieceWeightKg: 180,
-              airlineLimitKg: 100,
+              pieceWeightKg: 4, // <= distributeFixture's 5kg package gross weight (Q_PIECE_WEIGHT)
+              airlineLimitKg: 2,
               ratePerExcessKg: 2.5,
             }
           : {
@@ -240,8 +245,8 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       seaRates: [],
       warehouse: [],
       transit: {
-        departureDate: "2026-08-12T00:00:00.000Z",
-        arrivalDate: "2026-08-14T00:00:00.000Z",
+        departureDate: "2026-09-01T00:00:00.000Z",
+        arrivalDate: "2026-09-03T00:00:00.000Z",
         guaranteedTransitDaysByVariant: { AIR: 2 },
       },
       dgSurchargeNote: null,
@@ -757,8 +762,10 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     // variants filled, so this is a legitimate, submittable draft. seededCharges here are the 5
     // SEA CORE PLAIN origin lines (SEA_MAIN_FREIGHT is retired/inactive — sea freight prices via
     // seaRates instead); v3: charges are per-variant matrix cells, so each is priced under FCL
-    // only ($10 x 5 = $50) — LCL is left completely untouched (no rate, no charges), proving it
-    // stays a legitimate blank column rather than needing to be filled too.
+    // only ($10 x 5 = $50) — v4 (Round 4): charges are COMMON (rateVariant: null, one row per
+    // definitionKey) — they fold into EVERY seaRates column equally, not just FCL's. LCL is left
+    // completely untouched on its OWN freight rate, proving it stays a legitimate blank column
+    // rather than needing its own rate too (freight stays per-variant, only charges went common).
     const draft = {
       legId: leg.id,
       mode: "SEA",
@@ -780,7 +787,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
           presetKey: null,
           label: c.label,
           amount: 10,
-          rateVariant: "FCL",
+          rateVariant: null,
         }),
       ),
       trucking: [],
@@ -792,8 +799,9 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       transit: {
         departureDate: "2026-09-01T00:00:00.000Z",
         arrivalDate: "2026-09-10T00:00:00.000Z",
-        // only FCL is a priced variant (LCL is untouched) — Q_TRANSIT only requires FCL's slot.
-        guaranteedTransitDaysByVariant: { FCL: 9 },
+        // v4 (Round 4): Sea's Guaranteed Transit Time is now ONE common value (keyed by
+        // SEA_VARIANT_KEY = "SEA"), not per-FCL/LCL — a single vessel/voyage doesn't arrive twice.
+        guaranteedTransitDaysByVariant: { SEA: 9 },
       },
       dgSurchargeNote: null,
       termsConditions: null,
@@ -821,10 +829,381 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     expect(rates[0]!.rateVariant).toBe("FCL");
     expect(Number(rates[0]!.amount)).toBe(1800);
 
-    // Quote.grandTotal = the engine's MAX variant grand total: FCL = 1800 (rate) + $50 (its own
-    // charges) + $0 warehouse = 1850; LCL (untouched) = 0 (rate) + 0 (no charges) + $0 = 0.
-    // max(1850, 0) = 1850.
+    // Quote.grandTotal = the engine's MAX variant grand total: FCL = 1800 (rate) + $50 (COMMON
+    // charges, v4) + $0 warehouse = 1850; LCL (its own rate untouched) = 0 (rate) + $50 (the SAME
+    // common charges — they fold into every variant) + $0 = 50. max(1850, 50) = 1850.
     const quote = await prisma.quote.findUniqueOrThrow({ where: { id: submitRes.body.quoteId } });
     expect(Number(quote.grandTotal)).toBe(1850);
+  });
+
+  // ── Round 4 (charge-model & UX refinements, Task 2): common charges + per-mode transit ──
+  // Task 1 (packages/shared) made every `draft.charges` row COMMON (rateVariant: null, one row per
+  // definitionKey or custom line, priced once — not once per rate-variant column) and collapsed
+  // Sea's Guaranteed Transit Time to ONE value (SEA_VARIANT_KEY, materializing as a single
+  // TransitPlan row with rateVariant: null — a vessel/voyage doesn't arrive twice for FCL vs LCL).
+  // This is Task 2's own RED->GREEN proof that ff-portal.service.ts's materialize was brought in
+  // line: a common ChargeLine per priced line (incl. a custom [+ Add Charge] line, which must
+  // round-trip through GET afterwards), per-variant SeaFreightRate as always, exactly ONE
+  // TransitPlan (not one per priced seaRates column), and Quote.grandTotal = the max variant total
+  // (freight(v) + the common additionalChargeSum + warehouseSum).
+  it("submit: SEA — common charges + a custom line + per-variant freight + ONE Sea GTT → common ChargeLines (rateVariant null), custom line round-trips, ONE Sea TransitPlan, grandTotal = max variant (Round 4)", async () => {
+    const admin = cookie(Role.ADMINISTRATOR);
+    const seq = ++fixtureSeq;
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-R4SEA-${seq}`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: `PK-R4SEA-${seq}`, dimL: 100, dimW: 100, dimH: 100, grossWt: 500 }],
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: `L-${PREFIX}-R4SEA-${seq}`,
+        mode: "SEA",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+      },
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
+
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PREFIX}-R4SEA-${seq}`,
+        companyName: `FF R4 SEA Co ${seq}`,
+        pic: "P",
+        contactNumber: "+1000000000",
+        email: `ff-${PREFIX.toLowerCase()}-r4sea-${seq}@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["SEA"],
+        handleDg: false,
+        defaultCurrency: "USD",
+      },
+    });
+    await request(app.getHttpServer())
+      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [ff.id] })
+      .expect(200);
+    const distRes = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    const token = distRes.body.rfqs[0].accessToken as string;
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+    const legDto = got.body.legs[0];
+    // sanity: the 5 SEA CORE lines seed as ONE common row each (v4) — not fanned across FCL/LCL.
+    expect(legDto.draft.charges).toHaveLength(5);
+    expect(
+      (legDto.draft.charges as { rateVariant: null }[]).every((c) => c.rateVariant === null),
+    ).toBe(true);
+
+    const draft = {
+      legId: leg.id,
+      mode: "SEA",
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 520,
+      notes: null,
+      cargo: legDto.manifest.cargo.map(
+        (c: { packageId: string; grossWt: string; volumeCbm: string | null }) => ({
+          packageId: c.packageId,
+          grossWtKg: Number(c.grossWt),
+          cbm: Number(c.volumeCbm ?? 0),
+        }),
+      ),
+      // the 5 seeded CORE lines priced at $10 each ($50) PLUS one ad-hoc [+ Add Charge] custom
+      // line ($25, no definitionKey/presetKey — the "custom-line tolerance") — every row common.
+      charges: [
+        ...legDto.seededCharges.map(
+          (c: { zone: string | null; definitionKey: string; label: string }) => ({
+            zone: c.zone,
+            definitionKey: c.definitionKey,
+            presetKey: null,
+            label: c.label,
+            amount: 10,
+            rateVariant: null,
+          }),
+        ),
+        {
+          zone: null,
+          definitionKey: null,
+          presetKey: null,
+          label: "Special handling fee",
+          amount: 25,
+          rateVariant: null,
+          note: "customer-requested crating",
+        },
+      ],
+      trucking: [],
+      // per-variant freight, unchanged by Round 4 — both FCL and LCL priced differently so the
+      // MAX-variant grandTotal logic is unambiguous.
+      seaRates: [
+        { rateVariant: "FCL", containerSize: "FORTY", amount: 1800, remarks: "FCL priced" },
+        { rateVariant: "LCL", containerSize: null, amount: 900, remarks: "LCL priced" },
+      ],
+      warehouse: [],
+      transit: {
+        departureDate: "2026-09-01T00:00:00.000Z",
+        arrivalDate: "2026-09-10T00:00:00.000Z",
+        // ONE common Sea GTT (SEA_VARIANT_KEY) covering both FCL and LCL.
+        guaranteedTransitDaysByVariant: { SEA: 12 },
+      },
+      dgSurchargeNote: null,
+      termsConditions: null,
+    };
+
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${leg.id}`)
+      .send(draft)
+      .expect(200);
+    const submitRes = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .expect(201);
+    expect(submitRes.body.status).toBe("QUOTED");
+    const quoteId = submitRes.body.quoteId as string;
+
+    // ── common ChargeLines: 6 rows (5 catalogue + 1 custom), EVERY one rateVariant: null ──
+    const chargeLines = await prisma.chargeLine.findMany({ where: { quoteId } });
+    expect(chargeLines).toHaveLength(6);
+    expect(chargeLines.every((c) => c.rateVariant === null)).toBe(true);
+    const customLine = chargeLines.find((c) => c.definitionKey === null);
+    expect(customLine).toBeDefined();
+    expect(customLine?.presetKey).toBeNull();
+    expect(customLine?.label).toBe("Special handling fee");
+    expect(Number(customLine?.amount)).toBe(25);
+    expect(customLine?.note).toBe("customer-requested crating");
+
+    // ── freight stays per-variant: both SeaFreightRate rows persist ──
+    const seaRates = await prisma.seaFreightRate.findMany({ where: { quoteId } });
+    expect(seaRates).toHaveLength(2);
+    expect(seaRates.find((r) => r.rateVariant === "FCL")?.amount.toString()).toBe("1800");
+    expect(seaRates.find((r) => r.rateVariant === "LCL")?.amount.toString()).toBe("900");
+
+    // ── exactly ONE Sea TransitPlan (rateVariant: null) — NOT one per priced seaRates column ──
+    const transitPlans = await prisma.transitPlan.findMany({ where: { quoteId } });
+    expect(transitPlans).toHaveLength(1);
+    expect(transitPlans[0]!.rateVariant).toBeNull();
+    expect(transitPlans[0]!.guaranteedTransitDays).toBe(12);
+
+    // ── Quote.grandTotal = max variant: FCL = 1800 + 75 (50 common + 25 custom) + 0 = 1875;
+    //    LCL = 900 + 75 + 0 = 975. max(1875, 975) = 1875. ──
+    const quote = await prisma.quote.findUniqueOrThrow({ where: { id: quoteId } });
+    expect(Number(quote.grandTotal)).toBe(1875);
+
+    // ── GET round-trips the submitted draft (design §6 finding #8): custom line + common
+    //    rateVariant + the ONE Sea GTT key all survive a fresh request, not a blank reseed. ──
+    const after = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+    const afterDraft = after.body.legs[0].draft;
+    expect(afterDraft.charges).toHaveLength(6);
+    expect(afterDraft.charges.every((c: { rateVariant: null }) => c.rateVariant === null)).toBe(
+      true,
+    );
+    const afterCustom = afterDraft.charges.find(
+      (c: { label: string }) => c.label === "Special handling fee",
+    );
+    expect(afterCustom?.amount).toBe(25);
+    expect(afterCustom?.note).toBe("customer-requested crating");
+    expect(afterDraft.transit.guaranteedTransitDaysByVariant).toEqual({ SEA: 12 });
+  });
+
+  // Task 2 (Round 4) carry-forward proof: Task 1's shared `validateQuote` restored Round 3's
+  // locked rule (freight REQUIRED for Air/Sea, OPTIONAL for Road) via an isLegStarted split — but
+  // ff-portal.service.ts's own hand-mirrored materialize helpers (isVariantPriced/variantRate)
+  // predated that split. If those mirrors were left stale, the API could silently re-impose
+  // "Road freight required" at submit (crashing on a force-unwrapped trucking amount, or simply
+  // never reaching the materialize code because of a wrongly-computed priced-variant set) even
+  // though the shared gate no longer requires it. This pins both halves of the contract end to
+  // end: a Road leg submits successfully on common charges alone (no trucking row at all), and a
+  // Sea leg is still correctly rejected without its own freight rate (Sea/Air stay required).
+  it("submit: ROAD succeeds with priced common charges and NO trucking rate (Round 3, locked); SEA is still rejected without its own freight rate", async () => {
+    const admin = cookie(Role.ADMINISTRATOR);
+    const seq = ++fixtureSeq;
+
+    // ── ROAD half ──
+    const roadQuery = await prisma.query.create({
+      data: { queryCode: `${CODE}-R4GATE-ROAD-${seq}`, incoterms: "FOB" },
+    });
+    const roadOrigin = await prisma.point.create({
+      data: { queryId: roadQuery.id, type: "PICKUP", country: "CN" },
+    });
+    const roadDest = await prisma.point.create({
+      data: { queryId: roadQuery.id, type: "DELIVERY", country: "AE" },
+    });
+    const roadLeg = await prisma.leg.create({
+      data: {
+        queryId: roadQuery.id,
+        legCode: `L-${PREFIX}-R4GATE-ROAD-${seq}`,
+        mode: "ROAD",
+        status: "READY_FOR_RFQ",
+        originPointId: roadOrigin.id,
+        destinationPointId: roadDest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+      },
+    });
+    const { packageIds: roadPkgIds } = await createCargoWithPackages(prisma, {
+      queryId: roadQuery.id,
+      packages: [{ packageNo: `PK-R4GATE-ROAD-${seq}`, dimL: 10, dimW: 20, dimH: 30, grossWt: 5 }],
+    });
+    await assignPackagesToLeg(prisma, roadLeg.id, roadPkgIds);
+    // Road has no CORE PLAIN lines — explicitly select one STANDARD line so there's an active
+    // common charge to price (mirrors ff-portal-v3.e2e-spec.ts's distributeRoadFixture).
+    const tailLift = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "ROAD_STD_TAIL_LIFT" },
+    });
+    await prisma.legChargeLineSelection.create({
+      data: { legId: roadLeg.id, definitionId: tailLift.id },
+    });
+    const roadFf = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PREFIX}-R4GR-${seq}`,
+        companyName: `FF R4 Gate Road Co ${seq}`,
+        pic: "P",
+        contactNumber: "+1000000000",
+        email: `ff-${PREFIX.toLowerCase()}-r4gr-${seq}@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["ROAD"],
+        handleDg: false,
+        defaultCurrency: "USD",
+      },
+    });
+    await request(app.getHttpServer())
+      .put(`/api/queries/${roadQuery.id}/legs/${roadLeg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [roadFf.id] })
+      .expect(200);
+    const roadDist = await request(app.getHttpServer())
+      .post(`/api/queries/${roadQuery.id}/legs/${roadLeg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    const roadToken = roadDist.body.rfqs[0].accessToken as string;
+
+    const roadGot = await request(app.getHttpServer()).get(`/api/ff/rfq/${roadToken}`).expect(200);
+    const roadLegDto = roadGot.body.legs[0];
+    expect(roadLegDto.draft.trucking).toHaveLength(2); // seeded DEDICATED + GROUPAGE, both blank
+
+    const roadDraft = {
+      ...roadLegDto.draft,
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 5,
+      // price the ONE common charge; trucking is left EXACTLY as seeded — both rows amount: null.
+      charges: roadLegDto.draft.charges.map((c: { amount: number | null }) => ({
+        ...c,
+        amount: 60,
+      })),
+    };
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${roadToken}/quotes/${roadLeg.id}`)
+      .send(roadDraft)
+      .expect(200);
+    // THE PROOF: 201, not a 422 Q_RATE / crash — Road freight is optional once a common charge is
+    // priced, and materialize must not silently re-demand a trucking rate.
+    const roadSubmit = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${roadToken}/quotes/${roadLeg.id}/submit`)
+      .expect(201);
+    expect(roadSubmit.body.status).toBe("QUOTED");
+
+    const roadQuoteId = roadSubmit.body.quoteId as string;
+    expect(await prisma.truckingCharge.count({ where: { quoteId: roadQuoteId } })).toBe(0);
+    expect(await prisma.transitPlan.count({ where: { quoteId: roadQuoteId } })).toBe(0); // no priced freight variant -> no GTT required, no row written
+    const roadCharge = await prisma.chargeLine.findFirstOrThrow({
+      where: { quoteId: roadQuoteId },
+    });
+    expect(roadCharge.rateVariant).toBeNull();
+    expect(Number(roadCharge.amount)).toBe(60);
+    const roadQuote = await prisma.quote.findUniqueOrThrow({ where: { id: roadQuoteId } });
+    expect(Number(roadQuote.grandTotal)).toBe(60); // both variants: 0 freight + 60 common + 0 warehouse
+
+    // ── SEA half: common charges alone do NOT satisfy Q_RATE — Sea freight stays required ──
+    const seaQuery = await prisma.query.create({
+      data: { queryCode: `${CODE}-R4GATE-SEA-${seq}`, incoterms: "FOB" },
+    });
+    const seaOrigin = await prisma.point.create({
+      data: { queryId: seaQuery.id, type: "PICKUP", country: "CN" },
+    });
+    const seaDest = await prisma.point.create({
+      data: { queryId: seaQuery.id, type: "DELIVERY", country: "AE" },
+    });
+    const seaLeg = await prisma.leg.create({
+      data: {
+        queryId: seaQuery.id,
+        legCode: `L-${PREFIX}-R4GATE-SEA-${seq}`,
+        mode: "SEA",
+        status: "READY_FOR_RFQ",
+        originPointId: seaOrigin.id,
+        destinationPointId: seaDest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+      },
+    });
+    const { packageIds: seaPkgIds } = await createCargoWithPackages(prisma, {
+      queryId: seaQuery.id,
+      packages: [{ packageNo: `PK-R4GATE-SEA-${seq}`, dimL: 10, dimW: 20, dimH: 30, grossWt: 5 }],
+    });
+    await assignPackagesToLeg(prisma, seaLeg.id, seaPkgIds);
+    const seaFf = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `FF-${PREFIX}-R4GS-${seq}`,
+        companyName: `FF R4 Gate Sea Co ${seq}`,
+        pic: "P",
+        contactNumber: "+1000000000",
+        email: `ff-${PREFIX.toLowerCase()}-r4gs-${seq}@e2e.test`,
+        availableCountries: ["CN", "AE"],
+        modes: ["SEA"],
+        handleDg: false,
+        defaultCurrency: "USD",
+      },
+    });
+    await request(app.getHttpServer())
+      .put(`/api/queries/${seaQuery.id}/legs/${seaLeg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [seaFf.id] })
+      .expect(200);
+    const seaDist = await request(app.getHttpServer())
+      .post(`/api/queries/${seaQuery.id}/legs/${seaLeg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    const seaToken = seaDist.body.rfqs[0].accessToken as string;
+
+    const seaGot = await request(app.getHttpServer()).get(`/api/ff/rfq/${seaToken}`).expect(200);
+    const seaLegDto = seaGot.body.legs[0];
+
+    const seaDraft = {
+      ...seaLegDto.draft,
+      currency: "USD",
+      quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+      chargedWeightKg: 5,
+      // every common charge priced; BOTH seaRates rows left exactly as seeded (amount: null).
+      charges: seaLegDto.draft.charges.map((c: { amount: number | null }) => ({
+        ...c,
+        amount: 15,
+      })),
+    };
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${seaToken}/quotes/${seaLeg.id}`)
+      .send(seaDraft)
+      .expect(200);
+    const seaSubmit = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${seaToken}/quotes/${seaLeg.id}/submit`)
+      .expect(422);
+    expect(seaSubmit.body.findings.map((f: { rule: string }) => f.rule)).toContain("Q_RATE");
+    expect((await prisma.quote.findFirst({ where: { legId: seaLeg.id } }))?.status).toBe(
+      "RFQ_SENT",
+    );
   });
 });

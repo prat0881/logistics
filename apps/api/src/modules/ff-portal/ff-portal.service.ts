@@ -13,7 +13,9 @@ import {
   seedQuoteDraftPricing,
   seedQuoteDraftWarehouse,
   variantsForMode,
+  variantsForTransit,
   AIR_VARIANT_KEY,
+  SEA_VARIANT_KEY,
   QuoteEvent,
   Role,
 } from "@svyft/shared";
@@ -28,6 +30,7 @@ import type {
   ResolvedChargeLine,
   FreightMode,
   ChargeRateVariant,
+  TransitVariantKey,
   SeedEndpoint,
 } from "@svyft/shared";
 import { Prisma } from "@prisma/client";
@@ -44,16 +47,20 @@ const chargeAmount = (c: QuoteDraftCharge): number =>
     ? computeHeavyWeightAmount(c.pieceWeightKg, c.airlineLimitKg, c.ratePerExcessKg)
     : c.amount!;
 
-// ── v3 per-variant helpers (design §3.1/§5) ──────────────────────────────────────────────────
+// ── v4 per-variant helpers (design §3.1/§5, Round 4) ─────────────────────────────────────────
 // The three functions below mirror quote-engine.ts's private chargeCellPriced/variantRate/
-// isVariantPriced EXACTLY (same rules validateQuote used to decide which variant columns are
-// "priced" and therefore required full charge pricing + a transit-days value). They're
+// isVariantPriced EXACTLY (re-synced for Round 4 — see the Task-2 handoff: they previously
+// predated BOTH the common-charge change and the isVariantPriced/isLegStarted split, which could
+// have silently re-imposed "Road freight required" at submit; validateQuote itself is imported
+// from @svyft/shared wholesale — never mirrored — so the actual submit-gate can't drift, but
+// materialize below still needs its own "which freight variant is priced" verdict). They're
 // duplicated locally — same pattern as chargeAmount() above mirroring effectiveChargeAmount() —
-// because materialize (submit(), below) needs the identical "priced variant" verdict for two
-// purposes: (a) drop any charge cell that isn't priced before force-unwrapping its amount (an
-// untouched variant's cells are legitimately null post-gate — same reasoning as the existing
-// trucking/seaRates amount!=null filters), and (b) write exactly one TransitPlan row per priced
-// variant, no more, no fewer.
+// because materialize (submit(), below) needs that verdict for: writing exactly one TransitPlan
+// row per priced Road variant (Sea/Air collapse to their one common/single row — see the
+// transitKeys logic in submit()). Charges no longer carry a rateVariant at all (v4: every row is
+// common — see QuoteDraftCharge), so unlike v3 there is nothing to filter by variant when
+// materializing ChargeLines; every chargeCellPriced-passing row materializes once, full stop,
+// with rateVariant forced to null (see the chargeLine.createMany call below).
 
 /** A charge cell counts as "priced" once it carries a usable amount — a literal `amount`, or
  *  (for a HEAVY_WEIGHT_CALC line) all three calc inputs. Matches chargeAmount()'s own notion of
@@ -72,21 +79,25 @@ function variantRate(draft: QuoteDraft, v: ChargeRateVariant | null): number | n
   return null;
 }
 
-/** Has variant `v` had *anything* entered against it — its freight-rate cell or any charge cell?
- *  An untouched variant materializes NO ChargeLine cells and gets NO TransitPlan row. */
+/** Is variant `v` "priced" (v4, matching quote-engine.ts's isVariantPriced exactly)? Road/Sea:
+ *  purely its OWN freight rate — charges no longer carry a rateVariant, so a charge cell can no
+ *  longer establish which freight column it belongs to. Air (no freight-rate cell at all): any
+ *  common charge. Feeds ONLY the TransitPlan materialize logic below (which Road variants get
+ *  their own row, and whether Sea/Air's one common row gets written at all) — never the
+ *  ChargeLine materialize, which no longer filters by variant. */
 function isVariantPriced(draft: QuoteDraft, v: ChargeRateVariant | null): boolean {
-  if (variantRate(draft, v) != null) return true;
-  return draft.charges.some((c) => c.rateVariant === v && chargeCellPriced(c));
+  if (draft.mode === "ROAD" || draft.mode === "SEA") return variantRate(draft, v) != null;
+  return draft.charges.some(chargeCellPriced);
 }
 
-/** resolveScope seed (design §5): when a leg has no saved draftJson yet, GET returns a starter
- *  QuoteDraft instead of null — the full per-variant charge matrix (every active chargeConfig
- *  line × the mode's rate-variant columns, one QuoteDraftCharge per cell, `amount: null`; Air's
- *  single implicit column seeds `rateVariant: null` for free via variantsForMode("AIR") ===
- *  [null]) PLUS the mode's blank freight-rate rows (Road → Dedicated/Groupage `trucking`, Sea →
- *  FCL/LCL `seaRates`, keyed off the leg's first endpoint for Road) PLUS the shared warehouse rows
- *  (one per warehouse-positioned endpoint when handling is included) — so the portal always has an
- *  addressable, editable cell for every (line, variant) pair, for the freight rate, AND for
+/** resolveScope seed (design §5; v4/Round 4: charges common, freight per-variant): when a leg has
+ *  no saved draftJson yet, GET returns a starter QuoteDraft instead of null — ONE common row per
+ *  active chargeConfig line (`rateVariant: null`, `amount: null` — every charge is priced once,
+ *  full stop, not once per rate-variant column any more) PLUS the mode's blank freight-rate rows
+ *  (Road → Dedicated/Groupage `trucking`, Sea → FCL/LCL `seaRates`, keyed off the leg's first
+ *  endpoint for Road — freight is the one thing that STAYS per-variant) PLUS the shared warehouse
+ *  rows (one per warehouse-positioned endpoint when handling is included) — so the portal always
+ *  has an addressable, editable cell for every charge line, for the freight rate, AND for
  *  warehousing, rather than the client reconstructing them. Charges + trucking + seaRates come from
  *  `@svyft/shared`'s `seedQuoteDraftPricing`, warehouse from `seedQuoteDraftWarehouse` — the SAME
  *  helpers the client's draftFromDto calls, a single source of truth so the server and client seeds
@@ -335,7 +346,9 @@ export class FfPortalService {
         ],
       });
 
-    // ── validate (design §3.2, submit-gate v3 — per-variant-column rules) ──
+    // ── validate (design §3.2, submit-gate v4/Round 4 — common charges gated once, freight
+    // per-variant, Sea/Air freight required + Road optional) — imported wholesale from
+    // @svyft/shared, never mirrored, so this gate can't drift from the client's. ──
     const findings: Finding[] = validateQuote(
       draft,
       scope.rfq.submissionDeadline.toISOString(),
@@ -366,11 +379,16 @@ export class FfPortalService {
           })),
         });
 
-        // v3: charges are per-variant matrix cells (rateVariant null = Air's single implicit
-        // column or a non-variant/custom line). An untouched variant's cells are legitimately
-        // null post-gate (Q_PRICED only requires full pricing for a variant that's actually
-        // priced) — filter them out here for the same reason the trucking/seaRates filters below
-        // exist: so chargeAmount(c)'s `c.amount!` force-unwrap is always safe.
+        // v4 (Round 4): every charge is COMMON — one row per definitionKey (or one row per ad-hoc
+        // [+ Add Charge] custom line), priced ONCE, not once per rate-variant column. An unpriced
+        // row is legitimately null post-gate only when the leg was never "started" at all (Q_RATE
+        // would have blocked otherwise) — filter it out here for the same reason the trucking/
+        // seaRates filters below exist: so chargeAmount(c)'s `c.amount!` force-unwrap is always
+        // safe. `rateVariant` is force-written to `null` rather than forwarded from `c.rateVariant`
+        // — the QuoteDraftCharge TYPE already narrows it to the literal `null` (Task 1), but this
+        // is the wire boundary: a stale/legacy client could still technically PATCH a real
+        // ChargeRateVariant past the (shape-only) Zod schema, and nothing here should ever let a
+        // charge materialize as anything but common.
         await tx.chargeLine.createMany({
           data: draft.charges.filter(chargeCellPriced).map((c, i) => ({
             quoteId: q.id,
@@ -386,7 +404,7 @@ export class FfPortalService {
             airlineLimitKg: c.airlineLimitKg ?? null,
             ratePerExcessKg: c.ratePerExcessKg ?? null,
             billOfLadingType: c.billOfLadingType ?? null,
-            rateVariant: c.rateVariant,
+            rateVariant: null,
           })),
         });
 
@@ -437,29 +455,42 @@ export class FfPortalService {
           });
         }
 
-        // v3: one TransitPlan row per PRICED variant (was a single row per quote) — an untouched
-        // variant has no data worth persisting and Q_TRANSIT never required a days value for it.
-        // The Air transit-days bridge: the draft keys Air's days under AIR_VARIANT_KEY ("AIR")
-        // since guaranteedTransitDaysByVariant needs a real object key, but Air's TransitPlan row
-        // itself still gets `rateVariant: null` (v is null for Air — variantsForMode("AIR") ===
-        // [null]) to match ChargeLine/TruckingCharge/SeaFreightRate's null-for-Air convention.
+        // v4 (Round 4, design D2): Road stays one TransitPlan row PER PRICED variant (DEDICATED
+        // and GROUPAGE can genuinely commit to different transit times); Sea/Air collapse to
+        // exactly ONE common TransitPlan (`rateVariant: null`) the moment ANY freight variant is
+        // priced — a single vessel/voyage (Sea) or the one implicit column (Air) never arrives
+        // twice, so pricing both Sea columns (FCL+LCL) still writes only one row, not two. This
+        // mirrors quote-engine.ts's private requiredTransitKeys/variantsForTransit (the Q_TRANSIT
+        // gate) so materialize can never write a row the gate wouldn't have required a days value
+        // for, or skip one it would have. `transitKeys` are the technical keys into
+        // `guaranteedTransitDaysByVariant`: Road's are its own real ChargeRateVariant (DEDICATED/
+        // GROUPAGE, unchanged from v3); Sea/Air's are the SEA_VARIANT_KEY/AIR_VARIANT_KEY
+        // sentinels, which both materialize as `rateVariant: null` (matching ChargeLine/
+        // TruckingCharge/SeaFreightRate's null-for-no-real-variant convention).
         if (draft.transit) {
           const transit = draft.transit;
           const pricedVariants = variantsForMode(draft.mode).filter((v) =>
             isVariantPriced(draft, v),
           );
-          for (const v of pricedVariants) {
+          const transitKeys: TransitVariantKey[] =
+            pricedVariants.length === 0
+              ? []
+              : draft.mode === "ROAD"
+                ? pricedVariants.filter((v): v is ChargeRateVariant => v != null)
+                : variantsForTransit(draft.mode); // SEA -> [SEA_VARIANT_KEY], AIR/unresolved -> [AIR_VARIANT_KEY]
+          for (const key of transitKeys) {
+            const rateVariantColumn =
+              key === AIR_VARIANT_KEY || key === SEA_VARIANT_KEY ? null : key;
             await tx.transitPlan.create({
               data: {
                 quoteId: q.id,
-                rateVariant: v,
+                rateVariant: rateVariantColumn,
                 carrier: transit.carrier ?? null,
                 flightVoyageNo: transit.flightVoyageNo ?? null,
                 departureDate: transit.departureDate ? new Date(transit.departureDate) : null,
                 arrivalDate: transit.arrivalDate ? new Date(transit.arrivalDate) : null,
                 carrierSurcharge: transit.carrierSurcharge ?? null,
-                guaranteedTransitDays:
-                  transit.guaranteedTransitDaysByVariant[v ?? AIR_VARIANT_KEY] ?? null,
+                guaranteedTransitDays: transit.guaranteedTransitDaysByVariant[key] ?? null,
                 plannedPickupDate: transit.plannedPickupDate
                   ? new Date(transit.plannedPickupDate)
                   : null,
