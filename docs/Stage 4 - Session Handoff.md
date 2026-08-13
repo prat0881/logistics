@@ -27,7 +27,12 @@
 
 ## ▶ Remaining Stage 4 work & pending register (SINGLE SOURCE OF TRUTH)
 
-> **Decision (2026-07-31, locked with user):** **finish Stage 4 fully before starting Stage 5.** The program's **Stage 5 = the Quote Comparison & Award epic** (Functional Spec §2 forward-refs; currency→USD, negotiation/requote, per-leg award — drives the `REQUOTED`/`APPROVED`/`CLOSED` statuses defined-but-undriven here). It is **greenfield (no spec/design doc yet)** and **depends on SB6** (awarding on quotes that post-RFQ edits can silently invalidate is unsafe). **Stage-5 brainstorming is deferred** until the items below are done.
+> **Decision (2026-07-31, locked with user):** **finish Stage 4 fully before starting Stage 5.** The program's **Stage 5 = the Quote Comparison & Award epic** (Functional Spec §2 forward-refs; currency→USD, negotiation/requote, per-leg award — drives the `REQUOTED`/`APPROVED`/`CLOSED` statuses defined-but-undriven here). It is **greenfield (no spec/design doc yet)** and **depends on SB6** (awarding on quotes that post-RFQ edits can silently invalidate is unsafe).
+>
+> **▶ Update (2026-08-13) — resume plan for a fresh session:** the FF-portal quoting work is **feature-complete on [PR #51](https://github.com/sj132q/svyft-logistics/pull/51)** (v2 §4.8 → v3 per-variant → route-view → Round-4 charge-model + Road-mandatory; tip `8e30b9a`; `pnpm run ci` green; **go-live-gated, NOT merged**). Two threads remain, both suited to a **fresh session** (context is full):
+> 1. **More FF-portal deploy→test→fix rounds** as the user surfaces them — each: static audit → confirm design decisions → SDD batch folded into PR #51 (per [[feedback-audit-before-live-testing]]). Recovery: the per-round SDD ledgers under `.superpowers/sdd/` + the top-of-file status bullets.
+> 2. **Stage 5 = Quote Comparison & Award** — the user is now ready to **design it** (no longer blocked on finishing every Stage-4 item). Start with `superpowers:brainstorming` → `writing-plans`; greenfield (Functional-Spec §2 forward-refs; currency→USD, negotiation/requote, per-leg award → drives the defined-but-undriven `REQUOTED`/`APPROVED`/`CLOSED`); **depends on SB6** (PR #45). Own branch/worktree off `main`.
+> 3. **Go-live cutover** (PR #51) stays user-gated: quantify Neon-prod loss on BOTH destructive migrations (`cargo_packing_list` + `ff_portal_v3`), staging dry-run, explicit approval.
 >
 > **⚠ Naming clash:** the program's **"Stage 5"** (comparison/award) is NOT Stage-4's internal **"SB5"** (notifications, now delivered) / **"SB6"** (change-order). This register covers Stage 4's remaining **SB6** + polish + go-live gates.
 
