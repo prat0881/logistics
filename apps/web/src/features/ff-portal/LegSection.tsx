@@ -187,6 +187,12 @@ function LegSectionForm({
   const { variants } = computeQuoteTotals(draft);
   const grandTotal = Math.max(...variants.map((v) => v.grandTotal), 0);
 
+  // design §6C finding #7: the Warehousing section+heading only renders when the leg actually has
+  // warehouse rows to price — `draft.warehouse` is draftFromDto's seed of the leg's frozen
+  // warehouseIncluded decision (design §9), the same source WarehouseStaging itself reads, so this
+  // can't disagree with whether that component would render anything.
+  const hasWarehouse = draft.warehouse.length > 0;
+
   return (
     <FormProvider {...form}>
       <div className="space-y-8">
@@ -210,13 +216,17 @@ function LegSectionForm({
           <ChargeMatrix seededCharges={leg.seededCharges} mode={leg.mode} />
         </section>
 
-        {/* Warehouse staging */}
-        <section id={sectionAnchorId(leg.legId, "warehouse")}>
-          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Warehousing
-          </h3>
-          <WarehouseStaging />
-        </section>
+        {/* Warehouse staging — entire section (heading included) hidden when the leg has no
+            warehouse (design §6C finding #7); today WarehouseStaging itself already renders
+            nothing for an empty list, but the wrapper used to render regardless. */}
+        {hasWarehouse && (
+          <section id={sectionAnchorId(leg.legId, "warehouse")}>
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Warehousing
+            </h3>
+            <WarehouseStaging />
+          </section>
+        )}
 
         {/* Transit plan */}
         <section id={sectionAnchorId(leg.legId, "transit")}>

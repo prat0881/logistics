@@ -1,6 +1,14 @@
 // format.test.ts
 import { describe, it, expect } from "vitest";
-import { fmtAmount, fmtWeight, fmtCbm, fmtDecimal, toDatetimeLocal, fromDatetimeLocal } from "./format";
+import {
+  fmtAmount,
+  fmtWeight,
+  fmtCbm,
+  fmtDecimal,
+  toDatetimeLocal,
+  fromDatetimeLocal,
+  nowDatetimeLocal,
+} from "./format";
 
 describe("format helpers", () => {
   it("fmtAmount groups thousands with 2dp, dash for null", () => {
@@ -15,9 +23,14 @@ describe("format helpers", () => {
   it("fmtDecimal handles NaN/null", () => expect(fmtDecimal("x")).toBe("—"));
   it("datetime-local round-trips a UTC instant back to an ISO instant", () => {
     const iso = "2026-08-01T09:30:00.000Z";
-    const local = toDatetimeLocal(iso);          // viewer-local wall time
+    const local = toDatetimeLocal(iso); // viewer-local wall time
     expect(local).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
     expect(new Date(fromDatetimeLocal(local)!).getTime()).toBe(new Date(iso).getTime());
   });
   it("fromDatetimeLocal maps empty to null", () => expect(fromDatetimeLocal("")).toBeNull());
+  it("nowDatetimeLocal returns the current moment in datetime-local format (design D3 min= helper)", () => {
+    const local = nowDatetimeLocal();
+    expect(local).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect(Math.abs(new Date(local).getTime() - Date.now())).toBeLessThan(60_000);
+  });
 });

@@ -1,10 +1,15 @@
 import { useFormContext, useWatch } from "react-hook-form";
-import type { QuoteDraft, FreightMode, ChargeRateVariant } from "@svyft/shared";
-import { variantsForMode, rateVariantLabel, AIR_VARIANT_KEY } from "@svyft/shared";
+import type { QuoteDraft, FreightMode, TransitVariantKey } from "@svyft/shared";
+import {
+  variantsForTransit,
+  rateVariantLabel,
+  AIR_VARIANT_KEY,
+  SEA_VARIANT_KEY,
+} from "@svyft/shared";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { NumberField } from "./NumberField";
-import { toDatetimeLocal, fromDatetimeLocal } from "./format";
+import { toDatetimeLocal, fromDatetimeLocal, nowDatetimeLocal } from "./format";
 import { cn } from "@/lib/utils";
 
 export interface TransitPlanFormProps {
@@ -16,44 +21,54 @@ export interface TransitPlanFormProps {
   legId: string;
 }
 
-/** Column label matching ChargeMatrix's convention (rateVariantLabel for Road/Sea, "Air" for the
- *  single implicit column) — keeps each transit-days field's label aligned with the charge
- *  matrix's own column headers (design §6 finding #4: "matching the matrix's columns"). */
-function variantLabel(v: ChargeRateVariant | null): string {
-  return v ? rateVariantLabel(v) : "Air";
+/** Column label for a Guaranteed Transit Time field, keyed by variantsForTransit(mode)'s
+ *  TransitVariantKey (design D2, v4): Road's two real ChargeRateVariant members get the same
+ *  Dedicated/Groupage labels the charge matrix uses; Sea's ONE common slot reads "Sea" (a single
+ *  GTT covers both FCL/LCL — a ship doesn't arrive twice); Air's single implicit column reads
+ *  "Air". Distinct from `variantsForMode`'s freight-rate columns, which stay per-variant for Sea. */
+function variantLabel(v: TransitVariantKey): string {
+  if (v === AIR_VARIANT_KEY) return "Air";
+  if (v === SEA_VARIANT_KEY) return "Sea";
+  return rateVariantLabel(v);
 }
 
 /**
  * Transit plan — mode-specific fields (design §7): Road plans a pickup date, Air plans a
  * flight, Sea plans a vessel voyage. Guaranteed Transit Time is mandatory (the Q_TRANSIT gate,
- * quote-engine.ts) and, per v3 (design §3.1/D3, §6 finding #4), **per rate variant** — one field
- * per column of the charge matrix (Road/Sea render Dedicated+Groupage or FCL+LCL side by side;
- * Air renders its single implicit column). The rest of the schedule (carrier/dates, mode-specific)
- * stays once per leg below — the old generic departureDate/arrivalDate/carrier/flightVoyageNo/
- * carrierSurcharge inputs are dropped, fully superseded by the mode-specific fields (the
- * underlying QuoteDraftTransit columns are nullable and ungated, so dropping the inputs loses no
- * data integrity).
+ * quote-engine.ts) and keyed by `variantsForTransit(mode)` (design D2, v4): Road renders one field
+ * per rate variant (Dedicated + Groupage, matching the charge matrix's columns); Sea renders ONE
+ * common field (FCL and LCL ride the same vessel/voyage, so a second independent GTT had no
+ * real-world meaning — v3 rendered two, this is the v4 reversal); Air renders its single implicit
+ * column. The rest of the schedule (carrier/dates, mode-specific) stays once per leg below — the
+ * old generic departureDate/arrivalDate/carrier/flightVoyageNo/carrierSurcharge inputs are
+ * dropped, fully superseded by the mode-specific fields (the underlying QuoteDraftTransit columns
+ * are nullable and ungated, so dropping the inputs loses no data integrity).
  */
 export function TransitPlanForm({ mode, legId }: TransitPlanFormProps): JSX.Element {
   const { register, control, setValue } = useFormContext<QuoteDraft>();
   const transit = useWatch({ control, name: "transit" });
-  const variants = variantsForMode(mode);
+  const variants = variantsForTransit(mode);
   // Leg-qualified DOM id (finding #4): unique per rendered leg so same-mode legs don't clash.
   const fid = (name: string) => `${legId}-${name}`;
+  // No-past-date client gate (design D3, finding #10): the `min` every datetime-local field below
+  // uses so the picker can't offer a past moment — computed once per render and reused across
+  // every field on this pass (see format.ts's nowDatetimeLocal). The engine's unconditional
+  // Q_PAST_DATE rule (quote-engine.ts's validateQuote) is the enforcement half this can't bypass.
+  const nowLocal = nowDatetimeLocal();
 
   return (
     <div className="space-y-6">
-      {/* Guaranteed Transit Time — mandatory on every mode (Q_TRANSIT gate), one field per rate
-          variant/column (design §6 finding #4) so e.g. Dedicated and Groupage can each commit to
-          a different transit time; Air has a single implicit column. */}
+      {/* Guaranteed Transit Time — mandatory on every mode (Q_TRANSIT gate), keyed by
+          variantsForTransit(mode) (design D2): Road one field per rate variant/column so
+          Dedicated and Groupage can each commit to a different transit time; Sea ONE common
+          field; Air a single implicit column. */}
       <div className={cn("grid gap-4", variants.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
-        {variants.map((v) => {
-          const variantKey = v ?? AIR_VARIANT_KEY;
+        {variants.map((variantKey) => {
           const id = fid(`transit-guaranteed-days-${variantKey}`);
           return (
             <div className="space-y-1" key={variantKey}>
               <Label htmlFor={id}>
-                Guaranteed Transit Time (days) — {variantLabel(v)}
+                Guaranteed Transit Time (days) — {variantLabel(variantKey)}
                 <span className="text-destructive"> *</span>
               </Label>
               <NumberField
@@ -86,6 +101,7 @@ export function TransitPlanForm({ mode, legId }: TransitPlanFormProps): JSX.Elem
           <Input
             id={fid("transit-planned-pickup")}
             type="datetime-local"
+            min={nowLocal}
             value={toDatetimeLocal(transit?.plannedPickupDate ?? null)}
             onChange={(e) =>
               setValue("transit.plannedPickupDate", fromDatetimeLocal(e.target.value), {
@@ -122,6 +138,7 @@ export function TransitPlanForm({ mode, legId }: TransitPlanFormProps): JSX.Elem
               <Input
                 id={fid("transit-planned-departure")}
                 type="datetime-local"
+                min={nowLocal}
                 value={toDatetimeLocal(transit?.plannedDeparture ?? null)}
                 onChange={(e) =>
                   setValue("transit.plannedDeparture", fromDatetimeLocal(e.target.value), {
@@ -135,6 +152,7 @@ export function TransitPlanForm({ mode, legId }: TransitPlanFormProps): JSX.Elem
               <Input
                 id={fid("transit-planned-arrival")}
                 type="datetime-local"
+                min={nowLocal}
                 value={toDatetimeLocal(transit?.plannedArrival ?? null)}
                 onChange={(e) =>
                   setValue("transit.plannedArrival", fromDatetimeLocal(e.target.value), {
@@ -173,6 +191,7 @@ export function TransitPlanForm({ mode, legId }: TransitPlanFormProps): JSX.Elem
               <Input
                 id={fid("transit-etd")}
                 type="datetime-local"
+                min={nowLocal}
                 value={toDatetimeLocal(transit?.etd ?? null)}
                 onChange={(e) =>
                   setValue("transit.etd", fromDatetimeLocal(e.target.value), {
@@ -186,6 +205,7 @@ export function TransitPlanForm({ mode, legId }: TransitPlanFormProps): JSX.Elem
               <Input
                 id={fid("transit-eta")}
                 type="datetime-local"
+                min={nowLocal}
                 value={toDatetimeLocal(transit?.eta ?? null)}
                 onChange={(e) =>
                   setValue("transit.eta", fromDatetimeLocal(e.target.value), {

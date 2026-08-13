@@ -65,6 +65,24 @@ const quotedLeg = {
   status: "QUOTED",
 } as unknown as FfPortalLegDto;
 
+// Same leg, but with a warehouse endpoint + the frozen warehouseIncluded decision (design §9) —
+// seedQuoteDraftWarehouse (draftFromDto's fresh-draft path) only produces a non-empty
+// draft.warehouse for this fixture, not the base `leg` above (LegSection §6C finding #7).
+const legWithWarehouse = {
+  ...leg,
+  warehouseIncluded: true,
+  endpoints: [
+    {
+      pointId: "p1",
+      type: "WAREHOUSE",
+      name: "OAP Warehouse",
+      country: "IN",
+      code: "OAP",
+      warehousePosition: "ORIGIN",
+    },
+  ],
+} as unknown as FfPortalLegDto;
+
 describe("LegSection submit gate", () => {
   it("blocks submit on client findings and does not POST", async () => {
     const fx = mockFetch(() => ({ status: 200, body: {} }));
@@ -153,10 +171,13 @@ describe("LegSection sections & layout (design §6 finding #7)", () => {
   it("groups the quote form into labelled sections", () => {
     render(
       wrap(
+        // Warehouse-inclusive fixture: this test asserts every section heading renders, which for
+        // Warehousing is only true when the leg actually has a warehouse (see the dedicated
+        // "warehouse section" describe block below for the conditional itself).
         <LegSection
           token="tok"
           rfq={rfq}
-          leg={leg}
+          leg={legWithWarehouse}
           currency="USD"
           quoteValidityUntil={rfq.quoteValidityUntil}
           readOnly={false}
@@ -169,6 +190,40 @@ describe("LegSection sections & layout (design §6 finding #7)", () => {
     expect(screen.getByRole("heading", { name: /transit plan/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^notes$/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /^terms$/i })).toBeInTheDocument();
+  });
+});
+
+describe("LegSection warehouse section (design §6C finding #7)", () => {
+  it("renders no Warehousing heading/section when the leg has no warehouse", () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={leg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+        />,
+      ),
+    );
+    expect(screen.queryByRole("heading", { name: /warehousing/i })).not.toBeInTheDocument();
+  });
+
+  it("renders the Warehousing heading/section when the leg has a warehouse", () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={legWithWarehouse}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+        />,
+      ),
+    );
+    expect(screen.getByRole("heading", { name: /warehousing/i })).toBeInTheDocument();
   });
 });
 

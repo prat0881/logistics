@@ -56,11 +56,10 @@ describe("TransitPlanForm — Guaranteed Transit Time (mandatory, per rate-varia
     expect(screen.getByLabelText(/guaranteed transit time.*groupage/i)).toBeInTheDocument();
   });
 
-  it("renders two fields for Sea, one per variant (FCL + LCL), matching the charge matrix's columns", () => {
+  it("renders ONE common field for Sea (design D2/v4: one GTT shared by FCL+LCL, not per-variant)", () => {
     render(<Harness mode="SEA" />);
-    expect(screen.getAllByLabelText(/guaranteed transit time/i)).toHaveLength(2);
-    expect(screen.getByLabelText(/guaranteed transit time.*fcl/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/guaranteed transit time.*lcl/i)).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/guaranteed transit time/i)).toHaveLength(1);
+    expect(screen.getByLabelText(/guaranteed transit time.*sea/i)).toBeInTheDocument();
   });
 
   it("writes a numeric value keyed by AIR_VARIANT_KEY for Air's single column", async () => {
@@ -82,13 +81,12 @@ describe("TransitPlanForm — Guaranteed Transit Time (mandatory, per rate-varia
     });
   });
 
-  it("writes independent values per variant for Sea (FCL and LCL don't clobber each other)", async () => {
+  it("writes a numeric value keyed by SEA_VARIANT_KEY for Sea's single common column", async () => {
     render(<Harness mode="SEA" />);
-    await userEvent.type(screen.getByLabelText(/guaranteed transit time.*fcl/i), "10");
-    await userEvent.type(screen.getByLabelText(/guaranteed transit time.*lcl/i), "20");
+    const input = screen.getByLabelText(/guaranteed transit time.*sea/i);
+    await userEvent.type(input, "12");
     expect(JSON.parse(screen.getByTestId("guaranteed-by-variant").textContent ?? "{}")).toEqual({
-      FCL: 10,
-      LCL: 20,
+      SEA: 12,
     });
   });
 });
@@ -136,7 +134,9 @@ describe("TransitPlanForm — Air", () => {
 
   it("writes an ISO instant to transit.plannedDeparture when a departure datetime is chosen", async () => {
     render(<Harness mode="AIR" />);
-    await userEvent.type(screen.getByLabelText(/planned departure/i), "2026-08-05T10:00");
+    // Future fixture date (not a hardcoded near-past one) — a past value would now be rejected by
+    // the field's own `min` (design D3) and would trip the engine's unconditional Q_PAST_DATE gate.
+    await userEvent.type(screen.getByLabelText(/planned departure/i), "2026-09-05T10:00");
     const written = screen.getByTestId("planned-departure").textContent ?? "";
     expect(written).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(Number.isFinite(new Date(written).getTime())).toBe(true);
@@ -182,5 +182,32 @@ describe("TransitPlanForm — Sea", () => {
     expect(screen.getByLabelText(/vessel \/ voyage/i)).toHaveValue("MSC Anna / 123W");
     const written = screen.getByTestId("etd").textContent ?? "";
     expect(written).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  });
+});
+
+describe("TransitPlanForm — no past dates (design D3, finding #10)", () => {
+  // Independent check (doesn't import the component's own "now" helper): the field's `min` must
+  // decode to within a minute of the real wall clock, in datetime-local format.
+  function expectMinIsApproxNow(input: HTMLElement) {
+    const min = (input as HTMLInputElement).min;
+    expect(min).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect(Math.abs(new Date(min).getTime() - Date.now())).toBeLessThan(60_000);
+  }
+
+  it("Road: Planned Pickup Date has min=now", () => {
+    render(<Harness mode="ROAD" />);
+    expectMinIsApproxNow(screen.getByLabelText(/planned pickup date/i));
+  });
+
+  it("Air: Planned Departure and Planned Arrival have min=now", () => {
+    render(<Harness mode="AIR" />);
+    expectMinIsApproxNow(screen.getByLabelText(/planned departure/i));
+    expectMinIsApproxNow(screen.getByLabelText(/planned arrival/i));
+  });
+
+  it("Sea: ETD and ETA have min=now", () => {
+    render(<Harness mode="SEA" />);
+    expectMinIsApproxNow(screen.getByLabelText(/^etd/i));
+    expectMinIsApproxNow(screen.getByLabelText(/^eta/i));
   });
 });
