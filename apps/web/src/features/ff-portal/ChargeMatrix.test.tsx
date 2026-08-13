@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useForm, FormProvider, useWatch, type Control } from "react-hook-form";
-import type { QuoteDraft, FfPortalSeededCharge, FreightMode, ResolvedChargeLine } from "@svyft/shared";
+import type {
+  QuoteDraft,
+  FfPortalSeededCharge,
+  FreightMode,
+  ResolvedChargeLine,
+} from "@svyft/shared";
 import { validateQuote, seedQuoteDraftPricing } from "@svyft/shared";
 import { ChargeMatrix } from "./ChargeMatrix";
 
@@ -64,18 +69,19 @@ const ROAD_LINES: FfPortalSeededCharge[] = [
   },
 ];
 
+// v4 (design D1): every `charges` row is COMMON — ONE row per definitionKey, `rateVariant: null`,
+// regardless of mode. Freight is the one thing that stays per-variant, and it never lived in this
+// array — Road prices it via `trucking`, seeded separately below.
 function roadDraft(): QuoteDraft {
   const d = baseDraft("ROAD");
-  d.charges = ROAD_LINES.flatMap((s) =>
-    (["DEDICATED", "GROUPAGE"] as const).map((rv) => ({
-      zone: s.zone,
-      definitionKey: s.definitionKey,
-      presetKey: null,
-      label: s.label,
-      amount: null,
-      rateVariant: rv,
-    })),
-  );
+  d.charges = ROAD_LINES.map((s) => ({
+    zone: s.zone,
+    definitionKey: s.definitionKey,
+    presetKey: null,
+    label: s.label,
+    amount: null,
+    rateVariant: null,
+  }));
   d.trucking = (["DEDICATED", "GROUPAGE"] as const).map((rv) => ({
     legEndpointPointId: "p1",
     truckingType: rv,
@@ -110,17 +116,15 @@ const SEA_LINES: FfPortalSeededCharge[] = [
 
 function seaDraft(): QuoteDraft {
   const d = baseDraft("SEA");
-  d.charges = SEA_LINES.flatMap((s) =>
-    (["FCL", "LCL"] as const).map((rv) => ({
-      zone: s.zone,
-      definitionKey: s.definitionKey,
-      presetKey: null,
-      label: s.label,
-      amount: null,
-      rateVariant: rv,
-      billOfLadingType: null,
-    })),
-  );
+  d.charges = SEA_LINES.map((s) => ({
+    zone: s.zone,
+    definitionKey: s.definitionKey,
+    presetKey: null,
+    label: s.label,
+    amount: null,
+    rateVariant: null,
+    billOfLadingType: null,
+  }));
   d.seaRates = (["FCL", "LCL"] as const).map((rv) => ({
     rateVariant: rv,
     containerSize: null,
@@ -150,6 +154,8 @@ const AIR_LINES: FfPortalSeededCharge[] = [
   },
 ];
 
+// Air's charges were ALREADY common in v3 (its single implicit column never fanned out) — this
+// fixture is unchanged by the v4 model.
 function airDraft(): QuoteDraft {
   const d = baseDraft("AIR");
   d.charges = AIR_LINES.map((s) => ({
@@ -225,28 +231,33 @@ describe("ChargeMatrix — Road (Dedicated/Groupage columns)", () => {
     expect(screen.getByText("Road Freight")).toBeInTheDocument();
   });
 
-  it("entering an amount updates only that (line, variant) charge cell", async () => {
+  // design D1 / Step-1(a): every common charge row is now ONE field spanning the variant
+  // columns, not one field per column — the core visual/structural change of this task.
+  it("renders each common charge as a SINGLE amount input, not one per variant column", () => {
+    render(<Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" />);
+    expect(screen.getAllByLabelText(/^insurance$/i)).toHaveLength(1);
+    expect(screen.getAllByLabelText(/^tail-lift \/ lift-gate$/i)).toHaveLength(1);
+  });
+
+  it("still renders the freight row with SEPARATE Dedicated/Groupage inputs (freight stays per-variant)", () => {
+    render(<Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" />);
+    expect(screen.getByLabelText(/^road freight — dedicated$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^road freight — groupage$/i)).toBeInTheDocument();
+  });
+
+  it("entering an amount updates only that charge line's cell, not a sibling line's", async () => {
     render(
       <Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" withDebug />,
     );
-    // Anchored (^...$): "Insurance — Groupage" is the amount field; the new per-cell note field
-    // (added review round 1) is aria-labelled "Note for Insurance — Groupage", which an
-    // unanchored /insurance — groupage/i would also match, making the query ambiguous.
-    await userEvent.type(screen.getByLabelText(/^insurance — groupage$/i), "75");
+    // Anchored (^...$): the per-cell "Note for Insurance" sibling field would also match an
+    // unanchored /insurance/i query, making it ambiguous.
+    await userEvent.type(screen.getByLabelText(/^insurance$/i), "75");
 
     const charges = chargesFrom(screen.getByTestId("charges-debug"));
-    const insuranceGroupage = charges.find(
-      (c) => c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "GROUPAGE",
-    );
-    const insuranceDedicated = charges.find(
-      (c) => c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "DEDICATED",
-    );
-    const tailLiftDedicated = charges.find(
-      (c) => c.definitionKey === "ROAD_STD_TAIL_LIFT" && c.rateVariant === "DEDICATED",
-    );
-    expect(insuranceGroupage?.amount).toBe(75);
-    expect(insuranceDedicated?.amount).toBeNull();
-    expect(tailLiftDedicated?.amount).toBeNull();
+    const insurance = charges.find((c) => c.definitionKey === "ROAD_STD_INSURANCE");
+    const tailLift = charges.find((c) => c.definitionKey === "ROAD_STD_TAIL_LIFT");
+    expect(insurance?.amount).toBe(75);
+    expect(tailLift?.amount).toBeNull();
   });
 
   it("binds the freight row to trucking[] with a Tonnage Select on the Dedicated cell only", async () => {
@@ -267,34 +278,18 @@ describe("ChargeMatrix — Road (Dedicated/Groupage columns)", () => {
     expect(trucking.find((t) => t.rateVariant === "DEDICATED")?.tonnage).toBe("T_5");
   });
 
-  it("greys out a cell with no matching seeded charge for that (line, variant) pair", () => {
+  it("greys out a common charge row entirely when the draft has no matching charges entry (stale/legacy draft)", () => {
     const draft = roadDraft();
-    // Simulate a stale/legacy draft: drop the GROUPAGE cell for Insurance.
-    draft.charges = draft.charges.filter(
-      (c) => !(c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "GROUPAGE"),
-    );
+    // Simulate a stale/legacy draft: the Insurance line was added to the catalogue after this
+    // draft was created, so `draft.charges` carries no entry for it at all (unlike v3, there's no
+    // per-variant cell to drop — the whole row is either present once or missing).
+    draft.charges = draft.charges.filter((c) => c.definitionKey !== "ROAD_STD_INSURANCE");
     render(<Harness seededCharges={ROAD_LINES} defaultValues={draft} mode="ROAD" />);
-    // Groupage is the N/A cell here — NotApplicableCell renders a single disabled field with no
-    // note sibling, so the unanchored query stays unambiguous; Dedicated is anchored (^...$)
-    // since it IS a normal editable cell and now also carries a "Note for ..." sibling field.
-    expect(screen.getByLabelText(/insurance — groupage/i)).toBeDisabled();
-    expect(screen.getByLabelText(/^insurance — dedicated$/i)).toBeEnabled();
+    expect(screen.getByLabelText(/^insurance$/i)).toBeDisabled();
+    expect(screen.getByLabelText(/^tail-lift \/ lift-gate$/i)).toBeEnabled();
   });
 
-  it("shows a per-column grand total aligned under each column, en-dash while a variant's rate is blank", async () => {
-    render(<Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" />);
-    // Nothing priced yet — neither variant has a freight rate → both totals blank.
-    expect(screen.getByTestId("chargematrix-total-DEDICATED")).toHaveTextContent("–");
-    expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("–");
-
-    await userEvent.type(screen.getByLabelText(/road freight — dedicated/i), "1000");
-    await userEvent.type(screen.getByLabelText(/^insurance — dedicated$/i), "50");
-    expect(screen.getByTestId("chargematrix-total-DEDICATED")).toHaveTextContent("1,050.00");
-    // Groupage's freight rate is still unset — stays blank even though it has no charges either.
-    expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("–");
-  });
-
-  it("keeps the totals row's cell count aligned with the column headers (finding #6)", () => {
+  it("keeps the Grand total row's cell count aligned with the column headers (finding #6)", () => {
     render(<Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" />);
     const headerCells = screen.getAllByRole("columnheader");
     const totalRow = screen.getByTestId("chargematrix-total-DEDICATED").closest("tr");
@@ -307,7 +302,8 @@ describe("ChargeMatrix — Road (Dedicated/Groupage columns)", () => {
 // The regression was that the SERVER seed (ff-portal.service.ts) returned trucking:[]/seaRates:[],
 // so once resolveScope always returned it, ChargeMatrix rendered every freight cell as a disabled
 // NotApplicableCell (trucking.findIndex(...) === -1). These render from `seedQuoteDraftPricing` —
-// the exact seed both the server and draftFromDto now produce — instead of a hand-seeded fixture.
+// the exact seed both the server and draftFromDto now produce (one common row/line, v4) — instead
+// of a hand-seeded fixture.
 describe("ChargeMatrix — renders the shared seed shape with editable freight cells (finding #1)", () => {
   it("ROAD: seedQuoteDraftPricing yields editable Road Freight cells for both variants", () => {
     const draft = { ...baseDraft("ROAD"), ...seedQuoteDraftPricing(ROAD_LINES, "ROAD", "p1") };
@@ -332,6 +328,12 @@ describe("ChargeMatrix — renders the shared seed shape with editable freight c
     render(<Harness seededCharges={ROAD_LINES} defaultValues={draft} mode="ROAD" />);
     expect(screen.getByLabelText(/road freight — dedicated/i)).toBeDisabled();
   });
+
+  it("the seed produces exactly ONE common charges row per line, not one per variant (v4)", () => {
+    const { charges } = seedQuoteDraftPricing(ROAD_LINES, "ROAD", "p1");
+    expect(charges).toHaveLength(ROAD_LINES.length);
+    expect(charges.every((c) => c.rateVariant === null)).toBe(true);
+  });
 });
 
 describe("ChargeMatrix — Sea (FCL/LCL columns)", () => {
@@ -343,22 +345,13 @@ describe("ChargeMatrix — Sea (FCL/LCL columns)", () => {
     expect(screen.queryByRole("combobox", { name: /container size — lcl/i })).toBeNull();
   });
 
-  it("renders a Bill of Lading type Select on the SEA_ORIGIN_BILL_OF_LADING row's cells only", () => {
+  it("renders a SINGLE Bill of Lading type Select on the common SEA_ORIGIN_BILL_OF_LADING row", () => {
     render(<Harness seededCharges={SEA_LINES} defaultValues={seaDraft()} mode="SEA" />);
-    expect(
-      screen.getByRole("combobox", { name: /bill of lading type — fcl/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("combobox", { name: /bill of lading type — lcl/i }),
-    ).toBeInTheDocument();
-    // Origin THC (the other seeded line) gets no B/L dropdown at all.
-    expect(screen.getAllByRole("combobox", { name: /bill of lading type/i })).toHaveLength(2);
+    expect(screen.getAllByRole("combobox", { name: /bill of lading type/i })).toHaveLength(1);
   });
 
   it("selecting a container size writes only seaRates[FCL].containerSize", async () => {
-    render(
-      <Harness seededCharges={SEA_LINES} defaultValues={seaDraft()} mode="SEA" withDebug />,
-    );
+    render(<Harness seededCharges={SEA_LINES} defaultValues={seaDraft()} mode="SEA" withDebug />);
     await selectOption(/container size — fcl/i, "20'");
 
     const seaRates = JSON.parse(
@@ -368,21 +361,13 @@ describe("ChargeMatrix — Sea (FCL/LCL columns)", () => {
     expect(seaRates.find((r) => r.rateVariant === "LCL")?.containerSize).toBeNull();
   });
 
-  it("selecting a Bill of Lading type writes only that column's charge cell", async () => {
-    render(
-      <Harness seededCharges={SEA_LINES} defaultValues={seaDraft()} mode="SEA" withDebug />,
-    );
-    await selectOption(/bill of lading type — fcl/i, "Telex Release");
+  it("selecting a Bill of Lading type writes the ONE common charge cell", async () => {
+    render(<Harness seededCharges={SEA_LINES} defaultValues={seaDraft()} mode="SEA" withDebug />);
+    await selectOption(/bill of lading type/i, "Telex Release");
 
     const charges = chargesFrom(screen.getByTestId("charges-debug"));
-    const blFcl = charges.find(
-      (c) => c.definitionKey === "SEA_ORIGIN_BILL_OF_LADING" && c.rateVariant === "FCL",
-    );
-    const blLcl = charges.find(
-      (c) => c.definitionKey === "SEA_ORIGIN_BILL_OF_LADING" && c.rateVariant === "LCL",
-    );
-    expect(blFcl?.billOfLadingType).toBe("TELEX");
-    expect(blLcl?.billOfLadingType ?? null).toBeNull();
+    const bl = charges.find((c) => c.definitionKey === "SEA_ORIGIN_BILL_OF_LADING");
+    expect(bl?.billOfLadingType).toBe("TELEX");
   });
 });
 
@@ -392,24 +377,36 @@ describe("ChargeMatrix — Air (single column)", () => {
     expect(screen.getByRole("columnheader", { name: "Air" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Dedicated" })).toBeNull();
     expect(screen.queryByRole("columnheader", { name: "FCL" })).toBeNull();
-    // Air Freight appears exactly once — it's a normal seeded row, not duplicated by a synthetic
-    // freight row (design §3.1: "Air ← the AIR_MAIN_FREIGHT charge line").
+    // Air Freight appears exactly once — it's a normal (common) seeded row, not duplicated by a
+    // synthetic freight row (design §3.1: "Air ← the AIR_MAIN_FREIGHT charge line").
     expect(screen.getAllByText("Air Freight")).toHaveLength(1);
     expect(screen.queryByTestId("chargematrix-row-freight")).toBeNull();
   });
 
   it("renders the HEAVY_WEIGHT_CALC line via HeavyWeightCalcRow, not a plain amount field", () => {
     render(<Harness seededCharges={AIR_LINES} defaultValues={airDraft()} mode="AIR" />);
+    expect(screen.getByLabelText(/piece weight.*heavy weight surcharge$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/airline limit.*heavy weight surcharge$/i)).toBeInTheDocument();
     expect(
-      screen.getByLabelText(/piece weight.*heavy weight surcharge — air/i),
+      screen.getByLabelText(/rate per excess kg.*heavy weight surcharge$/i),
     ).toBeInTheDocument();
-    expect(
-      screen.getByLabelText(/airline limit.*heavy weight surcharge — air/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByLabelText(/rate per excess kg.*heavy weight surcharge — air/i),
-    ).toBeInTheDocument();
-    expect(screen.queryByLabelText(/^heavy weight surcharge — air$/i)).toBeNull();
+    expect(screen.queryByLabelText(/^heavy weight surcharge$/i)).toBeNull();
+  });
+
+  // design D4/#11: ChargeMatrix computes Σ draft.cargo[].grossWtKg and forwards it to
+  // HeavyWeightCalcRow — proves the wiring end-to-end (HeavyWeightCalcRow.test.tsx covers the
+  // component's own piece-vs-gross logic in isolation).
+  it("passes the leg's total cargo gross weight down to HeavyWeightCalcRow (design D4/#11)", async () => {
+    const draft = airDraft();
+    draft.cargo = [
+      { packageId: "p1", grossWtKg: 600, cbm: 1 },
+      { packageId: "p2", grossWtKg: 400, cbm: 1 },
+    ];
+    render(<Harness seededCharges={AIR_LINES} defaultValues={draft} mode="AIR" />);
+    await userEvent.type(screen.getByLabelText(/piece weight.*heavy weight surcharge$/i), "1500");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("1500");
+    expect(alert).toHaveTextContent("1000"); // 600 + 400
   });
 
   it("the single column's grand total reflects the Air Freight cell (no separate rate cell)", async () => {
@@ -418,12 +415,149 @@ describe("ChargeMatrix — Air (single column)", () => {
     // quote-engine.ts), so the blank-rate convention never applies to it: the total starts at
     // 0.00 (not "–"), same as QuoteSummary's existing v.key !== "AIR" carve-out.
     expect(screen.getByTestId("chargematrix-total-AIR")).toHaveTextContent("0.00");
-    await userEvent.type(screen.getByLabelText(/^air freight — air$/i), "2000");
+    await userEvent.type(screen.getByLabelText(/^air freight$/i), "2000");
     expect(screen.getByTestId("chargematrix-total-AIR")).toHaveTextContent("2,000.00");
   });
 });
 
-// ── Per-cell note vs. the $0-price gate (review round 1) ────────────────────────────────────────
+// ── design D1: Additional-charges subtotal + Grand total per variant ────────────────────────────
+describe("ChargeMatrix — Additional charges subtotal + Grand total per variant (design D1)", () => {
+  it("the Additional-charges subtotal sums every common charge row, independent of variant", async () => {
+    render(<Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" />);
+    expect(screen.getByTestId("chargematrix-additional-subtotal")).toHaveTextContent("0.00");
+
+    await userEvent.type(screen.getByLabelText(/^insurance$/i), "50");
+    await userEvent.type(screen.getByLabelText(/^tail-lift \/ lift-gate$/i), "25");
+    expect(screen.getByTestId("chargematrix-additional-subtotal")).toHaveTextContent("75.00");
+  });
+
+  it("a variant's Grand total = ITS OWN freight rate + the Additional-charges subtotal + warehouse", async () => {
+    render(<Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" />);
+    await userEvent.type(screen.getByLabelText(/^road freight — dedicated$/i), "1000");
+    await userEvent.type(screen.getByLabelText(/^insurance$/i), "50");
+
+    // Dedicated: 1000 (own freight) + 50 (common charge) = 1050.
+    expect(screen.getByTestId("chargematrix-total-DEDICATED")).toHaveTextContent("1,050.00");
+    // Groupage's OWN freight rate is still unset → blank "–", even though the SAME common
+    // Insurance charge (50) also folds into its total once priced — the blank-rate convention
+    // keys off the variant's own rate, not whether any money is associated with it at all.
+    expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("–");
+
+    await userEvent.type(screen.getByLabelText(/^road freight — groupage$/i), "800");
+    expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("850.00");
+  });
+});
+
+// ── design D1/#6: "Add Charge Line" restores custom lines, now as COMMON rows ───────────────────
+describe('ChargeMatrix — "Add Charge Line" (design D1/#6)', () => {
+  it("clicking Add Charge Line appends an editable common custom row (label + amount + remark)", async () => {
+    render(
+      <Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" withDebug />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /add charge line/i }));
+
+    await userEvent.type(screen.getByLabelText(/custom charge 1 label/i), "Fuel surcharge");
+    await userEvent.type(screen.getByLabelText(/custom charge 1 amount/i), "40");
+    await userEvent.type(screen.getByLabelText(/custom charge 1 remark/i), "Peak season");
+
+    const charges = chargesFrom(screen.getByTestId("charges-debug"));
+    const custom = charges.find((c) => c.label === "Fuel surcharge");
+    expect(custom).toBeDefined();
+    expect(custom?.definitionKey ?? null).toBeNull();
+    expect(custom?.presetKey ?? null).toBeNull();
+    expect(custom?.rateVariant).toBeNull();
+    expect(custom?.amount).toBe(40);
+    expect(custom?.note).toBe("Peak season");
+  });
+
+  it("a custom row's amount folds into the Additional-charges subtotal and every variant's Grand total", async () => {
+    render(<Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" />);
+    await userEvent.type(screen.getByLabelText(/^road freight — dedicated$/i), "500");
+    await userEvent.type(screen.getByLabelText(/^road freight — groupage$/i), "300");
+
+    await userEvent.click(screen.getByRole("button", { name: /add charge line/i }));
+    await userEvent.type(screen.getByLabelText(/custom charge 1 amount/i), "60");
+
+    expect(screen.getByTestId("chargematrix-additional-subtotal")).toHaveTextContent("60.00");
+    expect(screen.getByTestId("chargematrix-total-DEDICATED")).toHaveTextContent("560.00");
+    expect(screen.getByTestId("chargematrix-total-GROUPAGE")).toHaveTextContent("360.00");
+  });
+
+  it("adding a second custom row keeps both independently editable (no cross-talk)", async () => {
+    render(
+      <Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" withDebug />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /add charge line/i }));
+    await userEvent.type(screen.getByLabelText(/custom charge 1 label/i), "First custom");
+    await userEvent.type(screen.getByLabelText(/custom charge 1 amount/i), "10");
+
+    await userEvent.click(screen.getByRole("button", { name: /add charge line/i }));
+    await userEvent.type(screen.getByLabelText(/custom charge 2 label/i), "Second custom");
+    await userEvent.type(screen.getByLabelText(/custom charge 2 amount/i), "20");
+
+    const charges = chargesFrom(screen.getByTestId("charges-debug"));
+    const first = charges.find((c) => c.label === "First custom");
+    const second = charges.find((c) => c.label === "Second custom");
+    expect(first?.amount).toBe(10);
+    expect(second?.amount).toBe(20);
+  });
+
+  it("Remove deletes exactly the clicked custom row, leaving catalogue rows and the other custom row intact", async () => {
+    render(
+      <Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" withDebug />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /add charge line/i }));
+    await userEvent.type(screen.getByLabelText(/custom charge 1 label/i), "First custom");
+    await userEvent.click(screen.getByRole("button", { name: /add charge line/i }));
+    await userEvent.type(screen.getByLabelText(/custom charge 2 label/i), "Second custom");
+
+    await userEvent.click(screen.getByRole("button", { name: /remove custom charge 1/i }));
+
+    const charges = chargesFrom(screen.getByTestId("charges-debug"));
+    expect(charges.some((c) => c.label === "First custom")).toBe(false);
+    expect(charges.some((c) => c.label === "Second custom")).toBe(true);
+    expect(charges.some((c) => c.definitionKey === "ROAD_STD_INSURANCE")).toBe(true);
+    expect(charges.some((c) => c.definitionKey === "ROAD_STD_TAIL_LIFT")).toBe(true);
+    // The removed row's own fields are gone from the DOM too, not just hidden.
+    expect(screen.queryByLabelText(/custom charge 2 label/i)).toBeNull();
+  });
+
+  // The Q_CUSTOM_* gate (quote-engine.ts) is unconditional on every custom line — mirrors the
+  // existing "per-cell note vs. $0-price gate" tests below, proving the NEW custom-row UI produces
+  // a draft shape the REAL shared gate accepts/rejects exactly as designed.
+  it("an unpriced, unremarked custom line fires Q_CUSTOM_AMOUNT + Q_CUSTOM_REMARK; filling both clears them", async () => {
+    render(
+      <Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" withDebug />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /add charge line/i }));
+    await userEvent.type(screen.getByLabelText(/custom charge 1 label/i), "Fuel surcharge");
+
+    let charges = chargesFrom(screen.getByTestId("charges-debug"));
+    let findings = validateQuote(
+      { ...roadDraft(), charges },
+      FAR_FUTURE_DEADLINE,
+      NOW,
+      activeLinesFrom(ROAD_LINES),
+    );
+    expect(findings.some((f) => f.rule === "Q_CUSTOM_AMOUNT")).toBe(true);
+    expect(findings.some((f) => f.rule === "Q_CUSTOM_REMARK")).toBe(true);
+
+    await userEvent.type(screen.getByLabelText(/custom charge 1 amount/i), "40");
+    await userEvent.type(screen.getByLabelText(/custom charge 1 remark/i), "Peak season");
+
+    charges = chargesFrom(screen.getByTestId("charges-debug"));
+    findings = validateQuote(
+      { ...roadDraft(), charges },
+      FAR_FUTURE_DEADLINE,
+      NOW,
+      activeLinesFrom(ROAD_LINES),
+    );
+    expect(findings.some((f) => f.rule === "Q_CUSTOM_AMOUNT")).toBe(false);
+    expect(findings.some((f) => f.rule === "Q_CUSTOM_REMARK")).toBe(false);
+  });
+});
+
+// ── Per-cell note vs. the $0-price gate (review round 1; v4: message dropped its variant suffix) ──
 // Retiring ChargeZonePanel/RoadChargesPanel dropped their "Note (optional)" field, but
 // validateQuote's Q_PRICED still requires a note to price a PLAIN catalogue line at exactly 0
 // (quote-engine.ts: `c.amount === 0 && !c.note?.trim()`) — with no note surface, an FF pricing a
@@ -442,36 +576,29 @@ function activeLinesFrom(seeded: FfPortalSeededCharge[]): ResolvedChargeLine[] {
 }
 const FAR_FUTURE_DEADLINE = "2999-01-01T00:00:00.000Z";
 const NOW = "2026-01-01T00:00:00.000Z";
-const ZERO_REMARK_MESSAGE = 'A remark is required to quote "Insurance" (Dedicated) at 0';
+// v4: the engine dropped the "(Dedicated)"/"(Groupage)" suffix from this message — there's
+// nothing left to disambiguate once a charge is common (quote-engine.ts, Task 1).
+const ZERO_REMARK_MESSAGE = 'A remark is required to quote "Insurance" at 0';
 
-describe("ChargeMatrix — per-cell note clears the $0-price Q_PRICED gate", () => {
-  it("binds the note to exactly the (Insurance, Dedicated) cell — not its Groupage sibling or another line — and a note clears the zero-price finding", async () => {
+describe("ChargeMatrix — the charge Note field clears the $0-price Q_PRICED gate", () => {
+  it("binds the note to exactly the Insurance cell — not Tail-lift's — and a note clears the zero-price finding", async () => {
     render(
       <Harness seededCharges={ROAD_LINES} defaultValues={roadDraft()} mode="ROAD" withDebug />,
     );
 
-    await userEvent.type(screen.getByLabelText(/^insurance — dedicated$/i), "0");
+    await userEvent.type(screen.getByLabelText(/^insurance$/i), "0");
     await userEvent.type(
-      screen.getByLabelText(/note for insurance — dedicated/i),
+      screen.getByLabelText(/^note for insurance$/i),
       "Waived per customer request",
     );
 
     const charges = chargesFrom(screen.getByTestId("charges-debug"));
-    const insuranceDedicated = charges.find(
-      (c) => c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "DEDICATED",
-    );
-    const insuranceGroupage = charges.find(
-      (c) => c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "GROUPAGE",
-    );
-    const tailLiftDedicated = charges.find(
-      (c) => c.definitionKey === "ROAD_STD_TAIL_LIFT" && c.rateVariant === "DEDICATED",
-    );
-    // The note landed on exactly the cell it was typed into — not the Groupage sibling sharing
-    // the same definitionKey, and not a different charge line sharing the same rateVariant.
-    expect(insuranceDedicated?.amount).toBe(0);
-    expect(insuranceDedicated?.note).toBe("Waived per customer request");
-    expect(insuranceGroupage?.note ?? "").toBe("");
-    expect(tailLiftDedicated?.note ?? "").toBe("");
+    const insurance = charges.find((c) => c.definitionKey === "ROAD_STD_INSURANCE");
+    const tailLift = charges.find((c) => c.definitionKey === "ROAD_STD_TAIL_LIFT");
+    // The note landed on exactly the cell it was typed into — not the sibling catalogue line.
+    expect(insurance?.amount).toBe(0);
+    expect(insurance?.note).toBe("Waived per customer request");
+    expect(tailLift?.note ?? "").toBe("");
 
     // Run the REAL gate (unchanged — this test doesn't touch validateQuote) against the draft the
     // matrix just produced.
@@ -489,9 +616,7 @@ describe("ChargeMatrix — per-cell note clears the $0-price Q_PRICED gate", () 
   it("still blocks a $0 line with no note (negative control — proves the note, not the zero amount, clears the gate)", () => {
     const draft = roadDraft();
     draft.charges = draft.charges.map((c) =>
-      c.definitionKey === "ROAD_STD_INSURANCE" && c.rateVariant === "DEDICATED"
-        ? { ...c, amount: 0 } // priced at 0, no note
-        : c,
+      c.definitionKey === "ROAD_STD_INSURANCE" ? { ...c, amount: 0 } : c,
     );
     const findings = validateQuote(draft, FAR_FUTURE_DEADLINE, NOW, activeLinesFrom(ROAD_LINES));
     expect(findings.some((f) => f.rule === "Q_PRICED" && f.message === ZERO_REMARK_MESSAGE)).toBe(

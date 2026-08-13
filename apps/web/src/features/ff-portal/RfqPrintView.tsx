@@ -235,13 +235,18 @@ function chargeCellHasAmount(c: QuoteDraftCharge): boolean {
 }
 
 /**
- * The charge structure for this leg, rendered as a per-variant matrix (design §3.1/§6 finding
- * #8): rows are the distinct charge headers seeded onto the leg (`seededCharges`, already one
- * row per definitionKey) plus the mode's freight-rate row (Road/Sea only); columns are
- * `variantsForMode(mode)` — Air degrades to a single implicit column, matching ChargeMatrix.tsx
- * (the live editing matrix this mirrors). Cell amounts come from `draft.charges` /
- * `draft.trucking` / `draft.seaRates` — blank ("—") pre-submission (the seeded matrix has no
- * amounts yet), the FF's own submitted figures post-submission.
+ * The charge structure for this leg, rendered read-only per the D1 layout (design §3.1/D1, Round
+ * 4 — the same structure ChargeMatrix.tsx edits live): the mode's freight-rate row (Road/Sea only)
+ * keeps the per-variant columns; every `draft.charges` row is now COMMON (one row per
+ * definitionKey, priced once) and renders as a SINGLE amount spanning the variant columns
+ * (`colSpan`), not one per column — including any FF-authored [+ Add Charge Line] custom row
+ * (`definitionKey`/`presetKey: null`), which has no entry in `seededCharges` and would otherwise
+ * vanish from the printed document with no line item explaining its share of the total (the same
+ * class of bug fix round 1 already fixed for warehouse — see WarehousingList's doc comment).
+ * Columns are `variantsForMode(mode)` — Air degrades to a single implicit column, matching
+ * ChargeMatrix.tsx. Cell amounts come from `draft.charges` / `draft.trucking` / `draft.seaRates` —
+ * blank ("—") pre-submission (the seeded matrix has no amounts yet), the FF's own submitted
+ * figures post-submission.
  */
 function ChargeMatrixPrintTable({
   seededCharges,
@@ -253,8 +258,9 @@ function ChargeMatrixPrintTable({
   draft: QuoteDraft;
 }) {
   const columns = variantsForMode(mode);
+  const customCharges = draft.charges.filter((c) => !c.definitionKey && !c.presetKey);
   const hasFreightRow = mode === "ROAD" || mode === "SEA";
-  if (!hasFreightRow && seededCharges.length === 0) {
+  if (!hasFreightRow && seededCharges.length === 0 && customCharges.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">No preset charge lines seeded for this leg.</p>
     );
@@ -263,7 +269,15 @@ function ChargeMatrixPrintTable({
   // Keyed by variant, not raw index (mirrors ChargeMatrix.tsx) — a mismatch between this
   // component's `mode` prop and the leg's own `draft.mode` (should never happen; both trace back
   // to `leg.mode`) can't silently misalign a total under the wrong column.
-  const totalByKey = new Map(computeQuoteTotals(draft).variants.map((t) => [t.key, t] as const));
+  const totals = computeQuoteTotals(draft);
+  const totalByKey = new Map(totals.variants.map((t) => [t.key, t] as const));
+  // definitionKey → the matching common charges entry (v4: one row per definitionKey, not one per
+  // (definitionKey, rateVariant) pair — mirrors ChargeMatrix.tsx's chargeIndexByKey).
+  const chargeByKey = new Map(
+    draft.charges
+      .filter((c) => c.definitionKey)
+      .map((c) => [c.definitionKey as string, c] as const),
+  );
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
@@ -299,26 +313,37 @@ function ChargeMatrixPrintTable({
               ))}
             </tr>
           )}
-          {seededCharges.map((s, i) => (
-            <tr
-              key={`${s.definitionKey ?? s.label}-${i}`}
-              className="border-b border-border/60 last:border-b-0"
-            >
-              <td className="px-3 py-2">{s.label}</td>
-              {columns.map((v) => {
-                const cell = draft.charges.find(
-                  (c) => c.definitionKey === s.definitionKey && c.rateVariant === v,
-                );
-                return (
-                  <td key={columnKey(v)} className="px-3 py-2 text-right font-mono tabular-nums">
-                    {cell && chargeCellHasAmount(cell)
-                      ? fmtAmount(effectiveChargeAmount(cell))
-                      : "—"}
-                  </td>
-                );
-              })}
+          {seededCharges.map((s, i) => {
+            const cell = s.definitionKey ? chargeByKey.get(s.definitionKey) : undefined;
+            return (
+              <tr
+                key={`${s.definitionKey ?? s.label}-${i}`}
+                className="border-b border-border/60 last:border-b-0"
+              >
+                <td className="px-3 py-2">{s.label}</td>
+                <td
+                  colSpan={columns.length}
+                  className="px-3 py-2 text-right font-mono tabular-nums"
+                >
+                  {cell && chargeCellHasAmount(cell) ? fmtAmount(effectiveChargeAmount(cell)) : "—"}
+                </td>
+              </tr>
+            );
+          })}
+          {customCharges.map((c, i) => (
+            <tr key={`custom-${i}`} className="border-b border-border/60 last:border-b-0">
+              <td className="px-3 py-2">{c.label}</td>
+              <td colSpan={columns.length} className="px-3 py-2 text-right font-mono tabular-nums">
+                {chargeCellHasAmount(c) ? fmtAmount(effectiveChargeAmount(c)) : "—"}
+              </td>
             </tr>
           ))}
+          <tr className="border-b border-border/60 text-muted-foreground">
+            <td className="px-3 py-2">Additional charges</td>
+            <td colSpan={columns.length} className="px-3 py-2 text-right font-mono tabular-nums">
+              {fmtAmount(totals.additionalChargeSum)}
+            </td>
+          </tr>
           <tr className="bg-muted/40 font-semibold">
             <td className="px-3 py-2">Grand total</td>
             {columns.map((v) => {

@@ -42,11 +42,13 @@ function ChargesDebug({ control }: { control: Control<QuoteDraft> }) {
   return <div data-testid="charges-debug">{JSON.stringify(rows)}</div>;
 }
 
-function Harness() {
+// totalGrossWtKg defaults generously high so the pre-existing calc-only tests below (piece 800 /
+// 1200) never trip the new D4 piece-vs-gross check unless a test deliberately passes a lower one.
+function Harness({ totalGrossWtKg = 5000 }: { totalGrossWtKg?: number } = {}) {
   const form = useForm<QuoteDraft>({ defaultValues: defaultDraft });
   return (
     <FormProvider {...form}>
-      <HeavyWeightCalcRow index={0} label={LABEL} />
+      <HeavyWeightCalcRow index={0} label={LABEL} totalGrossWtKg={totalGrossWtKg} />
       <ChargesDebug control={form.control} />
     </FormProvider>
   );
@@ -102,5 +104,54 @@ describe("HeavyWeightCalcRow", () => {
     await userEvent.type(limitInput(), "1000");
     await userEvent.type(rateInput(), "2");
     expect(screen.getByTestId("charges-debug")).toHaveTextContent(/"amount":null/);
+  });
+});
+
+// ── design D4 / finding #11: piece weight can't exceed the leg's total cargo gross weight — the
+// client mirror of quote-engine.ts's Q_PIECE_WEIGHT (`c.pieceWeightKg > Σ draft.cargo[].grossWtKg`,
+// strict >). The leg total is passed in as a prop (ChargeMatrix computes it from `draft.cargo`)
+// rather than read off the form here, since HeavyWeightCalcRow only has its OWN charge index in
+// scope, not the whole draft.
+describe("HeavyWeightCalcRow — piece weight vs. the leg's total cargo gross weight (design D4/#11)", () => {
+  it("shows an inline error when piece weight exceeds the leg's total cargo gross weight", async () => {
+    render(<Harness totalGrossWtKg={1000} />);
+    await userEvent.type(pieceInput(), "1200");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("1200");
+    expect(alert).toHaveTextContent("1000");
+    expect(alert).toHaveTextContent(/cannot exceed/i);
+  });
+
+  it("does not show an error when piece weight is within the leg's total cargo gross weight", async () => {
+    render(<Harness totalGrossWtKg={1000} />);
+    await userEvent.type(pieceInput(), "800");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("does not error exactly at the total gross weight (strict >, matches the engine's Q_PIECE_WEIGHT)", async () => {
+    render(<Harness totalGrossWtKg={1000} />);
+    await userEvent.type(pieceInput(), "1000");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("clears the error once the piece weight is corrected back within range", async () => {
+    render(<Harness totalGrossWtKg={1000} />);
+    await userEvent.type(pieceInput(), "1200");
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    await userEvent.clear(pieceInput());
+    await userEvent.type(pieceInput(), "900");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("still writes the over-limit piece weight into RHF form state (surfaces, not silently drops, the bad value so the submit gate can also catch it)", async () => {
+    render(<Harness totalGrossWtKg={1000} />);
+    await userEvent.type(pieceInput(), "1200");
+    expect(screen.getByTestId("charges-debug")).toHaveTextContent(/"pieceWeightKg":1200/);
+  });
+
+  it("shows no error while piece weight is unset, regardless of the gross-weight limit", () => {
+    render(<Harness totalGrossWtKg={0} />);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

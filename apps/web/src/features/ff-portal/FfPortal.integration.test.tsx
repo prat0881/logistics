@@ -323,21 +323,24 @@ describe("FfPortal integration — happy path", () => {
     await screen.findByText(/Acme/i);
 
     // 1. Price the "Air Freight" charge
-    // NumberField renders an <input type="number"> with aria-label "Amount for Air Freight"
-    // v3: ChargeMatrix labels a cell "<row label> — <column label>" (e.g. "Air Freight — Air"),
-    // replacing the old "Amount for <label>" convention; anchored so it doesn't also match the
-    // per-cell "Note for Air Freight — Air" sibling field (Task 5 round 1).
-    const amountInput = screen.getByLabelText(/^air freight — air$/i);
+    // v4 (design D1, Round 4): every `charges` row (Air's included) is COMMON now — ONE amount
+    // input labeled with just the row's own label, no "— Air" variant suffix (there's nothing
+    // left to disambiguate once a charge isn't per-variant). Anchored so it doesn't also match
+    // the per-cell "Note for Air Freight" sibling field.
+    const amountInput = screen.getByLabelText(/^air freight$/i);
     await userEvent.clear(amountInput);
     await userEvent.type(amountInput, "2000");
 
     // 2. Set transit departure date
+    // Q_PAST_DATE (design D3, Task 1 of this round) unconditionally rejects any FF datetime
+    // earlier than "now" — these must stay safely in the future as real time advances, same fix
+    // Task 2 applied across the e2e specs it touched (see its report's collateral-fallout note).
     const departureInput = screen.getByLabelText(/departure/i);
-    fireEvent.change(departureInput, { target: { value: "2026-08-05T10:00" } });
+    fireEvent.change(departureInput, { target: { value: "2026-09-05T10:00" } });
 
     // 3. Set transit arrival date
     const arrivalInput = screen.getByLabelText(/arrival/i);
-    fireEvent.change(arrivalInput, { target: { value: "2026-08-07T10:00" } });
+    fireEvent.change(arrivalInput, { target: { value: "2026-09-07T10:00" } });
 
     // 4. Check the T&C checkbox
     const checkbox = screen.getByRole("checkbox");
@@ -421,18 +424,16 @@ describe("FfPortal integration — 422 surfacing", () => {
 
     // Fill in all the required fields so the CLIENT gate passes
     // (price the charge, set dates, check T&C — then server returns 422)
-    // v3: ChargeMatrix labels a cell "<row label> — <column label>" (e.g. "Air Freight — Air"),
-    // replacing the old "Amount for <label>" convention; anchored so it doesn't also match the
-    // per-cell "Note for Air Freight — Air" sibling field (Task 5 round 1).
-    const amountInput = screen.getByLabelText(/^air freight — air$/i);
+    // v4 (design D1, Round 4): common charge row → single amount input, no "— Air" suffix.
+    const amountInput = screen.getByLabelText(/^air freight$/i);
     await userEvent.clear(amountInput);
     await userEvent.type(amountInput, "2000");
 
     const departureInput = screen.getByLabelText(/departure/i);
-    fireEvent.change(departureInput, { target: { value: "2026-08-05T10:00" } });
+    fireEvent.change(departureInput, { target: { value: "2026-09-05T10:00" } });
 
     const arrivalInput = screen.getByLabelText(/arrival/i);
-    fireEvent.change(arrivalInput, { target: { value: "2026-08-07T10:00" } });
+    fireEvent.change(arrivalInput, { target: { value: "2026-09-07T10:00" } });
 
     const checkbox = screen.getByRole("checkbox");
     await userEvent.click(checkbox);

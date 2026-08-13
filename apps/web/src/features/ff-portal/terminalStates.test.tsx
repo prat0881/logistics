@@ -146,12 +146,15 @@ describe("terminalStates", () => {
   });
 
   // ── finding #8 companion check (Task 8 follow-up): AlreadySubmittedSummary reads `leg.draft`
-  // the same way RfqPrintView does — this proves it renders the SUBMITTED per-variant totals for
-  // a v3-shaped draft (the shape ff-portal.service.ts's submit() now persists onto
-  // Quote.draftJson instead of nulling it), not just that a testid element exists. A blank/
-  // reseeded draft (the pre-fix bug shape — same field, all amounts null) would render "–" here
-  // instead of these figures, so this genuinely discriminates fixed vs. broken upstream data.
-  it("AlreadySubmittedSummary renders the SUBMITTED per-variant totals for a v3 QUOTED leg (finding #8)", () => {
+  // the same way RfqPrintView does — this proves it renders the SUBMITTED totals for a real draft
+  // (the shape ff-portal.service.ts's submit() now persists onto Quote.draftJson instead of
+  // nulling it), not just that a testid element exists. A blank/reseeded draft (the pre-fix bug
+  // shape — same field, all amounts null) would render "–" here instead of these figures, so this
+  // genuinely discriminates fixed vs. broken upstream data.
+  // v4 (design D1): `charges` is common — ONE row (`rateVariant: null`), folded into EVERY
+  // variant's total equally; freight (`trucking`) is the one thing that stays per-variant, so the
+  // two variants' Grand totals now differ ONLY by their own freight rate.
+  it("AlreadySubmittedSummary renders the SUBMITTED totals (common charge + per-variant freight) for a QUOTED leg (Round 4)", () => {
     const rfq: FfPortalRfqDto = {
       rfqNumber: "R-3",
       incoterms: "FOB",
@@ -176,16 +179,8 @@ describe("terminalStates", () => {
           definitionKey: "ROAD_STD_TAIL_LIFT",
           presetKey: "ROAD_STD_TAIL_LIFT",
           label: "Tail Lift",
-          amount: 120,
-          rateVariant: "DEDICATED",
-        },
-        {
-          zone: "ORIGIN",
-          definitionKey: "ROAD_STD_TAIL_LIFT",
-          presetKey: "ROAD_STD_TAIL_LIFT",
-          label: "Tail Lift",
-          amount: 90,
-          rateVariant: "GROUPAGE",
+          amount: 100,
+          rateVariant: null,
         },
       ],
       trucking: [
@@ -268,9 +263,10 @@ describe("terminalStates", () => {
     render(<AlreadySubmittedSummary leg={leg} rfq={rfq} />);
     expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
 
-    // 120 (charge) + 500 (freight) = 620 Dedicated; 90 + 300 = 390 Groupage — real per-variant
-    // arithmetic, not an echoed input, so this fails if leg.draft were the blank reseed.
-    expect(screen.getByTestId("grand-total-DEDICATED")).toHaveTextContent("620.00");
-    expect(screen.getByTestId("grand-total-GROUPAGE")).toHaveTextContent("390.00");
+    // 500 (Dedicated's own freight) + 100 (the ONE common Tail Lift charge, same for both
+    // variants) = 600; 300 (Groupage's own freight) + 100 = 400 — real arithmetic, not an echoed
+    // input, so this fails if leg.draft were the blank reseed.
+    expect(screen.getByTestId("grand-total-DEDICATED")).toHaveTextContent("600.00");
+    expect(screen.getByTestId("grand-total-GROUPAGE")).toHaveTextContent("400.00");
   });
 });

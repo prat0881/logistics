@@ -74,10 +74,13 @@ const roadLeg: FfPortalLegDto = {
   seededCharges: [], // ROAD legs seed via `endpoints`/trucking, not `seededCharges`
 };
 
-// ── finding #8 fixtures: a QUOTED leg whose `draft` carries the FF's SUBMITTED per-variant
-// figures (Task 3's resolveScope/submit contract — see ff-portal.service.ts), not the blank
-// seed. ROAD exercises the 2-column matrix (Dedicated/Groupage) + the separate freight-rate row
-// sourced from `trucking` (design §3.1: Road's freight rate is NOT a `charges` line).
+// ── finding #8 fixtures: a QUOTED leg whose `draft` carries the FF's SUBMITTED figures (Task 3's
+// resolveScope/submit contract — see ff-portal.service.ts), not the blank seed. ROAD exercises the
+// 2-column matrix (Dedicated/Groupage) + the separate freight-rate row sourced from `trucking`
+// (design §3.1: Road's freight rate is NOT a `charges` line).
+// v4 (design D1): `charges` is COMMON — ONE row per line (`rateVariant: null`), priced once and
+// folded into EVERY variant's total equally; freight (`trucking`) is the one thing that stays
+// per-variant.
 const quotedRoadDraft: QuoteDraft = {
   legId: "L3",
   mode: "ROAD",
@@ -93,15 +96,7 @@ const quotedRoadDraft: QuoteDraft = {
       presetKey: "ROAD_STD_TAIL_LIFT",
       label: "Tail Lift",
       amount: 120,
-      rateVariant: "DEDICATED",
-    },
-    {
-      zone: "ORIGIN",
-      definitionKey: "ROAD_STD_TAIL_LIFT",
-      presetKey: "ROAD_STD_TAIL_LIFT",
-      label: "Tail Lift",
-      amount: 90,
-      rateVariant: "GROUPAGE",
+      rateVariant: null,
     },
   ],
   trucking: [
@@ -194,7 +189,8 @@ const quotedRoadLegWithWarehouse: FfPortalLegDto = {
 
 // finding #3a: a variant whose own freight rate was never entered must read "—" in the grand-total
 // row — the SAME blank convention ChargeMatrix/QuoteSummary use — not a misleading "0.00". Here
-// DEDICATED is priced (tail lift 120 + trucking 500 = 620) while GROUPAGE is fully untouched.
+// DEDICATED is priced (tail lift 120 + trucking 500 = 620) while GROUPAGE's OWN freight is
+// untouched — even though the SAME common Tail Lift charge (120) also applies to it.
 const partiallyPricedRoadLeg: FfPortalLegDto = {
   ...quotedRoadLeg,
   legId: "L5",
@@ -203,16 +199,6 @@ const partiallyPricedRoadLeg: FfPortalLegDto = {
   draft: {
     ...quotedRoadDraft,
     legId: "L5",
-    charges: [
-      {
-        zone: "ORIGIN",
-        definitionKey: "ROAD_STD_TAIL_LIFT",
-        presetKey: "ROAD_STD_TAIL_LIFT",
-        label: "Tail Lift",
-        amount: 120,
-        rateVariant: "DEDICATED",
-      },
-    ],
     trucking: [
       {
         legEndpointPointId: "P1",
@@ -234,8 +220,36 @@ const partiallyPricedRoadLeg: FfPortalLegDto = {
   },
 };
 
+// design D1/#6: a custom [+ Add Charge Line] row (no definitionKey/presetKey) — present only in
+// `draft.charges`, never in `seededCharges` — must still render as its own read-only line item
+// (not silently folded into the totals with nothing on the page explaining it, the same class of
+// bug fix round 1 already fixed for warehouse — see WarehousingList's doc comment).
+const quotedRoadLegWithCustomCharge: FfPortalLegDto = {
+  ...quotedRoadLeg,
+  legId: "L6",
+  quoteId: "Q6",
+  manifest: { ...quotedRoadLeg.manifest, legId: "L6", legCode: "LEG-06" },
+  draft: {
+    ...quotedRoadDraft,
+    legId: "L6",
+    charges: [
+      ...quotedRoadDraft.charges,
+      {
+        zone: null,
+        definitionKey: null,
+        presetKey: null,
+        label: "Fuel surcharge",
+        amount: 45,
+        rateVariant: null,
+        note: "Peak season",
+      },
+    ],
+  },
+};
+
 // AIR's degenerate single-implicit-column case (variantsForMode("AIR") === [null]): freight has
-// NO separate row — it's just the AIR_MAIN_FREIGHT `charges` line, same as any other header.
+// NO separate row — it's just the AIR_MAIN_FREIGHT `charges` line, same as any other header. Air's
+// charges were ALREADY common in v3 (rateVariant: null) — this fixture is unchanged by v4.
 const quotedAirLeg: FfPortalLegDto = {
   ...leg,
   status: "QUOTED",
@@ -326,23 +340,31 @@ describe("RfqPrintView", () => {
     expect(screen.getByText(/no preset charge lines/i)).toBeInTheDocument();
   });
 
-  // ── finding #8: the preview must show the SUBMITTED quote for a QUOTED leg, not the empty seed ──
-  it("renders the submitted per-variant charges, freight rate, chargeable weight, and notes for a QUOTED leg (finding #8)", () => {
+  // ── finding #8 / design D1: the preview must show the SUBMITTED quote for a QUOTED leg, with
+  // the SAME D1 layout as the live ChargeMatrix — common charges as a single amount, freight
+  // per-variant, an Additional-charges subtotal, and the Grand total per variant.
+  it("renders the submitted common charge (single amount), freight rate, chargeable weight, and notes for a QUOTED leg (finding #8, Round 4)", () => {
     render(<RfqPrintView rfq={{ ...rfq, legs: [quotedRoadLeg] }} />);
 
-    // per-variant charge amounts (Tail Lift: Dedicated 120.00, Groupage 90.00) — NOT "—"
-    expect(screen.getByText("120.00")).toBeInTheDocument();
-    expect(screen.getByText("90.00")).toBeInTheDocument();
+    // the ONE common Tail Lift charge — a single amount, not two per-variant cells.
+    const tailLiftRow = screen.getByText("Tail Lift").closest("tr")!;
+    expect(within(tailLiftRow).getByText("120.00")).toBeInTheDocument();
 
-    // freight rate per variant (Road Freight, sourced from `trucking`, not `charges`)
-    expect(screen.getByText("Road Freight")).toBeInTheDocument();
-    expect(screen.getByText("500.00")).toBeInTheDocument();
-    expect(screen.getByText("300.00")).toBeInTheDocument();
+    // freight rate per variant (Road Freight, sourced from `trucking`, not `charges`) — UNCHANGED,
+    // freight stays per-variant.
+    const freightRow = screen.getByText("Road Freight").closest("tr")!;
+    expect(within(freightRow).getByText("500.00")).toBeInTheDocument();
+    expect(within(freightRow).getByText("300.00")).toBeInTheDocument();
 
-    // per-variant grand total (120+500=620 Dedicated, 90+300=390 Groupage) — proves real arithmetic,
-    // not just echoed input, so this fails if the fix is a tautological pass-through.
-    expect(screen.getByText("620.00")).toBeInTheDocument();
-    expect(screen.getByText("390.00")).toBeInTheDocument();
+    // Additional-charges subtotal = the one common Tail Lift charge (120).
+    const subtotalRow = screen.getByText("Additional charges").closest("tr")!;
+    expect(within(subtotalRow).getByText("120.00")).toBeInTheDocument();
+
+    // per-variant grand total (500+120=620 Dedicated, 300+120=420 Groupage) — proves real
+    // arithmetic, not just echoed input, so this fails if the fix is a tautological pass-through.
+    const totalRow = screen.getByText("Grand total").closest("tr")!;
+    expect(within(totalRow).getByText("620.00")).toBeInTheDocument();
+    expect(within(totalRow).getByText("420.00")).toBeInTheDocument();
 
     // the one leg-level chargeable weight
     expect(screen.getByText("482.750")).toBeInTheDocument();
@@ -354,18 +376,45 @@ describe("RfqPrintView", () => {
   it("shows '—' (not 0.00) in the grand-total row for an untouched/blank-rate variant (finding #3a)", () => {
     render(<RfqPrintView rfq={{ ...rfq, legs: [partiallyPricedRoadLeg] }} />);
     const totalRow = screen.getByText("Grand total").closest("tr")!;
-    // DEDICATED is priced → its real total; GROUPAGE is untouched → blank "—", never "0.00".
+    // DEDICATED is priced → its real total; GROUPAGE is untouched → blank "—", never "0.00" —
+    // even though the common Tail Lift charge (120) folds into both variants equally.
     expect(within(totalRow).getByText("620.00")).toBeInTheDocument();
     expect(within(totalRow).getByText("—")).toBeInTheDocument();
     expect(within(totalRow).queryByText("0.00")).toBeNull();
   });
 
-  it("renders per-cell amounts for a QUOTED AIR leg (single implicit column, freight folded into charges)", () => {
+  // design D1/#6: a custom [+ Add Charge Line] row must render as its own line item, not vanish
+  // into the totals with nothing on the page explaining it — same fix-round-1 principle already
+  // applied to warehouse (see WarehousingList's doc comment).
+  it("renders a custom [+ Add Charge Line] line as its own read-only row, folded into the Additional-charges subtotal and Grand total", () => {
+    render(<RfqPrintView rfq={{ ...rfq, legs: [quotedRoadLegWithCustomCharge] }} />);
+
+    const customRow = screen.getByText("Fuel surcharge").closest("tr")!;
+    expect(within(customRow).getByText("45.00")).toBeInTheDocument();
+
+    // Additional charges = 120 (Tail Lift, catalogue) + 45 (Fuel surcharge, custom) = 165.
+    const subtotalRow = screen.getByText("Additional charges").closest("tr")!;
+    expect(within(subtotalRow).getByText("165.00")).toBeInTheDocument();
+
+    // Grand total: 500+165=665 Dedicated, 300+165=465 Groupage.
+    const totalRow = screen.getByText("Grand total").closest("tr")!;
+    expect(within(totalRow).getByText("665.00")).toBeInTheDocument();
+    expect(within(totalRow).getByText("465.00")).toBeInTheDocument();
+  });
+
+  it("renders per-cell amounts, the Additional-charges subtotal, and Grand total for a QUOTED AIR leg (single implicit column, freight folded into charges)", () => {
     render(<RfqPrintView rfq={{ ...rfq, legs: [quotedAirLeg] }} />);
     expect(screen.getByText("75.00")).toBeInTheDocument();
     expect(screen.getByText("640.00")).toBeInTheDocument();
     expect(screen.getByText("1250.500")).toBeInTheDocument();
     expect(screen.getByText("Priority handling requested")).toBeInTheDocument();
+
+    // Additional charges = 75 (Origin THC) + 640 (Air Freight) = 715; Air has no separate freight
+    // rate cell, so Grand total = 0 + 715 + 0 (warehouse) = 715.
+    const subtotalRow = screen.getByText("Additional charges").closest("tr")!;
+    expect(within(subtotalRow).getByText("715.00")).toBeInTheDocument();
+    const totalRow = screen.getByText("Grand total").closest("tr")!;
+    expect(within(totalRow).getByText("715.00")).toBeInTheDocument();
   });
 
   // ── finding #8 fix round 1: the shared (non-per-variant, design D4) Warehousing section was

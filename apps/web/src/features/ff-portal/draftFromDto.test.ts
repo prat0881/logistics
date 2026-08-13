@@ -189,7 +189,12 @@ describe("draftFromDto", () => {
     });
   });
 
-  it("fans each seeded line out across every rate-variant column for the mode (v3 matrix seed, design §3.1)", () => {
+  // v4 (design D1, Round 4): `charges` is COMMON now — every seeded line stays exactly ONE
+  // `charges` entry (`rateVariant: null`), the SAME for every mode. This test used to prove the
+  // v3 per-rate-variant fan-out (Road/Sea: 2 entries, Air: 1); that fan-out was removed from the
+  // shared `seedQuoteDraftPricing` this function delegates to (Task 1 of this round) — updated to
+  // pin the current (v4) "always exactly one row" behavior instead of the retired v3 shape.
+  it("seeds exactly ONE common charges entry per line, for every mode (v4, design D1)", () => {
     const seededCharges = [
       {
         zone: null,
@@ -201,31 +206,18 @@ describe("draftFromDto", () => {
       },
     ];
 
-    // Road: 2 columns (Dedicated/Groupage) -> one seeded line fans out to 2 charges entries.
-    const road = { ...airLeg(), mode: "ROAD" as const, seededCharges };
-    const dRoad = draftFromDto(road, rfq);
-    expect(dRoad.charges).toHaveLength(2);
-    expect(dRoad.charges.map((c) => c.rateVariant).sort()).toEqual(["DEDICATED", "GROUPAGE"]);
-    for (const c of dRoad.charges) {
-      expect(c).toMatchObject({
+    for (const mode of ["ROAD", "SEA", "AIR"] as const) {
+      const leg = { ...airLeg(), mode, seededCharges };
+      const d = draftFromDto(leg, rfq);
+      expect(d.charges).toHaveLength(1);
+      expect(d.charges[0]).toMatchObject({
         zone: null,
         definitionKey: "ROAD_FUEL_SURCHARGE",
         label: "Fuel Surcharge",
         amount: null,
+        rateVariant: null,
       });
     }
-
-    // Sea: 2 columns (FCL/LCL) -> same fan-out shape as Road, different variant values.
-    const sea = { ...airLeg(), mode: "SEA" as const, seededCharges };
-    const dSea = draftFromDto(sea, rfq);
-    expect(dSea.charges).toHaveLength(2);
-    expect(dSea.charges.map((c) => c.rateVariant).sort()).toEqual(["FCL", "LCL"]);
-
-    // Air: single implicit column -> one seeded line stays one charges entry, rateVariant: null.
-    const air = { ...airLeg(), seededCharges };
-    const dAir = draftFromDto(air, rfq);
-    expect(dAir.charges).toHaveLength(1);
-    expect(dAir.charges[0].rateVariant).toBeNull();
   });
 
   it("gates warehouse rows on warehouseIncluded (falsy/undefined → none)", () => {

@@ -3,6 +3,9 @@ import { render, screen } from "@testing-library/react";
 import type { QuoteDraft } from "@svyft/shared";
 import { QuoteSummary } from "./QuoteSummary";
 
+// v4 (design D1): every `charges` row is COMMON — ONE row per line (`rateVariant: null`), priced
+// once, folded into EVERY variant's Grand Total equally via `additionalChargeSum`. Freight is the
+// one thing that stays per-variant (`trucking`/`seaRates`).
 const roadDraft: QuoteDraft = {
   legId: "L1",
   mode: "ROAD",
@@ -11,11 +14,8 @@ const roadDraft: QuoteDraft = {
   chargedWeightKg: 1500, // v3: leg-level, not per-package
   notes: null,
   cargo: [{ packageId: "p1", grossWtKg: 1500, cbm: 2.5 }],
-  // v3: charges are per-variant matrix cells — the same "Fuel surcharge" priced identically under
-  // both columns (a charge no longer has a variant-independent "shared" cell).
   charges: [
-    { zone: null, presetKey: null, label: "Fuel surcharge", amount: 200, rateVariant: "DEDICATED" },
-    { zone: null, presetKey: null, label: "Fuel surcharge", amount: 200, rateVariant: "GROUPAGE" },
+    { zone: null, presetKey: null, label: "Fuel surcharge", amount: 200, rateVariant: null },
   ],
   trucking: [
     {
@@ -44,6 +44,8 @@ const roadDraft: QuoteDraft = {
   termsConditions: null,
 };
 
+// Air's charges were ALREADY common in v3 (its single implicit column never fanned out) — this
+// fixture is unchanged by the v4 model.
 const airDraft: QuoteDraft = {
   legId: "L1",
   mode: "AIR",
@@ -72,7 +74,7 @@ const seaDraft: QuoteDraft = {
   notes: null,
   cargo: [{ packageId: "p1", grossWtKg: 2000, cbm: 5 }],
   charges: [
-    { zone: "ORIGIN", presetKey: null, label: "Origin THC", amount: 150, rateVariant: "FCL" },
+    { zone: "ORIGIN", presetKey: null, label: "Origin THC", amount: 150, rateVariant: null },
   ],
   trucking: [],
   seaRates: [
@@ -86,13 +88,12 @@ const seaDraft: QuoteDraft = {
 };
 
 describe("QuoteSummary", () => {
-  it("shows the shared subtotal and chargeable weight (kg)", () => {
+  it("shows the Additional-charges subtotal, Warehouse subtotal, and chargeable weight (kg)", () => {
     render(<QuoteSummary draft={roadDraft} currency="USD" />);
-    // v3: sharedSubtotal is the warehouse total ONLY (charges are per-variant matrix cells now,
-    // folded into each variant's own grandTotal instead — see computeQuoteTotals) = 300 (warehouse);
+    // additionalChargeSum = 200 (the one common Fuel surcharge line); warehouseSum = 300;
     // chargeableWeightKg is the leg-level QuoteDraft.chargedWeightKg = 1500.
-    const sharedRow = screen.getByText("Shared subtotal").closest("div");
-    expect(sharedRow).toHaveTextContent("300.00");
+    expect(screen.getByTestId("total-additional-charges")).toHaveTextContent("200.00");
+    expect(screen.getByTestId("total-warehouse")).toHaveTextContent("300.00");
     expect(screen.getByTestId("total-chargeable")).toHaveTextContent("1500.000");
   });
 
@@ -100,15 +101,16 @@ describe("QuoteSummary", () => {
     render(<QuoteSummary draft={roadDraft} currency="USD" />);
     expect(screen.getAllByTestId(/^grand-total-/)).toHaveLength(2);
 
-    // Dedicated: chargeSum 200 (Fuel surcharge, DEDICATED column) + rateAmount 500 + sharedSubtotal
-    // (warehouse) 300 = 1000
+    // Dedicated: rateAmount 500 + additionalChargeSum 200 (common, same for every variant) +
+    // warehouseSum 300 = 1000.
     const dedicated = screen.getByTestId("grand-total-DEDICATED");
     expect(dedicated).toHaveTextContent("Dedicated total");
     expect(dedicated).toHaveTextContent("1,000.00");
     expect(dedicated).toHaveTextContent("USD");
 
     // Groupage: its own freight rate (trucking) is unpriced → rateAmount null → blank ("–")
-    // regardless of its 200 of charges — QuoteSummary's blank rule keys off rateAmount alone.
+    // regardless of the common charges/warehouse that DO apply to it — QuoteSummary's blank rule
+    // keys off rateAmount alone.
     const groupage = screen.getByTestId("grand-total-GROUPAGE");
     expect(groupage).toHaveTextContent("Groupage total");
     expect(groupage).toHaveTextContent("–");
@@ -118,10 +120,11 @@ describe("QuoteSummary", () => {
   it("Air: shows a single Air total, never blank even though rateAmount is always null", () => {
     render(<QuoteSummary draft={airDraft} currency="USD" />);
     expect(screen.getAllByTestId(/^grand-total-/)).toHaveLength(1);
+    expect(screen.getByTestId("total-additional-charges")).toHaveTextContent("900.00");
 
     const air = screen.getByTestId("grand-total-AIR");
     expect(air).toHaveTextContent("Air total");
-    expect(air).toHaveTextContent("900.00"); // chargeSum (Air Freight, rateVariant: null) 900 + 0 warehouse
+    expect(air).toHaveTextContent("900.00"); // additionalChargeSum (Air Freight) 900 + 0 warehouse
     expect(air).not.toHaveTextContent("–");
   });
 
@@ -129,7 +132,7 @@ describe("QuoteSummary", () => {
     render(<QuoteSummary draft={seaDraft} currency="USD" />);
     expect(screen.getAllByTestId(/^grand-total-/)).toHaveLength(2);
 
-    // FCL: chargeSum 150 (Origin THC, FCL column) + rateAmount 1200 + sharedSubtotal (warehouse) 0 = 1350
+    // FCL: rateAmount 1200 + additionalChargeSum 150 (Origin THC, common) + warehouseSum 0 = 1350.
     const fcl = screen.getByTestId("grand-total-FCL");
     expect(fcl).toHaveTextContent("FCL total");
     expect(fcl).toHaveTextContent("1,350.00");

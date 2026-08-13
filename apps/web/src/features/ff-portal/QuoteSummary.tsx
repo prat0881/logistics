@@ -12,9 +12,17 @@ export function QuoteSummary({
   const totals = computeQuoteTotals(draft);
   return (
     <dl className="space-y-2 text-sm">
-      <div className="flex justify-between">
-        <dt className="text-muted-foreground">Shared subtotal</dt>
-        <dd className="font-mono tabular-nums">{fmtAmount(totals.sharedSubtotal)}</dd>
+      {/* v4 (design D1): "Shared subtotal" (warehouse-only, v3) split into the two figures that
+          actually feed every variant's Grand total — Additional charges (the COMMON `charges`
+          sum ChargeMatrix's own subtotal row shows) and Warehouse — so this headline stays
+          consistent with the charge table instead of collapsing them into one unlabeled number. */}
+      <div className="flex justify-between" data-testid="total-additional-charges">
+        <dt className="text-muted-foreground">Additional charges</dt>
+        <dd className="font-mono tabular-nums">{fmtAmount(totals.additionalChargeSum)}</dd>
+      </div>
+      <div className="flex justify-between" data-testid="total-warehouse">
+        <dt className="text-muted-foreground">Warehouse</dt>
+        <dd className="font-mono tabular-nums">{fmtAmount(totals.warehouseSum)}</dd>
       </div>
       <div className="flex justify-between" data-testid="total-chargeable">
         <dt className="text-muted-foreground">Chargeable weight (kg)</dt>
