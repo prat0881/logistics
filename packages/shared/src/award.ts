@@ -65,3 +65,28 @@ export const rejectSchema = z.object({ reason: z.string().trim().min(1).max(2000
 export type ShortlistInput = z.infer<typeof shortlistSchema>;
 export type SendForApprovalInput = z.infer<typeof sendForApprovalSchema>;
 export type RejectInput = z.infer<typeof rejectSchema>;
+
+// ── Stage 5 (S5.4 Task 4) — the frozen award snapshot ───────────────────────────
+// Persisted verbatim onto `Query.awardSnapshot` (Json?) by AwardService.generateClientQuote:
+// one row per leg's winning (APPROVED) offer, priced directly from its own submitted
+// `draftJson` (comparison.service.ts's COMPARABLE_STATUSES deliberately excludes APPROVED, so
+// getComparison can't be reused once every leg has an awarded winner). Presence
+// (`awardSnapshot != null`) IS the `quotingClient` milestone signal query-status.projector.ts
+// reads to roll the query up to QUOTING_CLIENT — this type is the contract S5.6 (the
+// client-facing quote) reads back.
+export interface QueryAwardSnapshotLeg {
+  legId: string;
+  winningQuoteId: string;
+  freightForwarderId: string;
+  variant: ChargeRateVariant | null;
+  currency: string | null;
+  unitsPerUsd: number | null; // null for a USD winner (passes through, no rate stored) or an untracked currency
+  usdTotal: number; // A7-gated — generate 409s before a null usdTotal can ever be persisted
+  nativeTotal: number; // grandTotal in the winning quote's own currency
+  transitDays: number | null;
+}
+export interface QueryAwardSnapshot {
+  generatedByUserId: string;
+  legs: QueryAwardSnapshotLeg[];
+  combinedUsd: number; // Σ legs[].usdTotal
+}

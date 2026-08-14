@@ -34,7 +34,10 @@ export class QueryStatusProjector {
     client: Prisma.TransactionClient | PrismaService = this.prisma,
   ): Promise<void> {
     if (!queryId) return;
-    const q = await client.query.findUnique({ where: { id: queryId }, select: { rfqReadyAt: true } });
+    const q = await client.query.findUnique({
+      where: { id: queryId },
+      select: { rfqReadyAt: true, awardSnapshot: true },
+    });
     if (!q) return;
     const legs = await client.leg.findMany({ where: { queryId }, select: { status: true } });
     const legStatuses = legs.map((l) => l.status) as LegStatus[];
@@ -54,7 +57,14 @@ export class QueryStatusProjector {
       !quotes.some((qt) => qt.status === "QUOTED");
 
     // `created` is emergent from the leg rollup now — only the rfqReady milestone is passed.
-    const status = this.project(legStatuses, { rfqReady: !!q.rfqReadyAt, noResponse });
+    // `quotingClient` (S5.4 Task 4): sourced straight from Query.awardSnapshot's presence — the
+    // frozen award snapshot IS the signal (generateClientQuote writes it in the same
+    // transaction as this recompute; reopenComparison clears it back to null, same transaction).
+    const status = this.project(legStatuses, {
+      rfqReady: !!q.rfqReadyAt,
+      noResponse,
+      quotingClient: !!q.awardSnapshot,
+    });
     await client.query.update({ where: { id: queryId }, data: { status } });
   }
 }

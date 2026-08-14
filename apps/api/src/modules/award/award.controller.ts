@@ -68,4 +68,23 @@ export class AwardController {
   ) {
     return this.award.reject(id, legId, body, user);
   }
+
+  // The two TERMINAL endpoints (S5.4 Task 4) — query-scoped (no :legId), neither takes a body.
+  // generate-client-quote freezes the award snapshot + rolls the query to QUOTING_CLIENT;
+  // Manager+ gated like approve/reject above (it's the moment a client-facing quote is
+  // committed to). reopen-comparison reverses it back to QUOTED and is Executive+ (no @Roles),
+  // same auth-only convention as shortlist/send-for-approval — reopening is not itself a
+  // checker-level decision, just undoing the freeze.
+  @Roles(Role.ADMINISTRATOR, Role.MANAGER)
+  @Post("generate-client-quote")
+  @HttpCode(200)
+  generateClientQuote(@Param("id") id: string, @CurrentUser() user: RequestUser) {
+    return this.award.generateClientQuote(id, user);
+  }
+
+  @Post("reopen-comparison")
+  @HttpCode(200)
+  reopenComparison(@Param("id") id: string, @CurrentUser() user: RequestUser) {
+    return this.award.reopenComparison(id, user);
+  }
 }

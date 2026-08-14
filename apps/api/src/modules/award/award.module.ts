@@ -3,6 +3,7 @@ import { LegEvent, LegStatus, QuoteEvent, QuoteStatus } from "@svyft/shared";
 import { StatusModule } from "../status/status.module";
 import { StatusRegistry } from "../status/status.registry";
 import { ComparisonModule } from "../comparison/comparison.module";
+import { FxRatesModule } from "../fx-rates/fx-rates.module";
 import { PrismaModule } from "../../prisma/prisma.module";
 import { AwardController } from "./award.controller";
 import { AwardService } from "./award.service";
@@ -14,8 +15,12 @@ import { AwardService } from "./award.service";
 // S5.4 Task 2: AwardController/AwardService (shortlist + send-for-approval, the maker half —
 // see award.service.ts) now wired in. ComparisonModule is imported for ComparisonService
 // (getComparison, reused to validate a shortlist and to snapshot the recommendation).
+// S5.4 Task 4: FxRatesModule added for FxRatesService (generateClientQuote prices each leg's
+// winner directly off its own draftJson + the FX table — getComparison can't be reused there,
+// see award.service.ts). QueryStatusProjector needs no new import — StatusModule already
+// exports it.
 @Module({
-  imports: [StatusModule, ComparisonModule, PrismaModule],
+  imports: [StatusModule, ComparisonModule, FxRatesModule, PrismaModule],
   controllers: [AwardController],
   providers: [AwardService],
 })

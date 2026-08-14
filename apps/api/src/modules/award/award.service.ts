@@ -5,12 +5,20 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { AwardDecisionStatus, type LegAwardDecision } from "@prisma/client";
+import { AwardDecisionStatus, Prisma, type LegAwardDecision, type Query } from "@prisma/client";
 import {
+  AIR_VARIANT_KEY,
   LegEvent,
   LegStatus,
   QuoteEvent,
   QuoteStatus,
+  computeQuoteTotals,
+  latestRateByCurrency,
+  toUsd,
+  transitKeyForVariant,
+  type QueryAwardSnapshot,
+  type QueryAwardSnapshotLeg,
+  type QuoteDraft,
   type RejectInput,
   type SendForApprovalInput,
   type ShortlistInput,
@@ -18,6 +26,8 @@ import {
 import { PrismaService } from "../../prisma/prisma.service";
 import type { RequestUser } from "../auth/types";
 import { ComparisonService } from "../comparison/comparison.service";
+import { FxRatesService } from "../fx-rates/fx-rates.service";
+import { QueryStatusProjector } from "../status/query-status.projector";
 import { StatusService } from "../status/status.service";
 
 // Quote statuses that still might yield a NEW comparable price if we wait longer — the leg
@@ -41,6 +51,8 @@ export class AwardService {
     private readonly prisma: PrismaService,
     private readonly comparison: ComparisonService,
     private readonly status: StatusService,
+    private readonly projector: QueryStatusProjector,
+    private readonly fxRates: FxRatesService,
   ) {}
 
   async shortlist(
@@ -315,6 +327,143 @@ export class AwardService {
         },
       });
       return updated;
+    });
+  }
+
+  // The two TERMINAL endpoints (design §5.6/§8.3/§9, S5.4 Task 4). Both are QUERY-scoped (no
+  // legId) — unlike every method above. `generateClientQuote` cannot reuse
+  // `ComparisonService.getComparison` for pricing: comparison.service.ts's COMPARABLE_STATUSES
+  // deliberately excludes APPROVED (its line-51 comment), and every winning quote IS APPROVED by
+  // the time this runs (Task 3's approve() put it there) — getComparison would emit zero offers.
+  // Instead each winner is priced directly off its own draftJson, mirroring
+  // comparison.service.ts's buildLeg (lines ~147-190) but targeted at the single shortlisted
+  // variant instead of every variantsForMode column.
+  async generateClientQuote(queryId: string, user: RequestUser): Promise<Query> {
+    const legs = await this.prisma.leg.findMany({ where: { queryId }, select: { id: true } });
+    if (legs.length === 0) {
+      throw new ConflictException("This query has no legs to generate a client quote for");
+    }
+
+    // A6 — every leg must have a decision AND that decision must be APPROVED with a shortlisted
+    // winner still on it. A leg with no decision at all (never shortlisted) and a leg whose
+    // decision exists but never reached APPROVED both fail the same way — one gate, one message.
+    const decisions = await this.prisma.legAwardDecision.findMany({ where: { queryId } });
+    const decisionByLeg = new Map(decisions.map((d) => [d.legId, d]));
+    for (const leg of legs) {
+      const decision = decisionByLeg.get(leg.id);
+      if (!decision || decision.status !== AwardDecisionStatus.APPROVED || !decision.shortlistedQuoteId) {
+        throw new ConflictException("every leg must be approved before generating the client quote");
+      }
+    }
+
+    const rates = await this.fxRates.list();
+    const ratesByCurrency = latestRateByCurrency(rates);
+
+    const winners: QueryAwardSnapshotLeg[] = [];
+    for (const leg of legs) {
+      const decision = decisionByLeg.get(leg.id)!;
+      const quote = await this.prisma.quote.findUniqueOrThrow({
+        where: { id: decision.shortlistedQuoteId! },
+        select: {
+          id: true,
+          freightForwarderId: true,
+          draftJson: true,
+          submittedAt: true,
+          rfq: { select: { currency: true, quoteValidityUntil: true } },
+        },
+      });
+
+      const draft = quote.draftJson as unknown as QuoteDraft;
+      const totals = computeQuoteTotals(draft);
+      const variantKey = decision.shortlistedVariant ?? AIR_VARIANT_KEY;
+      const vt = totals.variants.find((t) => t.key === variantKey)!;
+      const nativeTotal = vt.grandTotal;
+
+      const currency = quote.rfq?.currency ?? null;
+      const rate = currency ? (ratesByCurrency.get(currency) ?? null) : null;
+      const usdTotal = currency ? toUsd(nativeTotal, currency, rate) : null;
+      // A7 — USD passes through toUsd unconditionally; every other currency needs a rate on
+      // file. A null here is the ONLY way a non-priceable winner can reach this point (A6
+      // already proved the decision/quote/variant exist), so it's the sole A7 trigger.
+      if (usdTotal == null) {
+        throw new ConflictException(`no FX rate on file for ${currency ?? "this quote's currency"}`);
+      }
+
+      const transitDays =
+        draft.transit?.guaranteedTransitDaysByVariant[
+          transitKeyForVariant(draft.mode, decision.shortlistedVariant)
+        ] ?? null;
+
+      winners.push({
+        legId: leg.id,
+        winningQuoteId: quote.id,
+        freightForwarderId: quote.freightForwarderId,
+        variant: decision.shortlistedVariant,
+        currency,
+        unitsPerUsd: rate?.unitsPerUsd ?? null,
+        usdTotal,
+        nativeTotal,
+        transitDays,
+      });
+    }
+
+    const awardSnapshot: QueryAwardSnapshot = {
+      generatedByUserId: user.userId,
+      legs: winners,
+      combinedUsd: winners.reduce((sum, w) => sum + w.usdTotal, 0),
+    };
+
+    // ONE transaction: freeze the snapshot, audit one GENERATE event per leg (the table's legId
+    // is NOT-NULL with an FK — a single query-level/sentinel row is impossible), then recompute
+    // the query rollup INSIDE the same tx so it reads the just-written awardSnapshot and
+    // persists QUOTING_CLIENT atomically. Deliberately no `this.status.fire(...)` call — legs
+    // stay APPROVED (leg AWARDED is reserved for post-client-Won, Stage 6); query status is a
+    // projection, never fire()'d.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.query.update({
+        where: { id: queryId },
+        data: { awardSnapshot: awardSnapshot as unknown as Prisma.InputJsonValue },
+      });
+      for (const leg of legs) {
+        await tx.awardDecisionEvent.create({
+          data: { legId: leg.id, queryId, type: "GENERATE", actorId: user.userId },
+        });
+      }
+      await this.projector.recompute(queryId, tx);
+      return tx.query.findUniqueOrThrow({ where: { id: queryId } });
+    });
+  }
+
+  async reopenComparison(queryId: string, user: RequestUser): Promise<Query> {
+    const query = await this.prisma.query.findUnique({
+      where: { id: queryId },
+      select: { awardSnapshot: true },
+    });
+    if (!query) throw new NotFoundException("Query not found");
+    if (query.awardSnapshot == null) {
+      throw new ConflictException("this query is not being quoted to the client");
+    }
+
+    const legs = await this.prisma.leg.findMany({ where: { queryId }, select: { id: true } });
+
+    // Leg/decision APPROVED states are LEFT INTACT — reopening the client quote doesn't
+    // un-approve legs; a later per-leg change/negotiation reverses an approval (S5.5).
+    return this.prisma.$transaction(async (tx) => {
+      await tx.query.update({
+        where: { id: queryId },
+        // Prisma.DbNull (a nullable Json column -> SQL NULL, not the JSON null literal —
+        // JsonNull would read back as a truthy object, defeating the projector's `!!` check and
+        // reopenComparison's own `== null` guard above) — same convention as
+        // rfq.service.ts/rfq-schedule.listener.ts's draftJson clears.
+        data: { awardSnapshot: Prisma.DbNull },
+      });
+      for (const leg of legs) {
+        await tx.awardDecisionEvent.create({
+          data: { legId: leg.id, queryId, type: "REOPEN", actorId: user.userId },
+        });
+      }
+      await this.projector.recompute(queryId, tx);
+      return tx.query.findUniqueOrThrow({ where: { id: queryId } });
     });
   }
 }
