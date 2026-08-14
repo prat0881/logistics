@@ -57,10 +57,11 @@ Three cumulative roles (existing): `EXECUTIVE` ⊂ `MANAGER` ⊂ `ADMINISTRATOR`
 | Capability | Who | Enforcement |
 | :-- | :-- | :-- |
 | View comparison, shortlist, negotiate, send-for-approval | **Executive+** | auth-only (no `@Roles`) |
-| Approve / reject a leg, generate client quotation | **Manager+**, and **≠ the user who sent that leg** | `@Roles(ADMINISTRATOR, MANAGER)` + **four-eyes** guard on `sentByUserId` |
+| Approve / reject a leg | **Manager+**, and **≠ the user who sent that leg** | `@Roles(ADMINISTRATOR, MANAGER)` + **four-eyes** guard on `sentByUserId` |
+| Generate client quotation | **Manager+** | `@Roles(ADMINISTRATOR, MANAGER)` — per **§16 O4**, *no* extra four-eyes (the per-leg four-eyes already applied at each leg's approval) |
 | Create/edit FX rates | **Manager+** | `@Roles(ADMINISTRATOR, MANAGER)` (master-data convention) |
 
-The mockup's two views map onto the roles: **maker mode** (compare / shortlist / negotiate / send) is visible to **Executive+**; the **checker mode** — the approval screen with approve/reject + the "Generate" gate — is visible **only to Manager+**, and its controls are active only when the current user is _not_ the one who sent that leg (four-eyes). **A plain Executive can send for approval but never sees or performs an approval.** This is a **deliberate deviation** from the "all workflow writes Executive+" convention: the checker tier is role-gated (like master data), which the user explicitly required.
+The mockup's two views map onto the roles: **maker mode** (compare / shortlist / negotiate / send) is visible to **Executive+**; the **checker mode** — the approval screen with approve/reject + the "Generate" gate — is visible **only to Manager+**; its **approve/reject** controls are active only when the current user is _not_ the one who sent that leg (four-eyes), while **Generate** requires only Manager+ (**§16 O4** — no extra four-eyes, since each leg's approval already passed four-eyes). **A plain Executive can send for approval but never sees or performs an approval.** This is a **deliberate deviation** from the "all workflow writes Executive+" convention: the checker tier is role-gated (like master data), which the user explicitly required.
 
 ---
 
@@ -230,7 +231,7 @@ When SB6's `ChangeOrderStrategy` invalidates a quote (a post-RFQ field edit reop
 
 ## 11. Read model & APIs
 
-All under `/api/queries/:id` unless noted; all Executive+ (four-eyes enforced in-service for approve/reject/generate).
+All under `/api/queries/:id` unless noted; all Executive+ (four-eyes enforced in-service for approve/reject; **Generate is Manager+ only — no four-eyes, §16 O4**).
 
 | Method / path | Purpose | RBAC |
 | :-- | :-- | :-- |
@@ -266,7 +267,7 @@ The **approved mockup is the visual spec** (interactive `Compare Quotes` artifac
 | A1 | Shortlist references an offer present on the leg — a `QUOTED` offer, or (only under an A9 override) the re-quoted FF's own earlier-price `REQUOTED` offer. | Blocking | shortlist |
 | A2 | Override reason present when shortlist ≠ recommendation. | Blocking | send-for-approval |
 | A3 | Leg is `FULLY_QUOTED` or deadline passed (D10). | Blocking | send-for-approval |
-| A4 | Approver is **Manager+** and **≠ sender** (four-eyes). | Blocking | approve / reject / generate |
+| A4 | Approver is **Manager+** and **≠ sender** (four-eyes). Generate = **Manager+ only, no four-eyes** (§16 O4). | Blocking | approve / reject |
 | A5 | Rejection reason present. | Blocking | reject |
 | A6 | Every leg's decision is `APPROVED`; no unresolved no-quote leg (D11). | Blocking | generate |
 | A7 | An FX rate exists for every currency among the awarded winners. | Blocking | generate |

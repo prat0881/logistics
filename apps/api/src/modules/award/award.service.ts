@@ -61,6 +61,22 @@ export class AwardService {
     input: ShortlistInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
+    // Guard (opus whole-branch review, task-4 Round 3 FIX #1) — a decision that has already
+    // moved past DRAFT (sent for approval, or approved) must not be silently reset by a fresh
+    // shortlist. Without this: shortlist the winner -> send -> a different Manager approves
+    // (leg=APPROVED, quote=APPROVED, decision={APPROVED, shortlist=winner}) -> shortlist AGAIN
+    // with the LOSING (still-QUOTED) offer resets the decision to DRAFT while the leg/quote stay
+    // APPROVED — an orphaned approval with no way forward: send-for-approval 400s (the leg isn't
+    // FULLY_QUOTED), generate 409s (A6 wants every decision APPROVED, this one is DRAFT), reopen
+    // 409s (nothing was ever generated). No leg-level reopen exists until S5.5. Checked first,
+    // before the comparatively expensive getComparison call below.
+    const existing = await this.prisma.legAwardDecision.findUnique({ where: { legId } });
+    if (existing && existing.status !== AwardDecisionStatus.DRAFT) {
+      throw new ConflictException(
+        "This leg's decision has already been sent for approval or approved; reject or reopen it before re-shortlisting",
+      );
+    }
+
     // Reused for two things: (a) A1 — prove `input.quoteId`/`variant` is a real, PRICED offer
     // on this leg (comparison offers are already QUOTED/REQUOTED-only, so finding one here also
     // proves the status requirement); (b) the live recommendation to snapshot onto the decision
@@ -363,15 +379,13 @@ export class AwardService {
       }
     }
 
-    // Four-eyes (task-4 review IMP-1 — the S5.4 plan's Global Constraints + design §4/§11
-    // require it on ALL THREE checker routes, not just approve/reject): the generating user must
-    // not be the sender of ANY of this query's legs. `decisions` is already scoped to this query
-    // and, past the A6 loop above, is exactly one APPROVED row per leg — approve() never clears
-    // sentByUserId — so this is well-defined without a further fetch. Checked before any pricing
-    // work (fail fast on authorization).
-    if (decisions.some((d) => d.sentByUserId === user.userId)) {
-      throw new ForbiddenException("SELF_APPROVAL");
-    }
+    // NO four-eyes gate here, deliberately (opus whole-branch review, task-4 Round 3 FIX #2 —
+    // reverses a Round-2 fix that added one). Design §16 O4: "Generate = Manager+, NO extra
+    // four-eyes" — per-leg four-eyes is already enforced at each leg's approve() via
+    // requireDecidable below; generate is a query-wide rollup of decisions already vetted that
+    // way, not a fresh decision that itself needs a second approver. `@Roles(ADMINISTRATOR,
+    // MANAGER)` on the controller route is the only gate. reject()/approve() keep four-eyes —
+    // unaffected by this.
 
     const rates = await this.fxRates.list();
     const ratesByCurrency = latestRateByCurrency(rates);

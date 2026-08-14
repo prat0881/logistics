@@ -315,6 +315,21 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(decision?.status).toBe("PENDING_APPROVAL"); // untouched
   });
 
+  it("task-4 review Round 3 FIX #3 — the same Manager who sent -> 403 SELF_APPROVAL on reject too", async () => {
+    const senderId = randomUUID();
+    const { query, leg } = await seedPendingApproval("selfreject", senderId);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(senderId, Role.MANAGER)) // same id that sent it
+      .send({ reason: "irrelevant — SELF_APPROVAL blocks before this is read" })
+      .expect(403);
+    expect(res.body.message).toBe("SELF_APPROVAL");
+
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("PENDING_APPROVAL"); // untouched
+  });
+
   it("reject with no reason -> 400", async () => {
     const senderId = randomUUID();
     const { query, leg } = await seedPendingApproval("noreason", senderId);
@@ -486,5 +501,55 @@ describe("award workflow — checker endpoints (e2e)", () => {
 
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("DRAFT"); // untouched
+  });
+
+  it("task-4 review Round 3 FIX #1 — re-shortlisting an APPROVED leg with the LOSING (still-QUOTED) offer -> 409, decision + leg untouched", async () => {
+    const senderId = randomUUID(); // M1
+    const approverId = randomUUID(); // M2
+    // Two FFs both QUOTED — seedPendingApproval shortlists+sends the "REC" one by default,
+    // leaving "LOSE" as a second, genuinely valid, still-QUOTED offer nobody ever picked.
+    const { query, leg, quotes } = await seedPendingApproval("reshortlist", senderId, [
+      { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
+      { key: "LOSE", status: "QUOTED", deadline: future(), draft: { amount: 166400, transitDays: 5 } },
+    ]);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+      .set("Cookie", cookieFor(approverId, Role.MANAGER))
+      .send()
+      .expect(200);
+
+    // The bug scenario: re-shortlist the leg with the loser, AFTER it's already been approved.
+    await request(app.getHttpServer())
+      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ quoteId: quotes.LOSE.id, variant: "DEDICATED" })
+      .expect(409);
+
+    // Nothing moved: decision still points at the real winner, leg still APPROVED — no orphaned
+    // approval, no stuck query.
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("APPROVED");
+    expect(decision?.shortlistedQuoteId).toBe(quotes.REC.id);
+    const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
+    expect(updatedLeg?.status).toBe("APPROVED");
+  });
+
+  it("task-4 review Round 3 FIX #1 (nice-to-have) — re-shortlisting a PENDING_APPROVAL leg (sent, not yet decided) -> 409, decision untouched", async () => {
+    const senderId = randomUUID();
+    const { query, leg, quotes } = await seedPendingApproval("reshortlistpending", senderId, [
+      { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
+      { key: "OTH", status: "QUOTED", deadline: future(), draft: { amount: 166400, transitDays: 5 } },
+    ]);
+
+    await request(app.getHttpServer())
+      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ quoteId: quotes.OTH.id, variant: "DEDICATED" })
+      .expect(409);
+
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("PENDING_APPROVAL");
+    expect(decision?.shortlistedQuoteId).toBe(quotes.REC.id); // unchanged
   });
 });

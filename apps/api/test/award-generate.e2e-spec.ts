@@ -395,7 +395,7 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
     expect(snapshot.combinedUsd).toBe(1733.68);
   });
 
-  it("task-4 review IMP-1 — four-eyes: the Manager who sent an approved leg calls generate -> 403 SELF_APPROVAL, no state change; a different Manager -> 200", async () => {
+  it("task-4 review Round 3 FIX #2 (design §16 O4) — a Manager who sent one of the approved legs can STILL generate -> 200 (no four-eyes on generate; per-leg four-eyes already happened at approve)", async () => {
     const senderId = randomUUID();
     const { query } = await seedQuery("selfgen", [
       {
@@ -408,20 +408,9 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
       { decision: "APPROVED", currency: "INR", amount: 41600, transitDays: 5 }, // sent by someone else
     ]);
 
-    const blocked = await request(app.getHttpServer())
-      .post(`/api/queries/${query.id}/generate-client-quote`)
-      .set("Cookie", cookieFor(senderId, Role.MANAGER)) // same id that sent leg 1's approval
-      .send()
-      .expect(403);
-    expect(blocked.body.message).toBe("SELF_APPROVAL");
-
-    const untouched = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
-    expect(untouched.awardSnapshot).toBeNull();
-    expect(untouched.status).not.toBe("QUOTING_CLIENT");
-
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/generate-client-quote`)
-      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER)) // a genuinely different Manager
+      .set("Cookie", cookieFor(senderId, Role.MANAGER)) // same id that sent leg 1's approval
       .send()
       .expect(200);
 
