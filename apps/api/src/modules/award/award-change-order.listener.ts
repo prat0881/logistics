@@ -24,9 +24,14 @@ import type { ChangeOrderReopenedEvent } from "../changes/change-order.strategy"
 // ChangesModule, no import cycle — EventEmitter2 is global, so the producer (ChangeOrderStrategy)
 // and this consumer stay decoupled, same pattern as the sibling RfqNotificationsService.onLegReopened.
 //
-// The try/catch is LOAD-BEARING, not defensive boilerplate: StatusService.fire (status.service.ts)
-// awaits emitAsync(...), so an uncaught throw here would propagate back into ChangeOrderStrategy's
-// OWN awaited fire() and fail a change-order cascade that has already committed. Mirrors
+// The try/catch is kept for attributable error logging, defense-in-depth against a future
+// refactor of the strategy's own catch, and consistency with the sibling listeners below — NOT
+// because an uncaught throw here would otherwise break the caller. "changeorder.leg.reopened" is
+// emitted directly by ChangeOrderStrategy.apply (change-order.strategy.ts, its OWN
+// `this.events.emitAsync(...)` call, already wrapped in its own try/catch that logs a `warn` and
+// continues — "cascade already applied"), not via StatusService.fire's `${key}.status.changed`
+// emit; an uncaught throw here would surface as that `warn`, and only roll back this listener's
+// own transaction — it would not fail or roll back the change-order edit itself. Mirrors
 // LegQuoteProjector / QueryStatusProjector.onLegStatusChanged / RfqNotificationsService.onLegReopened.
 @Injectable()
 export class AwardChangeOrderListener {

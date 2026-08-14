@@ -29,6 +29,10 @@ describe(`${PREFIX} (e2e)`, () => {
   // Any authenticated (Executive+) role works — the route carries no @Roles.
   const cookieFor = (userId: string) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role: Role.EXECUTIVE, tenantId: null })}`;
+  // generate-client-quote is Manager+ gated (design §4/§16 O4) — needed to reach a REAL
+  // QUOTING_CLIENT for the snapshot-teardown regression below.
+  const managerCookie = (userId: string) =>
+    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role: Role.MANAGER, tenantId: null })}`;
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
@@ -161,6 +165,82 @@ describe(`${PREFIX} (e2e)`, () => {
     return { query, leg, origin, dest, ff, rfq, quote, decision, seededHash };
   }
 
+  // A query with N legs, EACH already fully APPROVED (leg APPROVED, quote APPROVED with a
+  // draftJson, LegAwardDecision APPROVED+shortlisted) — the state generate-client-quote's A6
+  // gate requires before it will freeze a real awardSnapshot. Mirrors
+  // award-generate.e2e-spec.ts's seedQuery (not importable — scoped inside that file's own
+  // describe block), trimmed to just what the snapshot-teardown regression needs.
+  async function seedApprovedQuery(label: string, legSpecs: { amount: number; transitDays: number }[]) {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-${label}`, priority: "HIGH", incoterms: "FOB" },
+    });
+    const legs: { id: string; quoteId: string; ffId: string; rfqId: string }[] = [];
+    for (let i = 0; i < legSpecs.length; i++) {
+      const spec = legSpecs[i];
+      const key = `${label}-${i + 1}`;
+      const origin = await prisma.point.create({
+        data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+      });
+      const dest = await prisma.point.create({
+        data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+      });
+      const leg = await prisma.leg.create({
+        data: {
+          queryId: query.id,
+          legCode: `L${i + 1}`,
+          mode: "ROAD",
+          originPointId: origin.id,
+          destinationPointId: dest.id,
+          status: "APPROVED" as never,
+        },
+      });
+      const ff = await mkFf(`FF-${PREFIX}-${key}`);
+      const rfq = await prisma.rfq.create({
+        data: {
+          queryId: query.id,
+          freightForwarderId: ff.id,
+          rfqNumber: `${CODE}-RFQ-${key}`,
+          accessTokenHash: `hash-${PREFIX}-${key}`,
+          submissionDeadline: new Date(Date.now() + 3600_000),
+          incoterms: "FOB",
+          currency: "INR",
+          quoteValidityUntil: new Date("2099-01-01T00:00:00.000Z"),
+        },
+      });
+      const quote = await prisma.quote.create({
+        data: {
+          queryId: query.id,
+          legId: leg.id,
+          freightForwarderId: ff.id,
+          rfqId: rfq.id,
+          status: "APPROVED" as never,
+          submittedAt: new Date(),
+          draftJson: roadDraft(
+            leg.id,
+            origin.id,
+            spec.amount,
+            spec.transitDays,
+          ) as unknown as Prisma.InputJsonValue,
+        },
+      });
+      await prisma.legAwardDecision.create({
+        data: {
+          legId: leg.id,
+          queryId: query.id,
+          shortlistedQuoteId: quote.id,
+          shortlistedVariant: "DEDICATED",
+          status: "APPROVED",
+          sentByUserId: randomUUID(),
+          sentForApprovalAt: new Date(),
+          decidedByUserId: randomUUID(),
+          decidedAt: new Date(),
+        },
+      });
+      legs.push({ id: leg.id, quoteId: quote.id, ffId: ff.id, rfqId: rfq.id });
+    }
+    return { query, legs };
+  }
+
   const cleanup = async () => {
     const qs = await prisma.query.findMany({
       where: { queryCode: { startsWith: CODE } },
@@ -186,6 +266,7 @@ describe(`${PREFIX} (e2e)`, () => {
     await prisma.freightForwarder.deleteMany({
       where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
     });
+    await prisma.fxRate.deleteMany({ where: { note: { startsWith: PREFIX } } });
   };
 
   beforeAll(async () => {
@@ -201,6 +282,8 @@ describe(`${PREFIX} (e2e)`, () => {
     // exist regardless of test order/DB state (CI has no separate seed step).
     await seedReferenceData(prisma);
     await cleanup();
+    // generate-client-quote's A7 gate needs an FX rate on file for the winners' currency (INR).
+    await prisma.fxRate.create({ data: { currency: "INR", unitsPerUsd: 83.2, note: PREFIX } });
   });
 
   afterAll(async () => {
@@ -370,5 +453,60 @@ describe(`${PREFIX} (e2e)`, () => {
       .post(`/api/queries/${query.id}/legs/${leg.id}/quotes/${quote.id}/request-requote`)
       .send({ comment: "x" })
       .expect(401);
+  });
+
+  // Whole-branch review, task 2 — a real cross-task bug: request-requote on a leg that's part
+  // of an ALREADY-GENERATED (QUOTING_CLIENT) query must tear down that frozen awardSnapshot,
+  // exactly as the §10.2 change-order reversal listener does for its own reopen path. Without
+  // this, deriveQueryStatus's `quotingClient` milestone short-circuits ahead of the leg rollup
+  // and the query keeps reporting QUOTING_CLIENT with a stale client-facing total naming a
+  // quote that's now REQUOTED and a decision that's now DRAFT.
+  it("QUOTING_CLIENT teardown — request-requote on a generated query's leg winner clears awardSnapshot and rolls the query OFF QUOTING_CLIENT (to QUOTED, not back to QUOTING_CLIENT); the untouched leg is unaffected", async () => {
+    const { query, legs } = await seedApprovedQuery("qc", [
+      { amount: 83200, transitDays: 3 },
+      { amount: 41600, transitDays: 5 },
+    ]);
+
+    // --- reach a REAL QUOTING_CLIENT via the real endpoint (not a hand-crafted snapshot) ---
+    const genRes = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", managerCookie(randomUUID()))
+      .send()
+      .expect(200);
+    expect(genRes.body.status).toBe("QUOTING_CLIENT");
+    const beforeRequote = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(beforeRequote.status).toBe("QUOTING_CLIENT");
+    expect(beforeRequote.awardSnapshot).not.toBeNull();
+
+    // --- negotiate leg 1's winner ---
+    const comment = "Client wants a sharper rate before we send the quotation";
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${legs[0].id}/quotes/${legs[0].quoteId}/request-requote`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment })
+      .expect(200);
+
+    // --- the query rolled OFF QUOTING_CLIENT (to QUOTED — leg1 FULLY_QUOTED, leg2 still
+    //     APPROVED -> leastAdvanced = FULLY_QUOTED -> QUOTED), snapshot cleared ---
+    const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(updated.awardSnapshot).toBeNull();
+    expect(updated.status).not.toBe("QUOTING_CLIENT");
+    expect(updated.status).toBe("QUOTED");
+
+    // --- leg 1: negotiated as expected ---
+    const quote1After = await prisma.quote.findUniqueOrThrow({ where: { id: legs[0].quoteId } });
+    expect(quote1After.status).toBe("REQUOTED");
+    const decision1After = await prisma.legAwardDecision.findUnique({ where: { legId: legs[0].id } });
+    expect(decision1After?.status).toBe("DRAFT");
+    const leg1After = await prisma.leg.findUniqueOrThrow({ where: { id: legs[0].id } });
+    expect(leg1After.status).toBe("FULLY_QUOTED");
+
+    // --- leg 2: NOT touched by leg 1's negotiation (the fix must not over-reach) ---
+    const quote2After = await prisma.quote.findUniqueOrThrow({ where: { id: legs[1].quoteId } });
+    expect(quote2After.status).toBe("APPROVED");
+    const decision2After = await prisma.legAwardDecision.findUnique({ where: { legId: legs[1].id } });
+    expect(decision2After?.status).toBe("APPROVED");
+    const leg2After = await prisma.leg.findUniqueOrThrow({ where: { id: legs[1].id } });
+    expect(leg2After.status).toBe("APPROVED");
   });
 });
