@@ -10,6 +10,7 @@ export interface FireContext {
   actorId?: string | null;
   tenantId?: string | null;
   queryId?: string;
+  reason?: string | null;
   routeValid?: boolean;
   findings?: Finding[];
   tx?: Prisma.TransactionClient;
