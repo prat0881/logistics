@@ -104,17 +104,24 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
   const future = () => new Date(Date.now() + 86400000);
 
   type LegSpec = {
-    // false = FULLY_QUOTED, quote QUOTED, NO LegAwardDecision row at all — A6's "not every leg
-    // has an approved winner" case.
-    approved: boolean;
+    // APPROVED = leg APPROVED, quote APPROVED, a fully-decided LegAwardDecision (status
+    //   APPROVED, shortlisted = the seeded quote) — exactly the state Task 3's real approve()
+    //   endpoint leaves behind.
+    // PENDING_APPROVAL = leg FULLY_QUOTED, quote QUOTED, a LegAwardDecision that exists but was
+    //   only ever sent (status PENDING_APPROVAL, never decided) — A6's "decision exists but
+    //   isn't APPROVED" arm (task-4 review IMP-3).
+    // NONE = leg FULLY_QUOTED, quote QUOTED, NO LegAwardDecision row at all — A6's "never
+    //   shortlisted at all" arm.
+    decision: "APPROVED" | "PENDING_APPROVAL" | "NONE";
     currency: string;
     amount: number;
     transitDays: number;
+    // Four-eyes test only (task-4 review IMP-1) — override the decision's sentByUserId with a
+    // known id instead of a fresh randomUUID() per leg, so a test can call generate AS that id.
+    sentByUserId?: string;
   };
 
-  // One Query + N Legs, each with its own dedicated FF/Rfq/Quote. `approved` legs get a
-  // fully-decided LegAwardDecision (status APPROVED, shortlisted = the seeded quote) — exactly
-  // the state Task 3's real approve() endpoint leaves behind.
+  // One Query + N Legs, each with its own dedicated FF/Rfq/Quote.
   async function seedQuery(label: string, legs: LegSpec[]) {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-${label}`, priority: "HIGH", incoterms: "FOB" },
@@ -137,7 +144,7 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
           mode: "ROAD",
           originPointId: origin.id,
           destinationPointId: dest.id,
-          status: (spec.approved ? "APPROVED" : "FULLY_QUOTED") as never,
+          status: (spec.decision === "APPROVED" ? "APPROVED" : "FULLY_QUOTED") as never,
         },
       });
       const ffRow = await mkFf(`FF-${PREFIX}-${key}`);
@@ -159,7 +166,7 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
           legId: leg.id,
           freightForwarderId: ffRow.id,
           rfqId: rfq.id,
-          status: (spec.approved ? "APPROVED" : "QUOTED") as never,
+          status: (spec.decision === "APPROVED" ? "APPROVED" : "QUOTED") as never,
           submittedAt: new Date(),
           draftJson: roadDraft(
             leg.id,
@@ -170,7 +177,7 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
         },
       });
 
-      if (spec.approved) {
+      if (spec.decision === "APPROVED") {
         await prisma.legAwardDecision.create({
           data: {
             legId: leg.id,
@@ -178,10 +185,22 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
             shortlistedQuoteId: quote.id,
             shortlistedVariant: "DEDICATED",
             status: "APPROVED",
-            sentByUserId: randomUUID(),
+            sentByUserId: spec.sentByUserId ?? randomUUID(),
             sentForApprovalAt: new Date(),
             decidedByUserId: randomUUID(),
             decidedAt: new Date(),
+          },
+        });
+      } else if (spec.decision === "PENDING_APPROVAL") {
+        await prisma.legAwardDecision.create({
+          data: {
+            legId: leg.id,
+            queryId: query.id,
+            shortlistedQuoteId: quote.id,
+            shortlistedVariant: "DEDICATED",
+            status: "PENDING_APPROVAL",
+            sentByUserId: spec.sentByUserId ?? randomUUID(),
+            sentForApprovalAt: new Date(),
           },
         });
       }
@@ -235,8 +254,8 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
 
   it("2-leg query, both legs approved (INR) -> generate (MANAGER) 200: QUOTING_CLIENT + a 2-leg snapshot; then reopen (EXECUTIVE) 200: back to QUOTED, snapshot null, legs still APPROVED", async () => {
     const { query, legs } = await seedQuery("happy", [
-      { approved: true, currency: "INR", amount: 83200, transitDays: 3 }, // -> $1000 USD
-      { approved: true, currency: "INR", amount: 41600, transitDays: 5 }, // -> $500 USD
+      { decision: "APPROVED", currency: "INR", amount: 83200, transitDays: 3 }, // -> $1000 USD
+      { decision: "APPROVED", currency: "INR", amount: 41600, transitDays: 5 }, // -> $500 USD
     ]);
 
     const res = await request(app.getHttpServer())
@@ -266,6 +285,12 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
     });
     expect(genEvents).toHaveLength(2);
     expect(genEvents.map((e) => e.legId).sort()).toEqual(legs.map((l) => l.id).sort());
+    // Each GENERATE event carries its OWN leg's winner (quoteId/variant), not left null
+    // (task-4 review MIN-5) — mirrors how SHORTLIST/APPROVE events record them.
+    const genEventsByLeg = new Map(genEvents.map((e) => [e.legId, e]));
+    expect(genEventsByLeg.get(legs[0].id)?.quoteId).toBe(legs[0].quoteId);
+    expect(genEventsByLeg.get(legs[1].id)?.quoteId).toBe(legs[1].quoteId);
+    expect(genEvents.every((e) => e.variant === "DEDICATED")).toBe(true);
 
     // Legs stay APPROVED — generate never fires a leg/quote transition (AWARDED is reserved for
     // post-client-Won, Stage 6).
@@ -292,10 +317,27 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
     expect(reopenEvents).toHaveLength(2);
   });
 
-  it("A6 — 2-leg query with only ONE leg approved (the other FULLY_QUOTED, no decision) -> generate 409, status/snapshot untouched", async () => {
+  it("A6 (first arm) — 2-leg query with only ONE leg approved (the other FULLY_QUOTED, NO decision at all) -> generate 409, status/snapshot untouched", async () => {
     const { query } = await seedQuery("a6", [
-      { approved: true, currency: "INR", amount: 83200, transitDays: 3 },
-      { approved: false, currency: "INR", amount: 20000, transitDays: 4 },
+      { decision: "APPROVED", currency: "INR", amount: 83200, transitDays: 3 },
+      { decision: "NONE", currency: "INR", amount: 20000, transitDays: 4 },
+    ]);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(409);
+
+    const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(updated.awardSnapshot).toBeNull();
+    expect(updated.status).not.toBe("QUOTING_CLIENT");
+  });
+
+  it("A6 (second arm, task-4 review IMP-3) — 2-leg query where one leg's decision exists but is only PENDING_APPROVAL (never decided) -> generate 409, status/snapshot untouched", async () => {
+    const { query } = await seedQuery("a6pending", [
+      { decision: "APPROVED", currency: "INR", amount: 83200, transitDays: 3 },
+      { decision: "PENDING_APPROVAL", currency: "INR", amount: 20000, transitDays: 4 },
     ]);
 
     await request(app.getHttpServer())
@@ -311,7 +353,7 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
 
   it("A7 — 1-leg approved query whose winner's currency (EUR) has no FX rate on file -> generate 409", async () => {
     const { query } = await seedQuery("a7", [
-      { approved: true, currency: "EUR", amount: 900, transitDays: 2 },
+      { decision: "APPROVED", currency: "EUR", amount: 900, transitDays: 2 },
     ]);
 
     await request(app.getHttpServer())
@@ -325,9 +367,72 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
     expect(updated.status).not.toBe("QUOTING_CLIENT");
   });
 
+  it("task-4 review IMP-2 — combinedUsd is re-rounded to cents after summing (3 winners whose individually-rounded usdTotals sum to a float artifact)", async () => {
+    // 83208.32 / 41620.8 / 19413.056 INR @ 83.2 -> toUsd yields exactly 1000.10 / 500.25 /
+    // 233.33 per leg (verified independently), but the raw JS sum of those three floats is
+    // 1733.6799999999998, not 1733.68 — this only passes once combinedUsd re-rounds the sum.
+    const { query, legs } = await seedQuery("roundcombined", [
+      { decision: "APPROVED", currency: "INR", amount: 83208.32, transitDays: 3 },
+      { decision: "APPROVED", currency: "INR", amount: 41620.8, transitDays: 3 },
+      { decision: "APPROVED", currency: "INR", amount: 19413.056, transitDays: 3 },
+    ]);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(200);
+
+    const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    const snapshot = updated.awardSnapshot as unknown as Snapshot;
+    expect(snapshot.legs).toHaveLength(3);
+    const byLeg = new Map(snapshot.legs.map((l) => [l.legId, l]));
+    expect(byLeg.get(legs[0].id)?.usdTotal).toBe(1000.1);
+    expect(byLeg.get(legs[1].id)?.usdTotal).toBe(500.25);
+    expect(byLeg.get(legs[2].id)?.usdTotal).toBe(233.33);
+    const rawSum = snapshot.legs.reduce((s, l) => s + l.usdTotal, 0);
+    expect(rawSum).not.toBe(1733.68); // proves the artifact is real, not a vacuous assertion
+    expect(snapshot.combinedUsd).toBe(1733.68);
+  });
+
+  it("task-4 review IMP-1 — four-eyes: the Manager who sent an approved leg calls generate -> 403 SELF_APPROVAL, no state change; a different Manager -> 200", async () => {
+    const senderId = randomUUID();
+    const { query } = await seedQuery("selfgen", [
+      {
+        decision: "APPROVED",
+        currency: "INR",
+        amount: 83200,
+        transitDays: 3,
+        sentByUserId: senderId,
+      },
+      { decision: "APPROVED", currency: "INR", amount: 41600, transitDays: 5 }, // sent by someone else
+    ]);
+
+    const blocked = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(senderId, Role.MANAGER)) // same id that sent leg 1's approval
+      .send()
+      .expect(403);
+    expect(blocked.body.message).toBe("SELF_APPROVAL");
+
+    const untouched = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(untouched.awardSnapshot).toBeNull();
+    expect(untouched.status).not.toBe("QUOTING_CLIENT");
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER)) // a genuinely different Manager
+      .send()
+      .expect(200);
+
+    const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(updated.status).toBe("QUOTING_CLIENT");
+    expect(updated.awardSnapshot).not.toBeNull();
+  });
+
   it("RBAC — an EXECUTIVE calling generate-client-quote -> 403 (RolesGuard)", async () => {
     const { query } = await seedQuery("rbac", [
-      { approved: true, currency: "INR", amount: 83200, transitDays: 3 },
+      { decision: "APPROVED", currency: "INR", amount: 83200, transitDays: 3 },
     ]);
 
     await request(app.getHttpServer())
@@ -338,6 +443,24 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
 
     const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
     expect(updated.awardSnapshot).toBeNull();
+  });
+
+  it("task-4 review IMP-4/MIN-3 — generate on a real ZERO-leg query -> 409 (distinct from a nonexistent query -> 404)", async () => {
+    const { query } = await seedQuery("zerolegs", []);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(409);
+    const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(updated.awardSnapshot).toBeNull();
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${randomUUID()}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(404);
   });
 
   it("reopen-comparison when awardSnapshot is already null -> 409", async () => {

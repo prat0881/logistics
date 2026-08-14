@@ -339,14 +339,21 @@ export class AwardService {
   // comparison.service.ts's buildLeg (lines ~147-190) but targeted at the single shortlisted
   // variant instead of every variantsForMode column.
   async generateClientQuote(queryId: string, user: RequestUser): Promise<Query> {
+    // MIN-3 (task-4 review) — 404 a nonexistent query explicitly (mirrors reopenComparison
+    // below), so it stays distinct from a real, zero-leg query (a 409 next).
+    const query = await this.prisma.query.findUnique({ where: { id: queryId }, select: { id: true } });
+    if (!query) throw new NotFoundException("Query not found");
+
     const legs = await this.prisma.leg.findMany({ where: { queryId }, select: { id: true } });
     if (legs.length === 0) {
       throw new ConflictException("This query has no legs to generate a client quote for");
     }
 
     // A6 — every leg must have a decision AND that decision must be APPROVED with a shortlisted
-    // winner still on it. A leg with no decision at all (never shortlisted) and a leg whose
-    // decision exists but never reached APPROVED both fail the same way — one gate, one message.
+    // winner still on it. A leg with no decision at all (never shortlisted), a leg whose
+    // decision exists but never reached APPROVED (e.g. still PENDING_APPROVAL), and one missing
+    // a shortlistedQuoteId (structurally unreachable — approve() guarantees it — but the column
+    // is nullable) all fail the same way — one gate, one message.
     const decisions = await this.prisma.legAwardDecision.findMany({ where: { queryId } });
     const decisionByLeg = new Map(decisions.map((d) => [d.legId, d]));
     for (const leg of legs) {
@@ -354,6 +361,16 @@ export class AwardService {
       if (!decision || decision.status !== AwardDecisionStatus.APPROVED || !decision.shortlistedQuoteId) {
         throw new ConflictException("every leg must be approved before generating the client quote");
       }
+    }
+
+    // Four-eyes (task-4 review IMP-1 — the S5.4 plan's Global Constraints + design §4/§11
+    // require it on ALL THREE checker routes, not just approve/reject): the generating user must
+    // not be the sender of ANY of this query's legs. `decisions` is already scoped to this query
+    // and, past the A6 loop above, is exactly one APPROVED row per leg — approve() never clears
+    // sentByUserId — so this is well-defined without a further fetch. Checked before any pricing
+    // work (fail fast on authorization).
+    if (decisions.some((d) => d.sentByUserId === user.userId)) {
+      throw new ForbiddenException("SELF_APPROVAL");
     }
 
     const rates = await this.fxRates.list();
@@ -368,15 +385,24 @@ export class AwardService {
           id: true,
           freightForwarderId: true,
           draftJson: true,
-          submittedAt: true,
-          rfq: { select: { currency: true, quoteValidityUntil: true } },
+          rfq: { select: { currency: true } },
         },
       });
 
+      // Defensive (task-4 review MIN-1): the two lookups below are safe only by cross-request
+      // invariant (a submitted, APPROVED quote always carries a draftJson with the shortlisted
+      // variant's column priced). If that invariant is ever violated, fail clean (409) instead
+      // of an unhandled TypeError (500) on a financial endpoint.
+      if (!quote.draftJson) {
+        throw new ConflictException("winning quote is not priceable");
+      }
       const draft = quote.draftJson as unknown as QuoteDraft;
       const totals = computeQuoteTotals(draft);
       const variantKey = decision.shortlistedVariant ?? AIR_VARIANT_KEY;
-      const vt = totals.variants.find((t) => t.key === variantKey)!;
+      const vt = totals.variants.find((t) => t.key === variantKey);
+      if (!vt) {
+        throw new ConflictException("winning quote is not priceable");
+      }
       const nativeTotal = vt.grandTotal;
 
       const currency = quote.rfq?.currency ?? null;
@@ -410,23 +436,37 @@ export class AwardService {
     const awardSnapshot: QueryAwardSnapshot = {
       generatedByUserId: user.userId,
       legs: winners,
-      combinedUsd: winners.reduce((sum, w) => sum + w.usdTotal, 0),
+      // Re-round after summing already cents-rounded values (task-4 review IMP-2) — a Σ of
+      // floats each individually rounded to 2dp can still land on a binary-float artifact (e.g.
+      // 1000.10 + 500.25 + 233.33 === 1733.6799999999998), and this total is persisted verbatim
+      // into the frozen, client-facing snapshot.
+      combinedUsd: Math.round(winners.reduce((sum, w) => sum + w.usdTotal, 0) * 100) / 100,
     };
 
     // ONE transaction: freeze the snapshot, audit one GENERATE event per leg (the table's legId
-    // is NOT-NULL with an FK — a single query-level/sentinel row is impossible), then recompute
-    // the query rollup INSIDE the same tx so it reads the just-written awardSnapshot and
-    // persists QUOTING_CLIENT atomically. Deliberately no `this.status.fire(...)` call — legs
-    // stay APPROVED (leg AWARDED is reserved for post-client-Won, Stage 6); query status is a
-    // projection, never fire()'d.
+    // is NOT-NULL with an FK — a single query-level/sentinel row is impossible; each carries its
+    // own winner's quoteId/variant — task-4 review MIN-5 — mirroring how SHORTLIST/APPROVE
+    // events record them), then recompute the query rollup INSIDE the same tx so it reads the
+    // just-written awardSnapshot and persists QUOTING_CLIENT atomically. Deliberately no
+    // `this.status.fire(...)` call — legs stay APPROVED (leg AWARDED is reserved for
+    // post-client-Won, Stage 6); query status is a projection, never fire()'d.
+    const winnerByLeg = new Map(winners.map((w) => [w.legId, w]));
     return this.prisma.$transaction(async (tx) => {
       await tx.query.update({
         where: { id: queryId },
         data: { awardSnapshot: awardSnapshot as unknown as Prisma.InputJsonValue },
       });
       for (const leg of legs) {
+        const winner = winnerByLeg.get(leg.id)!;
         await tx.awardDecisionEvent.create({
-          data: { legId: leg.id, queryId, type: "GENERATE", actorId: user.userId },
+          data: {
+            legId: leg.id,
+            queryId,
+            type: "GENERATE",
+            quoteId: winner.winningQuoteId,
+            variant: winner.variant,
+            actorId: user.userId,
+          },
         });
       }
       await this.projector.recompute(queryId, tx);
