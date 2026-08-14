@@ -436,6 +436,7 @@ model StatusTransition {
   from     String?
   to       String
   event    String
+  reason   String?
   actorId  String?  @db.Uuid
   at       DateTime @default(now())
 
@@ -461,6 +462,48 @@ model ChangeLog {
   @@index([entity, entityId])
 }
 
+enum AwardDecisionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+model LegAwardDecision {
+  id                 String              @id @default(uuid()) @db.Uuid
+  legId              String              @unique @db.Uuid
+  queryId            String              @db.Uuid
+  shortlistedQuoteId String?             @db.Uuid
+  shortlistedVariant ChargeRateVariant?
+  recommendedQuoteId String?             @db.Uuid
+  recommendedVariant ChargeRateVariant?
+  overrideReason     String?
+  status             AwardDecisionStatus @default(DRAFT)
+  sentForApprovalAt  DateTime?
+  sentByUserId       String?             @db.Uuid
+  decidedByUserId    String?             @db.Uuid
+  decidedAt          DateTime?
+  rejectionReason    String?
+  updatedAt          DateTime            @updatedAt
+
+  @@index([queryId])
+}
+
+model AwardDecisionEvent {
+  id      String             @id @default(uuid()) @db.Uuid
+  legId   String             @db.Uuid
+  queryId String             @db.Uuid
+  type    String
+  quoteId String?            @db.Uuid
+  variant ChargeRateVariant?
+  reason  String?
+  actorId String?            @db.Uuid
+  at      DateTime           @default(now())
+
+  @@index([legId])
+  @@index([queryId])
+}
+
 enum QueryStatus {
   DRAFT
   CREATED
@@ -472,6 +515,7 @@ enum QueryStatus {
   LOST
   CLOSED
   NO_RESPONSE
+  QUOTING_CLIENT
 }
 
 enum Priority {
@@ -555,6 +599,7 @@ enum LegStatus {
   IN_TRANSIT
   DELIVERED
   CLOSED
+  APPROVED
 }
 
 enum QuoteStatus {
@@ -692,6 +737,7 @@ model Query {
   internalNotes           String?
   status                  QueryStatus @default(DRAFT)
   rfqReadyAt              DateTime?
+  awardSnapshot           Json?
   // Soft reference (nullable uuid, NO relation) — same convention as StatusTransition.actorId
   // and FileAsset.uploadedById: decoupled + keeps synthetic-jwt test subjects valid.
   assignedUserId          String?     @db.Uuid
