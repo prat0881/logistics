@@ -1,0 +1,49 @@
+import type { ChargeRateVariant } from "./quote";
+import type { FreightMode } from "./config";
+import type { Priority } from "./query";
+import type { QuoteStatus } from "./status";
+
+/** One comparable offer = a quoted FF's price for one freight-variant column on one leg. */
+export interface OfferDto {
+  quoteId: string;
+  freightForwarderId: string;
+  freightForwarderName: string;
+  variant: ChargeRateVariant | null; // the freight column (null = Air's single column)
+  variantLabel: string; // "Dedicated" | "Groupage" | "FCL" | "LCL" | "—"
+  priced: boolean; // the variant carries its own freight rate (Air: any charge) — only priced offers are rankable
+  nativeTotal: number; // grandTotal in the quote's own currency
+  currency: string;
+  unitsPerUsd: number | null; // the FX rate used (null if none on file)
+  usdTotal: number | null; // toUsd(nativeTotal, currency, rate)
+  transitDays: number | null; // guaranteed transit for this variant's transit key
+  chargeableWeightKg: number;
+  validUntil: string | null; // the RFQ's quoteValidityUntil
+  quoteStatus: QuoteStatus;
+}
+/** An FF that was sent this leg but has not (yet) produced a comparable quote. */
+export interface PendingForwarderDto {
+  freightForwarderId: string;
+  freightForwarderName: string;
+  quoteStatus: QuoteStatus; // RFQ_SENT (awaiting) | REQUOTED | EXPIRED | INVALID | CLOSED
+}
+export interface RecommendationDto {
+  quoteId: string;
+  variant: ChargeRateVariant | null;
+  reason: string; // human string, e.g. "High priority → fastest transit (3 days); price broke the tie."
+}
+export interface LegComparisonDto {
+  legId: string;
+  legCode: string;
+  mode: FreightMode | null;
+  origin: string;
+  destination: string;
+  offers: OfferDto[]; // one per (quoted FF × freight column)
+  pendingForwarders: PendingForwarderDto[]; // sent, not yet comparably quoted (the "awaiting" indicator)
+  recommendation: RecommendationDto | null;
+}
+export interface ComparisonDto {
+  queryId: string;
+  priority: Priority;
+  fxAsOf: string | null; // when the FX rates were read (display)
+  legs: LegComparisonDto[];
+}
