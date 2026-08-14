@@ -209,4 +209,80 @@ describe("Status Machine (integration)", () => {
     expect(reg.get("leg").transitions.length).toBe(sourceLen + 1); // the registry's own copy grew
     expect(legTransitions.length).toBe(sourceLen); // the module-level source array is untouched
   });
+
+  // S5.5 task-2 review: StatusRegistry.contribute() no longer requires register() for the same
+  // key to have already run (NestJS's onModuleInit order across independently-initializing
+  // modules is not something callers should have to reason about — see status.registry.ts's own
+  // comment). These pin the merge orderings the pending-stash relies on, plus the
+  // onApplicationBootstrap() safety net that replaces the immediate throw contribute() used to
+  // give for a truly orphaned key. Pure unit tests — a bare `new StatusRegistry()`, no DB/Nest
+  // bootstrap, mirroring the test directly above.
+  const base = (key: string): StatusMachine => ({
+    key,
+    initial: "A",
+    transitions: [{ from: "A", on: "go", to: "B" }],
+  });
+
+  it("contribute() before register(): the pending transitions are merged in once register() runs (base ++ contributed)", () => {
+    const reg = new StatusRegistry();
+    const contributed = { from: "B", on: "back", to: "A" };
+    reg.contribute("widget", [contributed]);
+    const machine = base("widget");
+    reg.register(machine);
+    expect(reg.get("widget").transitions).toEqual([machine.transitions[0], contributed]);
+  });
+
+  it("multiple contribute() calls before register() merge in CALL order (base ++ first ++ second)", () => {
+    const reg = new StatusRegistry();
+    const first = { from: "B", on: "toC", to: "C" };
+    const second = { from: "C", on: "toD", to: "D" };
+    reg.contribute("widget", [first]);
+    reg.contribute("widget", [second]);
+    const machine = base("widget");
+    reg.register(machine);
+    expect(reg.get("widget").transitions).toEqual([machine.transitions[0], first, second]);
+  });
+
+  it("contribute() -> register() -> contribute() interleaves correctly (base ++ pre-register ++ post-register)", () => {
+    const reg = new StatusRegistry();
+    const preRegister = { from: "B", on: "toC", to: "C" };
+    reg.contribute("widget", [preRegister]);
+    const machine = base("widget");
+    reg.register(machine);
+    const postRegister = { from: "C", on: "toD", to: "D" };
+    reg.contribute("widget", [postRegister]);
+    expect(reg.get("widget").transitions).toEqual([
+      machine.transitions[0],
+      preRegister,
+      postRegister,
+    ]);
+  });
+
+  it("register() before contribute() still works exactly as before (base ++ contributed)", () => {
+    const reg = new StatusRegistry();
+    const machine = base("widget");
+    reg.register(machine);
+    const contributed = { from: "B", on: "back", to: "A" };
+    reg.contribute("widget", [contributed]);
+    expect(reg.get("widget").transitions).toEqual([machine.transitions[0], contributed]);
+  });
+
+  it("onApplicationBootstrap() throws for a contribute()'d key that was never register()-ed (orphan guard)", () => {
+    const reg = new StatusRegistry();
+    reg.contribute("neverRegistered", [{ from: "A", on: "go", to: "B" }]);
+    expect(() => reg.onApplicationBootstrap()).toThrow(/neverRegistered/);
+  });
+
+  it("onApplicationBootstrap() does not throw once every contributed key has been registered", () => {
+    const reg = new StatusRegistry();
+    reg.contribute("widget", [{ from: "B", on: "back", to: "A" }]);
+    reg.register(base("widget"));
+    expect(() => reg.onApplicationBootstrap()).not.toThrow();
+  });
+
+  it("onApplicationBootstrap() does not throw when nothing was ever contributed (the steady-state boot)", () => {
+    const reg = new StatusRegistry();
+    reg.register(base("widget"));
+    expect(() => reg.onApplicationBootstrap()).not.toThrow();
+  });
 });

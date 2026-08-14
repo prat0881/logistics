@@ -1,11 +1,11 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, type OnApplicationBootstrap } from "@nestjs/common";
 import type { StatusMachine } from "./status.types";
 
 // Holds one machine per key. The state vocabulary is central (shared); transition
 // EDGES are contributed by the owning stage — Stage 4+ call `contribute(...)` to
 // append forward/reopen edges without touching Stage 3.
 @Injectable()
-export class StatusRegistry {
+export class StatusRegistry implements OnApplicationBootstrap {
   private readonly machines = new Map<string, StatusMachine>();
   // Transitions contributed for a key before that key's own register() has run. NestJS calls
   // each module's onModuleInit in descending order of the module's computed "distance" from the
@@ -20,7 +20,11 @@ export class StatusRegistry {
   // register()/contribute() for the SAME key should not have to care which module's onModuleInit
   // happens to run first — both always complete during app bootstrap, well before any real
   // fire()/get() call — so contribute() no longer requires register() to have already run;
-  // register() merges in whatever was stashed here once it does run.
+  // register() merges in whatever was stashed here once it does run. onApplicationBootstrap
+  // below is the safety net this relaxation gives up: a typo'd key, or a register() dropped in
+  // a future refactor while a stray contribute() remains, now boots CLEANLY instead of throwing
+  // immediately — and would otherwise only surface as a 500 the first time fire() hits that key,
+  // possibly in production.
   private readonly pending = new Map<string, StatusMachine["transitions"]>();
 
   register(machine: StatusMachine): void {
@@ -48,5 +52,22 @@ export class StatusRegistry {
     const machine = this.machines.get(key);
     if (!machine) throw new Error(`No status machine registered for key '${key}'`);
     return machine;
+  }
+
+  // Fires strictly AFTER every module's onModuleInit has completed (NestApplication.init():
+  // callInitHook() fully resolves, THEN callBootstrapHook() runs) — so unlike the
+  // register()/contribute() pair above, this is NOT subject to the module-distance ordering
+  // fragility that motivated the pending-stash in the first place. By this point every
+  // register() call the app will ever make has already happened; anything still in `pending`
+  // was contributed against a key nobody ever registers — fail fast at boot rather than
+  // silently deferring the crash to the first runtime fire() against that key.
+  onApplicationBootstrap(): void {
+    if (this.pending.size > 0) {
+      const keys = [...this.pending.keys()].join(", ");
+      throw new Error(
+        `StatusRegistry: contribute() was called for key(s) [${keys}] that were never register()-ed. ` +
+          `A machine must be registered before the app finishes bootstrapping.`,
+      );
+    }
   }
 }
