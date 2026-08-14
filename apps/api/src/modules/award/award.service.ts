@@ -14,7 +14,7 @@ import { ComparisonService } from "../comparison/comparison.service";
 // hasn't heard back (RFQ_SENT), is mid-negotiation (REQUOTED), or needs re-distribution
 // (INVALID). Mirrors leg-quote.projector.ts's RESOLVED set (inverted) — kept as a small local
 // literal rather than importing that module's internal constant across a module boundary.
-const OUTSTANDING_QUOTE_STATUSES: readonly string[] = [
+const OUTSTANDING_QUOTE_STATUSES: readonly QuoteStatus[] = [
   QuoteStatus.RFQ_SENT,
   QuoteStatus.REQUOTED,
   QuoteStatus.INVALID,
@@ -37,15 +37,19 @@ export class AwardService {
     input: ShortlistInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
-    // Reused for two things: (a) A1 — prove `input.quoteId`/`variant` is a real offer on this
-    // leg (comparison offers are already QUOTED/REQUOTED-only, so finding one here also proves
-    // the status requirement); (b) the live recommendation to snapshot onto the decision (D3).
+    // Reused for two things: (a) A1 — prove `input.quoteId`/`variant` is a real, PRICED offer
+    // on this leg (comparison offers are already QUOTED/REQUOTED-only, so finding one here also
+    // proves the status requirement); (b) the live recommendation to snapshot onto the decision
+    // (D3). `getComparison` emits one OfferDto per `variantsForMode` slot unconditionally, so an
+    // FF that only priced e.g. DEDICATED still has a GROUPAGE placeholder (`priced: false`,
+    // ~$0) — `&& o.priced` keeps that placeholder from passing A1 and pinning the award to a
+    // never-quoted, zero-freight variant.
     const comparison = await this.comparison.getComparison(queryId);
     const leg = comparison.legs.find((l) => l.legId === legId);
     if (!leg) throw new NotFoundException("Leg not found");
 
     const offer = leg.offers.find(
-      (o) => o.quoteId === input.quoteId && o.variant === input.variant,
+      (o) => o.quoteId === input.quoteId && o.variant === input.variant && o.priced,
     );
     if (!offer) {
       throw new BadRequestException("Selected quote/variant is not an offer on this leg");

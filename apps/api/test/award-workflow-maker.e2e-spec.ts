@@ -245,6 +245,32 @@ describe("award workflow — maker endpoints (e2e)", () => {
     expect(await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } })).toBeNull();
   });
 
+  it("A1 — shortlisting an unpriced variant placeholder (GROUPAGE, when the FF only priced DEDICATED) -> 400; the priced variant still works", async () => {
+    // roadDraft() (above) only ever supplies a DEDICATED trucking rate — comparison.service.ts's
+    // `variantsForMode("ROAD")` still unconditionally emits a GROUPAGE OfferDto for this quote,
+    // just with `priced: false` (~$0 nativeTotal). A1 must reject shortlisting that placeholder.
+    const { query, leg, quotes } = await seedLeg("a1-unpriced", "FULLY_QUOTED", [
+      { key: "ONLY", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
+    ]);
+
+    await request(app.getHttpServer())
+      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ quoteId: quotes.ONLY.id, variant: "GROUPAGE", overrideReason: "x" })
+      .expect(400);
+    expect(await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } })).toBeNull();
+
+    // The SAME quote's actually-priced DEDICATED variant is still a valid, shortlistable offer.
+    await request(app.getHttpServer())
+      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ quoteId: quotes.ONLY.id, variant: "DEDICATED" })
+      .expect(200);
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.shortlistedQuoteId).toBe(quotes.ONLY.id);
+    expect(decision?.shortlistedVariant).toBe("DEDICATED");
+  });
+
   it("A2 — send-for-approval of a shortlist that overrides the recommendation with no overrideReason -> 400", async () => {
     const { query, leg, quotes } = await seedLeg("a2", "FULLY_QUOTED", [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
@@ -388,7 +414,7 @@ describe("award workflow — maker endpoints (e2e)", () => {
     expect(events[0].actorId).toBe(senderId);
   });
 
-  it("404s send-for-approval when no shortlist exists yet for the leg", async () => {
+  it("400s send-for-approval when no shortlist exists yet for the leg", async () => {
     const { query, leg } = await seedLeg("noshortlist", "FULLY_QUOTED", [
       { key: "ONLY", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
     ]);
