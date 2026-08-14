@@ -10,6 +10,7 @@ import { PrismaModule } from "../../prisma/prisma.module";
 import { AwardController } from "./award.controller";
 import { AwardService } from "./award.service";
 import { NegotiationService } from "./negotiation.service";
+import { AwardChangeOrderListener } from "./award-change-order.listener";
 
 // Stage 5 (S5.3, Technical Design §8.1/§8.2): the award/negotiation edges layered on top of
 // the Stage-3/4 "quote"/"leg" machines. Mirrors rfq.module.ts's onModuleInit — CONTRIBUTES
@@ -27,10 +28,16 @@ import { NegotiationService } from "./negotiation.service";
 // NotificationDispatcher (CommsModule). No DI cycle: RfqModule imports
 // StatusModule/ChangesModule/FreightForwardersModule/CommsModule — none of those import
 // AwardModule, and app.module.ts registers RfqModule before AwardModule.
+// S5.5 Task 4: AwardChangeOrderListener (award-change-order.listener.ts, design §10.2) reacts to
+// ChangesModule's "changeorder.leg.reopened" event to reverse an award on a leg a change-order
+// just reopened. It's an EVENT subscriber (EventEmitter2 is global), not a DI edge — no import of
+// ChangesModule needed here, only a `type`-only import of its event shape (no cycle). Needs no
+// new module import: PrismaService (PrismaModule) and QueryStatusProjector (StatusModule) are
+// both already imported above for AwardService's own use.
 @Module({
   imports: [StatusModule, ComparisonModule, FxRatesModule, PrismaModule, RfqModule, CommsModule],
   controllers: [AwardController],
-  providers: [AwardService, NegotiationService],
+  providers: [AwardService, NegotiationService, AwardChangeOrderListener],
 })
 export class AwardModule implements OnModuleInit {
   constructor(private readonly registry: StatusRegistry) {}
