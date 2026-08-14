@@ -12,6 +12,7 @@ function legStatusVariant(s: LegStatus): BadgeVariant {
     case "RFQ_SENT": return "accent";
     case "PARTIALLY_QUOTED": return "warning";
     case "FULLY_QUOTED":
+    case "APPROVED":
     case "AWARDED": return "success";
     default: return "outline";
   }
@@ -24,6 +25,7 @@ const LEG_LABEL: Record<LegStatus, string> = {
   RFQ_SENT: "RFQ Sent",
   PARTIALLY_QUOTED: "Partially Quoted",
   FULLY_QUOTED: "Fully Quoted",
+  APPROVED: "Approved",
   AWARDED: "Awarded",
   IN_TRANSIT: "In Transit",
   DELIVERED: "Delivered",

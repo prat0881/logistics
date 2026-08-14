@@ -41,6 +41,7 @@ export const LegStatus = {
   RFQ_SENT: "RFQ_SENT",
   PARTIALLY_QUOTED: "PARTIALLY_QUOTED",
   FULLY_QUOTED: "FULLY_QUOTED",
+  APPROVED: "APPROVED",
   AWARDED: "AWARDED",
   IN_TRANSIT: "IN_TRANSIT",
   DELIVERED: "DELIVERED",
@@ -56,6 +57,8 @@ export const LegEvent = {
   SEND_RFQ: "rfq.send",
   QUOTE_PARTIAL: "quote.partial",
   QUOTE_FULL: "quote.full",
+  APPROVE: "approve",
+  REOPEN_AWARD: "reopen_award",
 } as const;
 export type LegEvent = (typeof LegEvent)[keyof typeof LegEvent];
 export const LEG_EVENTS = Object.values(LegEvent) as [LegEvent, ...LegEvent[]];
@@ -79,6 +82,9 @@ export const QuoteEvent = {
   SUBMIT: "submit",   // RFQ_SENT → QUOTED
   EXPIRE: "expire",   // RFQ_SENT → EXPIRED
   INVALIDATE: "invalidate", // QUOTED → INVALID (change-order, sub-build 6)
+  APPROVE: "approve",             // QUOTED → APPROVED
+  UNAPPROVE: "unapprove",         // APPROVED → QUOTED
+  REQUEST_REQUOTE: "request_requote", // QUOTED/APPROVED → REQUOTED
 } as const;
 export type QuoteEvent = (typeof QuoteEvent)[keyof typeof QuoteEvent];
 export const QUOTE_EVENTS = Object.values(QuoteEvent) as [QuoteEvent, ...QuoteEvent[]];
@@ -90,6 +96,7 @@ export const QueryStatus = {
   RFQ_READY: "RFQ_READY",
   RFQ_SENT: "RFQ_SENT",
   QUOTED: "QUOTED",
+  QUOTING_CLIENT: "QUOTING_CLIENT",
   NO_RESPONSE: "NO_RESPONSE",
   AWAITING_CLIENT_DECISION: "AWAITING_CLIENT_DECISION",
   WON: "WON",
@@ -106,6 +113,7 @@ export interface QueryMilestones {
   rfqReady?: boolean;
   noResponse?: boolean;
   awaitingClientDecision?: boolean;
+  quotingClient?: boolean;
   won?: boolean;
   lost?: boolean;
   closed?: boolean;
@@ -117,10 +125,11 @@ const LEG_RANK: Record<LegStatus, number> = {
   RFQ_SENT: 2,
   PARTIALLY_QUOTED: 3,
   FULLY_QUOTED: 4,
-  AWARDED: 5,
-  IN_TRANSIT: 6,
-  DELIVERED: 7,
-  CLOSED: 8,
+  APPROVED: 5,
+  AWARDED: 6,
+  IN_TRANSIT: 7,
+  DELIVERED: 8,
+  CLOSED: 9,
 };
 
 function leastAdvanced(legStatuses: LegStatus[]): LegStatus {
@@ -140,6 +149,7 @@ export function deriveQueryStatus(
   if (milestones.lost) return QueryStatus.LOST;
   if (milestones.won) return QueryStatus.WON;
   if (milestones.awaitingClientDecision) return QueryStatus.AWAITING_CLIENT_DECISION;
+  if (milestones.quotingClient) return QueryStatus.QUOTING_CLIENT;
 
   if (legStatuses.length === 0) {
     // No legs (legacy Plan-4 drafts / pre-leg queries): query-level milestones only.
@@ -159,6 +169,8 @@ export function deriveQueryStatus(
       return QueryStatus.RFQ_SENT;
     case LegStatus.FULLY_QUOTED:
       return milestones.noResponse ? QueryStatus.NO_RESPONSE : QueryStatus.QUOTED;
+    case LegStatus.APPROVED:
+      return QueryStatus.QUOTED;
     case LegStatus.DELIVERED:
       return QueryStatus.CLOSED; // all legs delivered (§9.1)
     case LegStatus.CLOSED:

@@ -140,24 +140,50 @@ describe("status vocabularies", () => {
       "RFQ_SENT",
       "PARTIALLY_QUOTED",
       "FULLY_QUOTED",
+      "APPROVED",
       "AWARDED",
       "IN_TRANSIT",
       "DELIVERED",
       "CLOSED",
     ]);
-    expect(LEG_EVENTS).toEqual(["validate.pass", "reopen", "rfq.send", "quote.partial", "quote.full"]);
+    expect(LEG_EVENTS).toEqual([
+      "validate.pass",
+      "reopen",
+      "rfq.send",
+      "quote.partial",
+      "quote.full",
+      "approve",
+      "reopen_award",
+    ]);
     expect(QUERY_STATUSES).toEqual([
       "DRAFT",
       "CREATED",
       "RFQ_READY",
       "RFQ_SENT",
       "QUOTED",
+      "QUOTING_CLIENT",
       "NO_RESPONSE",
       "AWAITING_CLIENT_DECISION",
       "WON",
       "LOST",
       "CLOSED",
     ]);
+  });
+});
+
+describe("deriveQueryStatus — Stage 5", () => {
+  it("all legs APPROVED but no milestone → still QUOTED (the Generate gate drives QUOTING_CLIENT)", () => {
+    expect(deriveQueryStatus([LegStatus.APPROVED, LegStatus.APPROVED])).toBe(QueryStatus.QUOTED);
+  });
+  it("quotingClient milestone → QUOTING_CLIENT", () => {
+    expect(deriveQueryStatus([LegStatus.APPROVED], { quotingClient: true })).toBe(
+      QueryStatus.QUOTING_CLIENT,
+    );
+  });
+  it("awaitingClientDecision still outranks quotingClient (sent beats preparing)", () => {
+    expect(
+      deriveQueryStatus([LegStatus.APPROVED], { quotingClient: true, awaitingClientDecision: true }),
+    ).toBe(QueryStatus.AWAITING_CLIENT_DECISION);
   });
 });
 
@@ -176,7 +202,7 @@ describe("deriveQueryStatus — zero-leg query-level milestones (Plan 4)", () =>
   });
 });
 
-import { QuoteStatus, QUOTE_STATUSES, QuoteEvent, LegEvent } from "./status";
+import { QuoteStatus, QUOTE_STATUSES, QuoteEvent, QUOTE_EVENTS, LegEvent } from "./status";
 
 describe("quote status vocabulary", () => {
   it("declares the Stage-4 quote states", () => {
@@ -193,5 +219,20 @@ describe("quote status vocabulary", () => {
   it("declares quote events", () => {
     expect(QuoteEvent.SEND).toBe("send");
     expect(QuoteEvent.SUBMIT).toBe("submit");
+  });
+});
+
+describe("Stage 5 award events", () => {
+  it("declares the quote award events", () => {
+    expect(QuoteEvent.APPROVE).toBe("approve");
+    expect(QuoteEvent.UNAPPROVE).toBe("unapprove");
+    expect(QuoteEvent.REQUEST_REQUOTE).toBe("request_requote");
+    expect(QUOTE_EVENTS).toEqual(
+      expect.arrayContaining(["approve", "unapprove", "request_requote"]),
+    );
+  });
+  it("declares the leg award events", () => {
+    expect(LegEvent.APPROVE).toBe("approve");
+    expect(LegEvent.REOPEN_AWARD).toBe("reopen_award");
   });
 });
