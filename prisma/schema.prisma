@@ -472,7 +472,9 @@ enum AwardDecisionStatus {
 model LegAwardDecision {
   id                 String              @id @default(uuid()) @db.Uuid
   legId              String              @unique @db.Uuid
+  leg                Leg                 @relation(fields: [legId], references: [id], onDelete: Cascade)
   queryId            String              @db.Uuid
+  query              Query               @relation(fields: [queryId], references: [id], onDelete: Cascade)
   shortlistedQuoteId String?             @db.Uuid
   shortlistedVariant ChargeRateVariant?
   recommendedQuoteId String?             @db.Uuid
@@ -492,7 +494,9 @@ model LegAwardDecision {
 model AwardDecisionEvent {
   id      String             @id @default(uuid()) @db.Uuid
   legId   String             @db.Uuid
+  leg     Leg                @relation(fields: [legId], references: [id], onDelete: Cascade)
   queryId String             @db.Uuid
+  query   Query              @relation(fields: [queryId], references: [id], onDelete: Cascade)
   type    String
   quoteId String?            @db.Uuid
   variant ChargeRateVariant?
@@ -756,6 +760,9 @@ model Query {
 
   notifications Notification[]
 
+  awardDecisions      LegAwardDecision[]
+  awardDecisionEvents AwardDecisionEvent[]
+
   @@index([tenantId])
   @@index([clientId])
   @@index([assignedUserId])
@@ -884,6 +891,8 @@ model Leg {
   legPackages LegPackage[]
   quotes   Quote[]
   chargeSelections LegChargeLineSelection[]
+  awardDecision       LegAwardDecision?
+  awardDecisionEvents AwardDecisionEvent[]
 
   @@unique([queryId, legCode])
   @@index([queryId])
