@@ -12,6 +12,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { StatusService } from "../src/modules/status/status.service";
 
 // S5.4 Task 3 — the CHECKER half of the maker-checker award workflow (design §9 steps 2+4):
 // POST .../legs/:legId/approve and POST .../legs/:legId/reject, both Manager+
@@ -160,19 +161,24 @@ describe("award workflow — checker endpoints (e2e)", () => {
   }
 
   const future = () => new Date(Date.now() + 86400000);
+  const past = () => new Date(Date.now() - 3600000);
 
   // Drives the REAL maker endpoints (shortlist -> send-for-approval) to reach PENDING_APPROVAL
   // honestly. Shortlists the recommended (only comparable) offer so A2's override-reason
   // requirement never fires. Sender is a MANAGER (Manager ⊇ Executive's auth-only routes) so
-  // `sentByUserId` can double as the four-eyes actor under test.
+  // `sentByUserId` can double as the four-eyes actor under test. `legStatus` defaults to
+  // FULLY_QUOTED (the ordinary path) but can be overridden to PARTIALLY_QUOTED to exercise the
+  // A3 deadline-passed path — send-for-approval allows that, so a PENDING_APPROVAL decision can
+  // legitimately sit on top of a leg that never itself reached FULLY_QUOTED.
   async function seedPendingApproval(
     label: string,
     senderId: string,
     ffs: FfSpec[] = [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
     ],
+    legStatus: string = "FULLY_QUOTED",
   ) {
-    const { query, leg, quotes } = await seedLeg(label, "FULLY_QUOTED", ffs);
+    const { query, leg, quotes } = await seedLeg(label, legStatus, ffs);
 
     await request(app.getHttpServer())
       .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
@@ -229,16 +235,34 @@ describe("award workflow — checker endpoints (e2e)", () => {
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
-  it("a different Manager approves -> 200 + quote APPROVED + leg APPROVED + decision APPROVED + an APPROVE event", async () => {
+  it("a different Manager approves -> 200 + quote APPROVED + leg APPROVED + decision APPROVED + an APPROVE event, quote fired before leg", async () => {
     const senderId = randomUUID(); // M1
     const approverId = randomUUID(); // M2 — distinct from the sender
     const { query, leg, quotes } = await seedPendingApproval("happy", senderId);
+
+    // Fire ORDER is load-bearing (award.service.ts's approve() comment) but both orderings
+    // converge on the same final DB state — the wrong order only differs by a caught+logged
+    // illegal transition attempt inside the projector, which leaves no row to assert on. A
+    // call-order spy is the only thing that actually pins the order a future refactor could
+    // silently swap. `fire` calls through to the real implementation by default.
+    const fireSpy = jest.spyOn(app.get(StatusService), "fire");
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
       .set("Cookie", cookieFor(approverId, Role.MANAGER))
       .send()
       .expect(200);
+
+    const quoteFireIdx = fireSpy.mock.calls.findIndex(
+      (call) => call[0] === "quote" && call[2] === "approve",
+    );
+    const legFireIdx = fireSpy.mock.calls.findIndex(
+      (call) => call[0] === "leg" && call[2] === "approve",
+    );
+    expect(quoteFireIdx).toBeGreaterThanOrEqual(0);
+    expect(legFireIdx).toBeGreaterThanOrEqual(0);
+    expect(quoteFireIdx).toBeLessThan(legFireIdx);
+    fireSpy.mockRestore();
 
     const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
     expect(quote?.status).toBe("APPROVED");
@@ -278,11 +302,14 @@ describe("award workflow — checker endpoints (e2e)", () => {
     const senderId = randomUUID();
     const { query, leg } = await seedPendingApproval("selfapproval", senderId);
 
-    await request(app.getHttpServer())
+    // Body content is asserted (not just the status code) so this can't be confused with the
+    // RolesGuard's plain "Insufficient role" 403 (the Executive-blocked case above).
+    const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
       .set("Cookie", cookieFor(senderId, Role.MANAGER)) // same id that sent it
       .send()
       .expect(403);
+    expect(res.body.message).toBe("SELF_APPROVAL");
 
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("PENDING_APPROVAL"); // untouched
@@ -379,5 +406,85 @@ describe("award workflow — checker endpoints (e2e)", () => {
 
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("PENDING_APPROVAL"); // untouched
+  });
+
+  it("CRITICAL — approve/reject with a mismatched queryId in the URL (correct legId, a different real query) -> 404, no state change", async () => {
+    const senderId = randomUUID();
+    const { leg, quotes } = await seedPendingApproval("wrongquery", senderId);
+    // A second, unrelated real Query — proves the leg lookup is scoped to (legId, queryId)
+    // together, not legId alone. queryCode still starts with CODE so afterAll's cleanup() sweeps
+    // it up like every other row in this spec.
+    const otherQuery = await prisma.query.create({
+      data: { queryCode: `${CODE}-wrongquery-OTHER`, priority: "HIGH", incoterms: "FOB" },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${otherQuery.id}/legs/${leg.id}/approve`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(404);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${otherQuery.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "irrelevant — should never be reached" })
+      .expect(404);
+
+    const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
+    expect(quote?.status).toBe("QUOTED"); // untouched
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("PENDING_APPROVAL"); // untouched
+  });
+
+  it("CRITICAL — approve on a PARTIALLY_QUOTED leg that reached PENDING_APPROVAL via the A3 deadline-passed path -> 409, no partial commit", async () => {
+    const senderId = randomUUID();
+    // Mirrors the maker spec's "A3 (converse)" setup: one QUOTED offer + one FF that never
+    // responded (RFQ_SENT) whose deadline has passed — send-for-approval legitimately allows
+    // this, so the leg itself never becomes FULLY_QUOTED even though the decision reaches
+    // PENDING_APPROVAL.
+    const { query, leg, quotes } = await seedPendingApproval(
+      "partial",
+      senderId,
+      [
+        { key: "REC", status: "QUOTED", deadline: past(), draft: { amount: 83200, transitDays: 3 } },
+        { key: "PENDING", status: "RFQ_SENT", deadline: past() },
+      ],
+      "PARTIALLY_QUOTED",
+    );
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(409);
+
+    // No partial commit: the FULLY_QUOTED guard runs before any fire, so nothing moved at all.
+    const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
+    expect(quote?.status).toBe("QUOTED");
+    const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
+    expect(updatedLeg?.status).toBe("PARTIALLY_QUOTED");
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("PENDING_APPROVAL");
+  });
+
+  it("reject a leg whose decision is still DRAFT (shortlisted, never sent) -> 409", async () => {
+    const { query, leg, quotes } = await seedLeg("rejectdraft", "FULLY_QUOTED", [
+      { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
+    ]);
+
+    await request(app.getHttpServer())
+      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
+      .expect(200); // DRAFT, never sent for approval
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "should not matter, not pending" })
+      .expect(409);
+
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("DRAFT"); // untouched
   });
 });

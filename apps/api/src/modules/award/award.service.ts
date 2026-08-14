@@ -181,12 +181,25 @@ export class AwardService {
     });
   }
 
-  // Shared preconditions for both checker actions, in order: (1) the decision must exist
-  // (404); (2) it must be PENDING_APPROVAL — you cannot decide something not sent for approval
-  // (409); (3) four-eyes — the Manager (or Admin) deciding may not be the same user who sent it
-  // (403). The @Roles guard already keeps plain Executives out before this ever runs; this
-  // additionally stops a Manager from approving/rejecting their own send.
-  private async requireDecidable(legId: string, user: RequestUser): Promise<LegAwardDecision> {
+  // Shared preconditions for both checker actions, in order: (0) the leg must actually belong
+  // to the URL's queryId — 404 otherwise. This mirrors sendForApproval's own
+  // `where: { id: legId, queryId }` scoping (line ~114 above); without it, a mismatched queryId
+  // in the URL (any other real query, correct legId) would still succeed and thread the WRONG
+  // queryId into the fire()s / AwardDecisionEvent / QueryStatusProjector rollup — corrupting the
+  // audit trail and recomputing the wrong query's status. (1) the decision must exist (404);
+  // (2) it must be PENDING_APPROVAL — you cannot decide something not sent for approval (409);
+  // (3) four-eyes — the Manager (or Admin) deciding may not be the same user who sent it (403).
+  // The @Roles guard already keeps plain Executives out before this ever runs; this additionally
+  // stops a Manager from approving/rejecting their own send. Returns the leg's status alongside
+  // the decision since approve() needs it for its own FULLY_QUOTED guard below.
+  private async requireDecidable(
+    queryId: string,
+    legId: string,
+    user: RequestUser,
+  ): Promise<{ leg: { status: string }; decision: LegAwardDecision }> {
+    const leg = await this.prisma.leg.findFirst({ where: { id: legId, queryId }, select: { status: true } });
+    if (!leg) throw new NotFoundException("Leg not found");
+
     const decision = await this.prisma.legAwardDecision.findUnique({ where: { legId } });
     if (!decision) throw new NotFoundException("No award decision on this leg");
     if (decision.status !== AwardDecisionStatus.PENDING_APPROVAL) {
@@ -195,11 +208,26 @@ export class AwardService {
     if (decision.sentByUserId === user.userId) {
       throw new ForbiddenException("SELF_APPROVAL");
     }
-    return decision;
+    return { leg, decision };
   }
 
   async approve(queryId: string, legId: string, user: RequestUser): Promise<LegAwardDecision> {
-    const decision = await this.requireDecidable(legId, user);
+    const { leg, decision } = await this.requireDecidable(queryId, legId, user);
+
+    // The only registered "leg" edge for the APPROVE event is FULLY_QUOTED -> APPROVED
+    // (award.module.ts). sendForApproval's A3 path can legally reach PENDING_APPROVAL from a
+    // PARTIALLY_QUOTED leg (outstanding FFs' deadlines passed) — approving that leg would fire
+    // the quote first (which commits), then hit this illegal leg transition (uncaught ->
+    // IllegalTransitionError -> 500), stranding a half-approved state: quote APPROVED, leg still
+    // PARTIALLY_QUOTED, decision still PENDING_APPROVAL. Guard BEFORE firing anything so nothing
+    // half-commits. Completing a deadline-passed PARTIALLY_QUOTED leg (expiring the stragglers
+    // -> FULLY_QUOTED, then approving) is SB5's expiry-sweep job — deliberately not done here; a
+    // bare EXPIRE fire here would strand SB5's own ScheduledEvents for those quotes.
+    if (leg.status !== LegStatus.FULLY_QUOTED) {
+      throw new ConflictException(
+        "This leg is not fully quoted; its outstanding RFQs must be closed out before approval",
+      );
+    }
 
     // sendForApproval only ever reaches PENDING_APPROVAL with shortlistedQuoteId set (it
     // guards on that itself) — re-narrow defensively since the column is nullable.
@@ -258,7 +286,7 @@ export class AwardService {
     input: RejectInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
-    await this.requireDecidable(legId, user);
+    await this.requireDecidable(queryId, legId, user);
 
     // Single final write straight to DRAFT (design §9.5: "REJECTED -> back to DRAFT") rather
     // than two updates (REJECTED then DRAFT) — the "REJECTED" moment is captured as audit
