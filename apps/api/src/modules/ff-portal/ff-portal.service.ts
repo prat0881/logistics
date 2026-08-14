@@ -257,7 +257,7 @@ export class FfPortalService {
 
   async submit(scope: FfScope, legId: string): Promise<{ quoteId: string; status: "QUOTED" }> {
     const q = this.quoteForLeg(scope, legId);
-    if (q.status !== "RFQ_SENT") {
+    if (q.status !== "RFQ_SENT" && q.status !== "REQUOTED") {
       throw new ConflictException("This quote has already been submitted or is not open");
     }
 

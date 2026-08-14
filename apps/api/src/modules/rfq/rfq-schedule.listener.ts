@@ -65,7 +65,7 @@ export class RfqScheduleListener {
       if (!rfq) return;
 
       const openQuotes = await this.prisma.quote.findMany({
-        where: { rfqId, status: QuoteStatus.RFQ_SENT },
+        where: { rfqId, status: { in: [QuoteStatus.RFQ_SENT, QuoteStatus.REQUOTED] } },
         select: { id: true, legId: true, leg: { select: { legCode: true } } },
       });
 
