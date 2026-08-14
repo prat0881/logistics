@@ -5,8 +5,16 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { StatusService } from "../status/status.service";
 import type { StatusChangedEvent } from "../status/status.service";
 
-// Terminal quote states that count as "resolved" for the leg rollup (spec §9.2).
-const RESOLVED: string[] = [QuoteStatus.QUOTED, QuoteStatus.EXPIRED, QuoteStatus.CLOSED];
+// Terminal quote states that count as "resolved" for the leg rollup (spec §9.2). APPROVED
+// (S5.3 award edge, QUOTED -> APPROVED) counts too, so approving a quote doesn't strand the leg
+// short of FULLY_QUOTED. REQUOTED is deliberately excluded — a re-quote in flight is genuinely
+// not resolved.
+const RESOLVED: string[] = [
+  QuoteStatus.QUOTED,
+  QuoteStatus.EXPIRED,
+  QuoteStatus.CLOSED,
+  QuoteStatus.APPROVED,
+];
 
 @Injectable()
 export class LegQuoteProjector {

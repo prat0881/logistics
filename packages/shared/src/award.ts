@@ -1,4 +1,6 @@
+import { z } from "zod";
 import type { ChargeRateVariant } from "./quote";
+import { CHARGE_RATE_VARIANTS } from "./quote";
 import type { FreightMode } from "./config";
 import type { Priority } from "./query";
 import type { QuoteStatus } from "./status";
@@ -48,3 +50,18 @@ export interface ComparisonDto {
   fxAsOf: string | null; // when the FX rates were read (display)
   legs: LegComparisonDto[];
 }
+
+// ── Stage 5 (S5.4) request schemas — maker/checker approval-workflow endpoints ──
+export const shortlistSchema = z.object({
+  quoteId: z.string().uuid(),
+  variant: z.enum(CHARGE_RATE_VARIANTS).nullable(),
+  overrideReason: z.string().trim().min(1).max(2000).optional(), // required at send if shortlist ≠ recommendation (A2)
+});
+export const sendForApprovalSchema = z.object({
+  proceedWithoutWaiting: z.boolean().optional(), // A9 override when the leg has an in-flight re-quote
+  proceedReason: z.string().trim().min(1).max(2000).optional(),
+});
+export const rejectSchema = z.object({ reason: z.string().trim().min(1).max(2000) });
+export type ShortlistInput = z.infer<typeof shortlistSchema>;
+export type SendForApprovalInput = z.infer<typeof sendForApprovalSchema>;
+export type RejectInput = z.infer<typeof rejectSchema>;
