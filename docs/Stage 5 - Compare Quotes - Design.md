@@ -155,7 +155,7 @@ recommendOffer(input: {
   offers: { quoteId, variant, usdTotal|null, transitDays, submittedAt }[]   // one per (FF × priced variant)
 }): { quoteId, variant } | null
 ```
-- Consider only **quoted** offers with a resolvable `usdTotal` (has an FX rate) — offers missing a rate are surfaced as a warning and excluded until priced (D2).
+- Consider only **clean `QUOTED`** offers with a resolvable `usdTotal`. **Offers under re-quote (`REQUOTED`) are excluded** — you've asked to change that price, so the system won't recommend it (its earlier price still shows in the grid, badged stale — §11). Offers missing an FX rate are surfaced as a warning and excluded until priced (D2).
 - **High/Urgent:** sort by `transitDays` asc → `usdTotal` asc → `submittedAt` asc.
 - **Medium/Low:** sort by `usdTotal` asc → `transitDays` asc → `submittedAt` asc.
 - Returns the top offer, or `null` when no offer is rankable (empty/all-unpriced) — the UI then shows "no recommendation yet."
@@ -172,10 +172,13 @@ Everything routes through the **one door** `StatusService.fire`; machines are pu
 | :-- | :-- | :-- | :-- |
 | `QUOTED` | `APPROVE` | `APPROVED` | checker approves the shortlisted quote's leg |
 | `APPROVED` | `UNAPPROVE` | `QUOTED` | approval reversed (reopen / negotiate an approved FF) |
-| `QUOTED` | `REQUEST_REQUOTE` | `REQUOTED` | Executive asks this FF to re-quote |
-| `APPROVED` | `REQUEST_REQUOTE` | `REQUOTED` | re-negotiate an already-approved FF (also reverses the leg approval) |
-| `REQUOTED` | `SEND` | `RFQ_SENT` | token re-issued, FF portal reopened (reuses existing `SEND`) |
+| `QUOTED` | `REQUEST_REQUOTE` | `REQUOTED` | Executive asks this FF to re-quote — **the prior `draftJson` (earlier price) is retained**; the token is re-issued so the portal reopens |
+| `APPROVED` | `REQUEST_REQUOTE` | `REQUOTED` | re-negotiate an already-approved FF (also reverses the leg approval + resets the decision) |
+| `REQUOTED` | `SUBMIT` | `QUOTED` | the FF submits the **revised** quote (the ff-portal submit guard is extended to accept `REQUOTED`; the new price overwrites `draftJson`) → re-enters the comparison as a clean offer |
+| `REQUOTED` | `EXPIRE` | `EXPIRED` | the deadline passes with no revised quote (expiry sweep) |
 | `APPROVED` | `INVALIDATE` | `INVALID` | **new source** — a change-order reopens the leg an approved quote sat on |
+
+**`REQUOTED` is the _durable_ "awaiting revised quote" state** (not a transient hop to `RFQ_SENT`): the FF's earlier price stays visible in the comparison while it waits, the re-issued token reopens the portal for it, and a leg reads `awaitingReQuote = true` while any of its FFs sits in `REQUOTED`.
 
 **Reject is not a quote transition** — the quote stays `QUOTED`; only the `LegAwardDecision` moves to `REJECTED`. (No `REJECTED` quote status; matches spec §9.1's vocabulary.)
 
@@ -201,8 +204,8 @@ Approve/reject/requote all carry a `reason` (via `FireContext.reason` → `Statu
 Per leg, the decision walks: `DRAFT → PENDING_APPROVAL → APPROVED` (or `→ REJECTED → DRAFT`), all recorded on `LegAwardDecision` + `AwardDecisionEvent`.
 
 1. **Shortlist (Executive).** Pick a `(FF, variant)` offer; defaults to the live recommendation. Snapshot `recommendedQuoteId/Variant`. Selecting a non-recommended offer requires `overrideReason` before sending.
-2. **Negotiate (Executive, optional).** Per FF — see §10.
-3. **Send for approval (Executive).** Guard: leg `FULLY_QUOTED` or deadline passed (D10); override reason present if shortlist ≠ recommendation. Sets `PENDING_APPROVAL`, `sentByUserId`, `sentForApprovalAt`. The Executive's send button then **disables** until a rejection.
+2. **Negotiate (Executive, optional).** Per FF — see §10. **Requesting a re-quote auto-clears this leg's shortlist/approval** (`LegAwardDecision → DRAFT`) — the basis changed, so the decision reopens.
+3. **Send for approval (Executive).** Guards: leg `FULLY_QUOTED` or deadline passed (D10); override reason present if shortlist ≠ recommendation; and if the leg has an **in-flight re-quote** (`awaitingReQuote`, §11) it is **blocked by default** ("awaiting <FF>'s revised quote") unless the Executive **overrides** with a recorded reason ("proceed without waiting") — the override lets them shortlist any offer, **including the re-quoted FF's own earlier price** (A9). Sets `PENDING_APPROVAL`, `sentByUserId`, `sentForApprovalAt`. The send button then **disables** until a rejection.
 4. **Approve (checker ≠ sender).** Fires quote `APPROVE` (→`APPROVED`) + leg `APPROVE` (→`APPROVED`). Decision `APPROVED`. Approve/Reject controls lock.
 5. **Reject (checker ≠ sender).** Requires `rejectionReason`. Decision `REJECTED` → back to `DRAFT` (quote unchanged); Executive's send button re-enables; the reason shows in the Executive's timeline.
 6. **Generate quotation for client.** Enabled only when **every** leg's decision is `APPROVED` (and no unresolved no-quote leg, D11). Fires the `quotingClient` milestone → query `QUOTING_CLIENT`, writes `awardSnapshot`. Reversible via **Reopen** (clears the milestone/snapshot → `QUOTED`).
@@ -215,10 +218,10 @@ Per leg, the decision walks: `DRAFT → PENDING_APPROVAL → APPROVED` (or `→ 
 
 ### 10.1 Negotiation (dedicated path, D8)
 `POST /queries/:id/legs/:legId/quotes/:quoteId/request-requote` (Executive+), body `{ comment }`:
-- Fire quote `REQUEST_REQUOTE` (`QUOTED`|`APPROVED` → `REQUOTED`); if the quote was `APPROVED`, also fire leg `REOPEN_AWARD` (→`FULLY_QUOTED`) + set the decision back to `DRAFT` (a re-negotiated winner is no longer approved).
-- **Re-issue the FF's portal token** (reuse `RfqTokenService` + the existing reissue path) and **reset that RFQ's `submissionDeadline`** + re-arm the SB5 reminder/expiry `ScheduledEvent`s; dispatch `rfq.updated` via the SB5 `NotificationDispatcher` with the negotiation comment.
-- Fire quote `SEND` (`REQUOTED`→`RFQ_SENT`) so the FF portal reopens; on the FF's re-submit the existing `SUBMIT` path returns it to `QUOTED`. **Other FFs' quotes on the leg are untouched.**
-- Record an `AwardDecisionEvent{type: REQUEST_REQUOTE, reason: comment}`.
+- Fire quote `REQUEST_REQUOTE` (`QUOTED`|`APPROVED` → `REQUOTED`). **Retain the prior `draftJson`** (the earlier price stays visible in the comparison, badged stale — §11). **Reset this leg's `LegAwardDecision` to `DRAFT`** (clears any shortlist/approval — the basis changed); if the quote was `APPROVED`, also fire leg `REOPEN_AWARD` (→`FULLY_QUOTED`).
+- **Re-issue the FF's portal token** (reuse `RfqTokenService` + the existing reissue path) so the portal reopens **for the `REQUOTED` quote** (extend the ff-portal `GET`/submit guard to accept `REQUOTED` alongside `RFQ_SENT`); **reset that RFQ's `submissionDeadline`** + re-arm the SB5 reminder/expiry `ScheduledEvent`s; dispatch `rfq.updated` via the SB5 `NotificationDispatcher` with the negotiation comment.
+- On the FF's re-submit, `SUBMIT` (`REQUOTED`→`QUOTED`) overwrites `draftJson` with the revised price → it re-enters the comparison as a clean offer and the recommendation recomputes. **Other FFs' quotes on the leg are untouched.**
+- Record an `AwardDecisionEvent{type: REQUEST_REQUOTE, reason: comment}`. `REQUOTED` is the **durable** "awaiting revised" state (§8.1) — the leg reads `awaitingReQuote = true` while any FF sits in it.
 
 ### 10.2 Change-order reversal (depends on SB6)
 When SB6's `ChangeOrderStrategy` invalidates a quote (a post-RFQ field edit reopens a leg), Stage 5 **reverses any approval on that leg**: a listener on the existing `changeorder.leg.reopened` (or the quote `INVALIDATE`) event resets the leg's `LegAwardDecision` to `DRAFT`, fires leg `REOPEN_AWARD`/`REOPEN` as appropriate, and — if the query was `QUOTING_CLIENT` — clears the `quotingClient` milestone + `awardSnapshot` (back to `QUOTED`). New edges added in §8.1/8.2 (`APPROVED → INVALID`, `APPROVED → READY_FOR_RFQ`) make this legal.
@@ -231,7 +234,7 @@ All under `/api/queries/:id` unless noted; all Executive+ (four-eyes enforced in
 
 | Method / path | Purpose | RBAC |
 | :-- | :-- | :-- |
-| `GET …/comparison` | The comparison read model: per leg → per `(FF × variant)` offer `{ nativeTotal, currency, unitsPerUsd, usdTotal, transitDays, chargeableWeight, validUntil, quoteStatus }`, the live **recommendation**, the `LegAwardDecision`, the decision timeline, and per-quote itemised charges (from `draftJson`). Computes via `computeQuoteTotals` + `toUsd`. | Executive+ |
+| `GET …/comparison` | The comparison read model: per leg → **`offers`** (one per `(FF × variant)` for each `QUOTED`/`REQUOTED` quote) `{ nativeTotal, currency, unitsPerUsd, usdTotal, transitDays, chargeableWeight, validUntil, quoteStatus, priced }` — a `REQUOTED` offer carries its **earlier** price badged stale; **`pendingForwarders`** (FFs with no comparable price: `RFQ_SENT`/`EXPIRED`/`INVALID`/`CLOSED`); **`awaitingReQuote`** (any FF `REQUOTED`); the live **recommendation** (clean `QUOTED` only); the `LegAwardDecision` + decision timeline; per-quote itemised charges (from `draftJson`). Computes via `computeQuoteTotals` + `toUsd`. | Executive+ |
 | `PUT …/legs/:legId/shortlist` | Set/replace the shortlist `{ quoteId, variant, overrideReason? }`; snapshots the recommendation. | Executive+ |
 | `POST …/legs/:legId/send-for-approval` | Guarded by D10 + override-reason rule → `PENDING_APPROVAL`. | Executive+ |
 | `POST …/legs/:legId/approve` | Four-eyes → decision/leg/quote `APPROVED`. | **Manager+**, ≠ sender |
@@ -241,7 +244,7 @@ All under `/api/queries/:id` unless noted; all Executive+ (four-eyes enforced in
 | `POST …/reopen-comparison` | Clears the milestone/snapshot → `QUOTED`. | Executive+ |
 | `GET /fx-rates` · `POST /fx-rates` | FX master read/write. | read Executive+ / write **Manager+** |
 
-Shared DTOs (`@svyft/shared`): `LegComparisonDto`, `OfferDto`, `AwardDecisionDto`, `AwardDecisionEventDto`, `FxRateDto`, `RecommendationDto`, `QueryAwardSnapshotDto`. Errors via the global `ZodValidationPipe` + `PrismaExceptionFilter`; a non-`Manager+` on a checker route → `403` (RolesGuard); a **four-eyes violation → `403 SELF_APPROVAL`**; a stale-shortlist (quote no longer `QUOTED`) → `409`.
+Shared DTOs (`@svyft/shared`): `ComparisonDto`, `LegComparisonDto` (incl. `awaitingReQuote`), `OfferDto`, `PendingForwarderDto`, `AwardDecisionDto`, `AwardDecisionEventDto`, `FxRateDto`, `RecommendationDto`, `QueryAwardSnapshotDto`. Errors via the global `ZodValidationPipe` + `PrismaExceptionFilter`; a non-`Manager+` on a checker route → `403` (RolesGuard); a **four-eyes violation → `403 SELF_APPROVAL`**; a stale-shortlist (quote no longer `QUOTED`) → `409`.
 
 ---
 
@@ -260,14 +263,15 @@ The **approved mockup is the visual spec** (interactive `Compare Quotes` artifac
 
 | # | Rule | Severity | Trigger |
 | :-- | :-- | :-- | :-- |
-| A1 | Shortlist references a `QUOTED` offer that exists on the leg. | Blocking | shortlist |
+| A1 | Shortlist references an offer present on the leg — a `QUOTED` offer, or (only under an A9 override) the re-quoted FF's own earlier-price `REQUOTED` offer. | Blocking | shortlist |
 | A2 | Override reason present when shortlist ≠ recommendation. | Blocking | send-for-approval |
 | A3 | Leg is `FULLY_QUOTED` or deadline passed (D10). | Blocking | send-for-approval |
 | A4 | Approver is **Manager+** and **≠ sender** (four-eyes). | Blocking | approve / reject / generate |
 | A5 | Rejection reason present. | Blocking | reject |
 | A6 | Every leg's decision is `APPROVED`; no unresolved no-quote leg (D11). | Blocking | generate |
 | A7 | An FX rate exists for every currency among the awarded winners. | Blocking | generate |
-| A8 | Offer being acted on is still `QUOTED`/current (not stale after a re-quote/change-order). | Blocking (409) | approve / send |
+| A8 | Offer being acted on is still current (not _silently_ changed by a concurrent re-quote/change-order). The deliberate A9 override is the sanctioned exception. | Blocking (409) | approve / send |
+| A9 | A leg with an in-flight re-quote (`awaitingReQuote`) is blocked from send-for-approval unless the Executive supplies an **override with a recorded reason** ("proceed without waiting"). | Blocking (overridable) | send-for-approval |
 
 ---
 
@@ -275,7 +279,7 @@ The **approved mockup is the visual spec** (interactive `Compare Quotes` artifac
 
 - **Partial quotes:** comparison viewable at ≥1 quote; shortlist allowed; send gated by A3.
 - **No-viable-quote leg** (all expired/closed): blocks generate (A6); **must be re-distributed** (change-order → new RFQ → quote). No close-leg / partial-award path (per O2).
-- **Re-quote in flight:** the FF's column shows "Re-quote requested / awaiting"; that leg can't be approved until the quote returns to `QUOTED`.
+- **Re-quote in flight:** the FF's column shows its **earlier price** badged "Re-quote requested · awaiting revised," is excluded from the recommendation, and sets the leg's `awaitingReQuote`. Send-for-approval is blocked by default, but the Executive can **override** ("proceed without waiting") and shortlist any offer — including that FF's earlier price (§9 step 3, A9). When the revised quote arrives (`REQUOTED→QUOTED`) it re-enters the comparison and the recommendation recomputes.
 - **Concurrent change-order after approval:** §10.2 reverses the approval and (if generated) drops the query out of `QUOTING_CLIENT`.
 - **FX rate changes between generate and reopen:** re-generating re-snapshots at the current rate; the frozen `awardSnapshot` is what Stage 6 quotes.
 - **Same user, two browser tabs (maker+checker):** four-eyes is enforced server-side on `sentByUserId`, not the UI mode.
