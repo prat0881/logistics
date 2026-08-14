@@ -2,9 +2,11 @@ import { Body, Controller, HttpCode, Param, Post, Put } from "@nestjs/common";
 import {
   Role,
   rejectSchema,
+  requestRequoteSchema,
   sendForApprovalSchema,
   shortlistSchema,
   type RejectInput,
+  type RequestRequoteInput,
   type SendForApprovalInput,
   type ShortlistInput,
 } from "@svyft/shared";
@@ -13,6 +15,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { RequestUser } from "../auth/types";
 import { AwardService } from "./award.service";
+import { NegotiationService } from "./negotiation.service";
 
 // Maker/checker workflow (S5.4 design §9). shortlist/send-for-approval (steps 1+3) are the
 // maker half — Executive+ (no @Roles), same auth-only convention as comparison.controller.ts /
@@ -21,7 +24,10 @@ import { AwardService } from "./award.service";
 // (the sender may not decide their own send).
 @Controller("queries/:id")
 export class AwardController {
-  constructor(private readonly award: AwardService) {}
+  constructor(
+    private readonly award: AwardService,
+    private readonly negotiation: NegotiationService,
+  ) {}
 
   @Put("legs/:legId/shortlist")
   shortlist(
@@ -67,6 +73,23 @@ export class AwardController {
     @CurrentUser() user: RequestUser,
   ) {
     return this.award.reject(id, legId, body, user);
+  }
+
+  // S5.5 (design §10.1) — negotiation. Executive+ (no @Roles), same maker tier as
+  // shortlist/send-for-approval/reject above: asking an FF to revise their price is not itself
+  // a checker-level decision. Delegates to NegotiationService (a dedicated service, not
+  // AwardService, since it orchestrates RfqService's token/deadline reset + comms alongside the
+  // status/decision writes — see negotiation.service.ts).
+  @Post("legs/:legId/quotes/:quoteId/request-requote")
+  @HttpCode(200)
+  requestRequote(
+    @Param("id") id: string,
+    @Param("legId") legId: string,
+    @Param("quoteId") quoteId: string,
+    @Body(new ZodValidationPipe(requestRequoteSchema)) body: RequestRequoteInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.negotiation.requestRequote(id, legId, quoteId, body, user);
   }
 
   // The two TERMINAL endpoints (S5.4 Task 4) — query-scoped (no :legId), neither takes a body.

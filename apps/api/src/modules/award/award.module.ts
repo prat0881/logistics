@@ -4,9 +4,12 @@ import { StatusModule } from "../status/status.module";
 import { StatusRegistry } from "../status/status.registry";
 import { ComparisonModule } from "../comparison/comparison.module";
 import { FxRatesModule } from "../fx-rates/fx-rates.module";
+import { RfqModule } from "../rfq/rfq.module";
+import { CommsModule } from "../comms/comms.module";
 import { PrismaModule } from "../../prisma/prisma.module";
 import { AwardController } from "./award.controller";
 import { AwardService } from "./award.service";
+import { NegotiationService } from "./negotiation.service";
 
 // Stage 5 (S5.3, Technical Design §8.1/§8.2): the award/negotiation edges layered on top of
 // the Stage-3/4 "quote"/"leg" machines. Mirrors rfq.module.ts's onModuleInit — CONTRIBUTES
@@ -19,10 +22,15 @@ import { AwardService } from "./award.service";
 // winner directly off its own draftJson + the FX table — getComparison can't be reused there,
 // see award.service.ts). QueryStatusProjector needs no new import — StatusModule already
 // exports it.
+// S5.5 Task 2: NegotiationService (request-requote, negotiation.service.ts) needs RfqService
+// (reissueToken + the new resetDeadlineAndRearm — RfqModule now exports RfqService) and
+// NotificationDispatcher (CommsModule). No DI cycle: RfqModule imports
+// StatusModule/ChangesModule/FreightForwardersModule/CommsModule — none of those import
+// AwardModule, and app.module.ts registers RfqModule before AwardModule.
 @Module({
-  imports: [StatusModule, ComparisonModule, FxRatesModule, PrismaModule],
+  imports: [StatusModule, ComparisonModule, FxRatesModule, PrismaModule, RfqModule, CommsModule],
   controllers: [AwardController],
-  providers: [AwardService],
+  providers: [AwardService, NegotiationService],
 })
 export class AwardModule implements OnModuleInit {
   constructor(private readonly registry: StatusRegistry) {}

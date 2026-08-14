@@ -72,6 +72,21 @@ export const MESSAGE_TEMPLATES: {
     subject: null,
     body: "Leg {{legCode}} ({{origin}} -> {{destination}}) on RFQ {{rfqNumber}} was reopened — {{reason}}",
   },
+  // S5.5 (negotiation, design §10.1): fired when an Executive requests a revised price from a
+  // single FF (NegotiationService.requestRequote) — EMAIL to that FF, carrying the negotiation
+  // comment + a fresh portal link (the token is reissued in the same action). Deliberately a
+  // dedicated eventKey rather than reusing rfq.updated (whose copy is "a leg was added" and
+  // carries no comment token).
+  {
+    key: "rfq.requote_requested.email", eventKey: "rfq.requote_requested", channel: "EMAIL",
+    subject: "RFQ {{RFQ_Number}} — revised quote requested",
+    body: "We would like to request a revised quote for RFQ {{RFQ_Number}}.\nComment: {{Comment}}\n\nYour earlier submission remains on file. Please submit your updated price via your secure portal link: {{Access_Link}}",
+  },
+  {
+    key: "rfq.requote_requested.inapp", eventKey: "rfq.requote_requested", channel: "IN_APP",
+    subject: null,
+    body: "Revised quote requested for RFQ {{RFQ_Number}} — {{Comment}}",
+  },
 ];
 
 export async function seedMessageTemplates(prisma: PrismaClient): Promise<void> {

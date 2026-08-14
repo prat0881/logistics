@@ -177,6 +177,50 @@ export class RfqService {
     });
   }
 
+  /**
+   * Reset an existing RFQ's submission window to a fresh deadline and re-arm its
+   * `rfq.reminder`/`rfq.expiry` ScheduledEvents off that new deadline. Extracted from
+   * `performDistribution`'s reactivation branch (SB6 §7 Phase 3, below) so S5.5's negotiation
+   * path (design §10.1) can reuse the identical deadline-reset + re-arm behavior for a single
+   * RFQ outside of a distribute call (`NegotiationService.requestRequote`).
+   * Touches ONLY `submissionDeadline` — `currency`/`quoteValidityUntil` are deliberately left
+   * alone: the FF-portal `submit()` re-derives those two fields directly from the live `Rfq`
+   * row with no fallback, so clearing them here would 422 a REQUOTED FF's re-submit on
+   * Q_CURRENCY/Q_VALIDITY for reasons unrelated to the negotiation itself.
+   */
+  async resetDeadlineAndRearm(rfqId: string, tenantId?: string | null): Promise<Date> {
+    const deadline = await this.resolveDeadline();
+    await this.prisma.rfq.update({ where: { id: rfqId }, data: { submissionDeadline: deadline } });
+
+    // DELETE, not cancel — schedule()'s upsert matches on (entityType, entityId, eventKey,
+    // tier) and no-ops (`update: {}`) on an existing row, so it would never revise `dueAt` to
+    // the new deadline otherwise (same reasoning as the reactivation branch below).
+    await this.prisma.scheduledEvent.deleteMany({
+      where: { entityType: "RFQ", entityId: rfqId, eventKey: { in: ["rfq.reminder", "rfq.expiry"] } },
+    });
+
+    const offsets = await this.commsSettings.rfqReminderOffsets();
+    await this.scheduled.schedule(
+      "RFQ",
+      rfqId,
+      "rfq.reminder",
+      offsets.map((h) => ({
+        tier: `T${h}H`,
+        dueAt: new Date(deadline.getTime() - h * 60 * 60 * 1000),
+      })),
+      { tenantId },
+    );
+    await this.scheduled.schedule(
+      "RFQ",
+      rfqId,
+      "rfq.expiry",
+      [{ tier: "DEADLINE", dueAt: deadline }],
+      { tenantId },
+    );
+
+    return deadline;
+  }
+
   async getRfqState(queryId: string): Promise<QueryRfqStateDto> {
     const query = await this.prisma.query.findUnique({
       where: { id: queryId },

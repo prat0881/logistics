@@ -22,7 +22,7 @@ import { RfqService } from "./rfq.service";
   imports: [StatusModule, ChangesModule, FreightForwardersModule, CommsModule],
   controllers: [RfqController],
   providers: [RfqNumberService, RfqTokenService, LegQuoteProjector, EligibilityService, RfqService, RfqScheduleListener, RfqNotificationsService],
-  exports: [RfqNumberService, RfqTokenService, RfqNotificationsService],
+  exports: [RfqNumberService, RfqTokenService, RfqNotificationsService, RfqService],
 })
 export class RfqModule implements OnModuleInit {
   constructor(
