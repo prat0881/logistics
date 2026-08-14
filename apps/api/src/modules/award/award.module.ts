@@ -2,14 +2,22 @@ import { Module, type OnModuleInit } from "@nestjs/common";
 import { LegEvent, LegStatus, QuoteEvent, QuoteStatus } from "@svyft/shared";
 import { StatusModule } from "../status/status.module";
 import { StatusRegistry } from "../status/status.registry";
+import { ComparisonModule } from "../comparison/comparison.module";
+import { PrismaModule } from "../../prisma/prisma.module";
+import { AwardController } from "./award.controller";
+import { AwardService } from "./award.service";
 
 // Stage 5 (S5.3, Technical Design §8.1/§8.2): the award/negotiation edges layered on top of
 // the Stage-3/4 "quote"/"leg" machines. Mirrors rfq.module.ts's onModuleInit — CONTRIBUTES
 // transitions onto the already-registered machines, never edits leg.machine.ts/quote.machine.ts
 // and never calls `register()` (that already happened in legs.module.ts / rfq.module.ts).
-// Headless (S5.3): no controller fires these yet — S5.4 wires the endpoints.
+// S5.4 Task 2: AwardController/AwardService (shortlist + send-for-approval, the maker half —
+// see award.service.ts) now wired in. ComparisonModule is imported for ComparisonService
+// (getComparison, reused to validate a shortlist and to snapshot the recommendation).
 @Module({
-  imports: [StatusModule],
+  imports: [StatusModule, ComparisonModule, PrismaModule],
+  controllers: [AwardController],
+  providers: [AwardService],
 })
 export class AwardModule implements OnModuleInit {
   constructor(private readonly registry: StatusRegistry) {}

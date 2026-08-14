@@ -7,5 +7,8 @@ import { ComparisonService } from "./comparison.service";
   imports: [FxRatesModule],
   controllers: [ComparisonController],
   providers: [ComparisonService],
+  // Exported so other Stage-5 modules (award.module.ts) can inject getComparison() rather
+  // than re-deriving offers/recommendations themselves.
+  exports: [ComparisonService],
 })
 export class ComparisonModule {}
