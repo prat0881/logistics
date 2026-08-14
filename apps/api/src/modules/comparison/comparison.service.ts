@@ -44,18 +44,17 @@ const QUOTE_SELECT = {
 type QuoteRow = Prisma.QuoteGetPayload<{ select: typeof QUOTE_SELECT }>;
 
 // A quote is "comparable" (produces `OfferDto` rows, design §7/§11) once it has been submitted
-// and carries a priceable draft — QUOTED is the normal case; REQUOTED (a change-order re-ask;
-// not yet wired to any transition as of S5.2) keeps its LAST submitted bid comparable until a
-// fresh one lands.
+// and carries a priceable draft. QUOTED is the normal, rankable case. REQUOTED is the DURABLE
+// "awaiting a revised quote" state (a change-order re-ask): the FF's EARLIER price stays visible
+// here (so the Executive keeps context) but is excluded from ranking — see buildRecommendation's
+// QUOTED-only filter and `awaitingReQuote` below.
 const COMPARABLE_STATUSES: readonly QuoteStatus[] = [QuoteStatus.QUOTED, QuoteStatus.REQUOTED];
-// FFs with no CURRENT comparable submission — surfaced as "awaiting" (pendingForwarders) rather
-// than in `offers`. Note REQUOTED can legitimately land in BOTH lists: a quote that still carries
-// a stale-but-usable draft shows as an offer (the last-known bid) while also flagging here that a
-// fresh submission is awaited; SELECT (not yet sent) and APPROVED (already awarded) appear in
-// neither list.
+// FFs with NO comparable price at all (not even a stale one) — surfaced as "awaiting" in
+// pendingForwarders rather than in `offers`. REQUOTED is deliberately NOT here: a REQUOTED quote
+// always has an `offers` entry (its last submitted price, shown but unranked — flagged instead via
+// `awaitingReQuote`). SELECT (not yet sent) and APPROVED (already awarded) appear in neither list.
 const PENDING_STATUSES: readonly QuoteStatus[] = [
   QuoteStatus.RFQ_SENT,
-  QuoteStatus.REQUOTED,
   QuoteStatus.EXPIRED,
   QuoteStatus.INVALID,
   QuoteStatus.CLOSED,
@@ -208,6 +207,7 @@ export class ComparisonService {
       destination: pointLabel(leg.destinationPoint),
       offers,
       pendingForwarders,
+      awaitingReQuote: offers.some((o) => o.quoteStatus === QuoteStatus.REQUOTED),
       recommendation: this.buildRecommendation(offers, submittedAtByQuote, priority),
     };
   }
@@ -218,7 +218,10 @@ export class ComparisonService {
     priority: Priority,
   ): RecommendationDto | null {
     const candidates: RecommendOffer[] = offers
-      .filter((o) => o.priced)
+      // REQUOTED offers stay visible (see COMPARABLE_STATUSES) but are stale-by-definition — the
+      // confirmed product model excludes them from ranking/auto-decision entirely; only a live
+      // QUOTED price is ever recommendable.
+      .filter((o) => o.priced && o.quoteStatus === QuoteStatus.QUOTED)
       .map((o) => ({
         quoteId: o.quoteId,
         variant: o.variant,

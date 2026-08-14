@@ -21,6 +21,7 @@ type OfferBody = {
   freightForwarderId: string;
   variant: string | null;
   usdTotal: number | null;
+  quoteStatus: string;
 };
 
 describe("GET /queries/:id/comparison (e2e)", () => {
@@ -170,11 +171,13 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     const ffB = await mkFf(`FF-${PREFIX}-B`);
     const ffPending = await mkFf(`FF-${PREFIX}-PEND`);
     const ffNoFx = await mkFf(`FF-${PREFIX}-NOFX`);
+    const ffRequoted = await mkFf(`FF-${PREFIX}-REQ`);
 
     const rfqA = await mkRfq(query.id, ffA.id, "A", "INR");
     const rfqB = await mkRfq(query.id, ffB.id, "B", "EUR");
     const rfqPending = await mkRfq(query.id, ffPending.id, "PEND", "USD");
     const rfqNoFx = await mkRfq(query.id, ffNoFx.id, "NOFX", "GBP");
+    const rfqRequoted = await mkRfq(query.id, ffRequoted.id, "REQ", "INR");
 
     const t0 = new Date();
     await prisma.quote.create({
@@ -222,6 +225,22 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         draftJson: roadDraft(leg.id, origin.id, "GBP", 5000, 4) as unknown as Prisma.InputJsonValue,
       },
     });
+    await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffRequoted.id,
+        rfqId: rfqRequoted.id,
+        status: "REQUOTED", // change-order re-ask: earlier price stays visible, but unranked
+        submittedAt: t0,
+        // Deliberately the BEST possible offer in the pool (1-day transit beats A/B's 3, and
+        // 8,320 INR ≈ $100 undercuts both on price too) — if the QUOTED-only ranking filter were
+        // missing, THIS would win outright (no tie-break even needed). Asserting the recommendation
+        // stays FF-B below therefore proves the exclusion is real (status-based), not a coincidence
+        // of these numbers happening to lose anyway.
+        draftJson: roadDraft(leg.id, origin.id, "INR", 8320, 1) as unknown as Prisma.InputJsonValue,
+      },
+    });
 
     const res = await request(app.getHttpServer())
       .get(`/api/queries/${query.id}/comparison`)
@@ -254,5 +273,22 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     expect(offerNoFx).toBeDefined();
     expect(offerNoFx!.usdTotal).toBeNull();
     expect(legDto.recommendation.quoteId).not.toBe(offerNoFx!.quoteId);
+
+    // REQUOTED (FF-C): the earlier price stays visible as an offer (with its own status)...
+    const offerRequoted = offers.find(
+      (o) => o.freightForwarderId === ffRequoted.id && o.variant === "DEDICATED",
+    );
+    expect(offerRequoted).toBeDefined();
+    expect(offerRequoted!.quoteStatus).toBe("REQUOTED");
+    expect(offerRequoted!.usdTotal).toBe(toUsd(8320, "INR", { unitsPerUsd: 83.2 })); // = 100
+    // ...but is NOT "pending" (it has a comparable price, just a stale one)...
+    expect(pendingIds).not.toContain(ffRequoted.id);
+    // ...and is excluded from the recommendation (QUOTED-only ranking) despite being the
+    // objectively best offer on the leg (fastest transit AND cheapest) — proves the exclusion is
+    // status-based, not an artifact of it losing on merit.
+    expect(legDto.recommendation.quoteId).not.toBe(offerRequoted!.quoteId);
+    expect(legDto.recommendation.quoteId).toBe(offerB!.quoteId);
+    // ...and flips the leg-level "awaiting a revised quote" flag.
+    expect(legDto.awaitingReQuote).toBe(true);
   });
 });

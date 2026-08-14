@@ -20,11 +20,11 @@ export interface OfferDto {
   validUntil: string | null; // the RFQ's quoteValidityUntil
   quoteStatus: QuoteStatus;
 }
-/** An FF that was sent this leg but has not (yet) produced a comparable quote. */
+/** An FF that was sent this leg but has NO comparable price at all (not even a stale one). */
 export interface PendingForwarderDto {
   freightForwarderId: string;
   freightForwarderName: string;
-  quoteStatus: QuoteStatus; // RFQ_SENT (awaiting) | REQUOTED | EXPIRED | INVALID | CLOSED
+  quoteStatus: QuoteStatus; // RFQ_SENT (awaiting) | EXPIRED | INVALID | CLOSED — NOT REQUOTED (that's an offer, see awaitingReQuote)
 }
 export interface RecommendationDto {
   quoteId: string;
@@ -39,6 +39,7 @@ export interface LegComparisonDto {
   destination: string;
   offers: OfferDto[]; // one per (quoted FF × freight column)
   pendingForwarders: PendingForwarderDto[]; // sent, not yet comparably quoted (the "awaiting" indicator)
+  awaitingReQuote: boolean; // true when >=1 offer is REQUOTED (stale price shown, but excluded from ranking)
   recommendation: RecommendationDto | null;
 }
 export interface ComparisonDto {
