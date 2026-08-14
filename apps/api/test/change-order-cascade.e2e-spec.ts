@@ -46,6 +46,11 @@ const FF_A_GRAND_TOTAL = 6300; // FF-A's submitted price, snapshotted into the C
 const FF_C_GRAND_TOTAL = 2100; // FF-C's submitted price on the sibling leg — must survive untouched
 const REASON = "client corrected packing list for L1";
 
+// SB6 Task 3 (§10.2 prereq): a SEPARATE query/fixture for the APPROVED-quote case below — kept
+// independent of CODE/the capstone fixture above so its own cleanup (cleanupApproved) never has
+// to touch the capstone test's rows.
+const CODE_APPROVED = `${PFX}approved-query`;
+
 describe("Change-order cascade — capstone full flow (e2e)", () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -82,6 +87,22 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
     });
   };
 
+  // SB6 Task 3: independent of `cleanup()` above (a different queryCode) so the capstone
+  // fixture's cleanup is untouched. MessageLog has no FK to Query (see `cleanup`'s own comment),
+  // so it needs an explicit sweep; everything else (legs/points/cargo/packages/quotes/rfqs/
+  // changeLog/notifications-by-queryId) cascades off the Query delete. The FF this fixture
+  // creates shares FF_PREFIX, so `cleanup()`'s FF sweep (called alongside this one) covers it.
+  const cleanupApproved = async () => {
+    const q = await prisma.query.findUnique({
+      where: { queryCode: CODE_APPROVED },
+      select: { id: true },
+    });
+    if (q) {
+      await prisma.messageLog.deleteMany({ where: { entityType: "QUERY", entityId: q.id } });
+      await prisma.query.delete({ where: { id: q.id } });
+    }
+  };
+
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
@@ -89,6 +110,10 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
     prisma = moduleRef.get(PrismaService);
     packageService = moduleRef.get(PackageService);
     rfqService = moduleRef.get(RfqService);
+    // cleanupApproved() FIRST: it cascades away rfqD/quoteD (the CODE_APPROVED query graph), so
+    // cleanup()'s unconditional FF_PREFIX-wide sweep (last step, below) never trips the
+    // Rfq->FreightForwarder Restrict FK on ffD. Reversed order 500s on that FK constraint.
+    await cleanupApproved();
     await cleanup();
     // create-only upserts: guarantees the rfq.leg.reopened / rfq.updated templates + density
     // factors + RFQ AppSettings exist regardless of test order/DB state (CI has no seed step).
@@ -96,6 +121,7 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
   });
 
   afterAll(async () => {
+    await cleanupApproved(); // see beforeAll comment — must precede cleanup()'s FF_PREFIX sweep
     await cleanup();
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
@@ -442,5 +468,169 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
       rfqA.submissionDeadline.getTime(),
     );
     expect(rfqAAfter?.submissionDeadline.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  // SB6 Task 3 (§10.2 prereq, S5.5): the capstone test above proves the cascade for QUOTED/
+  // RFQ_SENT quotes; this proves it ALSO reaches a leg whose quote is already APPROVED
+  // (post-award). Pre-fix, downstreamWork() and ChangeOrderStrategy's live-quotes query both
+  // filtered to RFQ_SENT/QUOTED only, so this exact edit silently took the FREE path — no
+  // invalidation, no reopen, no rfq.leg.reopened notify — which is why the eventual
+  // award-reversal listener (§10.2, the next task) would never have fired. Drives the SAME
+  // mediated PackageService.update() boundary the controller uses (not ChangeMediator
+  // directly), mirroring the capstone test's own two-step (no-reason 409, then with-reason
+  // apply) shape.
+  it("cascades onto an APPROVED quote: invalidates it, reopens the APPROVED leg, and notifies the FF (§10.2 prereq)", async () => {
+    const OLD_GROSS_WT_A = 150; // kg — what the APPROVED FF originally priced against
+    const NEW_GROSS_WT_A = 275; // kg — the corrected packing-list weight
+    const GRAND_TOTAL_A = 4200; // the APPROVED FF's submitted (and awarded) price
+    const REASON_A = "client corrected packing list for the approved leg";
+
+    const query = await prisma.query.create({
+      data: { queryCode: CODE_APPROVED, assignedUserId: execId, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: {
+        queryId: query.id,
+        type: "PICKUP",
+        name: "Shenzhen Port",
+        city: "Shenzhen",
+        country: "CN",
+      },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", name: "Jebel Ali", city: "Dubai", country: "AE" },
+    });
+
+    const { cargoId, packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: "PK-APPROVED", dimL: 10, dimW: 10, dimH: 10, grossWt: OLD_GROSS_WT_A }],
+    });
+    const pkgId = packageIds[0];
+
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L-APPROVED",
+        mode: "AIR",
+        status: "APPROVED", // post-award — the exact state this task adds coverage for
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 7 * 86400000),
+      },
+    });
+    await assignPackagesToLeg(prisma, leg.id, [pkgId]);
+
+    const ffD = await mkFf(`${FF_PREFIX}D-APPROVED`);
+    const rfqD = await prisma.rfq.create({
+      data: {
+        queryId: query.id,
+        freightForwarderId: ffD.id,
+        rfqNumber: `${CODE_APPROVED}-RFQ-D`,
+        accessTokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
+        submissionDeadline: new Date(Date.now() - 3600_000),
+        currency: "USD",
+      },
+    });
+    const quoteD = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffD.id,
+        rfqId: rfqD.id,
+        status: QuoteStatus.APPROVED,
+        grandTotal: GRAND_TOTAL_A,
+        totalChargeableWeightT: 1.2,
+        manifestSnapshot: mkSnapshot(leg.id, pkgId, OLD_GROSS_WT_A) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // Step 1 — without a reason: same 409-shaped ConflictException + preview the capstone test
+    // proves for QUOTED — now also true for APPROVED. Nothing written.
+    let caught: unknown;
+    try {
+      await packageService.update(query.id, cargoId, pkgId, { grossWt: NEW_GROSS_WT_A }, user);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ConflictException);
+    const exception = caught as ConflictException;
+    expect(exception.getStatus()).toBe(409);
+    const body = exception.getResponse() as {
+      needsChangeOrder: boolean;
+      preview: {
+        affectedLegs: string[];
+        invalidatingQuotes: { quoteId: string; freightForwarderId: string }[];
+        refreshingQuotes: { quoteId: string; freightForwarderId: string }[];
+      };
+    };
+    expect(body.needsChangeOrder).toBe(true);
+    expect(body.preview.affectedLegs).toEqual([leg.id]);
+    expect(body.preview.invalidatingQuotes).toEqual([
+      { quoteId: quoteD.id, freightForwarderId: ffD.id },
+    ]);
+    expect(body.preview.refreshingQuotes).toEqual([]);
+
+    const pkgAfterPreview = await prisma.package.findUnique({ where: { id: pkgId } });
+    expect(Number(pkgAfterPreview?.grossWt)).toBe(OLD_GROSS_WT_A);
+    expect((await prisma.quote.findUnique({ where: { id: quoteD.id } }))?.status).toBe(
+      QuoteStatus.APPROVED,
+    );
+
+    // Step 2 — the same edit WITH a reason: the full cascade runs.
+    await packageService.update(
+      query.id,
+      cargoId,
+      pkgId,
+      { grossWt: NEW_GROSS_WT_A, reason: REASON_A },
+      user,
+    );
+
+    const pkgAfter = await prisma.package.findUnique({ where: { id: pkgId } });
+    expect(Number(pkgAfter?.grossWt)).toBe(NEW_GROSS_WT_A);
+
+    // The APPROVED quote is INVALIDATED (not merely refreshed) — history kept.
+    const quoteDAfter = await prisma.quote.findUnique({ where: { id: quoteD.id } });
+    expect(quoteDAfter?.status).toBe(QuoteStatus.INVALID);
+    expect(Number(quoteDAfter?.grandTotal)).toBe(GRAND_TOTAL_A); // pricing history untouched
+    const ffDSnap = quoteDAfter?.manifestSnapshot as unknown as { cargo: { grossWt: string }[] };
+    expect(ffDSnap.cargo[0].grossWt).toBe(String(OLD_GROSS_WT_A)); // frozen as historical context
+
+    // The leg reopens: APPROVED -> READY_FOR_RFQ (the existing award.module.ts edge).
+    const legAfter = await prisma.leg.findUnique({ where: { id: leg.id } });
+    expect(legAfter?.status).toBe("READY_FOR_RFQ");
+
+    // Exactly one durable ChangeLog row naming this APPROVED quote as invalidated.
+    const logs = await prisma.changeLog.findMany({
+      where: { queryId: query.id, changeType: "change-order" },
+    });
+    expect(logs).toHaveLength(1);
+    const payload = logs[0].payload as {
+      reason: string;
+      affectedScope: { type: string; id: string }[];
+      invalidatedQuotes: { quoteId: string; freightForwarderId: string; grandTotal: string | null }[];
+      refreshedQuotes: { quoteId: string; freightForwarderId: string }[];
+    };
+    expect(payload.reason).toBe(REASON_A);
+    expect(payload.affectedScope).toEqual([{ type: "leg", id: leg.id }]);
+    expect(payload.invalidatedQuotes).toHaveLength(1);
+    expect(payload.invalidatedQuotes[0].quoteId).toBe(quoteD.id);
+    expect(Number(payload.invalidatedQuotes[0].grandTotal)).toBe(GRAND_TOTAL_A);
+    expect(payload.refreshedQuotes).toEqual([]);
+
+    // The FF is notified of the reopen — the same changeorder.leg.reopened side-effect the
+    // capstone test proves for a QUOTED FF.
+    const ffDMsg = await prisma.messageLog.findFirst({
+      where: {
+        entityType: "QUERY",
+        entityId: query.id,
+        eventKey: "rfq.leg.reopened",
+        toAddress: ffD.email,
+      },
+    });
+    expect(ffDMsg).not.toBeNull();
+    expect(ffDMsg?.channel).toBe("EMAIL");
+    expect(ffDMsg?.subject).toContain(rfqD.rfqNumber);
+    expect(ffDMsg?.bodyRendered).toContain(REASON_A);
   });
 });

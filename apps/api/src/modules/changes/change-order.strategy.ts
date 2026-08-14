@@ -67,11 +67,21 @@ export class ChangeOrderStrategy {
       .map((s) => s.id);
 
     const quotes = await this.prisma.quote.findMany({
-      where: { legId: { in: legIds }, status: { in: [QuoteStatus.RFQ_SENT, QuoteStatus.QUOTED] } },
+      where: {
+        legId: { in: legIds },
+        // Stage 5 S5.5 Task 3 (§10.2 prereq): APPROVED (already-awarded) is live too — see
+        // scope.resolver.ts's downstreamWork, the gate this query mirrors.
+        status: { in: [QuoteStatus.RFQ_SENT, QuoteStatus.QUOTED, QuoteStatus.APPROVED] },
+      },
       select: { id: true, freightForwarderId: true, legId: true, status: true },
     });
+    // QUOTED and APPROVED are both INVALIDATED (re-quote required); only RFQ_SENT is merely
+    // refreshed in place (still pending, never submitted). An APPROVED quote is a QUOTED one
+    // that already cleared maker-checker — a change-order must undo the award the same way it
+    // undoes an ordinary submission, which is exactly what §10.2's reversal listener (next task)
+    // hooks off of via the leg REOPEN this fires below.
     const invalidating = quotes
-      .filter((q) => q.status === QuoteStatus.QUOTED)
+      .filter((q) => q.status === QuoteStatus.QUOTED || q.status === QuoteStatus.APPROVED)
       .map((q) => ({ quoteId: q.id, freightForwarderId: q.freightForwarderId }));
     const refreshing = quotes
       .filter((q) => q.status === QuoteStatus.RFQ_SENT)

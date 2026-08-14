@@ -10,9 +10,12 @@ import { PrismaService } from "../../prisma/prisma.service";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // "Does anything downstream (RFQs/quotes) depend on this scope?" (§7.3). TRUE iff a Quote on
-// a scope-leg is "live" (distributed: RFQ_SENT or QUOTED) — SELECT (pre-RFQ) and
-// EXPIRED/INVALID (gone stale) don't count. SB6 (Task 3) makes this real; previously (Stage 3,
-// no downstream artifacts yet) this was hardcoded false so every change stayed Free-path.
+// a scope-leg is "live" (distributed: RFQ_SENT, QUOTED, or — Stage 5 S5.5 Task 3, §10.2
+// prereq — APPROVED, i.e. already awarded) — SELECT (pre-RFQ) and EXPIRED/INVALID (gone stale)
+// don't count. SB6 (Task 3) makes this real; previously (Stage 3, no downstream artifacts yet)
+// this was hardcoded false so every change stayed Free-path. APPROVED postdates SB6 (added in
+// S5.3) — without it here, a field edit on an already-awarded leg silently took the Free path
+// (no invalidation, no reopen), so the §10.2 award-reversal listener would never fire.
 @Injectable()
 export class ScopeResolver {
   constructor(private readonly prisma: PrismaService) {}
@@ -26,7 +29,10 @@ export class ScopeResolver {
     const validLegIds = legIds.filter((id) => UUID_RE.test(id));
     if (validLegIds.length === 0) return false;
     const live = await this.prisma.quote.count({
-      where: { legId: { in: validLegIds }, status: { in: [QuoteStatus.RFQ_SENT, QuoteStatus.QUOTED] } },
+      where: {
+        legId: { in: validLegIds },
+        status: { in: [QuoteStatus.RFQ_SENT, QuoteStatus.QUOTED, QuoteStatus.APPROVED] },
+      },
     });
     return live > 0;
   }
