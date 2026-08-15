@@ -1,8 +1,12 @@
+import { useState } from "react";
 import type { LegComparisonDto, LegStatus } from "@svyft/shared";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LegStatusBadge } from "@/features/rfq-workspace/statusBadges";
+import { ComparisonGrid, offerKey } from "./ComparisonGrid";
+import { RecommendationBanner } from "./RecommendationBanner";
+import { OfferDetail } from "./OfferDetail";
 
 type BadgeVariant =
   | "default" | "secondary" | "success" | "warning"
@@ -37,12 +41,25 @@ interface CompareLegPanelProps {
  * CompareLegPanel — the Compare Quotes leg accordion card (S5.6 §12). Mirrors
  * `rfq-workspace/LegPanel`'s controlled single-open shell (chevron + legCode chip + route + mode
  * badge), plus a decision-status chip derived from `leg.decision?.status` when a shortlist exists.
- * The body is a placeholder here — Task 3 fills it with the (FF × variant) comparison grid and the
- * recommendation banner; Tasks 4/5 add the maker/checker panels.
+ * The body renders the read-only `(FF × variant)` comparison: a "N offers received" summary, the
+ * `RecommendationBanner`, the `ComparisonGrid` itself, and — once a column header is clicked — that
+ * offer's itemised `OfferDetail`. `selectedOfferKey` is local state (not lifted): nothing outside
+ * this panel needs to know which offer is expanded yet. Tasks 4/5 add the maker/checker panels
+ * alongside this same body.
  */
 export function CompareLegPanel({ leg, legStatus, open, onToggle }: CompareLegPanelProps) {
   const route = `${leg.origin} → ${leg.destination}`;
   const offerCount = leg.offers.length;
+
+  const [selectedOfferKey, setSelectedOfferKey] = useState<string | undefined>(undefined);
+  const selectedOffer = leg.offers.find(
+    (o) => offerKey(o.quoteId, o.variant) === selectedOfferKey,
+  );
+
+  function handleSelectOffer(quoteId: string, variant: string | null) {
+    const key = offerKey(quoteId, variant);
+    setSelectedOfferKey((cur) => (cur === key ? undefined : key));
+  }
 
   return (
     <Card id={`legcard-${leg.legId}`} className="scroll-mt-4 overflow-hidden">
@@ -69,8 +86,17 @@ export function CompareLegPanel({ leg, legStatus, open, onToggle }: CompareLegPa
       </button>
 
       {open && (
-        <div data-testid="leg-body" className="border-t border-border p-4 text-sm text-muted-foreground">
-          {offerCount} offer{offerCount === 1 ? "" : "s"} received — comparison grid coming next.
+        <div data-testid="leg-body" className="space-y-4 border-t border-border p-4">
+          <p className="text-sm text-muted-foreground">
+            {offerCount} offer{offerCount === 1 ? "" : "s"} received
+          </p>
+          <RecommendationBanner recommendation={leg.recommendation} offers={leg.offers} />
+          <ComparisonGrid
+            leg={leg}
+            selectedOfferKey={selectedOfferKey}
+            onSelectOffer={handleSelectOffer}
+          />
+          {selectedOffer && <OfferDetail offer={selectedOffer} />}
         </div>
       )}
     </Card>
