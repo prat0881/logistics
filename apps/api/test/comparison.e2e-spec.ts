@@ -291,4 +291,140 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     // ...and flips the leg-level "awaiting a revised quote" flag.
     expect(legDto.awaitingReQuote).toBe(true);
   });
+
+  it("exposes the award decision + its event timeline per leg, and itemised per-offer charge lines (S5.6)", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-2`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    // Two legs on the same query: one gets a decision + event, the other stays untouched — proves
+    // the null/[] default path alongside the populated path in a single round-trip.
+    const legWithDecision = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+      },
+    });
+    const legNoDecision = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L2",
+        mode: "ROAD",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+      },
+    });
+
+    await prisma.fxRate.create({ data: { currency: "INR", unitsPerUsd: 83.2, note: `${PREFIX} inr2` } });
+
+    const ff = await mkFf(`FF-${PREFIX}-DEC`);
+    const rfq = await mkRfq(query.id, ff.id, "DEC", "INR");
+    const quote = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: legWithDecision.id,
+        freightForwarderId: ff.id,
+        rfqId: rfq.id,
+        status: "QUOTED",
+        submittedAt: new Date(),
+        draftJson: roadDraft(legWithDecision.id, origin.id, "INR", 50000, 5) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const senderId = randomUUID();
+    await prisma.legAwardDecision.create({
+      data: {
+        legId: legWithDecision.id,
+        queryId: query.id,
+        shortlistedQuoteId: quote.id,
+        shortlistedVariant: "DEDICATED",
+        status: "PENDING_APPROVAL",
+        sentByUserId: senderId,
+        sentForApprovalAt: new Date(),
+      },
+    });
+    await prisma.awardDecisionEvent.create({
+      data: {
+        legId: legWithDecision.id,
+        queryId: query.id,
+        type: "SHORTLIST",
+        quoteId: quote.id,
+        variant: "DEDICATED",
+        actorId: senderId,
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+
+    type ChargeLineBody = {
+      label: string;
+      group: string;
+      nativeAmount: number;
+      usdAmount: number | null;
+    };
+    type LegDtoBody = {
+      legId: string;
+      decision: {
+        status: string;
+        shortlistedQuoteId: string | null;
+        sentByUserId: string | null;
+        sentForApprovalAt: string | null;
+      } | null;
+      timeline: Array<{ type: string; at: string; quoteId: string | null }>;
+      offers: Array<{
+        quoteId: string;
+        variant: string | null;
+        nativeTotal: number;
+        charges: ChargeLineBody[];
+      }>;
+    };
+    const legs = res.body.legs as LegDtoBody[];
+
+    // Populated path: decision fields + the SHORTLIST event surfaced verbatim.
+    const legDtoWithDecision = legs.find((l) => l.legId === legWithDecision.id)!;
+    expect(legDtoWithDecision.decision).not.toBeNull();
+    expect(legDtoWithDecision.decision!.status).toBe("PENDING_APPROVAL");
+    expect(legDtoWithDecision.decision!.shortlistedQuoteId).toBe(quote.id);
+    expect(legDtoWithDecision.decision!.sentByUserId).toBe(senderId);
+    expect(typeof legDtoWithDecision.decision!.sentForApprovalAt).toBe("string");
+    expect(Number.isNaN(Date.parse(legDtoWithDecision.decision!.sentForApprovalAt!))).toBe(false);
+
+    expect(legDtoWithDecision.timeline.length).toBeGreaterThan(0);
+    const shortlistEvent = legDtoWithDecision.timeline.find((e) => e.type === "SHORTLIST");
+    expect(shortlistEvent).toBeDefined();
+    expect(shortlistEvent!.quoteId).toBe(quote.id);
+    expect(typeof shortlistEvent!.at).toBe("string");
+    expect(Number.isNaN(Date.parse(shortlistEvent!.at))).toBe(false);
+
+    // Empty-default path: a leg nobody has touched yet gets null/[] , not undefined/missing.
+    const legDtoNoDecision = legs.find((l) => l.legId === legNoDecision.id)!;
+    expect(legDtoNoDecision.decision).toBeNull();
+    expect(legDtoNoDecision.timeline).toEqual([]);
+
+    // Itemised charges: non-empty, well-typed, and reconcile to the same offer's nativeTotal.
+    const offer = legDtoWithDecision.offers.find(
+      (o) => o.quoteId === quote.id && o.variant === "DEDICATED",
+    );
+    expect(offer).toBeDefined();
+    expect(offer!.charges.length).toBeGreaterThan(0);
+    for (const line of offer!.charges) {
+      expect(typeof line.label).toBe("string");
+      expect(typeof line.group).toBe("string");
+      expect(typeof line.nativeAmount).toBe("number");
+      expect(line.usdAmount === null || typeof line.usdAmount === "number").toBe(true);
+    }
+    const chargesSum = offer!.charges.reduce((s, l) => s + l.nativeAmount, 0);
+    expect(chargesSum).toBeCloseTo(offer!.nativeTotal, 6);
+  });
 });

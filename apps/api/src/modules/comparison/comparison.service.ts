@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, LegAwardDecision, AwardDecisionEvent } from "@prisma/client";
 import {
   QuoteStatus,
   computeQuoteTotals,
@@ -14,11 +14,16 @@ import {
   type ComparisonDto,
   type LegComparisonDto,
   type OfferDto,
+  type OfferChargeLineDto,
   type PendingForwarderDto,
   type RecommendationDto,
   type RecommendOffer,
   type FxRateDto,
   type Priority,
+  type AwardDecisionDto,
+  type AwardDecisionEventDto,
+  type QuoteVariantTotal,
+  type QuoteTotals,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { FxRatesService } from "../fx-rates/fx-rates.service";
@@ -42,6 +47,14 @@ const QUOTE_SELECT = {
   rfq: { select: { currency: true, quoteValidityUntil: true } },
 } satisfies Prisma.QuoteSelect;
 type QuoteRow = Prisma.QuoteGetPayload<{ select: typeof QUOTE_SELECT }>;
+
+// S5.6: the maker-checker read model (decision + its audit timeline) — populated by the
+// AwardService (S5.4/S5.5), read-only here. No `select` narrowing needed: both rows are small and
+// every scalar column is used in the DTO mapping below (`findMany` without `select`/`include`
+// already excludes the `leg`/`query` relations, so nothing extra comes along for the ride).
+// Same "import the full model type directly" convention award.service.ts already uses.
+type LegAwardDecisionRow = LegAwardDecision;
+type AwardDecisionEventRow = AwardDecisionEvent;
 
 // A quote is "comparable" (produces `OfferDto` rows, design §7/§11) once it has been submitted
 // and carries a priceable draft. QUOTED is the normal, rankable case. REQUOTED is the DURABLE
@@ -78,6 +91,39 @@ function pointLabel(
   return [p.city, p.country].filter(Boolean).join(", ") || p.name || "";
 }
 
+// Prisma's generated enum (`AwardDecisionStatus`) is a const-object-derived string union carrying
+// the exact same 4 literals as `AwardDecisionDto["status"]` — same precedent as `quoteStatus: q.status`
+// below (Prisma `QuoteStatus` -> shared `QuoteStatus`), no cast needed.
+function toAwardDecisionDto(d: LegAwardDecisionRow): AwardDecisionDto {
+  return {
+    legId: d.legId,
+    status: d.status,
+    shortlistedQuoteId: d.shortlistedQuoteId,
+    shortlistedVariant: d.shortlistedVariant,
+    recommendedQuoteId: d.recommendedQuoteId,
+    recommendedVariant: d.recommendedVariant,
+    overrideReason: d.overrideReason,
+    rejectionReason: d.rejectionReason,
+    sentByUserId: d.sentByUserId,
+    sentForApprovalAt: d.sentForApprovalAt ? d.sentForApprovalAt.toISOString() : null,
+    decidedByUserId: d.decidedByUserId,
+    decidedAt: d.decidedAt ? d.decidedAt.toISOString() : null,
+  };
+}
+
+function toAwardDecisionEventDto(e: AwardDecisionEventRow): AwardDecisionEventDto {
+  return {
+    id: e.id,
+    legId: e.legId,
+    type: e.type,
+    quoteId: e.quoteId,
+    variant: e.variant,
+    reason: e.reason,
+    actorId: e.actorId,
+    at: e.at.toISOString(),
+  };
+}
+
 @Injectable()
 export class ComparisonService {
   constructor(
@@ -92,7 +138,7 @@ export class ComparisonService {
     });
     if (!query) throw new NotFoundException("Query not found");
 
-    const [legs, quotes, rates] = await Promise.all([
+    const [legs, quotes, rates, decisions, events] = await Promise.all([
       this.prisma.leg.findMany({ where: { queryId }, orderBy: { legCode: "asc" }, select: LEG_SELECT }),
       this.prisma.quote.findMany({
         where: { queryId },
@@ -100,6 +146,8 @@ export class ComparisonService {
         select: QUOTE_SELECT,
       }),
       this.fxRates.list(),
+      this.prisma.legAwardDecision.findMany({ where: { queryId } }),
+      this.prisma.awardDecisionEvent.findMany({ where: { queryId }, orderBy: { at: "asc" } }),
     ]);
 
     const ffIds = [...new Set(quotes.map((q) => q.freightForwarderId))];
@@ -127,8 +175,27 @@ export class ComparisonService {
       quotesByLeg.set(q.legId, arr);
     }
 
+    // At most one LegAwardDecision per leg (`@unique` on `legId`) — a plain by-legId map. Events
+    // are append-only and many-per-leg, grouped in the `orderBy: { at: "asc" }` order queried above
+    // so each leg's `timeline` is already chronological with no further sort needed.
+    const decisionByLeg = new Map(decisions.map((d) => [d.legId, toAwardDecisionDto(d)]));
+    const eventsByLeg = new Map<string, AwardDecisionEventDto[]>();
+    for (const e of events) {
+      const arr = eventsByLeg.get(e.legId) ?? [];
+      arr.push(toAwardDecisionEventDto(e));
+      eventsByLeg.set(e.legId, arr);
+    }
+
     const legDtos: LegComparisonDto[] = legs.map((leg) =>
-      this.buildLeg(leg, quotesByLeg.get(leg.id) ?? [], ffNameById, ratesByCurrency, query.priority),
+      this.buildLeg(
+        leg,
+        quotesByLeg.get(leg.id) ?? [],
+        ffNameById,
+        ratesByCurrency,
+        query.priority,
+        decisionByLeg.get(leg.id) ?? null,
+        eventsByLeg.get(leg.id) ?? [],
+      ),
     );
 
     return { queryId: query.id, priority: query.priority, fxAsOf, legs: legDtos };
@@ -140,6 +207,8 @@ export class ComparisonService {
     ffNameById: Map<string, string>,
     ratesByCurrency: Map<string, FxRateDto>,
     priority: Priority,
+    decision: AwardDecisionDto | null,
+    timeline: AwardDecisionEventDto[],
   ): LegComparisonDto {
     const offers: OfferDto[] = [];
     const submittedAtByQuote = new Map<string, string>();
@@ -187,6 +256,7 @@ export class ComparisonService {
           chargeableWeightKg: totals.chargeableWeightKg,
           validUntil: q.rfq?.quoteValidityUntil ? q.rfq.quoteValidityUntil.toISOString() : null,
           quoteStatus: q.status,
+          charges: this.buildCharges(vt, totals, currency, rate),
         });
       }
     }
@@ -209,7 +279,37 @@ export class ComparisonService {
       pendingForwarders,
       awaitingReQuote: offers.some((o) => o.quoteStatus === QuoteStatus.REQUOTED),
       recommendation: this.buildRecommendation(offers, submittedAtByQuote, priority),
+      decision,
+      timeline,
     };
+  }
+
+  // Itemised per-offer breakdown (S5.6 §11/§12 click-FF-to-expand), derived from the SAME
+  // computeQuoteTotals(draft) output the offer's own nativeTotal already uses — NOT a hand-rolled
+  // re-parse of draft.charges/draft.warehouse. computeQuoteTotals only exposes totals grouped this
+  // coarsely (one freight rate per variant + one common additional-charges sum + one common
+  // warehouse sum — no origin/destination zone split), so that's the granularity emitted here;
+  // Σ nativeAmount always reconciles to vt.grandTotal (= the offer's nativeTotal) by construction.
+  private buildCharges(
+    vt: QuoteVariantTotal,
+    totals: QuoteTotals,
+    currency: string | null,
+    rate: FxRateDto | null,
+  ): OfferChargeLineDto[] {
+    const line = (group: string, label: string, nativeAmount: number): OfferChargeLineDto => ({
+      group,
+      label,
+      nativeAmount,
+      usdAmount: currency ? toUsd(nativeAmount, currency, rate) : null,
+    });
+    const lines: OfferChargeLineDto[] = [];
+    // Road/Sea: this variant's own freight-rate cell. Air has none (variantRate is always null for
+    // Air — its freight is folded into additionalChargeSum instead, see quote-engine.ts) so no
+    // "freight" line is emitted there; that amount still surfaces below, inside "Additional Charges".
+    if (vt.rateAmount != null) lines.push(line("freight", "Freight", vt.rateAmount));
+    lines.push(line("additional", "Additional Charges", totals.additionalChargeSum));
+    lines.push(line("warehouse", "Warehousing", totals.warehouseSum));
+    return lines;
   }
 
   private buildRecommendation(

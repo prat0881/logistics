@@ -5,6 +5,18 @@ import type { FreightMode } from "./config";
 import type { Priority } from "./query";
 import type { QuoteStatus } from "./status";
 
+/** One itemised line in an offer's charge breakdown (click-FF-to-expand detail, §11/§12).
+ *  Derived from the SAME `computeQuoteTotals(draft)` the offer's own totals already use — one row
+ *  per charge GROUP the totals object exposes (`freight` = the variant's own rate cell, Road/Sea
+ *  only; `additional` = the common `additionalChargeSum`; `warehouse` = `warehouseSum`), NOT a
+ *  hand-rolled parse of raw `draft.charges`/`draft.warehouse` lines. See comparison.service.ts's
+ *  `buildCharges` for exactly which groups are emitted and why. */
+export interface OfferChargeLineDto {
+  label: string;
+  group: string;
+  nativeAmount: number; // in the quote's own currency
+  usdAmount: number | null; // toUsd(nativeAmount, currency, rate) — null when no FX rate on file
+}
 /** One comparable offer = a quoted FF's price for one freight-variant column on one leg. */
 export interface OfferDto {
   quoteId: string;
@@ -21,6 +33,7 @@ export interface OfferDto {
   chargeableWeightKg: number;
   validUntil: string | null; // the RFQ's quoteValidityUntil
   quoteStatus: QuoteStatus;
+  charges: OfferChargeLineDto[]; // itemised breakdown; Σ nativeAmount === nativeTotal
 }
 /** An FF that was sent this leg but has NO comparable price at all (not even a stale one). */
 export interface PendingForwarderDto {
@@ -33,6 +46,36 @@ export interface RecommendationDto {
   variant: ChargeRateVariant | null;
   reason: string; // human string, e.g. "High priority → fastest transit (3 days); price broke the tie."
 }
+/** The maker-checker state for one leg's award (S5.3/S5.4 `LegAwardDecision`, read-only mirror —
+ *  string dates, mirrors `FxRateDto`'s ISO convention). `null` on the leg's `decision` means no
+ *  shortlist has ever been made (the row doesn't exist yet), not an error. */
+export interface AwardDecisionDto {
+  legId: string;
+  status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
+  shortlistedQuoteId: string | null;
+  shortlistedVariant: ChargeRateVariant | null;
+  recommendedQuoteId: string | null; // the recommendation snapshotted at shortlist time (D3)
+  recommendedVariant: ChargeRateVariant | null;
+  overrideReason: string | null; // required (A2) when the shortlist deviates from the recommendation
+  rejectionReason: string | null;
+  sentByUserId: string | null;
+  sentForApprovalAt: string | null;
+  decidedByUserId: string | null;
+  decidedAt: string | null;
+}
+/** One immutable audit-trail entry (`AwardDecisionEvent`) — SHORTLIST/SEND_FOR_APPROVAL/APPROVE/
+ *  REJECT/GENERATE/REOPEN/… (`type` stays a plain string here, not a closed union: the event log
+ *  is append-only and additive, new types shouldn't require a shared-package release). */
+export interface AwardDecisionEventDto {
+  id: string;
+  legId: string;
+  type: string;
+  quoteId: string | null;
+  variant: ChargeRateVariant | null;
+  reason: string | null;
+  actorId: string | null;
+  at: string;
+}
 export interface LegComparisonDto {
   legId: string;
   legCode: string;
@@ -43,6 +86,8 @@ export interface LegComparisonDto {
   pendingForwarders: PendingForwarderDto[]; // sent, not yet comparably quoted (the "awaiting" indicator)
   awaitingReQuote: boolean; // true when >=1 offer is REQUOTED (stale price shown, but excluded from ranking)
   recommendation: RecommendationDto | null;
+  decision: AwardDecisionDto | null; // null = no LegAwardDecision row yet (nothing shortlisted)
+  timeline: AwardDecisionEventDto[]; // chronological (`at` ascending), [] when nothing has happened
 }
 export interface ComparisonDto {
   queryId: string;
