@@ -1,6 +1,6 @@
 # Stage 5 — Session Handoff
 
-_Last updated: 2026-08-15 (overnight autonomous run: S5.4 + S5.5 delivered)_
+_Last updated: 2026-08-15 (S5.4 + S5.5 delivered & pushed; S5.6 in progress — T1–T4 of 6 done)_
 
 ## Current stage & branch
 - **Stage 5 — Compare Quotes & Award.** Branch `feat/stage-5-fx-master` → **PR #52** (OPEN, **not merged** — you merge manually).
@@ -15,7 +15,7 @@ _Last updated: 2026-08-15 (overnight autonomous run: S5.4 + S5.5 delivered)_
 | S5.3 | Status & decision foundations (enums, machine edges, `LegAwardDecision`/`AwardDecisionEvent`, `awardSnapshot`) | ✅ |
 | **S5.4** | **Approval workflow endpoints** — shortlist / send-for-approval / approve / reject / generate-client-quote / reopen-comparison | ✅ delivered this session |
 | **S5.5** | **Negotiation §10.1 + Change-order reversal §10.2** | ✅ delivered this session |
-| S5.6 | **Compare-Quotes frontend** (the screen per the mockup + FX admin) | ⏭ NEXT — not started |
+| S5.6 | **Compare-Quotes frontend** (the screen per the mockup + FX admin) | 🔨 IN PROGRESS — T1–T4 of 6 done (read-only view + maker); T5–T6 remaining |
 
 Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **opus whole-branch review**). S5.4's reviews caught 5 real defects before merge; S5.5's caught the `StatusRegistry` init-order issue + the request-requote/`QUOTING_CLIENT` teardown seam. All findings fixed or adjudicated.
 
@@ -35,15 +35,26 @@ Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **o
 - **S5.5 module-init ordering:** wiring `AwardModule → RfqModule` shifted NestJS's computed module-init "distance", flipping `RfqModule.contribute("leg")` ahead of `LegsModule.register(legMachine)`. Import-graph tweaks (e.g. `RfqModule` importing `LegsModule`) do **not** fix it (single-pass non-fixed-point DFS). Root-fixed in `StatusRegistry` instead (see item 4).
 - **S5.4 generate winner-pricing:** cannot reuse `getComparison` for winners — `COMPARABLE_STATUSES = [QUOTED, REQUOTED]` excludes `APPROVED`, so approved winners vanish from the grid. Generate prices winners directly from each winning quote's immutable `draftJson`.
 
-## The exact next step — S5.6 (Compare-Quotes frontend)
-**Backend is 100% ready** (all read + write endpoints across S5.1–S5.5). This is a pure frontend sub-build.
-- **Spec:** design §12; **the approved interactive mockup is the visual spec** (claude.ai artifact `10b4cbc3-c713-4773-b8c5-00ea8289cec4`).
-- **Route:** `/queries/:id/compare` (wire the `StageRail` "Quotes" step; gate at `RFQ_SENT`+).
-- **Reuse as-is:** `QueryOverviewHeader`, `RouteDiagram` (+ `computeRouteLayout`), `ForwarderStatusBadge`/`statusBadges`, shadcn tokens.
-- **Adapt:** `RouteDiagram` clickable-leg channel; the single-open `LegPanel` accordion; `ChargeMatrix` → a **read-only** comparison grid with `(FF × variant)` columns.
-- **New:** comparison grid + recommendation banner; **maker view** (Executive+: shortlist radios, override-reason, negotiate, send); **checker view** (Manager+ only: approve/reject + the Generate gate, controls four-eyes-disabled when viewer is the leg's sender; **Generate needs only Manager+, no four-eyes**); decision timeline; the **Quoting Client** end-state panel (frozen award summary + combined USD + reopen); the FX-admin screen already exists (S5.1) — extend if needed.
-- **Data:** TanStack Query hooks (`useComparison`, `useAwardDecision`, mutations) over `lib/api.ts`; RHF + Zod schemas from `@svyft/shared` (`shortlistSchema`, `sendForApprovalSchema`, `rejectSchema`, `requestRequoteSchema`).
-- **Recommendation:** S5.6 is a **visual deliverable** — best built with you watching it land against your mockup, so it wasn't started autonomously. Kick it off with `superpowers:brainstorming` (to confirm the frontend approach) → `writing-plans` → SDD, or ask me to draft the S5.6 plan directly.
+## S5.6 (Compare-Quotes frontend) — IN PROGRESS: 4 of 6 tasks done
+Plan: `docs/plans/stage-5/Stage 5 - S5.6 - Compare Quotes Frontend - Implementation Plan.md`. SDD ledger (full per-task detail + reviews): `.superpowers/sdd/Stage 5 - S5.6 …/progress.md`. Frontend-seam research: `scratchpad/s5.6-frontend-research.md`. Approved visual spec = mockup artifact `10b4cbc3-c713-4773-b8c5-00ea8289cec4` + design §12.
+
+**⚠ Scope correction:** S5.6 is NOT pure-frontend as §15 implied — `GET …/comparison` didn't return the award decision / timeline / itemised charges the maker-checker UI needs. **Task 1 added them** (shared `AwardDecisionDto`/`AwardDecisionEventDto`/`OfferChargeLineDto` + `ComparisonService` join; NO DB migration — tables pre-existed).
+
+**Done (all reviewed, on branch, LOCAL commits `7b58a8d..`<tip>):**
+- **T1** `c87201f` — backend read-model extension (decision + timeline + itemised charges on `GET …/comparison`).
+- **T2** `99ca41f`/`d0e4d52` — route `/queries/:id/compare` + `CompareQuotesPage` shell (reuses `QueryOverviewHeader` + `RouteDiagram` w/ a new `selectedLegId`/`onSelectLeg` channel + a single-open `CompareLegPanel`) + `StageRail` "Quotes" step wiring (`isQuotesStageEnabled` at `RFQ_SENT`+).
+- **T3** `0b65db4`/`6c4c621` — read-only `ComparisonGrid` (`(FF×variant)` columns) + `RecommendationBanner` + click-FF `OfferDetail` + pending/awaiting. Unpriced offers greyed, never a fake `$0`.
+- **T4** `58390ae`(+review fix) — **maker controls**: shortlist radios (override-reason when ≠ recommendation) + send-for-approval (A9 proceed-without-waiting) + per-FF Negotiate dialog. Hooks in `useAwardActions.ts`.
+- Everything green: `pnpm --filter @svyft/web test` (101 files / 632+), lint, `pnpm run typecheck`. NOT yet whole-repo `pnpm run ci` (T6 acceptance step). **Not pushed to PR #52 yet** (push at S5.6 completion, or as WIP).
+
+**Remaining — the exact next steps:**
+- **T5 — checker view** (`docs/plans/…S5.6…` Task 5): `CheckerPanel` (Manager+ **conditional mount** `canCheck = role===ADMINISTRATOR||MANAGER`) with Approve/Reject per `PENDING_APPROVAL` leg, **four-eyes-disabled** when `decision.sentByUserId === user.id`; a `DecisionTimeline` (`leg.timeline`, rendered in all modes); a **Generate** gate (Manager+, enabled only when every leg's `decision.status === "APPROVED"`) → `generate-client-quote`. Hooks `useApprove`/`useReject`/`useGenerateClientQuote`. **Generate = Manager+ ONLY, no four-eyes** (§16 O4). Reference: `FxRatesPage`'s `canWrite` conditional-mount; the maker hooks in `useAwardActions.ts`.
+- **T6 — Quoting-Client end-state panel**: `QuotingClientPanel` (shown when `query.status === "QUOTING_CLIENT"` / `awardSnapshot` present) — per-leg winners + `combinedUsd` from `Query.awardSnapshot` (`QueryAwardSnapshot`) + FX-as-of + a **Reopen** button (`reopen-comparison`, Executive+). Grid locks to read-only in this state.
+- **Acceptance:** full `pnpm run ci` → **visual verify vs the mockup** (dev server + screenshot maker/checker, light/dark — needs a query seeded to the comparison stage, i.e. distributed RFQs + submitted quotes) → opus whole-branch review → push S5.6 to PR #52.
+
+**Parked minors (in the S5.6 ledger):** T4 M2 (send-for-approval double-submit — a frontend disable-while-pending was added; the backend not guarding re-send-after-APPROVED is a separate follow-up), T4 M3 (RHF override text persists across picks — intentional), T3 #4/#5/#6 (REQUOTED badge wording split / `money.ts` DRY / aria-controls). The FX-admin screen (§12) **already exists** from S5.1 — no work needed unless extending.
+
+**How to resume:** continue the SDD run on `docs/plans/stage-5/Stage 5 - S5.6 …` from Task 5 (BASE = T4's tip). Or ask me to.
 
 ## Reusable facts (learned across S5.4/S5.5 SDD)
 - Caller id = `user.userId` (`RequestUser`); e2e actor `@db.Uuid` cols need cookie `sub: randomUUID()`.
