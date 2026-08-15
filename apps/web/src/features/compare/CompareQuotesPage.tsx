@@ -75,6 +75,7 @@ export function CompareQuotesPage() {
           {legs.map((leg) => (
             <CompareLegPanel
               key={leg.legId}
+              queryId={id}
               leg={leg}
               legStatus={statusByLegId.get(leg.legId)}
               open={openLegId === leg.legId}

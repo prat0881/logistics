@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LegComparisonDto } from "@svyft/shared";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { OfferDetail } from "./OfferDetail";
@@ -141,8 +142,17 @@ const LEG: LegComparisonDto = {
   timeline: [],
 };
 
+// CompareLegPanel now also renders Task 4's MakerPanel in its open body (below the grid), which
+// needs a QueryClientProvider ancestor for its useMutation hooks — this file's own tests never
+// touch MakerPanel's mutations (no fetch stub is installed), they only exercise the grid/detail
+// through the SAME shell it now happens to sit alongside.
 function renderPanel(leg: LegComparisonDto = LEG) {
-  return render(<CompareLegPanel leg={leg} open onToggle={() => {}} />);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <CompareLegPanel queryId="q1" leg={leg} open onToggle={() => {}} />
+    </QueryClientProvider>,
+  );
 }
 
 describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
