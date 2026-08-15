@@ -3,7 +3,7 @@ import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const RANK: Record<string, number> = {
-  DRAFT: 0, CREATED: 1, RFQ_READY: 2, RFQ_SENT: 3, QUOTED: 4, NO_RESPONSE: 4,
+  DRAFT: 0, CREATED: 1, RFQ_READY: 2, RFQ_SENT: 3, QUOTED: 4, NO_RESPONSE: 4, QUOTING_CLIENT: 4,
   AWAITING_CLIENT_DECISION: 5, WON: 6, LOST: 6, CLOSED: 7,
 };
 
@@ -11,20 +11,38 @@ export function isRfqStageEnabled(status: string): boolean {
   return (RANK[status] ?? 0) >= RANK.RFQ_READY;
 }
 
+/** The Compare Quotes screen (S5.6) becomes reachable once the RFQ has gone out. */
+export function isQuotesStageEnabled(status: string): boolean {
+  return (RANK[status] ?? 0) >= RANK.RFQ_SENT;
+}
+
 type StepState = "done" | "current" | "upcoming";
 
 interface StageRailProps {
   queryId: string;
-  active: "create" | "rfq";
+  active: "create" | "rfq" | "quotes";
   rfqEnabled: boolean;
+  /** Mirrors `rfqEnabled` for the "quotes" step — pass `isQuotesStageEnabled(query.status)`. */
+  quotesEnabled?: boolean;
 }
 
-export function StageRail({ queryId, active, rfqEnabled }: StageRailProps) {
+// Canonical step order, used to derive each step's state from its index relative to `active`'s
+// index — earlier steps are "done", the active one is "current", later ones are "upcoming". This
+// generalizes what used to be two hand-written ternaries (correct only for active="create"|"rfq")
+// so a step further right — "quotes" — also correctly marks the steps before it as done instead of
+// leaving them stuck on "upcoming".
+const STEP_KEYS = ["create", "rfq", "quotes", "award"] as const;
+
+export function StageRail({ queryId, active, rfqEnabled, quotesEnabled }: StageRailProps) {
+  const activeIndex = STEP_KEYS.indexOf(active);
+  const stateAt = (index: number): StepState =>
+    index === activeIndex ? "current" : index < activeIndex ? "done" : "upcoming";
+
   const steps: Array<{ key: string; label: string; to?: string; state: StepState }> = [
-    { key: "create", label: "Create", to: `/queries/${queryId}`, state: active === "create" ? "current" : "done" },
-    { key: "rfq", label: "RFQ", to: rfqEnabled ? `/queries/${queryId}/workspace` : undefined, state: active === "rfq" ? "current" : "upcoming" },
-    { key: "quotes", label: "Quotes", state: "upcoming" },
-    { key: "award", label: "Award", state: "upcoming" },
+    { key: "create", label: "Create", to: `/queries/${queryId}`, state: stateAt(0) },
+    { key: "rfq", label: "RFQ", to: rfqEnabled ? `/queries/${queryId}/workspace` : undefined, state: stateAt(1) },
+    { key: "quotes", label: "Quotes", to: quotesEnabled ? `/queries/${queryId}/compare` : undefined, state: stateAt(2) },
+    { key: "award", label: "Award", state: stateAt(3) },
   ];
 
   return (

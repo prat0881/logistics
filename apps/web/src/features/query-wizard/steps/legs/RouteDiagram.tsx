@@ -39,6 +39,13 @@ interface RouteDiagramProps {
   onEditPoint?: (pointId: string) => void;
   /** Clicking a leg edge opens the leg editor. */
   onEditLeg?: (legId: string) => void;
+  /** The leg whose edge should render the "selected" tier (Compare Quotes §12 — the currently
+   *  open leg card). Optional and independent of `findings`; both are optional and backwards
+   *  compatible, so existing callers (the query-wizard Legs step, `RfqWorkspace`) are unaffected. */
+  selectedLegId?: string;
+  /** Clicking a leg edge also reports the selection, independent of `onEditLeg` (a caller may pass
+   *  the same handler to both, as Compare Quotes does, or different ones). */
+  onSelectLeg?: (legId: string) => void;
   className?: string;
 }
 
@@ -73,6 +80,8 @@ export function RouteDiagram({
   findings,
   onEditPoint,
   onEditLeg,
+  selectedLegId,
+  onSelectLeg,
   className,
 }: RouteDiagramProps) {
   const [hovered, setHovered] = useState<{ kind: "point" | "leg"; id: string } | null>(null);
@@ -191,9 +200,11 @@ export function RouteDiagram({
                   to={d}
                   bow={bows.get(leg.id) ?? 0}
                   highlight={hl}
+                  selected={leg.id === selectedLegId}
                   messages={highlights.legMsgs.get(leg.id) ?? []}
                   reducedMotion={prefersReducedMotion}
                   onEditLeg={onEditLeg}
+                  onSelectLeg={onSelectLeg}
                   onHover={() => setHovered({ kind: "leg", id: leg.id })}
                   onLeave={() => setHovered(null)}
                 />
@@ -255,9 +266,11 @@ function Edge({
   to,
   bow,
   highlight,
+  selected,
   messages,
   reducedMotion,
   onEditLeg,
+  onSelectLeg,
   onHover,
   onLeave,
 }: {
@@ -267,9 +280,12 @@ function Edge({
   /** Vertical offset (px) fanning legs that share this endpoint pair apart. */
   bow: number;
   highlight: Highlight;
+  /** True when this is the Compare Quotes screen's currently-open leg. */
+  selected?: boolean;
   messages: string[];
   reducedMotion: boolean;
   onEditLeg?: (legId: string) => void;
+  onSelectLeg?: (legId: string) => void;
   onHover?: () => void;
   onLeave?: () => void;
 }) {
@@ -286,7 +302,11 @@ function Edge({
   const dx = Math.max(40, (x2 - x1) / 2);
   const path = `M ${x1} ${y1} C ${x1 + dx} ${y1 + bow}, ${x2 - dx} ${y2 + bow}, ${x2} ${y2}`;
 
-  // Highlight precedence: blocking > warning > mode default.
+  // Highlight precedence: blocking > warning > mode default (color); `selected` is a further,
+  // outer tier that only bumps width — it stacks on top of whatever color the finding precedence
+  // already chose (so a selected leg that's also blocking still reads as blocking) rather than
+  // replacing it. This mirrors the approved Compare Quotes mockup, whose "open leg" treatment is
+  // the same edge in its normal mode color, just drawn thicker.
   let stroke = modeColor(leg.mode);
   let markerId = leg.mode ? `arrow-${leg.mode}` : "arrow-unset";
   let width = 2.25;
@@ -300,19 +320,26 @@ function Edge({
     markerId = "arrow-blocking";
     width = 3;
   }
+  if (selected) {
+    width += 1.75;
+  }
 
   // The cubic's vertical peak sits at ~0.75·bow; place the legCode chip on the curve.
   const mid = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 + bow * 0.75 };
   const dash = modeDash(leg.mode);
 
-  const activate = () => onEditLeg?.(leg.id);
-  const interactive = !!onEditLeg;
+  const activate = () => {
+    onEditLeg?.(leg.id);
+    onSelectLeg?.(leg.id);
+  };
+  const interactive = !!onEditLeg || !!onSelectLeg;
 
   return (
     <g
       data-leg-id={leg.id}
       data-mode={leg.mode ?? "NONE"}
       data-finding={highlight.finding ?? undefined}
+      data-selected={selected ? "" : undefined}
       className={cn("group", interactive && "route-focusable cursor-pointer")}
       onClick={interactive ? activate : undefined}
       role={interactive ? "button" : undefined}
@@ -367,7 +394,7 @@ function Edge({
           rx={5}
           fill="hsl(var(--card))"
           stroke={stroke}
-          strokeWidth={1}
+          strokeWidth={selected ? 2 : 1}
         />
         <text
           x={0}
