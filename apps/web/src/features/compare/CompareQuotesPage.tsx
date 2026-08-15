@@ -66,7 +66,6 @@ export function CompareQuotesPage() {
             findings={[]}
             selectedLegId={openLegId ?? undefined}
             onSelectLeg={jumpToLeg}
-            onEditLeg={jumpToLeg}
           />
         </section>
 

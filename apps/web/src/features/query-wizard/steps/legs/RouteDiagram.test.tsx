@@ -515,6 +515,68 @@ describe("RouteDiagram", () => {
     expect(onEditLeg).toHaveBeenCalledWith(edge.getAttribute("data-leg-id"));
   });
 
+  // ── S5.6 Task 2 review: selectedLegId / onSelectLeg (Compare Quotes) ───────────
+
+  it("calling onSelectLeg fires on edge click, independent of onEditLeg", async () => {
+    const onSelectLeg = vi.fn();
+    render(<RouteDiagram detail={detailWithRoute} findings={[]} onSelectLeg={onSelectLeg} />);
+    const edge = document.querySelector("[data-leg-id]") as SVGGElement;
+    await userEvent.click(edge);
+    expect(onSelectLeg).toHaveBeenCalledWith(edge.getAttribute("data-leg-id"));
+  });
+
+  const detailTwoLegs = makeDetail({
+    points: [
+      { id: "p1", type: "PICKUP", name: "A" },
+      { id: "p2", type: "WAREHOUSE", name: "B" },
+      { id: "p3", type: "DELIVERY", name: "C" },
+    ],
+    legs: [
+      {
+        id: "l1",
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: "p1",
+        destinationPointId: "p2",
+        assignedPackageIds: [],
+      },
+      {
+        id: "l2",
+        legCode: "L2",
+        mode: "ROAD",
+        originPointId: "p2",
+        destinationPointId: "p3",
+        assignedPackageIds: [],
+      },
+    ],
+  });
+
+  it("marks only the selected leg's edge with data-selected", () => {
+    const { container } = render(
+      <RouteDiagram detail={detailTwoLegs} findings={[]} selectedLegId="l1" />,
+    );
+    expect(container.querySelector('[data-leg-id="l1"]')).toHaveAttribute("data-selected", "");
+    expect(container.querySelector('[data-leg-id="l2"]')).not.toHaveAttribute("data-selected");
+  });
+
+  it("stacks the selected width bump on top of a blocking finding instead of overwriting its color/marker", () => {
+    // Regression guard: a naive `else if (selected)` in the Edge precedence chain would make
+    // selection overwrite the blocking-red stroke instead of layering on top of it.
+    const findings: Finding[] = [
+      { rule: "R1", severity: "blocking", scope: { type: "leg", id: "l1" }, message: "broken chain" },
+    ];
+    const { container } = render(
+      <RouteDiagram detail={detailWithRoute} findings={findings} selectedLegId="l1" />,
+    );
+    const paths = container.querySelectorAll('[data-leg-id="l1"] path');
+    // Hit-target path, then (blocking) halo path, then the main colored/marked path last.
+    const mainPath = paths[paths.length - 1];
+    expect(mainPath).toHaveAttribute("stroke", "hsl(var(--destructive))");
+    expect(mainPath).toHaveAttribute("marker-end", "url(#arrow-blocking)");
+    expect(mainPath).toHaveAttribute("stroke-width", "4.75"); // 3 (blocking) + 1.75 (selected)
+    expect(container.querySelector('[data-leg-id="l1"]')).toHaveAttribute("data-selected", "");
+  });
+
   // ── Task 3: hover tooltip ────────────────────────────────────────────────────
 
   it("hovering a point box shows its full address in a tooltip", async () => {
