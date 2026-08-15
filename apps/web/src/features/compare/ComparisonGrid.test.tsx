@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { LegComparisonDto } from "@svyft/shared";
 import { CompareLegPanel } from "./CompareLegPanel";
+import { OfferDetail } from "./OfferDetail";
 
 // FF1 ("Acme Forwarding") prices BOTH Road variants off one submitted quote (`quote-1`) — the
 // same `quoteId` fans out into two `OfferDto` rows (DEDICATED/GROUPAGE) exactly as
@@ -85,6 +86,10 @@ const LEG: LegComparisonDto = {
     },
     {
       // Same FF/quote as above, Groupage left un-priced — must render as a greyed "—", never $0.
+      // `charges` is deliberately NOT [] here: comparison.service.ts's `buildCharges` unconditionally
+      // emits "Additional Charges" + "Warehousing" lines (only "Freight" is conditional), so a real
+      // unpriced offer always carries these two real, zero-amount lines — the exact shape that
+      // would otherwise render a fake-looking $0.00 total in OfferDetail if not guarded against.
       quoteId: "quote-2",
       freightForwarderId: "ff2",
       freightForwarderName: "Globex Logistics",
@@ -99,7 +104,10 @@ const LEG: LegComparisonDto = {
       chargeableWeightKg: 500,
       validUntil: null,
       quoteStatus: "QUOTED",
-      charges: [],
+      charges: [
+        { label: "Additional Charges", group: "additional", nativeAmount: 0, usdAmount: 0 },
+        { label: "Warehousing", group: "warehouse", nativeAmount: 0, usdAmount: 0 },
+      ],
     },
     {
       // A third FF whose quote is REQUOTED — its earlier price stays visible but stale-badged.
@@ -174,6 +182,36 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
     expect(cell).not.toHaveTextContent("$0");
   });
 
+  it("does not let an un-priced offer's header expand into a fake $0 total", async () => {
+    renderPanel();
+
+    // The un-priced GROUPAGE column's header is not a button — no click affordance at all. (FF1's
+    // OWN Groupage offer, quote-1::GROUPAGE, IS priced and IS a button — so this checks the
+    // specific unpriced header element, not "no button anywhere is named Groupage".)
+    const header = screen.getByTestId("offer-header-quote-2::GROUPAGE");
+    expect(header.tagName).not.toBe("BUTTON");
+
+    // Even so, clicking it must never surface OfferDetail's money — belt + suspenders. (Exact
+    // string, not a substring regex: "0.00 INR" would also match the tail of a real total like
+    // "45,000.00 INR", so this checks for the fake-zero text as its own standalone node.)
+    await userEvent.click(header);
+    expect(screen.queryByTestId("offer-detail-total-usd")).not.toBeInTheDocument();
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("0.00 INR")).not.toBeInTheDocument();
+  });
+
+  it("OfferDetail itself refuses to render a money total for an un-priced offer (defense in depth)", () => {
+    const unpriced = LEG.offers.find((o) => o.quoteId === "quote-2" && o.variant === "GROUPAGE")!;
+    render(<OfferDetail offer={unpriced} />);
+
+    expect(screen.getByText(/not priced by this forwarder/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("offer-detail-total-usd")).not.toBeInTheDocument();
+    // The two real zero-amount "Additional Charges"/"Warehousing" lines buildCharges emits for an
+    // un-priced offer must not leak through as a charges table either.
+    expect(screen.queryByText("Additional Charges")).not.toBeInTheDocument();
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+  });
+
   it("badges a REQUOTED offer as stale re-quote-requested", () => {
     renderPanel();
 
@@ -217,5 +255,96 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
   it("keeps the leg-body offer-count summary the page test relies on", () => {
     renderPanel();
     expect(screen.getByTestId("leg-body")).toHaveTextContent("5 offers received");
+  });
+});
+
+describe("ComparisonGrid edge cases", () => {
+  it("renders a single Air column (variant: null) without crashing", () => {
+    const airLeg: LegComparisonDto = {
+      legId: "leg-air",
+      legCode: "LEG-AIR",
+      mode: "AIR",
+      origin: "Delhi",
+      destination: "Frankfurt",
+      offers: [
+        {
+          quoteId: "quote-air-1",
+          freightForwarderId: "ffA",
+          freightForwarderName: "Air Cargo Co",
+          variant: null,
+          variantLabel: "—",
+          priced: true,
+          nativeTotal: 5000,
+          currency: "USD",
+          unitsPerUsd: 1,
+          usdTotal: 5000,
+          transitDays: 2,
+          chargeableWeightKg: 300,
+          validUntil: "2026-08-25T12:00:00.000Z",
+          quoteStatus: "QUOTED",
+          charges: [
+            { label: "Additional Charges", group: "additional", nativeAmount: 5000, usdAmount: 5000 },
+          ],
+        },
+      ],
+      pendingForwarders: [],
+      awaitingReQuote: false,
+      recommendation: null,
+      decision: null,
+      timeline: [],
+    };
+
+    renderPanel(airLeg);
+
+    expect(screen.getByText("Air Cargo Co")).toBeInTheDocument();
+    // offerKey's null-variant sentinel is "AIR" — one column, keyed off it.
+    expect(screen.getByTestId("offer-header-quote-air-1::AIR")).toBeInTheDocument();
+    expect(screen.getByTestId("offer-usd-quote-air-1::AIR")).toHaveTextContent("$5,000.00");
+  });
+
+  it("renders no banner and flags no column when the leg has no recommendation", () => {
+    renderPanel({ ...LEG, recommendation: null });
+
+    expect(screen.queryByTestId("recommendation-banner")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recommended")).not.toBeInTheDocument();
+  });
+
+  it("degrades gracefully when the recommendation references an offer absent from the leg", () => {
+    renderPanel({
+      ...LEG,
+      recommendation: {
+        quoteId: "quote-does-not-exist",
+        variant: "DEDICATED",
+        reason: "stale reference",
+      },
+    });
+
+    // Neither the banner (RecommendationBanner's own `.find()` returns undefined) nor any column
+    // flag renders — no crash, nothing shown, rather than a banner naming a nonexistent offer.
+    expect(screen.queryByTestId("recommendation-banner")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recommended")).not.toBeInTheDocument();
+  });
+
+  it("shows the empty-grid message and the pending list for a leg with zero offers", () => {
+    const emptyLeg: LegComparisonDto = {
+      legId: "leg-empty",
+      legCode: "LEG-EMPTY",
+      mode: "ROAD",
+      origin: "Pune",
+      destination: "Delhi",
+      offers: [],
+      pendingForwarders: [
+        { freightForwarderId: "ffX", freightForwarderName: "Only Pending Forwarder", quoteStatus: "RFQ_SENT" },
+      ],
+      awaitingReQuote: false,
+      recommendation: null,
+      decision: null,
+      timeline: [],
+    };
+
+    renderPanel(emptyLeg);
+
+    expect(screen.getByText("No comparable quotes yet.")).toBeInTheDocument();
+    expect(screen.getByText("Only Pending Forwarder")).toBeInTheDocument();
   });
 });

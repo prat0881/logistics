@@ -159,6 +159,7 @@ export function ComparisonGrid({ leg, selectedOfferKey, onSelectOffer }: Compari
                   g.offers.map((o) => {
                     const key = offerKey(o.quoteId, o.variant);
                     const recommended = isRecommended(leg, o);
+                    const variantText = o.variant ? rateVariantLabel(o.variant) : "—";
                     return (
                       <TableHead
                         key={key}
@@ -167,22 +168,32 @@ export function ComparisonGrid({ leg, selectedOfferKey, onSelectOffer }: Compari
                           recommended && "bg-primary/5 ring-1 ring-inset ring-primary",
                         )}
                       >
-                        <button
-                          type="button"
-                          data-testid={`offer-header-${key}`}
-                          aria-expanded={selectedOfferKey === key}
-                          onClick={() => onSelectOffer?.(o.quoteId, o.variant)}
-                          className="w-full rounded px-1 py-0.5 text-center hover:bg-muted/50"
-                        >
-                          <span className="block text-xs font-medium">
-                            {o.variant ? rateVariantLabel(o.variant) : "—"}
-                          </span>
-                          {recommended && (
-                            <Badge variant="accent" className="mt-1">
-                              Recommended
-                            </Badge>
-                          )}
-                        </button>
+                        {/* An unpriced offer has nothing to expand (its "charges" are just the
+                            two real, always-zero Additional/Warehousing lines buildCharges still
+                            emits — see OfferDetail's doc comment) — no click affordance at all,
+                            consistent with the grid greying its totals rather than showing $0. */}
+                        {o.priced ? (
+                          <button
+                            type="button"
+                            data-testid={`offer-header-${key}`}
+                            aria-expanded={selectedOfferKey === key}
+                            onClick={() => onSelectOffer?.(o.quoteId, o.variant)}
+                            className="w-full rounded px-1 py-0.5 text-center hover:bg-muted/50"
+                          >
+                            <span className="block text-xs font-medium">{variantText}</span>
+                            {recommended && (
+                              <Badge variant="accent" className="mt-1">
+                                Recommended
+                              </Badge>
+                            )}
+                          </button>
+                        ) : (
+                          <div data-testid={`offer-header-${key}`} className="w-full px-1 py-0.5">
+                            <span className="block text-xs font-medium text-muted-foreground">
+                              {variantText}
+                            </span>
+                          </div>
+                        )}
                       </TableHead>
                     );
                   }),
