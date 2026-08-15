@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { requestRequoteSchema, type RequestRequoteInput } from "@svyft/shared";
@@ -49,6 +49,13 @@ export function NegotiateDialog({
     defaultValues: { comment: "" },
   });
 
+  // The LATEST `quoteId` prop, updated every render (not just captured once) — read only inside
+  // the async `onSuccess` callback below, where a plain closed-over `quoteId` would always equal
+  // itself and could never detect "this dialog has since moved on to a different FF" (task-4
+  // review Fix #1, part 2).
+  const latestQuoteId = useRef(quoteId);
+  latestQuoteId.current = quoteId;
+
   // Reset both the form and any previous error whenever the dialog re-opens — otherwise a
   // cancelled attempt for one FF would leak its typed comment (or a stale error) into the next.
   // Deliberately keyed on `open` alone (`form`/`requestRequote` are stable hook identities, not
@@ -60,16 +67,40 @@ export function NegotiateDialog({
     }
   }, [open]);
 
+  // This single controlled Dialog is reused across every FF's negotiation on the leg (see the doc
+  // comment above) — Radix funnels EVERY close attempt (Escape, overlay click, the DialogContent
+  // corner X, and this component's own Cancel button below) through `onOpenChange`, so gating it
+  // here blocks all of them at once while a request is in flight. Without this, closing/cancelling
+  // out of Acme's pending negotiation and opening Globex's would leave Acme's request racing
+  // Globex's dialog: whichever settles later would otherwise fire the OTHER negotiation's
+  // `onSuccess` (task-4 review Fix #1, part 1).
+  function handleOpenChange(next: boolean) {
+    if (!next && requestRequote.isPending) return;
+    onOpenChange(next);
+  }
+
   // `.mutate()` with an inline `onSuccess`, not `.mutateAsync()` — closing the dialog only on
   // success still needs a completion signal, but awaiting `mutateAsync` here would leave its
   // rejection uncaught on a failed request (mirrors the same fix in MakerPanel.tsx); the inline
   // `requestRequote.isError` block below still renders the failure without closing the dialog.
+  //
+  // The `submittedFor`/`latestQuoteId` check is defense-in-depth on top of `handleOpenChange`
+  // above: with that guard in place, `quoteId` structurally can't change while a request for it
+  // is pending (every normal close path is blocked), so this comparison should always hold in
+  // practice — but it makes the success handler self-verifying rather than relying solely on the
+  // dialog never having been reachable in a bad state, which is worth keeping cheap insurance
+  // against however this component gets reused or changed later.
   function onSubmit(values: RequestRequoteInput) {
-    requestRequote.mutate(values, { onSuccess: () => onOpenChange(false) });
+    const submittedFor = quoteId;
+    requestRequote.mutate(values, {
+      onSuccess: () => {
+        if (latestQuoteId.current === submittedFor) onOpenChange(false);
+      },
+    });
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Negotiate with {freightForwarderName}</DialogTitle>
@@ -96,7 +127,12 @@ export function NegotiateDialog({
             </p>
           )}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleOpenChange(false)}
+              disabled={requestRequote.isPending}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={requestRequote.isPending}>

@@ -130,8 +130,13 @@ function ShortlistSection({
 }: ShortlistSectionProps) {
   const shortlist = useShortlist(queryId, leg.legId);
   const form = useForm<{ overrideReason?: string }>({
+    // `shortlistSchema`'s `overrideReason` is `.trim().min(1).max(2000).optional()` — `.optional()`
+    // only accepts `undefined`, NOT an empty string, so the default (and any cleared textarea)
+    // must resolve to `undefined`, never `""`, or zodResolver silently blocks submission with no
+    // visible error whenever the field is untouched (task-4 review Fix #3 caught this: the
+    // equals-recommendation case never renders the field at all, so it's always "untouched").
     resolver: zodResolver(shortlistSchema.pick({ overrideReason: true })),
-    defaultValues: { overrideReason: leg.decision?.overrideReason ?? "" },
+    defaultValues: { overrideReason: leg.decision?.overrideReason ?? undefined },
   });
   const reasonValue = form.watch("overrideReason");
   const missingReason = overrideRequired && !reasonValue?.trim();
@@ -139,9 +144,12 @@ function ShortlistSection({
 
   // `.mutate()`, not `.mutateAsync()` — nothing here needs to run AFTER the request settles (the
   // hook's own `onSuccess` handles invalidation, `shortlist.isError` drives the inline message
-  // below), and `mutateAsync`'s rejected promise would otherwise go uncaught on a 4xx/409.
+  // below), and `mutateAsync`'s rejected promise would otherwise go uncaught on a 4xx/409. The
+  // `isPending` guard is redundant with the submit button's own `disabled` below in the normal
+  // case (a native disabled button never dispatches a click) — kept anyway as a cheap,
+  // self-contained belt-and-suspenders against a double-fire (task-4 review Fix #2).
   function onSubmit(values: { overrideReason?: string }) {
-    if (!selectedOffer) return;
+    if (!selectedOffer || shortlist.isPending) return;
     const reason = values.overrideReason?.trim();
     shortlist.mutate({
       quoteId: selectedOffer.quoteId,
@@ -196,10 +204,24 @@ function ShortlistSection({
       {overrideRequired && (
         <div className="space-y-1">
           <Label htmlFor={overrideId}>Override reason</Label>
-          <Textarea id={overrideId} disabled={locked} {...form.register("overrideReason")} />
+          <Textarea
+            id={overrideId}
+            disabled={locked}
+            {...form.register("overrideReason", {
+              // A cleared textarea reads back "" from the DOM, which the same `.optional()`
+              // mismatch above would reject — coerce back to `undefined` (mirrors
+              // `FxRatesPage.tsx`'s `note` field).
+              setValueAs: (v: string) => (v === "" ? undefined : v),
+            })}
+          />
           <p className="text-xs text-muted-foreground">
             Required — this pick differs from the recommended offer.
           </p>
+          {form.formState.errors.overrideReason && (
+            <p role="alert" className="text-sm text-destructive">
+              {form.formState.errors.overrideReason.message}
+            </p>
+          )}
         </div>
       )}
 
@@ -227,7 +249,12 @@ function SendForApprovalSection({ queryId, leg }: { queryId: string; leg: LegCom
 
   // `.mutate()`, same reasoning as ShortlistSection.onSubmit above — the 409/400 path (A2/A3/A9
   // guards in award.service.ts) is surfaced via `sendForApproval.isError`, not a caught rejection.
+  // `disabled` below already covers `isPending` (a fast double-click can't reach a disabled native
+  // button), but `alreadySent` only flips once the post-send refetch lands — this guard closes
+  // that window at the handler level too, so a second invocation can never fire a second POST
+  // regardless of DOM/render timing (task-4 review Fix #2).
   function onSend() {
+    if (sendForApproval.isPending) return;
     if (leg.awaitingReQuote) {
       sendForApproval.mutate({ proceedWithoutWaiting: true, proceedReason: proceedReason.trim() });
     } else {

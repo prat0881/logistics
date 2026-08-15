@@ -189,6 +189,23 @@ describe("MakerPanel", () => {
     });
   });
 
+  it("PUTs {quoteId, variant} with no overrideReason when the pick equals the recommendation", async () => {
+    const calls: unknown[] = [];
+    renderMaker(LEG, { onShortlistPut: (body) => calls.push(body) });
+
+    // TCI Freight (quote-1/DEDICATED) is both the default selection and the recommendation — no
+    // override textarea should ever appear, and Shortlist should already be enabled.
+    expect(screen.queryByLabelText(/override reason/i)).not.toBeInTheDocument();
+    const shortlistButton = screen.getByRole("button", { name: /^shortlist$/i });
+    expect(shortlistButton).not.toBeDisabled();
+
+    await userEvent.click(shortlistButton);
+
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({ quoteId: "quote-1", variant: "DEDICATED" });
+    expect(calls[0]).not.toHaveProperty("overrideReason");
+  });
+
   it("posts an empty body on Send for approval when nothing is awaiting a re-quote", async () => {
     const calls: unknown[] = [];
     renderMaker(LEG, { onSendPost: (body) => calls.push(body) });
@@ -238,6 +255,55 @@ describe("MakerPanel", () => {
       quoteId: "quote-1",
       body: { comment: "Can you sharpen the price by 5%?" },
     });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("keeps Negotiate's Cancel disabled and refuses to close while the request is pending", async () => {
+    // A deferred (manually-resolved) response, so we can assert mid-flight state — the plain
+    // `mockFetch` helper always resolves on the next microtask, too fast to observe `isPending`.
+    let resolveRequote: ((value: { status: number; body?: unknown }) => void) | undefined;
+    const pending = new Promise<{ status: number; body?: unknown }>((resolve) => {
+      resolveRequote = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.endsWith("/api/queries/q1/legs/leg-1/quotes/quote-1/request-requote")) {
+          return pending.then(({ status, body }) => ({
+            ok: status >= 200 && status < 300,
+            status,
+            json: () => Promise.resolve(body ?? {}),
+            text: () => Promise.resolve(JSON.stringify(body ?? {})),
+          }));
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(""),
+        });
+      }),
+    );
+    renderWithProviders(<Harness leg={LEG} />, {
+      user: { id: "u1", name: "Exec", email: "e@x.com", role: "EXECUTIVE" },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /negotiate.*tci freight/i }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.type(within(dialog).getByLabelText(/comment/i), "Please revise.");
+    await userEvent.click(within(dialog).getByRole("button", { name: /request re-quote/i }));
+
+    await waitFor(() =>
+      expect(within(screen.getByRole("dialog")).getByRole("button", { name: /cancel/i })).toBeDisabled(),
+    );
+
+    // Neither a (disabled, no-op) Cancel click nor Escape may close the dialog mid-request.
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /cancel/i }));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // Resolving lets it close normally — proves this isn't just permanently stuck.
+    resolveRequote?.({ status: 200, body: { id: "quote-1", status: "REQUOTED" } });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
