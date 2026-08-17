@@ -5,7 +5,6 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LegStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import { ComparisonGrid, offerKey } from "./ComparisonGrid";
-import { RecommendationBanner } from "./RecommendationBanner";
 import { OfferDetail } from "./OfferDetail";
 import { MakerPanel } from "./MakerPanel";
 import { CheckerPanel } from "./CheckerPanel";
@@ -61,9 +60,9 @@ interface CompareLegPanelProps {
    *  whole read-only half `locked`-agnostic, and the final review overturned that for the
    *  RECOMMENDATION specifically. Once the client quote is generated the winning quote is
    *  `APPROVED`, which `COMPARABLE_STATUSES` excludes from `offers` (comparison.service.ts), so
-   *  `buildRecommendation` ranks only the offers that LOST — the banner and the column ring would
-   *  name a different forwarder than the award panel immediately below them. Both are therefore
-   *  suppressed while locked (final review M1). */
+   *  `buildRecommendation` ranks only the offers that LOST — the column tint/badge would name a
+   *  different forwarder than the award panel immediately below them. It is therefore suppressed
+   *  while locked, at the model layer (`buildComparisonRowModel`, S5.7 T1) — final review M1. */
   locked: boolean;
 }
 
@@ -72,9 +71,10 @@ interface CompareLegPanelProps {
  * `rfq-workspace/LegPanel`'s controlled single-open shell (chevron + legCode chip + route + mode
  * badge), plus a decision-status chip derived from `leg.decision?.status` when a shortlist exists.
  * The body renders the read-only `(FF × variant)` comparison — a "N offers received" summary, the
- * `RecommendationBanner`, the `ComparisonGrid` itself, and — once a column header is clicked — that
- * offer's itemised `OfferDetail` — followed by Task 4's `MakerPanel` (shortlist / send-for-approval
- * / negotiate). Task 5 adds the checker panel alongside this same body.
+ * `ComparisonGrid` itself (the recommendation now reads by column colour, not a separate banner —
+ * S5.7 T1), and — once a column header is clicked — that offer's itemised `OfferDetail` — followed
+ * by Task 4's `MakerPanel` (shortlist / send-for-approval / negotiate). Task 5 adds the checker
+ * panel alongside this same body.
  *
  * Two pieces of "which offer" state are lifted here, not one, despite both being keyed the same
  * way (`offerKey(quoteId, variant)`) — they answer genuinely different questions with different
@@ -147,9 +147,6 @@ export function CompareLegPanel({
           <p className="text-sm text-muted-foreground">
             {offerCount} offer{offerCount === 1 ? "" : "s"} received
           </p>
-          {!locked && (
-            <RecommendationBanner recommendation={leg.recommendation} offers={leg.offers} />
-          )}
           <ComparisonGrid
             leg={leg}
             selectedOfferKey={selectedOfferKey}

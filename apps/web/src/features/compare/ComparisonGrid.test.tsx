@@ -39,7 +39,7 @@ const LEG: LegComparisonDto = {
       priced: true,
       nativeTotal: 45000,
       currency: "INR",
-      unitsPerUsd: 83,
+      unitsPerUsd: 3.6725,
       usdTotal: 542.17,
       transitDays: 3,
       chargeableWeightKg: 500,
@@ -180,18 +180,47 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
     expect(screen.getByTestId("offer-usd-quote-2::DEDICATED")).toHaveTextContent("$506.02");
   });
 
-  it("flags the recommended offer's column and renders the recommendation banner", () => {
+  it("renders the conversion-rate row", () => {
+    renderPanel();
+    expect(screen.getByTestId("offer-rate-quote-1::DEDICATED")).toHaveTextContent("3.67250");
+  });
+
+  it("tints every cell of the recommended column and stars its Status badge with the reason, without touching sibling columns", () => {
     renderPanel();
 
-    const header = screen.getByTestId("offer-header-quote-1::DEDICATED");
-    expect(within(header).getByText("Recommended")).toBeInTheDocument();
+    // Every row of the recommended (quote-1::DEDICATED) column carries the tint — not just its
+    // header — per S5.7 item 2 ("recommendation by colour" replaces the old header-only ring).
+    // The header's testid sits on the inner `<button>`; the tint lives on the wrapping `<th>`.
+    expect(screen.getByTestId("offer-header-quote-1::DEDICATED").closest("th")).toHaveClass(
+      "bg-emerald-500/10",
+    );
+    expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).toHaveClass("bg-emerald-500/10");
+    expect(screen.getByTestId("offer-status-quote-1::DEDICATED")).toHaveClass("bg-emerald-500/10");
 
-    const banner = screen.getByTestId("recommendation-banner");
-    expect(within(banner).getByText(/Acme Forwarding/)).toBeInTheDocument();
-    expect(within(banner).getByText(/Dedicated/)).toBeInTheDocument();
-    expect(
-      within(banner).getByText(/High priority.*fastest transit.*price broke the tie/),
-    ).toBeInTheDocument();
+    // Its own forwarder's OTHER variant column (quote-1::GROUPAGE) is untouched — the tint is keyed
+    // by (quoteId, variant), not by forwarder.
+    expect(screen.getByTestId("offer-usd-quote-1::GROUPAGE")).not.toHaveClass("bg-emerald-500/10");
+
+    const status = screen.getByTestId("offer-status-quote-1::DEDICATED");
+    const badge = within(status).getByText("★ Recommended");
+    expect(badge).toHaveAttribute(
+      "title",
+      "High priority → fastest transit (3 days); price broke the tie.",
+    );
+  });
+
+  it("draws the forwarder separator on the last variant column of each group, not between a forwarder's own variants", () => {
+    renderPanel();
+
+    // FF1 (Acme) has two columns, quote-1::DEDICATED then quote-1::GROUPAGE — the separator belongs
+    // on the LAST one (the boundary before FF2's first column), not the first.
+    expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).not.toHaveClass("border-r-2");
+    expect(screen.getByTestId("offer-usd-quote-1::GROUPAGE")).toHaveClass("border-r-2");
+    // FF2 (Globex) likewise: quote-2::GROUPAGE is its last column.
+    expect(screen.getByTestId("offer-usd-quote-2::DEDICATED")).not.toHaveClass("border-r-2");
+    expect(screen.getByTestId("offer-usd-quote-2::GROUPAGE")).toHaveClass("border-r-2");
+    // FF3 (Third Forwarder) has exactly one column — it is trivially its own last column.
+    expect(screen.getByTestId("offer-usd-quote-3::DEDICATED")).toHaveClass("border-r-2");
   });
 
   it("greys an un-priced offer's total instead of showing $0", () => {
@@ -322,11 +351,13 @@ describe("ComparisonGrid edge cases", () => {
     expect(screen.getByTestId("offer-usd-quote-air-1::AIR")).toHaveTextContent("$5,000.00");
   });
 
-  it("renders no banner and flags no column when the leg has no recommendation", () => {
+  it("flags no column when the leg has no recommendation", () => {
     renderPanel({ ...LEG, recommendation: null });
 
-    expect(screen.queryByTestId("recommendation-banner")).not.toBeInTheDocument();
-    expect(screen.queryByText("Recommended")).not.toBeInTheDocument();
+    expect(screen.getByTestId("offer-header-quote-1::DEDICATED").closest("th")).not.toHaveClass(
+      "bg-emerald-500/10",
+    );
+    expect(screen.queryByText("★ Recommended")).not.toBeInTheDocument();
   });
 
   it("degrades gracefully when the recommendation references an offer absent from the leg", () => {
@@ -339,10 +370,10 @@ describe("ComparisonGrid edge cases", () => {
       },
     });
 
-    // Neither the banner (RecommendationBanner's own `.find()` returns undefined) nor any column
-    // flag renders — no crash, nothing shown, rather than a banner naming a nonexistent offer.
-    expect(screen.queryByTestId("recommendation-banner")).not.toBeInTheDocument();
-    expect(screen.queryByText("Recommended")).not.toBeInTheDocument();
+    // No column key in the model matches a nonexistent quoteId, so no cell picks up the tint or
+    // badge — no crash, nothing flagged, rather than naming a nonexistent offer.
+    expect(screen.queryByText("★ Recommended")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".bg-emerald-500\\/10")).toHaveLength(0);
   });
 
   it("shows the empty-grid message and the pending list for a leg with zero offers", () => {
@@ -369,15 +400,16 @@ describe("ComparisonGrid edge cases", () => {
   });
 
   // ── final review M1 ───────────────────────────────────────────────────────────────────────
-  it("suppresses the recommendation banner and the Recommended flag once the award is locked", () => {
+  it("suppresses the recommendation tint and the Recommended badge once the award is locked", () => {
     // Post-generate, the WINNING quote is APPROVED — a status COMPARABLE_STATUSES excludes from
     // `offers` — so whatever `recommendation` still points at is ranked among the losers only.
     renderPanel(LEG, { locked: true });
 
-    expect(screen.queryByTestId("recommendation-banner")).not.toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("offer-header-quote-1::DEDICATED")).queryByText("Recommended"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("offer-header-quote-1::DEDICATED").closest("th")).not.toHaveClass(
+      "bg-emerald-500/10",
+    );
+    expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).not.toHaveClass("bg-emerald-500/10");
+    expect(screen.queryByText("★ Recommended")).not.toBeInTheDocument();
 
     // …while the grid itself stays fully readable.
     expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).toHaveTextContent("$542.17");
