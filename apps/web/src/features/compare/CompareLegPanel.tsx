@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { LegComparisonDto, LegStatus } from "@svyft/shared";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -6,15 +6,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LegStatusBadge } from "@/features/rfq-workspace/statusBadges";
-import { ComparisonGrid, offerKey } from "./ComparisonGrid";
-import { buildComparisonRowModel, type OfferCell } from "./comparisonRowModel";
+import { ComparisonGrid } from "./ComparisonGrid";
+// Both from the leaf module they actually live in (final review MINOR #8): `offerKey` used to be
+// imported from `./ComparisonGrid`'s re-export while `buildComparisonRowModel` came from here,
+// which made one file read as if the two were unrelated.
+import { buildComparisonRowModel, offerKey, type OfferCell } from "./comparisonRowModel";
 import { ChargeBreakdownDialog } from "./ChargeBreakdownDialog";
 import { ShortlistDialog } from "./ShortlistDialog";
 import { NegotiateDialog } from "./NegotiateDialog";
 import { MakerPanel } from "./MakerPanel";
 import { CheckerPanel } from "./CheckerPanel";
 import { DecisionTimeline } from "./DecisionTimeline";
-import { useViewMode, type ViewMode } from "./useViewMode";
+import { type ViewMode } from "./useViewMode";
 
 type BadgeVariant =
   | "default" | "secondary" | "success" | "warning"
@@ -75,6 +78,13 @@ interface CompareLegPanelProps {
    *  There's no leg- or offer-level equivalent; every offer on the query reads the same rate
    *  table (S5.7 T3, ambiguity resolution #5). */
   fxAsOf: string | null;
+  /** The screen-wide columns/rows orientation and its setter, owned by `CompareQuotesPage`'s single
+   *  `useViewMode()` call. REQUIRED (not defaulted) on purpose: the preference is global by design
+   *  (§36), and when each panel called the hook itself every leg kept its own copy, so a toggle on
+   *  one leg never reached the others (final review IMPORTANT #1). Threading it makes a second,
+   *  divergent source of this state impossible to introduce by accident. */
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
 }
 
 /**
@@ -117,12 +127,11 @@ export function CompareLegPanel({
   onToggle,
   locked,
   fxAsOf,
+  viewMode,
+  onViewModeChange,
 }: CompareLegPanelProps) {
   const route = `${leg.origin} → ${leg.destination}`;
   const offerCount = leg.offers.length;
-
-  // S5.7 T2 — a single global (not per-leg) columns/rows preference; ambiguity resolution #3.
-  const [viewMode, setViewMode] = useViewMode();
 
   // S5.7 T5 — the leg-level "Negotiate…" trigger. Just an open/close flag: `NegotiateDialog`
   // re-derives its own eligibility list off `leg` on every render (see its own doc comment), so
@@ -150,6 +159,36 @@ export function CompareLegPanel({
   const decisionStatus = leg.decision?.status;
   const canShortlist =
     !locked && decisionStatus !== "PENDING_APPROVAL" && decisionStatus !== "APPROVED";
+
+  // `canShortlist` gates the OPEN DIALOG too, not just the Select button that opens it (final
+  // review IMPORTANT #2). `shortlistCell` is resolved from `buildComparisonRowModel`, which knows
+  // nothing about `locked` or the decision status, so without this the grid could drop the Select
+  // affordance under the maker — another user generating the client quote, or a second maker
+  // sending this leg for approval, both land via a background refetch — while an already-open
+  // dialog stayed live and submittable. The server 409s that submit (award.service.ts's shortlist
+  // guard), so it was a dead end rather than a bad award, but this component's own contract (see
+  // the comment above) is that the affordance is WITHHELD, never offered-and-rejected.
+  //
+  // Clearing the key as well as hiding the dialog is the other half (it subsumes deferred minor
+  // T4 F3): leaving `shortlistKey` set meant a later refetch that restored the offer — or
+  // re-enabled shortlisting — silently re-opened a dialog the maker never re-requested.
+  //
+  // The two are deliberately BOTH here even though this effect alone would also unmount the dialog
+  // (clearing the key empties `shortlistCell`). Passive effects run after paint, so without the
+  // `canShortlist &&` guard on the JSX the dialog would render once more on the tick the window
+  // closes — a visible flash of a control that is no longer valid. That one-frame difference is not
+  // observable through RTL (every `render`/`rerender` flushes effects before returning), so the
+  // mutation proof for the guard is green on its own and only this effect's removal reddens a test:
+  // recorded in the final-review fix report rather than papered over with a test that can't fail.
+  //
+  // This deliberately does NOT fire inside `ShortlistDialog`'s own save→send sequence: `shortlist`
+  // upserts the decision with `status: DRAFT` on both the create and update paths
+  // (award.service.ts), so the refetch triggered between the PUT and the POST returns a DRAFT
+  // decision and `canShortlist` stays true throughout. It flips only once the SEND has succeeded
+  // (→ PENDING_APPROVAL), by which point the dialog has already closed itself.
+  useEffect(() => {
+    if (!canShortlist) setShortlistKey(undefined);
+  }, [canShortlist]);
 
   // S5.7 T5 — this is a UI-only restriction (design consequence C1): the server still accepts a
   // re-quote on a PENDING_APPROVAL leg and resets its decision to DRAFT, it just isn't the flow the
@@ -224,7 +263,7 @@ export function CompareLegPanel({
                   </Button>
                 </>
               )}
-              <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+              <ViewModeToggle mode={viewMode} onChange={onViewModeChange} />
             </div>
           </div>
           <ComparisonGrid
@@ -235,7 +274,7 @@ export function CompareLegPanel({
             viewMode={viewMode}
             onShortlistOffer={canShortlist ? (cell) => setShortlistKey(cell.key) : undefined}
           />
-          {shortlistCell && (
+          {canShortlist && shortlistCell && (
             <ShortlistDialog
               open
               onOpenChange={(next) => !next && setShortlistKey(undefined)}

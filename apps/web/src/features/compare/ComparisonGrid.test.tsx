@@ -163,12 +163,19 @@ function renderPanel(
   {
     locked = false,
     fetch,
+    viewMode = "columns",
+    onViewModeChange = () => {},
   }: {
     locked?: boolean;
     /** Optional handler for the few tests that drive a real maker mutation through the panel;
      *  everything else keeps the blanket 401 (AuthProvider then self-reports unauthenticated and
      *  `CheckerPanel` hides, exactly as before). */
     fetch?: (url: string, init?: RequestInit) => { status: number; body?: unknown };
+    /** The orientation pair is owned by `CompareQuotesPage` now (final review IMPORTANT #1), so
+     *  the panel takes it as required props. Defaulted here to the pre-lift behaviour — the hook's
+     *  own default was `"columns"` — so every existing test in this file is unaffected. */
+    viewMode?: ViewMode;
+    onViewModeChange?: (mode: ViewMode) => void;
   } = {},
 ) {
   vi.stubGlobal(
@@ -186,6 +193,8 @@ function renderPanel(
           onToggle={() => {}}
           locked={locked}
           fxAsOf="2026-08-14T00:00:00.000Z"
+          viewMode={viewMode}
+          onViewModeChange={onViewModeChange}
         />
       </AuthProvider>
     </QueryClientProvider>,
@@ -408,6 +417,32 @@ describe.each(["columns", "rows"] as const)("ComparisonGrid — %s view", (mode)
     expect(await screen.findByText("$1,824.37")).toBeInTheDocument(); // grid still rendered
     expect(screen.queryByTestId("shortlist-select-q1::DEDICATED")).not.toBeInTheDocument();
     expect(screen.queryByText("Shortlist")).not.toBeInTheDocument(); // no orphan row/column header
+  });
+});
+
+// ── final review MINOR #9 — design §39 says the rows view's forwarder rows are "grouped and
+// banded". The columns view got `GROUP_SEPARATOR`; rows shipped with no equivalent, so grouping was
+// conveyed only by printing the forwarder name once. Rows-only by construction, hence outside the
+// parity `describe.each` above (the columns view has its own separator test further down).
+describe("ComparisonGridRows — forwarder grouping is banded", () => {
+  it("bands alternate forwarder groups and opens each later group with a rule", () => {
+    render(<ComparisonGrid leg={PARITY_LEG} viewMode="rows" />);
+
+    // PARITY_LEG is one offer each from three forwarders, so every row is also a group start.
+    const first = screen.getByTestId("offer-row-q1::DEDICATED"); // group 0 — Bridge
+    const second = screen.getByTestId("offer-row-q2::DEDICATED"); // group 1 — Second Forwarder
+    const third = screen.getByTestId("offer-row-q3::DEDICATED"); // group 2 — Third Forwarder
+
+    expect(second.className).toContain("bg-muted/30");
+    // Alternating: neither neighbour is banded, so the band actually distinguishes groups rather
+    // than tinting the whole table.
+    expect(first.className).not.toContain("bg-muted/30");
+    expect(third.className).not.toContain("bg-muted/30");
+
+    // Every group after the first opens with the same 2px rule the columns view closes groups with.
+    expect(first.className).not.toContain("border-t-2");
+    expect(second.className).toContain("border-t-2");
+    expect(third.className).toContain("border-t-2");
   });
 });
 
@@ -817,5 +852,103 @@ describe("ComparisonGrid edge cases", () => {
 
     renderPanel({ ...LEG, decision: { ...draft, status: "APPROVED" } });
     expect(screen.queryByTestId("shortlist-select-quote-1::DEDICATED")).not.toBeInTheDocument();
+  });
+});
+
+// ── final review IMPORTANT #2 — the gate has to cover the OPEN dialog, not just the button ─────
+// `ShortlistDialog` was the one maker control rendered outside `CompareLegPanel`'s `!locked` /
+// `canShortlist` gates: its `shortlistCell` is resolved from `buildComparisonRowModel`, which knows
+// nothing about `locked` or the decision status. So a background refetch that ended the maker's
+// window — another user generating the client quote, or a second maker sending this leg for
+// approval — dropped the Select row out of the grid while the ALREADY-OPEN dialog stayed live and
+// submittable. The server 409s that submit, so the consequence was a dead end rather than a bad
+// award, but the screen's contract is that the affordance is withheld, never offered-and-rejected.
+//
+// Both tests are driven by re-rendering the panel with a new `leg` — exactly what TanStack Query
+// does when `["comparison", queryId]` refetches underneath it.
+//
+// The fix is a `canShortlist &&` guard on the JSX PLUS an effect that clears `shortlistKey`.
+// Mutation-wise only the effect is separately provable: deleting it reddens the second test;
+// deleting the guard leaves both green, because clearing the key empties `shortlistCell` and so
+// unmounts the dialog anyway. The guard's remaining job is the one paint between the render that
+// closes the window and the passive effect that clears the key — and RTL flushes effects before
+// returning from `rerender`, so no assertion can sit in that gap. Both tests below therefore pin
+// user-visible behaviour ("it goes away", "it does not come back"), not one mechanism each.
+describe("ShortlistDialog is gated by the same rule as the Select button that opens it", () => {
+  const DRAFT_DECISION = {
+    legId: "leg-1",
+    status: "DRAFT" as const,
+    shortlistedQuoteId: null,
+    shortlistedVariant: null,
+    recommendedQuoteId: "quote-1",
+    recommendedVariant: "DEDICATED" as const,
+    overrideReason: null,
+    rejectionReason: null,
+    sentByUserId: null,
+    sentForApprovalAt: null,
+    decidedByUserId: null,
+    decidedAt: null,
+  };
+
+  /** Renders the panel in a form that can be re-rendered with a different `leg`, so a test can
+   *  simulate the read model changing under an open dialog. */
+  function renderRefetchablePanel(leg: LegComparisonDto) {
+    vi.stubGlobal("fetch", mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (l: LegComparisonDto) => (
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <CompareLegPanel
+            queryId="q1"
+            leg={l}
+            open
+            onToggle={() => {}}
+            locked={false}
+            fxAsOf="2026-08-14T00:00:00.000Z"
+            viewMode="columns"
+            onViewModeChange={() => {}}
+          />
+        </AuthProvider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree(leg));
+    return { refetchAs: (l: LegComparisonDto) => rerender(tree(l)) };
+  }
+
+  it("unmounts an already-open ShortlistDialog once the leg stops being shortlistable", async () => {
+    const draftLeg = { ...LEG, decision: DRAFT_DECISION };
+    const { refetchAs } = renderRefetchablePanel(draftLeg);
+
+    await userEvent.click(screen.getByTestId("shortlist-select-quote-1::DEDICATED"));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    // A second maker sends this leg for approval; the refetch brings back PENDING_APPROVAL.
+    refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, status: "PENDING_APPROVAL" } });
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // ...and the Select button is gone too, i.e. the grid and the dialog agree.
+    expect(screen.queryByTestId("shortlist-select-quote-1::DEDICATED")).not.toBeInTheDocument();
+  });
+
+  it("does not silently re-open the dialog when the leg becomes shortlistable again", async () => {
+    const draftLeg = { ...LEG, decision: DRAFT_DECISION };
+    const { refetchAs } = renderRefetchablePanel(draftLeg);
+
+    await userEvent.click(screen.getByTestId("shortlist-select-quote-1::DEDICATED"));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, status: "PENDING_APPROVAL" } });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // A checker rejects the leg — `reject()` writes DRAFT + a reason, so shortlisting reopens. The
+    // maker's stale pick must NOT come back as an open modal on its own (deferred minor T4 F3:
+    // hiding the dialog without clearing `shortlistKey` left it primed to reappear).
+    refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, rejectionReason: "Too expensive" } });
+
+    // Positive control — shortlisting really is available again, so "no dialog" isn't vacuous.
+    expect(
+      await screen.findByTestId("shortlist-select-quote-1::DEDICATED"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

@@ -7,7 +7,12 @@ import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareQuotesPage } from "./CompareQuotesPage";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  // The view-mode test below persists the orientation (that is the point of the preference), so it
+  // must not leak into the other tests in this file, which all assume the `"columns"` default.
+  localStorage.clear();
+});
 
 /** `AuthProvider`'s `/api/auth/me` round trip is async, so `useAuth()`'s `user` is `null` for one
  *  or more microtask hops after `render()`. Any absence assertion taken before it settles proves
@@ -237,6 +242,35 @@ describe("CompareQuotesPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /LEG-2/i }));
     await waitFor(() => expect(screen.getByTestId("leg-body")).toHaveTextContent("2 offers"));
     expect(screen.getAllByTestId("leg-body")).toHaveLength(1);
+  });
+
+  // ── final review IMPORTANT #1 — the orientation is ONE preference for the whole screen ────────
+  // This is the only place TWO view-mode consumers are concurrently mounted, which is the only
+  // shape that can catch the bug: every `CompareLegPanel` used to call `useViewMode()` itself, and
+  // `useState`'s lazy initialiser runs once per mount, so LEG-2's panel seeded `"columns"` at page
+  // load and never heard about a toggle made on LEG-1. `useViewMode.test.ts`'s "a fresh mount picks
+  // up the persisted preference" test cannot see this — it unmounts the first hook BEFORE mounting
+  // the second, which is the page-reload shape, not the production one.
+  it("carries the view-mode preference from one leg to another (one global orientation, not one per leg)", async () => {
+    renderPage();
+    await screen.findByText("EXECUTIVE");
+
+    await userEvent.click(await screen.findByRole("button", { name: /LEG-1/i }));
+    await screen.findByTestId("leg-body");
+    // Positive control: the default orientation really is columns, whose first header cell is
+    // "Offer" (the rows view's is "Forwarder / variant"), so the switch below is observable.
+    expect(screen.getByRole("columnheader", { name: /^offer$/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId("view-mode-rows"));
+    expect(
+      await screen.findByRole("columnheader", { name: /forwarder \/ variant/i }),
+    ).toBeInTheDocument();
+
+    // LEG-2's panel has been mounted since the page loaded — i.e. since BEFORE the toggle.
+    await userEvent.click(screen.getByRole("button", { name: /LEG-2/i }));
+    await waitFor(() => expect(screen.getByTestId("leg-body")).toHaveTextContent("2 offers"));
+    expect(screen.getByRole("columnheader", { name: /forwarder \/ variant/i })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /^offer$/i })).not.toBeInTheDocument();
   });
 
   it("locks maker/checker/generate controls and shows QuotingClientPanel once the award snapshot is present (S5.6 Task 6)", async () => {

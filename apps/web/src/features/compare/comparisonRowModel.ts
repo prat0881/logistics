@@ -15,10 +15,11 @@ export function offerKey(quoteId: string, variant: string | null): string {
 }
 
 /** The stale-price marker for a REQUOTED offer (design §14). One constant, because it labels the
- *  same offer in three places — this grid's Status-row badge, `ComparisonGridColumns`, and
- *  `MakerPanel`'s shortlist radio. Lives here (not `ComparisonGrid.tsx`) so `ComparisonGridColumns`
- *  can import it without a cycle back through `ComparisonGrid.tsx`; still re-exported from
- *  `ComparisonGrid.tsx` so existing importers (`MakerPanel`) keep resolving it unchanged. */
+ *  same offer in three places — `ComparisonGridColumns`'s Status row, `ComparisonGridRows`'s Status
+ *  cell, and `ShortlistDialog`'s stale warning (which is where the S5.6 shortlist radio's inline
+ *  version of this warning went when T4 deleted the radio). Lives here (not `ComparisonGrid.tsx`)
+ *  so `ComparisonGridColumns` can import it without a cycle back through `ComparisonGrid.tsx`;
+ *  still re-exported from `ComparisonGrid.tsx`, which is how `ComparisonGrid.test.tsx` imports it. */
 export const STALE_OFFER_LABEL = "Re-quote requested";
 
 export interface OfferCell {
@@ -80,42 +81,56 @@ export interface MetricDef {
   render(cell: OfferCell): string;
 }
 
-export const METRICS: MetricDef[] = [
+/**
+ * The metrics every orientation renders, in order. `as const satisfies` (rather than a plain
+ * `: MetricDef[]` annotation) is load-bearing, not style: it keeps each `id` a STRING LITERAL so
+ * `MetricId` below is a closed union. Annotating with `MetricDef[]` widened `id` back to `string`,
+ * which silently collapsed the two lookup maps into `Record<string, string>` — adding a metric then
+ * compiled cleanly and rendered `data-testid="undefined-<key>"` in BOTH views (final review MINOR
+ * #5; T2 recorded this as fixed but the widening made the fix inert). The `render` parameters are
+ * annotated explicitly because `as const` removes the contextual typing that used to infer them.
+ */
+export const METRICS = [
   {
     id: "usdTotal",
     label: "Total (USD)",
-    render: (c) => (c.offer.priced ? fmtUsd(c.offer.usdTotal) : "—"),
+    render: (c: OfferCell) => (c.offer.priced ? fmtUsd(c.offer.usdTotal) : "—"),
   },
   {
     id: "nativeTotal",
     label: "Total (native)",
-    render: (c) => (c.offer.priced ? fmtNative(c.offer.nativeTotal, c.offer.currency) : "—"),
+    render: (c: OfferCell) =>
+      c.offer.priced ? fmtNative(c.offer.nativeTotal, c.offer.currency) : "—",
   },
   {
     id: "rate",
     label: "Rate (per USD)",
-    render: (c) => (c.offer.unitsPerUsd == null ? "—" : c.offer.unitsPerUsd.toFixed(5)),
+    render: (c: OfferCell) => (c.offer.unitsPerUsd == null ? "—" : c.offer.unitsPerUsd.toFixed(5)),
   },
   {
     id: "transit",
     label: "Transit",
-    render: (c) => (c.offer.transitDays == null ? "—" : `${c.offer.transitDays} d`),
+    render: (c: OfferCell) => (c.offer.transitDays == null ? "—" : `${c.offer.transitDays} d`),
   },
   {
     id: "validUntil",
     label: "Valid until",
-    render: (c) => (c.offer.validUntil ? formatDate(c.offer.validUntil) : "—"),
+    render: (c: OfferCell) => (c.offer.validUntil ? formatDate(c.offer.validUntil) : "—"),
   },
-];
+] as const satisfies readonly MetricDef[];
+
+/** The closed union of metric ids, derived FROM `METRICS` — so the maps below are exhaustiveness-
+ *  checked against the array itself and a new metric without map entries is a COMPILE error. */
+export type MetricId = (typeof METRICS)[number]["id"];
 
 /**
  * Per-metric `data-testid` suffix and cell class, shared by `ComparisonGridColumns` and
  * `ComparisonGridRows` (S5.7 T2) so the two orientations physically cannot drift on either — they
  * were untyped, per-file copies in `ComparisonGridColumns.tsx` alone until T2 lifted them here.
- * Keyed by `MetricDef["id"]` (not hand-listed) so a new `METRICS` entry can't compile against a
- * lookup map that forgot to grow with it.
+ * Keyed by the derived `MetricId` union (not by `string`, and not hand-listed) so a new `METRICS`
+ * entry can't compile against a lookup map that forgot to grow with it.
  */
-export const METRIC_TESTID: Record<MetricDef["id"], string> = {
+export const METRIC_TESTID: Record<MetricId, string> = {
   usdTotal: "offer-usd",
   nativeTotal: "offer-native",
   rate: "offer-rate",
@@ -123,7 +138,7 @@ export const METRIC_TESTID: Record<MetricDef["id"], string> = {
   validUntil: "offer-valid",
 };
 
-export const METRIC_CELL_CLASS: Record<MetricDef["id"], string> = {
+export const METRIC_CELL_CLASS: Record<MetricId, string> = {
   usdTotal: "text-right font-mono tabular-nums",
   nativeTotal: "text-right font-mono tabular-nums",
   rate: "text-right font-mono tabular-nums text-muted-foreground",

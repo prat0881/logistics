@@ -78,6 +78,12 @@ export interface RequoteResult {
  * successful calls among a partial failure already reissued that forwarder's FF-portal token and
  * reset their RFQ deadline server-side (not rolled back), so the read model needs refreshing even
  * when `run` reports failures.
+ *
+ * BOTH keys, like every other non-shortlist mutation in this file (final review MINOR #7). A
+ * re-quote is not comparison-local: `negotiation.service.ts` fires `REOPEN_AWARD` and moves the
+ * quote's status, which rolls up into the LEG's status — and `LegStatusBadge` on the leg card is
+ * fed by `useQueryDetail` (`["query", queryId]`), not by the comparison read model. Invalidating
+ * only `["comparison"]` left that badge stale; the batch made it worse by staleing N legs at once.
  */
 export function useRequestRequoteBatch(queryId: string, legId: string) {
   const qc = useQueryClient();
@@ -110,6 +116,7 @@ export function useRequestRequoteBatch(queryId: string, legId: string) {
     } finally {
       setIsPending(false);
       qc.invalidateQueries({ queryKey: ["comparison", queryId] });
+      qc.invalidateQueries({ queryKey: ["query", queryId] });
     }
     return results;
   }

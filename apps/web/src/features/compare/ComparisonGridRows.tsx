@@ -22,6 +22,16 @@ import {
 } from "./comparisonRowModel";
 import { ShortlistSelectCell } from "./ShortlistSelectCell";
 
+/** The rows-view equivalent of `ComparisonGridColumns`'s `GROUP_SEPARATOR` (design §39 — forwarder
+ *  rows are "grouped and banded"; S5.7 shipped the columns rule but no rows counterpart, so
+ *  grouping read only from the name being printed once — final review MINOR #9). Two existing
+ *  tokens, no new visual language: alternate forwarder groups get a faint `muted` wash, and every
+ *  group after the first opens with the same 2px `border` rule the columns view closes its groups
+ *  with. The band sits on the `<tr>` and the recommendation tint on each `<td>`, so a recommended
+ *  row inside a banded group still reads as recommended (a cell background paints over its row's). */
+const GROUP_BAND = "bg-muted/30";
+const GROUP_TOP_RULE = "border-t-2 border-border";
+
 export interface ComparisonGridRowsProps {
   model: ComparisonRowModel;
   leg: LegComparisonDto;
@@ -67,13 +77,23 @@ export function ComparisonGridRows({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {groups.map((group) =>
+          {groups.map((group, groupIndex) =>
             group.cells.map((cell, indexInGroup) => {
               const variantText = cell.offer.variant ? rateVariantLabel(cell.offer.variant) : "—";
               const isFirstInGroup = indexInGroup === 0;
 
               return (
-                <TableRow key={cell.key} className={cn(cell.recommended && RECOMMENDED_TINT)}>
+                <TableRow
+                  key={cell.key}
+                  data-testid={`offer-row-${cell.key}`}
+                  className={cn(
+                    groupIndex % 2 === 1 && GROUP_BAND,
+                    isFirstInGroup && groupIndex > 0 && GROUP_TOP_RULE,
+                    // Last, so `cn`'s tailwind-merge resolves the background conflict in favour of
+                    // the recommendation rather than the band.
+                    cell.recommended && RECOMMENDED_TINT,
+                  )}
+                >
                   <TableCell className={cn(cell.recommended && RECOMMENDED_TINT)}>
                     <div className="flex flex-col gap-0.5">
                       {isFirstInGroup && (

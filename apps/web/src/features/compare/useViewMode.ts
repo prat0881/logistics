@@ -15,6 +15,19 @@ export type ViewMode = "columns" | "rows";
  * throw on `localStorage` access, and this screen must never crash because of a UI preference —
  * the read falls back to `"columns"` (the S5.6 default, so every existing caller that never
  * touches this hook keeps behaving exactly as before) and the write is best-effort only.
+ *
+ * 🔴 **Call this EXACTLY ONCE per screen, at the top, and thread the pair down as props.**
+ * The state is ordinary `useState`, so it is per-CALL, not per-browser: `useState`'s lazy
+ * initialiser runs once per mount, and each caller therefore seeds from `localStorage` at ITS mount
+ * and diverges from then on. S5.7 shipped with `CompareLegPanel` calling this per leg, so toggling
+ * to Rows on LEG-1 left the already-mounted LEG-2 panel holding `"columns"` — the preference only
+ * appeared to "carry" after a full page reload (final review IMPORTANT #1). `CompareQuotesPage` now
+ * owns the single call and passes `viewMode`/`onViewModeChange` to every `CompareLegPanel`, the same
+ * single-sourcing already used for `locked` and `fxAsOf`; `CompareLegPanel` takes both as REQUIRED
+ * props so a second call site can't be added by accident. The cross-leg guarantee is covered in
+ * `CompareQuotesPage.test.tsx` ("carries the view-mode preference across legs"), which is the only
+ * place two consumers are concurrently mounted — a mount/unmount SEQUENCE (as in this file's
+ * "a fresh mount picks up the persisted preference" test, which covers page reloads) cannot show it.
  */
 export function useViewMode(): [ViewMode, (m: ViewMode) => void] {
   const [mode, setMode] = useState<ViewMode>(() => {

@@ -5,10 +5,12 @@ import { ComparisonGridColumns } from "./ComparisonGridColumns";
 import { ComparisonGridRows } from "./ComparisonGridRows";
 import type { ViewMode } from "./useViewMode";
 
-// Re-exported so every existing importer (`CompareLegPanel`, `MakerPanel`, and their tests) keeps
-// resolving these from `./ComparisonGrid` unchanged. Both now live in `comparisonRowModel.ts`
-// (S5.7 T1) — `offerKey` moved there verbatim, `STALE_OFFER_LABEL` moved there to avoid a module
-// cycle with `ComparisonGridColumns.tsx`, which also needs it.
+// Both of these now LIVE in `comparisonRowModel.ts` (S5.7 T1) — `offerKey` moved there verbatim,
+// `STALE_OFFER_LABEL` moved there to avoid a module cycle with `ComparisonGridColumns.tsx`, which
+// also needs it. They stay re-exported here because `ComparisonGrid.test.tsx` imports
+// `STALE_OFFER_LABEL` from this module; no production file resolves either symbol through here any
+// more (final review MINOR #8 — `MakerPanel` stopped importing from this module in T4, and
+// `CompareLegPanel` now takes `offerKey` from the leaf module alongside `buildComparisonRowModel`).
 export { offerKey, STALE_OFFER_LABEL };
 
 export interface ComparisonGridProps {
@@ -24,7 +26,8 @@ export interface ComparisonGridProps {
   /** Offers-as-columns (default) vs offers-as-rows (S5.7 T2). Optional and defaulted so every
    *  existing caller/test that doesn't pass it keeps rendering exactly as it did before T2 —
    *  ambiguity resolution #1. `CompareLegPanel` is the only caller that threads a live value
-   *  through, from its own `useViewMode()`. */
+   *  through, from the ONE `useViewMode()` owned by `CompareQuotesPage` (final review IMPORTANT
+   *  #1 — it used to call the hook per leg panel, which made the "global" preference per-leg). */
   viewMode?: ViewMode;
   /** Opens the maker's `ShortlistDialog` for one offer (S5.7 T4). Omit it — or set `locked` — and
    *  the Shortlist row/column is not rendered at all. Deliberately NOT folded into `onSelectOffer`

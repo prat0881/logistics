@@ -7,6 +7,7 @@ import { StageRail, isRfqStageEnabled, isQuotesStageEnabled } from "@/features/r
 import { QueryOverviewHeader } from "@/features/rfq-workspace/QueryOverviewHeader";
 import { RouteDiagram } from "@/features/query-wizard/steps/legs/RouteDiagram";
 import { useComparison } from "./useComparison";
+import { useViewMode } from "./useViewMode";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { GenerateGate } from "./GenerateGate";
 import { QuotingClientPanel } from "./QuotingClientPanel";
@@ -26,6 +27,12 @@ export function CompareQuotesPage() {
   const query = useQueryDetail(id);
   const comparison = useComparison(id);
   const [openLegId, setOpenLegId] = useState<string | null>(null);
+  // S5.7 T2 — the columns/rows orientation is ONE preference for the whole screen (ambiguity
+  // resolution #3, design §36), so it is owned here and threaded down exactly like `locked` and
+  // `fxAsOf` below. It used to be a `useViewMode()` call inside each `CompareLegPanel`, which gave
+  // every leg its own copy: toggling on LEG-1 left the already-mounted LEG-2 on the orientation it
+  // had seeded with at page load (final review IMPORTANT #1).
+  const [viewMode, setViewMode] = useViewMode();
 
   if (!id) return <p role="alert" className="text-sm text-destructive">Missing query id.</p>;
   if (query.isLoading || comparison.isLoading)
@@ -94,6 +101,8 @@ export function CompareQuotesPage() {
               onToggle={() => setOpenLegId((cur) => (cur === leg.legId ? null : leg.legId))}
               locked={locked}
               fxAsOf={comparison.data.fxAsOf}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
             />
           ))}
           {legs.length === 0 && (

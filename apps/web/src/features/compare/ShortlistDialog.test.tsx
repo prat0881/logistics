@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { LegComparisonDto, OfferDto } from "@svyft/shared";
 import { renderWithProviders } from "@/test/renderWithProviders";
@@ -273,6 +273,20 @@ describe("ShortlistDialog", () => {
   it("shows no stale warning for a live QUOTED offer", () => {
     renderDialog({ offer: BRIDGE_DEDICATED });
     expect(screen.queryByText(/re-quote requested/i)).not.toBeInTheDocument();
+  });
+
+  // ── final review IMPORTANT #3 — design item 4 (§72) requires an offer summary, not just a total.
+  // The dialog is MODAL: the grid row the maker just clicked Select on is covered while they decide,
+  // so the figures they are awarding on have to be legible HERE. Only `usdTotal` shipped, which
+  // meant confirming an award without the conversion rate item 9 exists to surface.
+  it("summarises the offer's USD total, native total, conversion rate and transit", async () => {
+    renderDialog({ offer: FALCON_GROUPAGE });
+
+    const summary = await screen.findByTestId("shortlist-offer-summary");
+    expect(within(summary).getByTestId("shortlist-offer-usd")).toHaveTextContent("$1,416.06");
+    expect(within(summary).getByTestId("shortlist-offer-native")).toHaveTextContent("5,200.00 AED");
+    expect(within(summary).getByTestId("shortlist-offer-rate")).toHaveTextContent("3.67250");
+    expect(within(summary).getByTestId("shortlist-offer-transit")).toHaveTextContent("6 d");
   });
 
   it("names the offer it is acting on", async () => {

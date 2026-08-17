@@ -18,10 +18,11 @@ import {
 import {
   buildComparisonRowModel,
   offerKey,
+  METRICS,
+  METRIC_TESTID,
   STALE_OFFER_LABEL,
   type OfferCell,
 } from "./comparisonRowModel";
-import { fmtUsd } from "./money";
 import { useSendForApproval, useShortlist } from "./useAwardActions";
 import { errorMessage } from "./errorMessage";
 
@@ -168,11 +169,34 @@ export function ShortlistDialog({ open, onOpenChange, queryId, leg, cell }: Shor
             Shortlist {cell.offer.freightForwarderName} — {cell.offer.variantLabel}
           </DialogTitle>
           <DialogDescription>
-            {leg.legCode} · {leg.origin} → {leg.destination} · {fmtUsd(cell.offer.usdTotal)}
+            {leg.legCode} · {leg.origin} → {leg.destination}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
+          {/* Design item 4 (§72) — the offer summary. This dialog is MODAL, so the grid the maker
+              was just reading is covered and unreadable behind it; shipping only the USD total here
+              meant confirming an award without the conversion rate that item 9 exists to surface
+              (final review IMPORTANT #3). Rendered by mapping `METRICS` — the same definitions the
+              grid renders, so the figures here can never disagree with the row the Select was
+              clicked on, and a metric added to the grid appears here too. */}
+          <dl
+            data-testid="shortlist-offer-summary"
+            className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border border-border p-3 sm:grid-cols-3"
+          >
+            {METRICS.map((metric) => (
+              <div key={metric.id} className="flex flex-col">
+                <dt className="text-xs text-muted-foreground">{metric.label}</dt>
+                <dd
+                  data-testid={`shortlist-${METRIC_TESTID[metric.id]}`}
+                  className="font-mono text-sm tabular-nums"
+                >
+                  {metric.render(cell)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+
           {/* A REQUOTED offer is still shortlistable (the server's A1 guard checks `priced` only,
               award.service.ts:91-96) but its price is stale — the engine drops it from the ranking
               and the grid badges it. The S5.6 shortlist radio said so inline (final review M2);

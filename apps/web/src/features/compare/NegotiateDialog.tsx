@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { requestRequoteSchema, type LegComparisonDto } from "@svyft/shared";
+import { requestRequoteSchema, type LegComparisonDto, type QuoteStatus } from "@svyft/shared";
+import { ForwarderStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -13,6 +14,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useRequestRequoteBatch, type RequoteResult, type RequoteTarget } from "./useAwardActions";
+import { fmtUsd } from "./money";
 
 export interface NegotiateDialogProps {
   open: boolean;
@@ -45,6 +47,17 @@ interface Candidate {
   eligible: boolean;
   /** Only set when `!eligible` — always rendered next to the (disabled) checkbox, never hidden. */
   reason?: string;
+  /** The forwarder's quote status, shown as the SAME `ForwarderStatusBadge` the grid uses (design
+   *  §89). For an eligible forwarder this is the status of the quote `quoteId` points at; for a
+   *  `pendingForwarders` entry it's that entry's own status (`RFQ_SENT`). */
+  quoteStatus: QuoteStatus;
+  /** Every PRICED offer this forwarder has on the leg, in read-model order. A list, not one
+   *  number, because one Quote fans out into one offer per variant — "Bridge's current price" is
+   *  genuinely `Dedicated $542.17 · Groupage $361.45`, and collapsing that to a single figure would
+   *  be inventing one. Empty for a forwarder that has never priced anything. `usdTotal` keeps the
+   *  read model's own `number | null` — `priced` and a non-null total are separate fields on
+   *  `OfferDto`, and `fmtUsd` renders the null as an em-dash rather than a fake `$0.00`. */
+  prices: { variantLabel: string; usdTotal: number | null }[];
 }
 
 /**
@@ -75,13 +88,24 @@ function buildCandidates(leg: LegComparisonDto): Candidate[] {
         quoteId: offer.quoteId,
         eligible: quotable,
         reason: quotable ? undefined : "Already awaiting a revised quote.",
+        quoteStatus: offer.quoteStatus,
+        prices: [],
       });
     } else if (quotable && !existing.eligible) {
       // A later offer for the same forwarder turned out quotable (e.g. Dedicated is QUOTED after
-      // Groupage, seen first, was REQUOTED) — the forwarder as a whole is still eligible.
+      // Groupage, seen first, was REQUOTED) — the forwarder as a whole is still eligible. The badge
+      // follows the quote that made it eligible, so it can't say "Requoted" next to an enabled box.
       existing.eligible = true;
       existing.quoteId = offer.quoteId;
       existing.reason = undefined;
+      existing.quoteStatus = offer.quoteStatus;
+    }
+    // Prices accumulate across ALL of the forwarder's offers, eligible or not — the maker is
+    // choosing who to renegotiate with and needs to see what each one currently charges.
+    if (offer.priced) {
+      byForwarder
+        .get(offer.freightForwarderId)!
+        .prices.push({ variantLabel: offer.variantLabel, usdTotal: offer.usdTotal });
     }
   }
   for (const pending of leg.pendingForwarders) {
@@ -92,6 +116,8 @@ function buildCandidates(leg: LegComparisonDto): Candidate[] {
         quoteId: null,
         eligible: false,
         reason: "Hasn't quoted yet — nothing to re-quote.",
+        quoteStatus: pending.quoteStatus,
+        prices: [],
       });
     }
   }
@@ -229,7 +255,13 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
           <ul className="space-y-2">
             {candidates.map((c) => (
               <li key={c.freightForwarderId} className="space-y-1">
-                <label className="flex items-center gap-2 text-sm">
+                {/* Design item 6 (§89) — "a checkbox per forwarder, showing each one's current
+                    price and status". The dialog is modal, so the grid the maker was reading is
+                    covered; shipping names alone made them choose who to renegotiate with blind to
+                    prices (final review IMPORTANT #4). The badge is the grid's own
+                    `ForwarderStatusBadge`, not a second status vocabulary. `aria-label` stays on
+                    the Checkbox, so its accessible name is still just the forwarder's name. */}
+                <label className="flex flex-wrap items-center gap-2 text-sm">
                   <Checkbox
                     checked={selected.has(c.freightForwarderId)}
                     disabled={!c.eligible}
@@ -237,6 +269,17 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
                     aria-label={c.freightForwarderName}
                   />
                   {c.freightForwarderName}
+                  <ForwarderStatusBadge status={c.quoteStatus} />
+                  <span
+                    data-testid={`negotiate-price-${c.freightForwarderId}`}
+                    className="font-mono text-xs tabular-nums text-muted-foreground"
+                  >
+                    {c.prices.length === 0
+                      ? "No price yet"
+                      : c.prices
+                          .map((p) => `${p.variantLabel} ${fmtUsd(p.usdTotal)}`)
+                          .join(" · ")}
+                  </span>
                 </label>
                 {!c.eligible && (
                   <p className="pl-6 text-xs text-muted-foreground">{c.reason}</p>

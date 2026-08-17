@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LegComparisonDto } from "@svyft/shared";
@@ -208,6 +208,33 @@ describe("NegotiateDialog", () => {
     expect(screen.getByText(/hasn't quoted yet/i)).toBeInTheDocument();
   });
 
+  // ── final review IMPORTANT #4 — design item 6 (§89): "a checkbox per forwarder, showing each
+  // one's current price and status". Names alone shipped, and the dialog is modal, so the maker
+  // chose who to renegotiate with while the grid's prices were covered.
+  it("shows each forwarder's current price and quote status next to its checkbox", async () => {
+    renderNegotiate();
+
+    // Bridge prices BOTH Road variants off one quote — "its current price" is genuinely two
+    // figures, and collapsing them into one would be inventing a number the read model doesn't have.
+    const bridgePrice = await screen.findByTestId("negotiate-price-ff-bridge");
+    expect(bridgePrice).toHaveTextContent("Dedicated $542.17");
+    expect(bridgePrice).toHaveTextContent("Groupage $361.45");
+
+    expect(screen.getByTestId("negotiate-price-ff-falcon")).toHaveTextContent("Dedicated $506.02");
+    // An INELIGIBLE forwarder's price still shows — the maker needs to know what the one they
+    // can't re-ask is currently charging.
+    expect(screen.getByTestId("negotiate-price-ff-zenith")).toHaveTextContent("Dedicated $566.27");
+    // Orion never quoted: no invented figure, and no `$0.00`.
+    expect(screen.getByTestId("negotiate-price-ff-orion")).toHaveTextContent("No price yet");
+    expect(screen.getByTestId("negotiate-price-ff-orion")).not.toHaveTextContent("$");
+
+    // The status is the grid's own `ForwarderStatusBadge`, per forwarder — not a second vocabulary.
+    const row = (name: RegExp) => screen.getByRole("checkbox", { name }).closest("li")!;
+    expect(within(row(/bridge/i)).getByText("Quoted")).toBeInTheDocument();
+    expect(within(row(/zenith/i)).getByText("Requoted")).toBeInTheDocument();
+    expect(within(row(/orion/i)).getByText("RFQ Sent")).toBeInTheDocument();
+  });
+
   it("posts one request per selected forwarder with the shared note", async () => {
     const { fetchFn, requotePaths, lastFetchBody } = createRequoteFetch();
     const user = userEvent.setup();
@@ -322,6 +349,27 @@ describe("NegotiateDialog", () => {
     await user.click(screen.getByRole("button", { name: /send to 2 forwarders/i }));
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  // ── final review MINOR #7 — a re-quote is not comparison-local ────────────────────────────────
+  // `negotiation.service.ts` fires REOPEN_AWARD and moves the quote's status, which rolls up into
+  // the LEG's status — and the leg card's `LegStatusBadge` is fed by `useQueryDetail`
+  // (`["query", id]`), not by the comparison read model. The batch invalidated only
+  // `["comparison"]`, leaving that badge stale on every leg it touched.
+  it("invalidates the query detail as well as the comparison, so the leg status badge can't go stale", async () => {
+    const { fetchFn } = createRequoteFetch();
+    const user = userEvent.setup();
+    const { qc } = renderNegotiate({ fetchFn });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+
+    await user.click(await screen.findByRole("checkbox", { name: /bridge/i }));
+    await user.type(screen.getByLabelText(/^note$/i), "please revise");
+    await user.click(screen.getByRole("button", { name: /send to 1 forwarder/i }));
+
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["query", "q1"] }),
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["comparison", "q1"] });
   });
 
   it("resets selection and notes when the dialog re-opens", async () => {
