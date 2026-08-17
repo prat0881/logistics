@@ -1,6 +1,6 @@
 # Stage 5 — Session Handoff
 
-_Last updated: 2026-08-17 (S5.6 COMPLETE + pushed to PR #52 @ `33cc0b5`, CI green. **S5.7 UI enhancements specced, not started.**)_
+_Last updated: 2026-08-18 (S5.6 + **S5.7 both COMPLETE**. S5.7 = 11 commits `6c5f5d1..5f5c7bf`, all reviewed + final-opus-reviewed + fixed, `pnpm run ci` green, visually verified in both grid orientations as Executive and Manager.)_
 
 ## Current stage & branch
 - **Stage 5 — Compare Quotes & Award.** Branch `feat/stage-5-fx-master` → **PR #52** (OPEN, **not merged** — you merge manually).
@@ -16,7 +16,7 @@ _Last updated: 2026-08-17 (S5.6 COMPLETE + pushed to PR #52 @ `33cc0b5`, CI gree
 | **S5.4** | **Approval workflow endpoints** — shortlist / send-for-approval / approve / reject / generate-client-quote / reopen-comparison | ✅ delivered this session |
 | **S5.5** | **Negotiation §10.1 + Change-order reversal §10.2** | ✅ delivered this session |
 | **S5.6** | **Compare-Quotes frontend** (the screen per the mockup + FX admin) | ✅ COMPLETE — all 6 tasks, reviewed + final-review-fixed, ci green, visually verified, **pushed to PR #52** (`7b58a8d..354236e`) |
-| S5.7 | Compare-Quotes UI/UX enhancements (9 items) | 📋 SPECCED, not started — see the S5.7 section below |
+| **S5.7** | **Compare-Quotes UI/UX enhancements** (9 items, frontend-only) | ✅ COMPLETE — 6 tasks + final review + visual acceptance (`6c5f5d1..5f5c7bf`) |
 
 Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **opus whole-branch review**). S5.4's reviews caught 5 real defects before merge; S5.5's caught the `StatusRegistry` init-order issue + the request-requote/`QUOTING_CLIENT` teardown seam. All findings fixed or adjudicated.
 
@@ -73,8 +73,8 @@ Confirmed live: the full grid (6 `(FF×variant)` columns, USD+native, unpriced "
 
 **Pushed to PR #52 on 2026-08-17** (fast-forward `fb4935b..33cc0b5`); PR title + body updated to cover S5.6; CI green. Open items 5 and 6 above remain for you.
 
-## S5.7 (Compare-Quotes UI/UX enhancements) — 📋 SPECCED, NOT STARTED
-Nine enhancements requested 2026-08-17 against the delivered S5.6 screen. Brainstormed and specced; **no code written yet.**
+## S5.7 (Compare-Quotes UI/UX enhancements) — ✅ COMPLETE
+Nine enhancements against the delivered S5.6 screen. Built subagent-driven (6 tasks, TDD, per-task review + fix loops, **opus whole-sub-build review**), then visually accepted live. Commits `6c5f5d1..5f5c7bf` (11).
 - **Design of record:** `docs/Stage 5 - Compare Quotes UI Enhancements - Design.md`
 - **Implementation plan (SDD, 6 tasks):** `docs/plans/stage-5/Stage 5 - S5.7 - Compare Quotes UI Enhancements - Implementation Plan.md`
 - **Mockups** (kept, git-ignored): `.superpowers/brainstorm/62958-*/content/` — grid orientations, charge groupings, page structures, dialogs.
@@ -99,9 +99,21 @@ Nine enhancements requested 2026-08-17 against the delivered S5.6 screen. Brains
 Three real gaps, accepted deliberately. Full detail in the design doc's "Consequences" section.
 1. **C1 — item 5 is a UI convention, not a rule.** `AwardService.requestRequote` still accepts a re-quote on a `PENDING_APPROVAL` leg and resets the decision to `DRAFT`. The button is disabled; the endpoint is not. *Follow-up:* add a decision-status guard (409), or accept the reset and drop the UI restriction — the two currently contradict each other.
 2. **C2 — item 2 shows subtotals, not a breakdown.** `buildCharges` emits only 3 flat aggregates (`Freight`, `Additional Charges` = ONE sum over all origin/destination/ad-hoc lines, `Warehousing` = ONE sum). The itemised detail exists in each quote's `draftJson` (`charges[]` w/ zone+label+amount+note, `trucking[]`, `seaRates[]`, `warehouse[]`) but `computeQuoteTotals` returns only sums. *Follow-up:* a grouping-neutral read-model passthrough of the raw lines, letting the UI group them once business confirms. Business has NOT yet confirmed the grouping — that's why this is deferred.
-3. **C3 — multi-FF negotiate is not atomic.** N forwarders = N sequential `request-requote` calls, no transaction. A mid-batch failure leaves some asked and some not, and each success has already reissued that FF's portal token and reset their RFQ deadline — not rolled back. The dialog surfaces a per-FF result list rather than hiding it. *Follow-up:* a bulk endpoint taking `{quoteIds[], notes}` in one transaction.
+3. **C4 (NEW, from T4) — `send-for-approval` carries no offer identity.** The endpoint takes no body identifying the offer; the server sends whatever the leg's **persisted** shortlist is. The merged dialog re-writes the shortlist immediately before sending, so exposure shrank from unbounded (S5.6) to a few-ms gap **and** now needs a second maker on the same leg concurrently. Assessed **Low**. *Follow-up:* accept `{quoteId, variant}` and verify server-side.
+4. **C3 — multi-FF negotiate is not atomic.** N forwarders = N sequential `request-requote` calls, no transaction. A mid-batch failure leaves some asked and some not, and each success has already reissued that FF's portal token and reset their RFQ deadline — not rolled back. The dialog surfaces a per-FF result list rather than hiding it. *Follow-up:* a bulk endpoint taking `{quoteIds[], notes}` in one transaction.
 
-**Next step:** execute the plan with `superpowers:subagent-driven-development` from Task 1.
+### Outcome
+- **`pnpm run ci` GREEN** at `5f5c7bf`: lint + typecheck × 3 workspaces · shared 24 files · web 110 files / 736 tests · api 90 suites / 382 tests · 3 builds.
+- **The frontend-only constraint held on EVERY commit** — `git diff --stat 6c5f5d1..5f5c7bf -- apps/api packages/shared prisma` is empty. Verified after each task, not just at the end.
+- **Visually verified live** (seeded query `S56VIS-0001`), Executive **and** Manager, **both** grid orientations: route-diagram click opens the leg; FF grouping rules; tinted recommended column/row with the reason on the badge; `Rate (per USD)`; Select→merged dialog with the full four-value summary; leg-level Negotiate listing each forwarder's price + status with ineligible ones genuinely `disabled`; Negotiate blocked at `PENDING_APPROVAL`; Executive sees no checker panel or Generate gate, Manager sees both with Approve/Reject enabled; view-mode preference survived a logout/login as a different role.
+- **One defect found by the visual pass alone** and fixed in `5f5c7bf`: `MakerPanel` rendered an **empty bordered card** on every plain `DRAFT` leg (Tasks 4 and 5 removed everything it held, but the container still rendered). No reviewer could catch it — the DOM node was present and nothing asserted on emptiness.
+
+### What the reviews caught (worth knowing — the pattern repeated)
+Almost every finding this run was **missing coverage, not broken code**: the implementation verified correct, but nothing would have noticed if it stopped being. Reviewers found them by deleting production code and watching the suite stay green — the rows-view stale badge, the rows-view unpriced guard, `overrideReason` reaching the wire, the send-side error alert, and the negotiate retry-narrowing. Every fix was therefore required to be **mutation-proven**, and the final review found the view-mode desync (item #1) precisely *because* its test had been shaped so it could never fail. Full detail in the SDD ledger.
+
+**Notable:** merging shortlist + send (#4) **structurally eliminated** the Critical S5.6's final review had caught — the drift between the grid's live pick and the persisted shortlist that could award the wrong forwarder silently. Two independent reviewers traced it and confirmed it is now unreachable, not merely guarded; the `unsavedPick` guard was removed and its regression coverage **ported, not deleted**.
+
+**⚠ Observed once, not reproduced:** `award-generate.e2e-spec.ts`'s "combinedUsd is re-rounded" test failed in a single full-suite run, then passed 5/5 on re-runs (isolated and whole-file) and in two subsequent full `ci` runs. Its `rawSum` assertion depends on float summation **order** over `snapshot.legs`. Stage-5 backend, untouched by S5.7 — flagged in case hosted CI ever hits it.
 
 ## Reusable facts (learned across S5.4/S5.5 SDD)
 - Caller id = `user.userId` (`RequestUser`); e2e actor `@db.Uuid` cols need cookie `sub: randomUUID()`.

@@ -118,6 +118,12 @@ The dialog cannot show what "Additional Charges" is composed of, because the rea
 ### C3 — Multi-forwarder negotiate is not atomic
 N forwarders means N sequential `request-requote` calls with no transaction. A mid-batch failure leaves some forwarders asked and others not — each successful call has already reissued that forwarder's portal token and reset their RFQ deadline, and those effects are not rolled back. The per-forwarder result list makes this visible rather than hiding it. **Follow-up:** a bulk `request-requote` endpoint taking `{ quoteIds[], notes }` in one transaction.
 
+### C4 — `send-for-approval` carries no offer identity
+Surfaced during Task 4. `POST /api/queries/:id/legs/:legId/send-for-approval` takes no body identifying the offer; the server sends whatever the leg's **persisted** shortlist happens to be. The merged dialog re-writes the shortlist immediately before sending, so the exposure shrank from unbounded (S5.6: any previously-persisted offer, at any time) to the few-millisecond gap between two sequential requests — and it now additionally requires a **second maker working the same leg concurrently**. Assessed **Low** by the final review. It cannot be closed from the frontend. **Follow-up:** have the endpoint accept `{ quoteId, variant }` and verify it against the persisted decision server-side, 409-ing on mismatch.
+
+### Bundling note
+C1–C4 are all API-shape changes on the same feature. If they are addressed, do it as **one** backend task rather than four trips — and ideally alongside the business decision on charge grouping that C2 waits on.
+
 ## Testing
 
 - **Vitest + @testing-library**, colocated, matching the existing `features/compare` suite (56 tests today).
