@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LegComparisonDto } from "@svyft/shared";
@@ -254,6 +254,40 @@ describe("NegotiateDialog", () => {
     expect(screen.getByRole("button", { name: /send to 2 forwarders/i })).toBeEnabled();
   });
 
+  // Fix round 1, MINOR #2 — the single-forwarder dialog this replaced enforced
+  // `requestRequoteSchema`'s FULL bound (`.trim().min(1).max(2000)`) via `zodResolver`; the
+  // rewrite only checked non-empty, silently dropping the max-length half. Covers both the shared
+  // note and a per-forwarder note under the separate-notes toggle.
+  it("flags a note over 2000 characters and disables Send, for both the shared and per-forwarder note", async () => {
+    const { fetchFn } = createRequoteFetch();
+    const user = userEvent.setup();
+    renderNegotiate({ fetchFn });
+
+    await user.click(await screen.findByRole("checkbox", { name: /bridge/i }));
+    const sharedNote = screen.getByLabelText(/^note$/i);
+    // `userEvent.type` drives one keystroke at a time — far too slow for 2000+ characters — so the
+    // over-limit value is set directly, same as a paste would land in the controlled input.
+    fireEvent.change(sharedNote, { target: { value: "a".repeat(2001) } });
+
+    expect(await screen.findByText(/2000 characters or fewer/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /send to 1 forwarder/i })).toBeDisabled();
+
+    // Trimming back under the limit clears the error and re-enables Send — proves this isn't
+    // permanently stuck once it trips.
+    fireEvent.change(sharedNote, { target: { value: "a".repeat(2000) } });
+    expect(screen.queryByText(/2000 characters or fewer/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /send to 1 forwarder/i })).toBeEnabled();
+
+    // Same bound on the per-forwarder path.
+    await user.click(await screen.findByRole("checkbox", { name: /falcon/i }));
+    await user.click(screen.getByRole("checkbox", { name: /separate note/i }));
+    const falconNote = screen.getByLabelText(/note for falcon/i);
+    fireEvent.change(falconNote, { target: { value: "b".repeat(2001) } });
+
+    expect(await screen.findByText(/2000 characters or fewer/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /send to 2 forwarders/i })).toBeDisabled();
+  });
+
   it("reports partial success per forwarder and stays open", async () => {
     const { fetchFn } = createRequoteFetch({
       "q-falcon": { status: 409, message: "Quote is not in a re-quotable state" },
@@ -268,6 +302,14 @@ describe("NegotiateDialog", () => {
     expect(await screen.findByText(/bridge/i, { selector: "[data-result='ok']" })).toBeInTheDocument();
     expect(screen.getByText(/not in a re-quotable state/i)).toBeInTheDocument();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
+
+    // The narrowing that makes "retry just the failures" actually safe: Bridge already succeeded
+    // (its FF-portal token/RFQ deadline were reissued server-side, not rolled back), so a second
+    // Send must NOT re-fire against it — only Falcon, the one that actually failed, stays selected.
+    // Without this, a careless retry silently reissues Bridge's token/deadline a second time.
+    expect(screen.getByRole("checkbox", { name: /bridge/i })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /falcon/i })).toBeChecked();
+    expect(screen.getByRole("button", { name: /send to 1 forwarder/i })).toBeInTheDocument();
   });
 
   it("closes once every selected forwarder's request succeeds", async () => {

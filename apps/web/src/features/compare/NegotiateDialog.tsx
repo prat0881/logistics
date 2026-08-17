@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { LegComparisonDto } from "@svyft/shared";
+import { requestRequoteSchema, type LegComparisonDto } from "@svyft/shared";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -23,6 +23,16 @@ export interface NegotiateDialogProps {
    *  render, so a background refetch (the batch's own invalidate included) can't leave the dialog
    *  showing a stale forwarder list. */
   leg: LegComparisonDto;
+}
+
+// Read straight off the schema (`requestRequoteSchema.shape.comment` is `.trim().min(1).max(2000)`)
+// rather than a hand-copied `2000` — the single-forwarder dialog this replaces enforced the WHOLE
+// schema via `zodResolver`; this rewrite dropped the max-length half of that (fix round 1, MINOR
+// #2), so both note paths below must fail the same way the old dialog did, not just on empty.
+const NOTE_MAX_LENGTH = requestRequoteSchema.shape.comment.maxLength ?? 2000;
+
+function noteTooLong(value: string): boolean {
+  return value.trim().length > NOTE_MAX_LENGTH;
 }
 
 /** One row in the eligibility list — one per FORWARDER, never per offer. */
@@ -142,8 +152,14 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
     return separateNotes ? (notes[id] ?? "") : sharedNote;
   }
 
-  const hasEmptyNote = selectedCandidates.some((c) => noteFor(c.freightForwarderId).trim().length === 0);
-  const canSubmit = n > 0 && !hasEmptyNote && !batch.isPending;
+  // Same rule `requestRequoteSchema` enforces server-side — non-empty AND no more than
+  // `NOTE_MAX_LENGTH` — checked against whichever note each selected forwarder will actually send
+  // (shared, or its own from `notes` when `separateNotes` is on).
+  const hasInvalidNote = selectedCandidates.some((c) => {
+    const trimmed = noteFor(c.freightForwarderId).trim();
+    return trimmed.length === 0 || trimmed.length > NOTE_MAX_LENGTH;
+  });
+  const canSubmit = n > 0 && !hasInvalidNote && !batch.isPending;
 
   function toggleForwarder(id: string, checked: boolean) {
     setSelected((prev) => {
@@ -237,6 +253,11 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
                         setNotes((prev) => ({ ...prev, [c.freightForwarderId]: e.target.value }))
                       }
                     />
+                    {noteTooLong(notes[c.freightForwarderId] ?? "") && (
+                      <p role="alert" className="text-sm text-destructive">
+                        Note must be {NOTE_MAX_LENGTH} characters or fewer.
+                      </p>
+                    )}
                   </div>
                 )}
               </li>
@@ -260,6 +281,11 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
                 value={sharedNote}
                 onChange={(e) => setSharedNote(e.target.value)}
               />
+              {noteTooLong(sharedNote) && (
+                <p role="alert" className="text-sm text-destructive">
+                  Note must be {NOTE_MAX_LENGTH} characters or fewer.
+                </p>
+              )}
             </div>
           )}
 
