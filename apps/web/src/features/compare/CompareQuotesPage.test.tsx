@@ -146,22 +146,65 @@ const COMPARISON = {
   ],
 };
 
-function renderPage() {
+// S5.6 Task 6, ambiguity resolution #1 — snapshot presence IS the QUOTING_CLIENT signal
+// (see `CompareQuotesPage.tsx`'s own comment). Reused verbatim across the locked-state tests
+// below so there's exactly one shape to keep in sync with `AwardSnapshotDto`.
+const SNAPSHOT = {
+  generatedByUserId: "u2",
+  legs: [
+    {
+      legId: "l1",
+      winningQuoteId: "quote-1",
+      freightForwarderId: "ff1",
+      variant: "DEDICATED",
+      currency: "INR",
+      unitsPerUsd: 83.1,
+      usdTotal: 541.52,
+      nativeTotal: 45000,
+      transitDays: 3,
+    },
+    {
+      legId: "l2",
+      winningQuoteId: "quote-3",
+      freightForwarderId: "ff3",
+      variant: "FCL",
+      currency: "USD",
+      unitsPerUsd: 1,
+      usdTotal: 2100,
+      nativeTotal: 2100,
+      transitDays: 24,
+    },
+  ],
+  combinedUsd: 2641.52,
+};
+
+/** S5.7 T6 — extended to accept `{ role, awardSnapshot }` so both-roles and locked-state tests
+ *  share one helper instead of hand-rolling `renderWithProviders` calls (brief Step 1's illustrative
+ *  `renderPage({ role })` signature). Always renders `AuthProbe` alongside the page — every test in
+ *  this file that asserts an absence must await it first (see the module doc comment above). */
+function renderPage(opts: { role?: string; awardSnapshot?: typeof SNAPSHOT | null } = {}) {
+  const role = opts.role ?? "EXECUTIVE";
+  const comparison =
+    opts.awardSnapshot !== undefined ? { ...COMPARISON, awardSnapshot: opts.awardSnapshot } : COMPARISON;
+  const detail = opts.awardSnapshot ? { ...QUERY_DETAIL, status: "QUOTING_CLIENT" } : QUERY_DETAIL;
   vi.stubGlobal(
     "fetch",
     mockFetch((url) => {
-      if (url.endsWith("/api/queries/q1")) return { status: 200, body: QUERY_DETAIL };
-      if (url.endsWith("/api/queries/q1/comparison")) return { status: 200, body: COMPARISON };
+      if (url.endsWith("/api/queries/q1")) return { status: 200, body: detail };
+      if (url.endsWith("/api/queries/q1/comparison")) return { status: 200, body: comparison };
       return { status: 404 };
     }),
   );
   return renderWithProviders(
-    <Routes>
-      <Route path="/queries/:id/compare" element={<CompareQuotesPage />} />
-    </Routes>,
+    <>
+      <AuthProbe />
+      <Routes>
+        <Route path="/queries/:id/compare" element={<CompareQuotesPage />} />
+      </Routes>
+    </>,
     {
       route: "/queries/q1/compare",
-      user: { id: "u1", name: "Exec", email: "e@x.com", role: "EXECUTIVE" },
+      user: { id: "u1", name: "Viewer", email: "v@x.com", role },
     },
   );
 }
@@ -201,63 +244,13 @@ describe("CompareQuotesPage", () => {
     // that would normally mount CheckerPanel's Approve/Reject (CheckerPanel.test.tsx pins exactly
     // this). Proving it's absent here — under an award snapshot — is therefore exercising the
     // `locked` gate itself, not just "nothing to check" or "wrong role".
-    const comparisonLocked = {
-      ...COMPARISON,
-      awardSnapshot: {
-        generatedByUserId: "u2",
-        legs: [
-          {
-            legId: "l1",
-            winningQuoteId: "quote-1",
-            freightForwarderId: "ff1",
-            variant: "DEDICATED",
-            currency: "INR",
-            unitsPerUsd: 83.1,
-            usdTotal: 541.52,
-            nativeTotal: 45000,
-            transitDays: 3,
-          },
-          {
-            legId: "l2",
-            winningQuoteId: "quote-3",
-            freightForwarderId: "ff3",
-            variant: "FCL",
-            currency: "USD",
-            unitsPerUsd: 1,
-            usdTotal: 2100,
-            nativeTotal: 2100,
-            transitDays: 24,
-          },
-        ],
-        combinedUsd: 2641.52,
-      },
-    };
-    vi.stubGlobal(
-      "fetch",
-      mockFetch((url) => {
-        if (url.endsWith("/api/queries/q1")) return { status: 200, body: { ...QUERY_DETAIL, status: "QUOTING_CLIENT" } };
-        if (url.endsWith("/api/queries/q1/comparison")) return { status: 200, body: comparisonLocked };
-        return { status: 404 };
-      }),
-    );
-    renderWithProviders(
-      <>
-        <AuthProbe />
-        <Routes>
-          <Route path="/queries/:id/compare" element={<CompareQuotesPage />} />
-        </Routes>
-      </>,
-      {
-        route: "/queries/q1/compare",
-        user: { id: "u1", name: "Mgr", email: "m@x.com", role: "MANAGER" },
-      },
-    );
+    renderPage({ role: "MANAGER", awardSnapshot: SNAPSHOT });
 
     const leg2 = await screen.findByRole("button", { name: /LEG-2/i });
     await userEvent.click(leg2);
     await screen.findByTestId("leg-body");
-    // Without this, `checker-panel`/`generate-gate` would be absent for the WRONG reason (no
-    // viewer yet ⇒ `canCheck` false) and the assertions below would pass even with `locked`
+    // Without this, `checker-panel`/`generate-gate`/the S5.7 assertions below would be absent for
+    // the WRONG reason (no viewer yet ⇒ `canCheck` false) and would pass even with `locked`
     // inverted — final review M3.
     await screen.findByText("MANAGER");
 
@@ -265,5 +258,54 @@ describe("CompareQuotesPage", () => {
     expect(screen.queryByTestId("checker-panel")).not.toBeInTheDocument();
     expect(screen.queryByTestId("generate-gate")).not.toBeInTheDocument();
     expect(await screen.findByTestId("quoting-client-panel")).toBeInTheDocument();
+
+    // S5.7 T6, re-pinning S5.6 final-review M1. LEG-2 carries a `recommendation` (see COMPARISON
+    // above), so — like the checker-panel assertion above — "no ★ Recommended" here is exercising
+    // `locked`, not "nothing to recommend". Negotiate is unconfounded by `decision.status` (it only
+    // gets DISABLED-with-reason at PENDING_APPROVAL, never removed for that reason alone — see
+    // `CompareLegPanel`'s `negotiateDisabledReason`), so its absence here is genuine too.
+    expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/recommended/i)).not.toBeInTheDocument();
+
+    // Select is NOT safe to prove on LEG-2: its decision is already PENDING_APPROVAL, which
+    // withholds Select on its own regardless of `locked` (`CompareLegPanel`'s `canShortlist`), so
+    // asserting Select's absence there would pass even with the `locked` gate itself deleted.
+    // LEG-1 has `decision: null` — nothing else would hide Select on it — so switching to it
+    // isolates the `locked` condition specifically.
+    await userEvent.click(await screen.findByRole("button", { name: /LEG-1/i }));
+    await screen.findByTestId("leg-body");
+    expect(screen.queryByRole("button", { name: /select/i })).not.toBeInTheDocument();
+  });
+
+  describe.each(["EXECUTIVE", "MANAGER"] as const)("compare screen as %s", (role) => {
+    it("shows the grid, the Select affordance and Negotiate", async () => {
+      renderPage({ role });
+      await screen.findByText(role);
+
+      const leg1 = await screen.findByRole("button", { name: /LEG-1/i });
+      await userEvent.click(leg1);
+      await screen.findByTestId("leg-body");
+
+      expect(screen.getByTestId("comparison-grid")).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /select/i }).length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: /negotiate/i })).toBeInTheDocument();
+    });
+  });
+
+  it("shows checker controls only to a MANAGER", async () => {
+    renderPage({ role: "EXECUTIVE" });
+    await screen.findByText("EXECUTIVE");
+
+    // `checker-panel` only mounts inside an OPEN leg body (`CompareLegPanel`'s `open && (...)`),
+    // so without opening a leg its absence would be vacuous — true for any role simply because no
+    // leg is expanded. LEG-2 carries a PENDING_APPROVAL decision (see COMPARISON above), the exact
+    // shape `CheckerPanel.test.tsx` proves DOES mount Approve/Reject for a MANAGER — opening it
+    // here means this assertion is exercising the role gate, not "nothing to check".
+    const leg2 = await screen.findByRole("button", { name: /LEG-2/i });
+    await userEvent.click(leg2);
+    await screen.findByTestId("leg-body");
+
+    expect(screen.queryByTestId("checker-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("generate-gate")).not.toBeInTheDocument();
   });
 });
