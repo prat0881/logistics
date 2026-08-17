@@ -11,31 +11,22 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ForwarderStatusBadge } from "@/features/rfq-workspace/statusBadges";
-import { METRICS, STALE_OFFER_LABEL, type ComparisonRowModel, type OfferCell } from "./comparisonRowModel";
+import {
+  METRICS,
+  METRIC_TESTID,
+  METRIC_CELL_CLASS,
+  RECOMMENDED_TINT,
+  STALE_OFFER_LABEL,
+  type ComparisonRowModel,
+  type OfferCell,
+} from "./comparisonRowModel";
 
 /** Right-of-column border that groups a forwarder's variant columns visually (S5.7 item 1 — S5.6
  *  Task 3 deliberately shipped without one, recorded as a judgment call, which read as ambiguous
  *  grouping). Applied to the LAST cell of every forwarder group in every row of the table, so the
- *  line runs unbroken from the forwarder-name header down through the Status row. */
+ *  line runs unbroken from the forwarder-name header down through the Status row. Columns-only —
+ *  there's no rows-view equivalent (S5.7 T2). */
 const GROUP_SEPARATOR = "border-r-2 border-border";
-/** The recommended column's tint (S5.7 item 2 — every cell of the column, not just the header). */
-const RECOMMENDED_TINT = "bg-emerald-500/10";
-
-const METRIC_TESTID: Record<string, string> = {
-  usdTotal: "offer-usd",
-  nativeTotal: "offer-native",
-  rate: "offer-rate",
-  transit: "offer-transit",
-  validUntil: "offer-valid",
-};
-
-const METRIC_CELL_CLASS: Record<string, string> = {
-  usdTotal: "text-right font-mono tabular-nums",
-  nativeTotal: "text-right font-mono tabular-nums",
-  rate: "text-right font-mono tabular-nums text-muted-foreground",
-  transit: "text-right text-muted-foreground",
-  validUntil: "text-right text-muted-foreground",
-};
 
 export interface ComparisonGridColumnsProps {
   model: ComparisonRowModel;

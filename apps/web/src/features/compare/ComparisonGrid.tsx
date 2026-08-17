@@ -2,6 +2,8 @@ import type { LegComparisonDto } from "@svyft/shared";
 import { ForwarderStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import { buildComparisonRowModel, offerKey, STALE_OFFER_LABEL, type OfferCell } from "./comparisonRowModel";
 import { ComparisonGridColumns } from "./ComparisonGridColumns";
+import { ComparisonGridRows } from "./ComparisonGridRows";
+import type { ViewMode } from "./useViewMode";
 
 // Re-exported so every existing importer (`CompareLegPanel`, `MakerPanel`, and their tests) keeps
 // resolving these from `./ComparisonGrid` unchanged. Both now live in `comparisonRowModel.ts`
@@ -19,19 +21,27 @@ export interface ComparisonGridProps {
    *  re-ranks whatever is left — i.e. the losers — so a "Recommended" flag here would name a
    *  forwarder the award panel directly below contradicts (final review M1). Defaults to `false`. */
   locked?: boolean;
+  /** Offers-as-columns (default) vs offers-as-rows (S5.7 T2). Optional and defaulted so every
+   *  existing caller/test that doesn't pass it keeps rendering exactly as it did before T2 —
+   *  ambiguity resolution #1. `CompareLegPanel` is the only caller that threads a live value
+   *  through, from its own `useViewMode()`. */
+  viewMode?: ViewMode;
 }
 
 /**
  * ComparisonGrid — the public entry point for the Compare Quotes leg comparison table (S5.6 §12,
- * reshaped by S5.7 T1). Builds the `ComparisonRowModel` (grouping, recommendation, staleness — all
- * pure and unit-tested in `comparisonRowModel.test.ts`) and renders `ComparisonGridColumns`, plus
- * the leg-level "awaiting response" / "awaiting re-quote" notices that sit outside the table.
+ * reshaped by S5.7 T1/T2). Builds the `ComparisonRowModel` (grouping, recommendation, staleness —
+ * all pure and unit-tested in `comparisonRowModel.test.ts`) and dispatches to whichever orientation
+ * `viewMode` selects — `ComparisonGridColumns` or `ComparisonGridRows` — plus the leg-level
+ * "awaiting response" / "awaiting re-quote" notices that sit outside the table and are identical
+ * either way.
  */
 export function ComparisonGrid({
   leg,
   selectedOfferKey,
   onSelectOffer,
   locked = false,
+  viewMode = "columns",
 }: ComparisonGridProps) {
   const model = buildComparisonRowModel(leg, locked);
 
@@ -40,9 +50,16 @@ export function ComparisonGrid({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="comparison-grid">
       {model.groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">No comparable quotes yet.</p>
+      ) : viewMode === "rows" ? (
+        <ComparisonGridRows
+          model={model}
+          leg={leg}
+          onOpenBreakdown={handleOpenBreakdown}
+          selectedOfferKey={selectedOfferKey}
+        />
       ) : (
         <ComparisonGridColumns
           model={model}

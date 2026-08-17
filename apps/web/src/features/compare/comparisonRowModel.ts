@@ -107,3 +107,30 @@ export const METRICS: MetricDef[] = [
     render: (c) => (c.offer.validUntil ? formatDate(c.offer.validUntil) : "—"),
   },
 ];
+
+/**
+ * Per-metric `data-testid` suffix and cell class, shared by `ComparisonGridColumns` and
+ * `ComparisonGridRows` (S5.7 T2) so the two orientations physically cannot drift on either — they
+ * were untyped, per-file copies in `ComparisonGridColumns.tsx` alone until T2 lifted them here.
+ * Keyed by `MetricDef["id"]` (not hand-listed) so a new `METRICS` entry can't compile against a
+ * lookup map that forgot to grow with it.
+ */
+export const METRIC_TESTID: Record<MetricDef["id"], string> = {
+  usdTotal: "offer-usd",
+  nativeTotal: "offer-native",
+  rate: "offer-rate",
+  transit: "offer-transit",
+  validUntil: "offer-valid",
+};
+
+export const METRIC_CELL_CLASS: Record<MetricDef["id"], string> = {
+  usdTotal: "text-right font-mono tabular-nums",
+  nativeTotal: "text-right font-mono tabular-nums",
+  rate: "text-right font-mono tabular-nums text-muted-foreground",
+  transit: "text-right text-muted-foreground",
+  validUntil: "text-right text-muted-foreground",
+};
+
+/** The recommended row/column's tint (S5.7 item 2 — every cell, not just the header/label). Shared
+ *  by both orientations for the same drift-proofing reason as the maps above. */
+export const RECOMMENDED_TINT = "bg-emerald-500/10";

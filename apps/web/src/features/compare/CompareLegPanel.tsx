@@ -3,12 +3,15 @@ import type { LegComparisonDto, LegStatus } from "@svyft/shared";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { LegStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import { ComparisonGrid, offerKey } from "./ComparisonGrid";
 import { OfferDetail } from "./OfferDetail";
 import { MakerPanel } from "./MakerPanel";
 import { CheckerPanel } from "./CheckerPanel";
 import { DecisionTimeline } from "./DecisionTimeline";
+import { useViewMode, type ViewMode } from "./useViewMode";
 
 type BadgeVariant =
   | "default" | "secondary" | "success" | "warning"
@@ -106,6 +109,9 @@ export function CompareLegPanel({
   const route = `${leg.origin} → ${leg.destination}`;
   const offerCount = leg.offers.length;
 
+  // S5.7 T2 — a single global (not per-leg) columns/rows preference; ambiguity resolution #3.
+  const [viewMode, setViewMode] = useViewMode();
+
   const [selectedOfferKey, setSelectedOfferKey] = useState<string | undefined>(undefined);
   const [shortlistKey, setShortlistKey] = useState<string | undefined>(undefined);
   const selectedOffer = leg.offers.find(
@@ -144,14 +150,23 @@ export function CompareLegPanel({
 
       {open && (
         <div data-testid="leg-body" className="space-y-4 border-t border-border p-4">
-          <p className="text-sm text-muted-foreground">
-            {offerCount} offer{offerCount === 1 ? "" : "s"} received
-          </p>
+          {/* Left: offer count. Right: view-mode toggle, in a wrapper that leaves room for Task 5's
+              "Negotiate…" button to sit alongside it — a layout only one control could live in
+              would have to be reworked when that lands (ambiguity resolution #2). */}
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              {offerCount} offer{offerCount === 1 ? "" : "s"} received
+            </p>
+            <div className="flex items-center gap-2">
+              <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+            </div>
+          </div>
           <ComparisonGrid
             leg={leg}
             selectedOfferKey={selectedOfferKey}
             onSelectOffer={handleSelectOffer}
             locked={locked}
+            viewMode={viewMode}
           />
           {selectedOffer && <OfferDetail offer={selectedOffer} />}
           {!locked && (
@@ -167,5 +182,46 @@ export function CompareLegPanel({
         </div>
       )}
     </Card>
+  );
+}
+
+/**
+ * ViewModeToggle — the two-way Columns/Rows switch on the leg's "N offers received" line (S5.7 T2,
+ * ambiguity resolution #2). A plain two-button group rather than a new primitive: the repo has no
+ * segmented-control/toggle-group component yet (checked `components/ui/`), and one binary switch
+ * doesn't earn adding one.
+ */
+function ViewModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: ViewMode;
+  onChange: (m: ViewMode) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Comparison view"
+      data-testid="view-mode-toggle"
+      className="inline-flex items-center rounded-md border border-border p-0.5"
+    >
+      {(["columns", "rows"] as const).map((m) => (
+        <Button
+          key={m}
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-pressed={mode === m}
+          data-testid={`view-mode-${m}`}
+          onClick={() => onChange(m)}
+          className={cn(
+            "h-7 px-2.5 text-xs capitalize",
+            mode === m && "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          )}
+        >
+          {m}
+        </Button>
+      ))}
+    </div>
   );
 }

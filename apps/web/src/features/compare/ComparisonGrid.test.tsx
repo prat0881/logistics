@@ -2,11 +2,13 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { LegComparisonDto } from "@svyft/shared";
+import type { LegComparisonDto, OfferDto } from "@svyft/shared";
 import { AuthProvider } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
+import { ComparisonGrid } from "./ComparisonGrid";
 import { OfferDetail } from "./OfferDetail";
+import type { ViewMode } from "./useViewMode";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -164,6 +166,92 @@ function renderPanel(leg: LegComparisonDto = LEG, { locked = false }: { locked?:
     </QueryClientProvider>,
   );
 }
+
+// ── S5.7 T2 — orientation parity fixture ──────────────────────────────────────────────────────
+// One priced, recommended offer ($1,824.37 / 3.67250 / 3 d — same numbers as
+// `comparisonRowModel.test.ts`'s default fixture, so the two RED-confirmed literal assertions in
+// the parity test below aren't coincidental) plus one un-priced offer from a second forwarder, so
+// every parity assertion (recommendation flag, no fake $0) is exercised identically in both views.
+const PARITY_PRICED_OFFER: OfferDto = {
+  quoteId: "q1",
+  freightForwarderId: "ff1",
+  freightForwarderName: "Bridge",
+  variant: "DEDICATED",
+  variantLabel: "Dedicated",
+  priced: true,
+  nativeTotal: 6700,
+  currency: "AED",
+  unitsPerUsd: 3.6725,
+  usdTotal: 1824.37,
+  transitDays: 3,
+  chargeableWeightKg: 100,
+  validUntil: "2026-09-16T00:00:00.000Z",
+  quoteStatus: "QUOTED",
+  charges: [],
+};
+
+const PARITY_UNPRICED_OFFER: OfferDto = {
+  quoteId: "q2",
+  freightForwarderId: "ff2",
+  freightForwarderName: "Second Forwarder",
+  variant: "DEDICATED",
+  variantLabel: "Dedicated",
+  priced: false,
+  nativeTotal: 0,
+  currency: "AED",
+  unitsPerUsd: 83, // deliberately NOT 3.6725 — collides with the priced offer's rate text otherwise
+  usdTotal: 0,
+  transitDays: null,
+  chargeableWeightKg: 100,
+  validUntil: null,
+  quoteStatus: "QUOTED",
+  charges: [
+    { label: "Additional Charges", group: "additional", nativeAmount: 0, usdAmount: 0 },
+    { label: "Warehousing", group: "warehouse", nativeAmount: 0, usdAmount: 0 },
+  ],
+};
+
+const PARITY_LEG: LegComparisonDto = {
+  legId: "leg-parity",
+  legCode: "LEG-PARITY",
+  mode: "ROAD",
+  origin: "Origin",
+  destination: "Destination",
+  offers: [PARITY_PRICED_OFFER, PARITY_UNPRICED_OFFER],
+  pendingForwarders: [],
+  awaitingReQuote: false,
+  recommendation: { quoteId: "q1", variant: "DEDICATED", reason: "fastest transit" },
+  decision: null,
+  timeline: [],
+};
+
+function renderGrid({ viewMode, locked = false }: { viewMode: ViewMode; locked?: boolean }) {
+  return render(<ComparisonGrid leg={PARITY_LEG} viewMode={viewMode} locked={locked} />);
+}
+
+// The whole point of T1's shared row model is that the two orientations cannot drift — every
+// assertion here runs through BOTH `viewMode`s against the same fixture, so a feature present in
+// one view and forgotten in the other fails this suite (mutation-proved: see task-2-report.md).
+describe.each(["columns", "rows"] as const)("ComparisonGrid — %s view", (mode) => {
+  it("shows every priced offer's USD total, rate and transit", async () => {
+    renderGrid({ viewMode: mode });
+    expect(await screen.findByText("$1,824.37")).toBeInTheDocument();
+    expect(screen.getByText("3.67250")).toBeInTheDocument();
+    expect(screen.getByText("3 d")).toBeInTheDocument();
+  });
+
+  it("flags the recommended offer and never prints $0 for an unpriced one", async () => {
+    renderGrid({ viewMode: mode });
+    expect(await screen.findByText(/recommended/i)).toBeInTheDocument();
+    expect(screen.getByTestId("comparison-grid")).not.toHaveTextContent("$0.00");
+  });
+
+  it("suppresses the recommendation once locked, without hiding the grid's own figures", async () => {
+    renderGrid({ viewMode: mode, locked: true });
+    expect(await screen.findByText("$1,824.37")).toBeInTheDocument();
+    expect(screen.queryByText(/★ Recommended/)).not.toBeInTheDocument();
+  });
+});
 
 describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
   it("renders one column per offer, grouped under its forwarder, with USD total + transit", () => {
