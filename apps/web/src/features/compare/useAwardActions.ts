@@ -1,12 +1,13 @@
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   AwardDecisionDto,
   RejectInput,
-  RequestRequoteInput,
   SendForApprovalInput,
   ShortlistInput,
 } from "@svyft/shared";
 import { postJson, putJson } from "@/lib/api";
+import { errorMessage } from "./errorMessage";
 
 /**
  * Maker-half mutations for the Compare Quotes screen (S5.6 Task 4 — design §9 steps 1+3 and
@@ -40,13 +41,80 @@ export function useSendForApproval(queryId: string, legId: string) {
   });
 }
 
-export function useRequestRequote(queryId: string, legId: string, quoteId: string) {
+// ── S5.7 T5 — leg-level multi-forwarder negotiate ──────────────────────────────────────────────
+// `useRequestRequote` (single quoteId bound at hook level, so it could never be looped over a
+// selection) is gone — nothing imports it once `NegotiateDialog` moved from a per-forwarder
+// button to one leg-level dialog. `RequoteTarget`/`RequoteResult` live here, next to the hook that
+// produces/consumes them, and `NegotiateDialog` imports both.
+
+/** One forwarder's re-quote request, already resolved to its (deduplicated) `quoteId` — see
+ *  `NegotiateDialog`'s eligibility-building doc comment for why selection is per FORWARDER, not
+ *  per offer. */
+export interface RequoteTarget {
+  quoteId: string;
+  freightForwarderName: string;
+  comment: string;
+}
+
+/** One target's outcome. `error` is only set on failure — already reduced to a display string via
+ *  `errorMessage`, since each result renders straight into the dialog with no further ApiError
+ *  unwrapping at the call site. */
+export interface RequoteResult {
+  quoteId: string;
+  freightForwarderName: string;
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * `useRequestRequoteBatch` — fires one `POST .../quotes/:quoteId/request-requote` per target,
+ * SEQUENTIALLY (`for…of`, not `Promise.all`) and with NO transaction: the server has no batch
+ * endpoint, so three successes followed by one failure is a real, reachable outcome, not a bug to
+ * guard against. `run` therefore never throws — every target's failure is caught and folded into
+ * its own `RequoteResult` — and the caller gets the full per-target list back to render, rather
+ * than one combined error that would hide which forwarders actually got re-notified.
+ *
+ * Invalidation happens exactly ONCE, after the whole loop settles, regardless of outcome: the
+ * successful calls among a partial failure already reissued that forwarder's FF-portal token and
+ * reset their RFQ deadline server-side (not rolled back), so the read model needs refreshing even
+ * when `run` reports failures.
+ */
+export function useRequestRequoteBatch(queryId: string, legId: string) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: RequestRequoteInput) =>
-      postJson(`/api/queries/${queryId}/legs/${legId}/quotes/${quoteId}/request-requote`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["comparison", queryId] }),
-  });
+  const [isPending, setIsPending] = useState(false);
+
+  async function run(targets: RequoteTarget[]): Promise<RequoteResult[]> {
+    setIsPending(true);
+    const results: RequoteResult[] = [];
+    try {
+      for (const target of targets) {
+        try {
+          await postJson(
+            `/api/queries/${queryId}/legs/${legId}/quotes/${target.quoteId}/request-requote`,
+            { comment: target.comment },
+          );
+          results.push({
+            quoteId: target.quoteId,
+            freightForwarderName: target.freightForwarderName,
+            ok: true,
+          });
+        } catch (error) {
+          results.push({
+            quoteId: target.quoteId,
+            freightForwarderName: target.freightForwarderName,
+            ok: false,
+            error: errorMessage(error, "Failed to request a re-quote."),
+          });
+        }
+      }
+    } finally {
+      setIsPending(false);
+      qc.invalidateQueries({ queryKey: ["comparison", queryId] });
+    }
+    return results;
+  }
+
+  return { run, isPending };
 }
 
 // ── Checker-half mutations (S5.6 Task 5, design §9 steps 2+4) ──────────────────────────────────

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { screen } from "@testing-library/react";
 import type { LegComparisonDto } from "@svyft/shared";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
@@ -109,29 +108,11 @@ function withSavedShortlist(
 const SAVED_LEG = withSavedShortlist(LEG, "quote-1", "DEDICATED");
 
 function Harness({ leg }: { leg: LegComparisonDto }) {
-  return <MakerPanel queryId="q1" leg={leg} />;
+  return <MakerPanel leg={leg} />;
 }
 
-function renderMaker(
-  leg: LegComparisonDto,
-  opts: {
-    onRequotePost?: (quoteId: string, body: unknown) => void;
-  } = {},
-) {
-  vi.stubGlobal(
-    "fetch",
-    mockFetch((url, init) => {
-      const requoteMatch = url.match(
-        new RegExp(`/api/queries/q1/legs/${leg.legId}/quotes/([^/]+)/request-requote$`),
-      );
-      if (requoteMatch && init?.method === "POST") {
-        const body = JSON.parse((init.body as string) ?? "{}") as unknown;
-        opts.onRequotePost?.(requoteMatch[1], body);
-        return { status: 200, body: { id: requoteMatch[1], status: "REQUOTED" } };
-      }
-      return { status: 404 };
-    }),
-  );
+function renderMaker(leg: LegComparisonDto) {
+  vi.stubGlobal("fetch", mockFetch(() => ({ status: 404 })));
   return renderWithProviders(<Harness leg={leg} />, {
     user: { id: "u1", name: "Exec", email: "e@x.com", role: "EXECUTIVE" },
   });
@@ -150,16 +131,24 @@ describe("MakerPanel", () => {
   //     affordance is UNMOUNTED rather than merely disabled.
   // What is asserted here is only what MakerPanel still renders.
 
-  it("renders no shortlist or send-for-approval controls of its own any more", () => {
-    renderMaker(LEG);
+  it("renders no shortlist, send-for-approval or negotiate controls of its own any more", () => {
+    // A DRAFT decision (SAVED_LEG) is the one state that gives every OTHER "no controls here"
+    // assertion something real to fail against — see the `Negotiate` one below: it isn't passing
+    // because the panel rendered nothing at all, `rejection-notice` is a genuine positive control
+    // in the SAME render.
+    renderMaker({
+      ...SAVED_LEG,
+      decision: { ...SAVED_LEG.decision!, rejectionReason: "Transit too slow for this client." },
+    });
 
     expect(screen.getByTestId("maker-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("rejection-notice")).toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /send for approval/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/override reason/i)).not.toBeInTheDocument();
-    // …while the negotiate half it still owns is present — so this isn't passing because the panel
-    // rendered nothing at all.
-    expect(screen.getByRole("button", { name: /negotiate.*tci freight/i })).toBeInTheDocument();
+    // S5.7 T5 — negotiation moved to one leg-level button in `CompareLegPanel`, so MakerPanel must
+    // no longer render any Negotiate affordance of its own.
+    expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
   });
 
   // ── final review I1 — post-reopen guidance ────────────────────────────────────────────────
@@ -212,76 +201,7 @@ describe("MakerPanel", () => {
     expect(screen.queryByTestId("rejection-notice")).not.toBeInTheDocument();
   });
 
-  it("Negotiate opens the dialog and POSTs {comment} to the FF's quote", async () => {
-    const calls: { quoteId: string; body: unknown }[] = [];
-    renderMaker(LEG, {
-      onRequotePost: (quoteId, body) => calls.push({ quoteId, body }),
-    });
-
-    await userEvent.click(screen.getByRole("button", { name: /negotiate.*tci freight/i }));
-
-    const dialog = await screen.findByRole("dialog");
-    await userEvent.type(
-      within(dialog).getByLabelText(/comment/i),
-      "Can you sharpen the price by 5%?",
-    );
-    await userEvent.click(within(dialog).getByRole("button", { name: /request re-quote/i }));
-
-    await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]).toEqual({
-      quoteId: "quote-1",
-      body: { comment: "Can you sharpen the price by 5%?" },
-    });
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  });
-
-  it("keeps Negotiate's Cancel disabled and refuses to close while the request is pending", async () => {
-    // A deferred (manually-resolved) response, so we can assert mid-flight state — the plain
-    // `mockFetch` helper always resolves on the next microtask, too fast to observe `isPending`.
-    let resolveRequote: ((value: { status: number; body?: unknown }) => void) | undefined;
-    const pending = new Promise<{ status: number; body?: unknown }>((resolve) => {
-      resolveRequote = resolve;
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        if (url.endsWith("/api/queries/q1/legs/leg-1/quotes/quote-1/request-requote")) {
-          return pending.then(({ status, body }) => ({
-            ok: status >= 200 && status < 300,
-            status,
-            json: () => Promise.resolve(body ?? {}),
-            text: () => Promise.resolve(JSON.stringify(body ?? {})),
-          }));
-        }
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({}),
-          text: () => Promise.resolve(""),
-        });
-      }),
-    );
-    renderWithProviders(<Harness leg={LEG} />, {
-      user: { id: "u1", name: "Exec", email: "e@x.com", role: "EXECUTIVE" },
-    });
-
-    await userEvent.click(screen.getByRole("button", { name: /negotiate.*tci freight/i }));
-    const dialog = await screen.findByRole("dialog");
-    await userEvent.type(within(dialog).getByLabelText(/comment/i), "Please revise.");
-    await userEvent.click(within(dialog).getByRole("button", { name: /request re-quote/i }));
-
-    await waitFor(() =>
-      expect(within(screen.getByRole("dialog")).getByRole("button", { name: /cancel/i })).toBeDisabled(),
-    );
-
-    // Neither a (disabled, no-op) Cancel click nor Escape may close the dialog mid-request.
-    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /cancel/i }));
-    await userEvent.keyboard("{Escape}");
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-
-    // Resolving lets it close normally — proves this isn't just permanently stuck.
-    resolveRequote?.({ status: 200, body: { id: "quote-1", status: "REQUOTED" } });
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  });
-
+  // Negotiate's own behaviour (dialog contents, POST body, mid-flight Cancel/Escape gating) now
+  // lives in `NegotiateDialog.test.tsx`; the leg-level button that opens it is covered in
+  // `ComparisonGrid.test.tsx` (rendered through `CompareLegPanel`, which owns it).
 });

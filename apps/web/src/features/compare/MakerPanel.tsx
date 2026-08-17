@@ -1,10 +1,6 @@
-import { useState } from "react";
-import type { LegComparisonDto, OfferDto } from "@svyft/shared";
-import { Button } from "@/components/ui/button";
-import { NegotiateDialog } from "./NegotiateDialog";
+import type { LegComparisonDto } from "@svyft/shared";
 
 export interface MakerPanelProps {
-  queryId: string;
   leg: LegComparisonDto;
 }
 
@@ -28,12 +24,12 @@ export interface MakerPanelProps {
  *     of the panel (final review I2);
  *   - both locked-state messages, `PENDING_APPROVAL` vs `APPROVED`, which are genuinely different
  *     dead-ends (final review I1) — see below;
- *   - the per-forwarder Negotiate buttons, which S5.7 T5 moves to the leg level. Removing them here
- *     would leave no negotiate path at all in between.
+ *   - the per-forwarder Negotiate buttons are GONE — S5.7 T5 moved negotiation to one leg-level
+ *     "Negotiate…" button + multi-forwarder dialog, wired in `CompareLegPanel` itself (it already
+ *     owns the leg's decision status the button disables on, and it sits above both MakerPanel and
+ *     CheckerPanel rather than belonging to either).
  */
-export function MakerPanel({ queryId, leg }: MakerPanelProps) {
-  const pricedOffers = leg.offers.filter((o) => o.priced);
-
+export function MakerPanel({ leg }: MakerPanelProps) {
   const status = leg.decision?.status;
   // A rejected leg comes back as DRAFT carrying the checker's reason. `REJECTED` is never persisted:
   // `reject()` writes DRAFT + `rejectionReason` in a single update (award.service.ts:319-331,
@@ -73,69 +69,6 @@ export function MakerPanel({ queryId, leg }: MakerPanelProps) {
           request or a fresh negotiation with the forwarder.
         </p>
       )}
-
-      <NegotiateSection queryId={queryId} leg={leg} pricedOffers={pricedOffers} />
-    </div>
-  );
-}
-
-function NegotiateSection({
-  queryId,
-  leg,
-  pricedOffers,
-}: {
-  queryId: string;
-  leg: LegComparisonDto;
-  pricedOffers: OfferDto[];
-}) {
-  const [negotiating, setNegotiating] = useState<{
-    quoteId: string;
-    freightForwarderName: string;
-  } | null>(null);
-
-  // One button per forwarder, not per offer column — a Road FF pricing both Dedicated and
-  // Groupage still submitted a single Quote (see `ComparisonGrid`'s own `groupByForwarder` doc
-  // comment), so two variant rows would otherwise open the identical negotiation twice.
-  const seen = new Set<string>();
-  const negotiableGroups = pricedOffers.filter((o) => {
-    if (seen.has(o.freightForwarderId)) return false;
-    seen.add(o.freightForwarderId);
-    return true;
-  });
-
-  if (negotiableGroups.length === 0) return null;
-
-  return (
-    <div className="space-y-3">
-      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Negotiate
-      </h3>
-      <div className="flex flex-wrap gap-2">
-        {negotiableGroups.map((o) => (
-          <Button
-            key={o.freightForwarderId}
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={o.quoteStatus === "REQUOTED"}
-            data-testid={`negotiate-${o.freightForwarderId}`}
-            onClick={() =>
-              setNegotiating({ quoteId: o.quoteId, freightForwarderName: o.freightForwarderName })
-            }
-          >
-            Negotiate — {o.freightForwarderName}
-          </Button>
-        ))}
-      </div>
-
-      <NegotiateDialog
-        open={negotiating != null}
-        onOpenChange={(v) => !v && setNegotiating(null)}
-        queryId={queryId}
-        legId={leg.legId}
-        quoteId={negotiating?.quoteId ?? ""}
-        freightForwarderName={negotiating?.freightForwarderName ?? ""}
-      />
     </div>
   );
 }

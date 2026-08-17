@@ -10,6 +10,7 @@ import { ComparisonGrid, offerKey } from "./ComparisonGrid";
 import { buildComparisonRowModel, type OfferCell } from "./comparisonRowModel";
 import { ChargeBreakdownDialog } from "./ChargeBreakdownDialog";
 import { ShortlistDialog } from "./ShortlistDialog";
+import { NegotiateDialog } from "./NegotiateDialog";
 import { MakerPanel } from "./MakerPanel";
 import { CheckerPanel } from "./CheckerPanel";
 import { DecisionTimeline } from "./DecisionTimeline";
@@ -84,9 +85,11 @@ interface CompareLegPanelProps {
  * `ComparisonGrid` itself (the recommendation now reads by column colour, not a separate banner —
  * S5.7 T1), and — once a column header is clicked — that offer's itemised breakdown in a
  * `ChargeBreakdownDialog` modal (S5.7 T3; used to be an inline detail block). The maker's award
- * actions now split in two: shortlist + send-for-approval happen in `ShortlistDialog`, opened from
- * a per-offer `Select` button in the grid (S5.7 T4), while `MakerPanel` below keeps the leg's
- * status/rejection messaging and the per-forwarder Negotiate buttons. `CheckerPanel` sits alongside
+ * actions now split three ways: shortlist + send-for-approval happen in `ShortlistDialog`, opened
+ * from a per-offer `Select` button in the grid (S5.7 T4); negotiation is this component's own
+ * leg-level "Negotiate…" button (next to the "N offers received" line) opening `NegotiateDialog`,
+ * a multi-forwarder rewrite of what used to be per-forwarder buttons inside `MakerPanel` (S5.7 T5);
+ * `MakerPanel` below keeps only the leg's status/rejection messaging. `CheckerPanel` sits alongside
  * in the same body.
  *
  * **The "which offer" state (S5.7 T4).** There used to be two lifted keys here — `selectedOfferKey`
@@ -121,6 +124,11 @@ export function CompareLegPanel({
   // S5.7 T2 — a single global (not per-leg) columns/rows preference; ambiguity resolution #3.
   const [viewMode, setViewMode] = useViewMode();
 
+  // S5.7 T5 — the leg-level "Negotiate…" trigger. Just an open/close flag: `NegotiateDialog`
+  // re-derives its own eligibility list off `leg` on every render (see its own doc comment), so
+  // there is no second piece of "which forwarders" state to keep in sync here.
+  const [negotiateOpen, setNegotiateOpen] = useState(false);
+
   const [selectedOfferKey, setSelectedOfferKey] = useState<string | undefined>(undefined);
   // The KEY, not the `OfferCell` object: the cell is re-resolved from the current `leg` on every
   // render, so a background refetch (both maker mutations invalidate `["comparison", queryId]`)
@@ -142,6 +150,14 @@ export function CompareLegPanel({
   const decisionStatus = leg.decision?.status;
   const canShortlist =
     !locked && decisionStatus !== "PENDING_APPROVAL" && decisionStatus !== "APPROVED";
+
+  // S5.7 T5 — this is a UI-only restriction (design consequence C1): the server still accepts a
+  // re-quote on a PENDING_APPROVAL leg and resets its decision to DRAFT, it just isn't the flow the
+  // maker should be steered through while a checker is already reviewing the current shortlist.
+  const negotiateDisabledReason =
+    decisionStatus === "PENDING_APPROVAL"
+      ? "A checker must reject this leg before it can be re-negotiated."
+      : null;
 
   function handleSelectOffer(quoteId: string, variant: string | null) {
     const key = offerKey(quoteId, variant);
@@ -182,14 +198,32 @@ export function CompareLegPanel({
 
       {open && (
         <div data-testid="leg-body" className="space-y-4 border-t border-border p-4">
-          {/* Left: offer count. Right: view-mode toggle, in a wrapper that leaves room for Task 5's
-              "Negotiate…" button to sit alongside it — a layout only one control could live in
-              would have to be reworked when that lands (ambiguity resolution #2). */}
+          {/* Left: offer count. Right: (S5.7 T5) the leg-level Negotiate button + its disabled
+              reason, then the view-mode toggle — the wrapper Task 2 left room for. */}
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
               {offerCount} offer{offerCount === 1 ? "" : "s"} received
             </p>
             <div className="flex items-center gap-2">
+              {/* A maker action, same as MakerPanel/CheckerPanel below — withheld entirely (not
+                  merely disabled) once locked, per this component's own `locked` contract. */}
+              {!locked && (
+                <>
+                  {negotiateDisabledReason && (
+                    <span className="text-xs text-muted-foreground">{negotiateDisabledReason}</span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto"
+                    disabled={negotiateDisabledReason != null}
+                    onClick={() => setNegotiateOpen(true)}
+                  >
+                    Negotiate…
+                  </Button>
+                </>
+              )}
               <ViewModeToggle mode={viewMode} onChange={setViewMode} />
             </div>
           </div>
@@ -219,7 +253,16 @@ export function CompareLegPanel({
               fxAsOf={fxAsOf}
             />
           )}
-          {!locked && <MakerPanel queryId={queryId} leg={leg} />}
+          {!locked && (
+            <NegotiateDialog
+              open={negotiateOpen}
+              onOpenChange={setNegotiateOpen}
+              queryId={queryId}
+              legId={leg.legId}
+              leg={leg}
+            />
+          )}
+          {!locked && <MakerPanel leg={leg} />}
           {!locked && <CheckerPanel queryId={queryId} leg={leg} />}
           <DecisionTimeline timeline={leg.timeline} />
         </div>

@@ -553,6 +553,42 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
     renderPanel();
     expect(screen.getByTestId("leg-body")).toHaveTextContent("5 offers received");
   });
+
+  // ── S5.7 T5 — the leg-level Negotiate button `CompareLegPanel` now owns ──────────────────────
+  it("opens the multi-forwarder negotiate dialog from the leg header", async () => {
+    renderPanel();
+
+    const btn = await screen.findByRole("button", { name: /negotiate/i });
+    expect(btn).not.toBeDisabled();
+
+    await userEvent.click(btn);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("disables the leg's Negotiate button once sent for approval", async () => {
+    const pendingLeg: LegComparisonDto = {
+      ...LEG,
+      decision: {
+        legId: LEG.legId,
+        status: "PENDING_APPROVAL",
+        shortlistedQuoteId: "quote-1",
+        shortlistedVariant: "DEDICATED",
+        recommendedQuoteId: "quote-1",
+        recommendedVariant: "DEDICATED",
+        overrideReason: null,
+        rejectionReason: null,
+        sentByUserId: "u1",
+        sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+        decidedByUserId: null,
+        decidedAt: null,
+      },
+    };
+    renderPanel(pendingLeg);
+
+    const btn = await screen.findByRole("button", { name: /negotiate/i });
+    expect(btn).toBeDisabled();
+    expect(screen.getByText(/checker must reject/i)).toBeInTheDocument();
+  });
 });
 
 describe("ComparisonGrid edge cases", () => {
