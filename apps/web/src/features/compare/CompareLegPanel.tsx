@@ -39,6 +39,12 @@ interface CompareLegPanelProps {
   legStatus?: LegStatus;
   open: boolean;
   onToggle: () => void;
+  /** S5.6 Task 6, ambiguity resolution #2 — `true` once `comparison.awardSnapshot != null` (the
+   *  query is QUOTING_CLIENT). `MakerPanel`/`CheckerPanel` are NOT MOUNTED at all while locked
+   *  (not merely disabled) — `CompareQuotesPage` computes this ONE boolean and threads it straight
+   *  through, so no child re-derives the condition. The grid/`RecommendationBanner`/`OfferDetail`/
+   *  `DecisionTimeline` stay mounted and read-only either way — they need no `locked` awareness. */
+  locked: boolean;
 }
 
 /**
@@ -69,7 +75,14 @@ interface CompareLegPanelProps {
  * offer is picked"), so there is exactly one place this can diverge from — this component — and it
  * doesn't.
  */
-export function CompareLegPanel({ queryId, leg, legStatus, open, onToggle }: CompareLegPanelProps) {
+export function CompareLegPanel({
+  queryId,
+  leg,
+  legStatus,
+  open,
+  onToggle,
+  locked,
+}: CompareLegPanelProps) {
   const route = `${leg.origin} → ${leg.destination}`;
   const offerCount = leg.offers.length;
 
@@ -121,13 +134,15 @@ export function CompareLegPanel({ queryId, leg, legStatus, open, onToggle }: Com
             onSelectOffer={handleSelectOffer}
           />
           {selectedOffer && <OfferDetail offer={selectedOffer} />}
-          <MakerPanel
-            queryId={queryId}
-            leg={leg}
-            shortlistKey={shortlistKey}
-            onShortlistKeyChange={setShortlistKey}
-          />
-          <CheckerPanel queryId={queryId} leg={leg} />
+          {!locked && (
+            <MakerPanel
+              queryId={queryId}
+              leg={leg}
+              shortlistKey={shortlistKey}
+              onShortlistKeyChange={setShortlistKey}
+            />
+          )}
+          {!locked && <CheckerPanel queryId={queryId} leg={leg} />}
           <DecisionTimeline timeline={leg.timeline} />
         </div>
       )}

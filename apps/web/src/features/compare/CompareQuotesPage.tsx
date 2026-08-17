@@ -9,6 +9,7 @@ import { RouteDiagram } from "@/features/query-wizard/steps/legs/RouteDiagram";
 import { useComparison } from "./useComparison";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { GenerateGate } from "./GenerateGate";
+import { QuotingClientPanel } from "./QuotingClientPanel";
 
 /**
  * CompareQuotesPage — the Compare Quotes screen (`/queries/:id/compare`, S5.6 §12). Reuses the
@@ -37,6 +38,12 @@ export function CompareQuotesPage() {
   const q = query.data;
   const legs = comparison.data.legs;
   const statusByLegId = new Map(q.legs.map((l) => [l.id, l.status]));
+  // S5.6 Task 6, ambiguity resolution #1 — snapshot-presence IS the QUOTING_CLIENT signal
+  // (`query-status.projector.ts` derives `query.status` off this same column). Computed ONCE
+  // here and threaded down as a single boolean, per resolution #2, rather than re-derived by
+  // each child.
+  const awardSnapshot = comparison.data.awardSnapshot;
+  const locked = awardSnapshot != null;
 
   function jumpToLeg(legId: string) {
     setOpenLegId(legId);
@@ -85,6 +92,7 @@ export function CompareQuotesPage() {
               legStatus={statusByLegId.get(leg.legId)}
               open={openLegId === leg.legId}
               onToggle={() => setOpenLegId((cur) => (cur === leg.legId ? null : leg.legId))}
+              locked={locked}
             />
           ))}
           {legs.length === 0 && (
@@ -94,7 +102,16 @@ export function CompareQuotesPage() {
           )}
         </div>
 
-        {canCheck && <GenerateGate queryId={id} legs={legs} />}
+        {awardSnapshot ? (
+          <QuotingClientPanel
+            queryId={id}
+            snapshot={awardSnapshot}
+            legs={legs}
+            fxAsOf={comparison.data.fxAsOf}
+          />
+        ) : (
+          canCheck && <GenerateGate queryId={id} legs={legs} />
+        )}
       </div>
     </div>
   );

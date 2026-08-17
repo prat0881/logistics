@@ -159,7 +159,7 @@ function renderPanel(leg: LegComparisonDto = LEG) {
   return render(
     <QueryClientProvider client={qc}>
       <AuthProvider>
-        <CompareLegPanel queryId="q1" leg={leg} open onToggle={() => {}} />
+        <CompareLegPanel queryId="q1" leg={leg} open onToggle={() => {}} locked={false} />
       </AuthProvider>
     </QueryClientProvider>,
   );

@@ -24,6 +24,7 @@ import {
   type AwardDecisionEventDto,
   type QuoteVariantTotal,
   type QuoteTotals,
+  type QueryAwardSnapshot,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { FxRatesService } from "../fx-rates/fx-rates.service";
@@ -134,7 +135,7 @@ export class ComparisonService {
   async getComparison(queryId: string): Promise<ComparisonDto> {
     const query = await this.prisma.query.findUnique({
       where: { id: queryId },
-      select: { id: true, priority: true },
+      select: { id: true, priority: true, awardSnapshot: true },
     });
     if (!query) throw new NotFoundException("Query not found");
 
@@ -198,7 +199,14 @@ export class ComparisonService {
       ),
     );
 
-    return { queryId: query.id, priority: query.priority, fxAsOf, legs: legDtos };
+    // Same "import the frozen JSON verbatim, no runtime re-validation" convention
+    // award.service.ts's own generateClientQuote/reopenComparison already use for this column
+    // (it's written once, by that same service, as `awardSnapshot as unknown as
+    // Prisma.InputJsonValue` — read back the same way here rather than inventing a Zod schema for
+    // a shape nothing else in the codebase parses defensively either).
+    const awardSnapshot = query.awardSnapshot as unknown as QueryAwardSnapshot | null;
+
+    return { queryId: query.id, priority: query.priority, fxAsOf, legs: legDtos, awardSnapshot };
   }
 
   private buildLeg(

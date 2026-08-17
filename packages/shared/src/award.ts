@@ -94,6 +94,12 @@ export interface ComparisonDto {
   priority: Priority;
   fxAsOf: string | null; // when the FX rates were read (display)
   legs: LegComparisonDto[];
+  // S5.6 Task 6 — the frozen award summary once the query is QUOTING_CLIENT (`query.status`
+  // projects straight off this column's presence, see query-status.projector.ts). `null` until
+  // `AwardService.generateClientQuote` freezes it; scoped here (not on the wider `QueryDetail`)
+  // since this one feature is the only frontend consumer — see this file's `QueryAwardSnapshot`
+  // doc comment above for the persisted shape.
+  awardSnapshot: QueryAwardSnapshot | null;
 }
 
 // ── Stage 5 (S5.4) request schemas — maker/checker approval-workflow endpoints ──

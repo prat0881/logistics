@@ -89,3 +89,20 @@ export function useGenerateClientQuote(queryId: string) {
     },
   });
 }
+
+// S5.6 Task 6 — the reverse of generate: unfreeze the award and go back to a live comparison.
+// Query-scoped like generate, no body, Executive+ (award.controller.ts's `reopenComparison` has
+// no `@Roles`, same auth-only convention as shortlist/send-for-approval — reopening just undoes
+// the freeze, it isn't itself a fresh checker-level decision). Same both-keys invalidation as
+// generate/approve/reject: reopening flips `query.status` back off QUOTING_CLIENT, so `["query",
+// queryId]` (StageRail/header) needs to re-derive alongside the comparison read model.
+export function useReopenComparison(queryId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => postJson(`/api/queries/${queryId}/reopen-comparison`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["comparison", queryId] });
+      qc.invalidateQueries({ queryKey: ["query", queryId] });
+    },
+  });
+}

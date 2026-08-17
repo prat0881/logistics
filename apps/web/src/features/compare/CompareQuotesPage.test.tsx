@@ -25,6 +25,7 @@ const COMPARISON = {
   queryId: "q1",
   priority: "MEDIUM",
   fxAsOf: "2026-08-14T00:00:00.000Z",
+  awardSnapshot: null,
   legs: [
     {
       legId: "l1",
@@ -180,5 +181,69 @@ describe("CompareQuotesPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /LEG-2/i }));
     await waitFor(() => expect(screen.getByTestId("leg-body")).toHaveTextContent("2 offers"));
     expect(screen.getAllByTestId("leg-body")).toHaveLength(1);
+  });
+
+  it("locks maker/checker/generate controls and shows QuotingClientPanel once the award snapshot is present (S5.6 Task 6)", async () => {
+    // LEG-2's decision is already PENDING_APPROVAL (see COMPARISON above) — for a MANAGER viewer
+    // that would normally mount CheckerPanel's Approve/Reject (CheckerPanel.test.tsx pins exactly
+    // this). Proving it's absent here — under an award snapshot — is therefore exercising the
+    // `locked` gate itself, not just "nothing to check" or "wrong role".
+    const comparisonLocked = {
+      ...COMPARISON,
+      awardSnapshot: {
+        generatedByUserId: "u2",
+        legs: [
+          {
+            legId: "l1",
+            winningQuoteId: "quote-1",
+            freightForwarderId: "ff1",
+            variant: "DEDICATED",
+            currency: "INR",
+            unitsPerUsd: 83.1,
+            usdTotal: 541.52,
+            nativeTotal: 45000,
+            transitDays: 3,
+          },
+          {
+            legId: "l2",
+            winningQuoteId: "quote-3",
+            freightForwarderId: "ff3",
+            variant: "FCL",
+            currency: "USD",
+            unitsPerUsd: 1,
+            usdTotal: 2100,
+            nativeTotal: 2100,
+            transitDays: 24,
+          },
+        ],
+        combinedUsd: 2641.52,
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.endsWith("/api/queries/q1")) return { status: 200, body: { ...QUERY_DETAIL, status: "QUOTING_CLIENT" } };
+        if (url.endsWith("/api/queries/q1/comparison")) return { status: 200, body: comparisonLocked };
+        return { status: 404 };
+      }),
+    );
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id/compare" element={<CompareQuotesPage />} />
+      </Routes>,
+      {
+        route: "/queries/q1/compare",
+        user: { id: "u1", name: "Mgr", email: "m@x.com", role: "MANAGER" },
+      },
+    );
+
+    const leg2 = await screen.findByRole("button", { name: /LEG-2/i });
+    await userEvent.click(leg2);
+    await screen.findByTestId("leg-body");
+
+    expect(screen.queryByTestId("maker-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("checker-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("generate-gate")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("quoting-client-panel")).toBeInTheDocument();
   });
 });

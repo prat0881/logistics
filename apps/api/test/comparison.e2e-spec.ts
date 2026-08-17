@@ -7,7 +7,7 @@ import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
 import type { Prisma } from "@prisma/client";
-import { Role, ACCESS_TOKEN_COOKIE, toUsd, type QuoteDraft } from "@svyft/shared";
+import { Role, ACCESS_TOKEN_COOKIE, toUsd, type QuoteDraft, type QueryAwardSnapshot } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
@@ -426,5 +426,47 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     }
     const chargesSum = offer!.charges.reduce((s, l) => s + l.nativeAmount, 0);
     expect(chargesSum).toBeCloseTo(offer!.nativeTotal, 6);
+  });
+
+  it("surfaces the frozen Query.awardSnapshot when present, and null when the query hasn't been generated yet (S5.6 Task 6)", async () => {
+    const querySnapshotted = await prisma.query.create({
+      data: { queryCode: `${CODE}-3`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    const snapshot: QueryAwardSnapshot = {
+      generatedByUserId: randomUUID(),
+      legs: [
+        {
+          legId: randomUUID(),
+          winningQuoteId: randomUUID(),
+          freightForwarderId: randomUUID(),
+          variant: "DEDICATED",
+          currency: "INR",
+          unitsPerUsd: 83.2,
+          usdTotal: 601.44,
+          nativeTotal: 50040,
+          transitDays: 5,
+        },
+      ],
+      combinedUsd: 601.44,
+    };
+    await prisma.query.update({
+      where: { id: querySnapshotted.id },
+      data: { awardSnapshot: snapshot as unknown as Prisma.InputJsonValue },
+    });
+
+    const resWithSnapshot = await request(app.getHttpServer())
+      .get(`/api/queries/${querySnapshotted.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+    expect(resWithSnapshot.body.awardSnapshot).toEqual(snapshot);
+
+    const queryNoSnapshot = await prisma.query.create({
+      data: { queryCode: `${CODE}-4`, priority: "LOW", incoterms: "FOB" },
+    });
+    const resNoSnapshot = await request(app.getHttpServer())
+      .get(`/api/queries/${queryNoSnapshot.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+    expect(resNoSnapshot.body.awardSnapshot).toBeNull();
   });
 });
