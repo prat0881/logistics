@@ -3,7 +3,6 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { LegComparisonDto, OfferDto } from "@svyft/shared";
 import { shortlistSchema } from "@svyft/shared";
-import { ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -13,6 +12,7 @@ import { offerKey } from "./ComparisonGrid";
 import { fmtUsd } from "./money";
 import { useSendForApproval, useShortlist } from "./useAwardActions";
 import { NegotiateDialog } from "./NegotiateDialog";
+import { errorMessage } from "./errorMessage";
 
 type DecisionStatus = NonNullable<LegComparisonDto["decision"]>["status"];
 
@@ -60,10 +60,6 @@ export function defaultShortlistKey(leg: LegComparisonDto): string | undefined {
     return offerKey(rec.quoteId, rec.variant);
   }
   return undefined;
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.message : fallback;
 }
 
 /**

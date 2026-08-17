@@ -2,16 +2,12 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { LegComparisonDto, RejectInput } from "@svyft/shared";
 import { rejectSchema, Role } from "@svyft/shared";
-import { ApiError } from "@/lib/api";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useApprove, useReject } from "./useAwardActions";
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.message : fallback;
-}
+import { errorMessage } from "./errorMessage";
 
 export interface CheckerPanelProps {
   queryId: string;

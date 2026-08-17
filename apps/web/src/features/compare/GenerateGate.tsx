@@ -1,11 +1,7 @@
 import type { LegComparisonDto } from "@svyft/shared";
-import { ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useGenerateClientQuote } from "./useAwardActions";
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.message : fallback;
-}
+import { errorMessage } from "./errorMessage";
 
 export interface GenerateGateProps {
   queryId: string;

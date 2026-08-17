@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { LegComparisonDto } from "@svyft/shared";
+import { useAuth } from "@/features/auth/AuthProvider";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
 import { CheckerPanel } from "./CheckerPanel";
@@ -66,9 +67,34 @@ function renderChecker(
   });
 }
 
+// `AuthProvider`'s `/api/auth/me` round trip is async — `useAuth()`'s `user` is `null` (so
+// `CheckerPanel` renders nothing, its `canCheck` false regardless of the actual role) for one or
+// more microtask hops after `render()` returns. An absence assertion taken synchronously, or via
+// a `waitFor`/`queryBy*` callback that's ALREADY true on its first (synchronous) check, proves
+// nothing: it would pass identically whether `CheckerPanel`'s role gate is correct OR completely
+// inverted, since both states are "absent" before auth settles. `AuthProbe` renders a value that
+// only exists once `AuthProvider` has actually resolved, so `await screen.findByText(...)` on it
+// forces every assertion after it to run post-settle (review round 1, IMPORTANT #1).
+function AuthProbe() {
+  const { user, loading } = useAuth();
+  return <span data-testid="auth-probe">{loading ? "loading" : (user?.role ?? "anonymous")}</span>;
+}
+
+function renderCheckerAfterAuthSettles(leg: LegComparisonDto, viewer: { id: string; role: string }) {
+  vi.stubGlobal("fetch", mockFetch(() => ({ status: 404 })));
+  renderWithProviders(
+    <>
+      <AuthProbe />
+      <CheckerPanel queryId="q1" leg={leg} />
+    </>,
+    { user: { id: viewer.id, name: "Viewer", email: "v@x.com", role: viewer.role } },
+  );
+  return screen.findByText(viewer.role);
+}
+
 describe("CheckerPanel", () => {
-  it("hides checker controls for an EXECUTIVE viewer", () => {
-    renderChecker(PENDING_LEG, { id: "manager-1", role: "EXECUTIVE" });
+  it("hides checker controls for an EXECUTIVE viewer", async () => {
+    await renderCheckerAfterAuthSettles(PENDING_LEG, { id: "manager-1", role: "EXECUTIVE" });
     expect(screen.queryByTestId("checker-panel")).not.toBeInTheDocument();
   });
 
@@ -84,8 +110,13 @@ describe("CheckerPanel", () => {
   });
 
   it("renders nothing when the leg has no pending decision to check", async () => {
-    renderChecker({ ...PENDING_LEG, decision: null }, { id: "manager-1", role: "MANAGER" });
-    await waitFor(() => expect(screen.queryByTestId("checker-panel")).not.toBeInTheDocument());
+    // Same shape as the EXECUTIVE test above: with `decision: null` AND `user` still `null`
+    // pre-settle, `checker-panel` is absent for the WRONG reason (no viewer yet) just as much as
+    // the right one (no decision to check) — waiting for the MANAGER probe forces `canCheck` to
+    // actually be `true` before this asserts absence, so it's really exercising
+    // `hasPendingDecision`, not just re-proving the auth gate.
+    await renderCheckerAfterAuthSettles({ ...PENDING_LEG, decision: null }, { id: "manager-1", role: "MANAGER" });
+    expect(screen.queryByTestId("checker-panel")).not.toBeInTheDocument();
   });
 
   it("disables Approve and Reject with a four-eyes hint when the viewer sent this leg for approval", async () => {
