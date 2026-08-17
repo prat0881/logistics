@@ -1,6 +1,6 @@
 # Stage 5 — Session Handoff
 
-_Last updated: 2026-08-15 (S5.4 + S5.5 delivered & pushed; S5.6 in progress — T1–T4 of 6 done)_
+_Last updated: 2026-08-17 (**S5.6 COMPLETE** — all 6 tasks built, reviewed, final-opus-reviewed + fixed, `pnpm run ci` green, visually verified. Commits `7b58a8d..354236e` are LOCAL — not yet pushed to PR #52.)_
 
 ## Current stage & branch
 - **Stage 5 — Compare Quotes & Award.** Branch `feat/stage-5-fx-master` → **PR #52** (OPEN, **not merged** — you merge manually).
@@ -15,7 +15,7 @@ _Last updated: 2026-08-15 (S5.4 + S5.5 delivered & pushed; S5.6 in progress — 
 | S5.3 | Status & decision foundations (enums, machine edges, `LegAwardDecision`/`AwardDecisionEvent`, `awardSnapshot`) | ✅ |
 | **S5.4** | **Approval workflow endpoints** — shortlist / send-for-approval / approve / reject / generate-client-quote / reopen-comparison | ✅ delivered this session |
 | **S5.5** | **Negotiation §10.1 + Change-order reversal §10.2** | ✅ delivered this session |
-| S5.6 | **Compare-Quotes frontend** (the screen per the mockup + FX admin) | 🔨 IN PROGRESS — T1–T4 of 6 done (read-only view + maker); T5–T6 remaining |
+| **S5.6** | **Compare-Quotes frontend** (the screen per the mockup + FX admin) | ✅ COMPLETE — all 6 tasks, reviewed + final-review-fixed, ci green, visually verified. **LOCAL only** (`7b58a8d..354236e`), not yet on PR #52 |
 
 Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **opus whole-branch review**). S5.4's reviews caught 5 real defects before merge; S5.5's caught the `StatusRegistry` init-order issue + the request-requote/`QUOTING_CLIENT` teardown seam. All findings fixed or adjudicated.
 
@@ -30,31 +30,47 @@ Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **o
 2. **Product question — earlier price lost on re-quote expiry (S5.5 Minor #4).** §10.1 promises the FF's earlier price "stays visible, badged stale." But the expiry sweep clears `draftJson` for a `REQUOTED` quote on deadline, so if the FF ignores a re-quote request, the original offer is **lost** (no fallback). Is that the intended business rule, or should the prior price be preserved?
 3. **Minor #3 (display-lag, folded into the follow-up ticket):** a `REQUOTED` quote expiring on an already-`FULLY_QUOTED` leg fires no leg transition, so the query status can read `QUOTED` while that leg holds only an `EXPIRED` quote.
 4. **`StatusRegistry` infra change (FYI — reviewed sound):** `contribute()` is now module-init-order-independent (`pending`-merge + an `OnApplicationBootstrap` orphan-key guard). This touches the Extensibility Core used by every domain module; it was deeply reviewed (merge proven correct for all orderings against the actual `@nestjs/core` scanner source). Flagging only because it's shared infra.
+5. **PRODUCT QUESTION (new, S5.6 final review) — is Reopen meant to be actionable?** `reopenComparison` (`award.service.ts:491-520`) deliberately leaves every leg's decision `APPROVED`. So after a reopen there is **no path to revise any shortlist**: reject 409s (`requireDecidable` — the decision isn't `PENDING_APPROVAL`) and the reopen already happened. The fix wave corrected the misleading UI copy only, as scoped; the flow question is yours. Either Reopen should also reset decisions to `DRAFT`, or the UI should say plainly that reopening only unfreezes the snapshot.
+6. **PRE-EXISTING server gap (new finding, NOT introduced by S5.6) — `sendForApproval` has no decision-status guard.** `award.service.ts:154` checks only that a decision exists with a `shortlistedQuoteId`, never `decision.status`, so an **`APPROVED` leg can be re-sent back to `PENDING_APPROVAL`** (and the UI's Send is enabled for it — `alreadySent` covers only `PENDING_APPROVAL`). Confirmed via `git merge-base` to predate S5.6's base `7b58a8d` (commit `03928dc`) and untouched by all 13 commits. Bounded — four-eyes still applies, so it is not a silent-award hole like C1 — but a workflow-integrity gap, and entangled with item 5.
 
 ## Approaches that didn't work
 - **S5.5 module-init ordering:** wiring `AwardModule → RfqModule` shifted NestJS's computed module-init "distance", flipping `RfqModule.contribute("leg")` ahead of `LegsModule.register(legMachine)`. Import-graph tweaks (e.g. `RfqModule` importing `LegsModule`) do **not** fix it (single-pass non-fixed-point DFS). Root-fixed in `StatusRegistry` instead (see item 4).
 - **S5.4 generate winner-pricing:** cannot reuse `getComparison` for winners — `COMPARABLE_STATUSES = [QUOTED, REQUOTED]` excludes `APPROVED`, so approved winners vanish from the grid. Generate prices winners directly from each winning quote's immutable `draftJson`.
 
-## S5.6 (Compare-Quotes frontend) — IN PROGRESS: 4 of 6 tasks done
+## S5.6 (Compare-Quotes frontend) — ✅ COMPLETE (6 of 6 tasks)
 Plan: `docs/plans/stage-5/Stage 5 - S5.6 - Compare Quotes Frontend - Implementation Plan.md`. SDD ledger (full per-task detail + reviews): `.superpowers/sdd/Stage 5 - S5.6 …/progress.md`. Frontend-seam research: `scratchpad/s5.6-frontend-research.md`. Approved visual spec = mockup artifact `10b4cbc3-c713-4773-b8c5-00ea8289cec4` + design §12.
 
 **⚠ Scope correction:** S5.6 is NOT pure-frontend as §15 implied — `GET …/comparison` didn't return the award decision / timeline / itemised charges the maker-checker UI needs. **Task 1 added them** (shared `AwardDecisionDto`/`AwardDecisionEventDto`/`OfferChargeLineDto` + `ComparisonService` join; NO DB migration — tables pre-existed).
 
-**Done (all reviewed, on branch, LOCAL commits `7b58a8d..`<tip>):**
+**Done — ALL 6 TASKS, all reviewed. LOCAL commits `7b58a8d..354236e` (13 commits, NOT pushed):**
 - **T1** `c87201f` — backend read-model extension (decision + timeline + itemised charges on `GET …/comparison`).
 - **T2** `99ca41f`/`d0e4d52` — route `/queries/:id/compare` + `CompareQuotesPage` shell (reuses `QueryOverviewHeader` + `RouteDiagram` w/ a new `selectedLegId`/`onSelectLeg` channel + a single-open `CompareLegPanel`) + `StageRail` "Quotes" step wiring (`isQuotesStageEnabled` at `RFQ_SENT`+).
 - **T3** `0b65db4`/`6c4c621` — read-only `ComparisonGrid` (`(FF×variant)` columns) + `RecommendationBanner` + click-FF `OfferDetail` + pending/awaiting. Unpriced offers greyed, never a fake `$0`.
-- **T4** `58390ae`(+review fix) — **maker controls**: shortlist radios (override-reason when ≠ recommendation) + send-for-approval (A9 proceed-without-waiting) + per-FF Negotiate dialog. Hooks in `useAwardActions.ts`.
-- Everything green: `pnpm --filter @svyft/web test` (101 files / 632+), lint, `pnpm run typecheck`. NOT yet whole-repo `pnpm run ci` (T6 acceptance step). **Not pushed to PR #52 yet** (push at S5.6 completion, or as WIP).
+- **T4** `58390ae`/`b2d12b3` — **maker controls**: shortlist radios (override-reason when ≠ recommendation) + send-for-approval (A9 proceed-without-waiting) + per-FF Negotiate dialog. Hooks in `useAwardActions.ts`.
+- **T5** `a85bd80`/`93987f3` — **checker view**: `CheckerPanel` (Manager+, four-eyes-disabled when `sentByUserId === user.id`) + `GenerateGate` (Manager+, NO four-eyes per O4) + `DecisionTimeline` (all modes) + `useApprove`/`useReject`/`useGenerateClientQuote`.
+- **T6** `0b516c8`/`513d22e` — **Quoting-Client end state**: `QuotingClientPanel` (per-leg winners + `combinedUsd` + FX-as-of + Reopen) + `useReopenComparison` + a single `locked` boolean that **unmounts** (not merely disables) Maker/Checker/Generate.
+- **Final-review fix wave** `354236e` — see below.
+- **`pnpm run ci` GREEN** at `354236e`: shared 366 · web 105 files/665 · api 90 suites/382 · lint + typecheck + 3 builds.
 
-**Remaining — the exact next steps:**
-- **T5 — checker view** (`docs/plans/…S5.6…` Task 5): `CheckerPanel` (Manager+ **conditional mount** `canCheck = role===ADMINISTRATOR||MANAGER`) with Approve/Reject per `PENDING_APPROVAL` leg, **four-eyes-disabled** when `decision.sentByUserId === user.id`; a `DecisionTimeline` (`leg.timeline`, rendered in all modes); a **Generate** gate (Manager+, enabled only when every leg's `decision.status === "APPROVED"`) → `generate-client-quote`. Hooks `useApprove`/`useReject`/`useGenerateClientQuote`. **Generate = Manager+ ONLY, no four-eyes** (§16 O4). Reference: `FxRatesPage`'s `canWrite` conditional-mount; the maker hooks in `useAwardActions.ts`.
-- **T6 — Quoting-Client end-state panel**: `QuotingClientPanel` (shown when `query.status === "QUOTING_CLIENT"` / `awardSnapshot` present) — per-leg winners + `combinedUsd` from `Query.awardSnapshot` (`QueryAwardSnapshot`) + FX-as-of + a **Reopen** button (`reopen-comparison`, Executive+). Grid locks to read-only in this state.
-- **Acceptance:** full `pnpm run ci` → **visual verify vs the mockup** (dev server + screenshot maker/checker, light/dark — needs a query seeded to the comparison stage, i.e. distributed RFQs + submitted quotes) → opus whole-branch review → push S5.6 to PR #52.
+**⚠ Second scope correction (T6):** `Query.awardSnapshot` was unreachable from the frontend (neither `ComparisonDto` nor `QueryDetail` exposed it). Resolved by adding `awardSnapshot` — and later `forwarderNames` — to **`ComparisonDto`** (feature-scoped) rather than `QueryDetail` (wide, app-wide). No migration. The persisted `QueryAwardSnapshotLeg` type was deliberately left untouched so a read-time-only field never masquerades as stored.
 
-**Parked minors (in the S5.6 ledger):** T4 M2 (send-for-approval double-submit — a frontend disable-while-pending was added; the backend not guarding re-send-after-APPROVED is a separate follow-up), T4 M3 (RHF override text persists across picks — intentional), T3 #4/#5/#6 (REQUOTED badge wording split / `money.ts` DRY / aria-controls). The FX-admin screen (§12) **already exists** from S5.1 — no work needed unless extending.
+### Final whole-sub-build review (opus): 1 Critical + 2 Important + 3 Minor — ALL fixed in `354236e`, re-reviewed clean
+The per-task reviews were task-scoped; the broad review caught what they structurally could not:
+- **C1 (Critical) — the T3×T4 seam.** `SendForApprovalSection` couldn't see the current pick, while a grid-header click silently re-points the shortlist radio. So: inspect another FF's charges → press Send without pressing Shortlist → **the server sends the previously-persisted offer, returns 200, and the checker approves the wrong forwarder, with no error anywhere.** Fixed with an `unsavedPick` guard (shared `offerKey` on both sides) enforced in `onSend` **and** `disabled`.
+- **I1** — after a Reopen, `MakerPanel` told users to "reject or reopen it", both impossible for an `APPROVED` decision. Copy corrected (the underlying product question is open item 1 below).
+- **I2** — nothing writes `REJECTED` (`reject()` writes `DRAFT` + `rejectionReason`), so a rejected leg's card read "Shortlisted" and the reason rendered nowhere in the app. Now an inline alert + a "Rejected — revise" chip; dead branches removed.
+- **M1** — post-award the grid re-ranked the *losers* and displayed "Recommended: \<losing FF\>" directly above the award panel. `locked` now suppresses the badge + banner.
+- **M2** stale REQUOTED offers were unlabelled in the shortlist radio; **M3** a latently-vacuous locked-state assertion.
 
-**How to resume:** continue the SDD run on `docs/plans/stage-5/Stage 5 - S5.6 …` from Task 5 (BASE = T4's tip). Or ask me to.
+### Visual verification — DONE (live dev server + seeded data)
+Seed script (scratchpad, **not** in the repo; idempotent, `--cleanup`): `scratchpad/seed-compare-quotes.ts` → query **S56VIS-0001** `83d5770f-959b-4ccd-b18c-d353ee9ad2d9` (2 legs ROAD+SEA, 4 FFs, INR/AED/GBP + matching FX rows, no USD). Logins `exec@svyft.local`/`exec-dev-password`, `manager@svyft.local`/`manager-dev-password`.
+Confirmed live: the full grid (6 `(FF×variant)` columns, USD+native, unpriced "—" never `$0`, REQUOTED stale badge, recommendation ring, pending/awaiting) in **light and dark**; the whole maker flow including **C1's guard releasing exactly when the shortlist persists**, and A9's proceed-without-waiting + reason; **RBAC live** (Executive sees no checker panel and no Generate gate; Manager sees both); the checker panel + `GenerateGate` disabled with "0 of 2 legs approved."; and inline `role="alert"` error surfacing proven against two real server guards.
+**Not verified live: `QuotingClientPanel` + Reopen** — reaching it needs every leg `FULLY_QUOTED`, which requires SB5's expiry sweep; `award.service.ts:246-253` warns that hand-firing a bare EXPIRE strands SB5's `ScheduledEvents`, so it was not fabricated. Covered by unit tests + e2e.
+**Note (pre-existing, app-wide, not S5.6):** dark mode is unreachable in the running app — `darkMode:["class"]` + `.dark` tokens exist, but nothing ever adds the class; there is no theme toggle.
+
+**Parked minors (rulings in the S5.6 ledger; the final review triaged ALL as defer):** T1 M1 (1¢ per-line vs total rounding — `OfferDetail` shows the authoritative `usdTotal`, test-pinned), T2 M2 (`RANK.QUOTING_CLIENT=4` is spec-literal — do not key a new threshold off it), T3 #4/#5/#6 (REQUOTED wording / `money.ts` DRY / aria-controls), T4 M3 (RHF override text persists across picks — harmless now C1's guard exists), T5 M3 (CheckerPanel-self-gates vs GenerateGate-parent-gates — independently re-confirmed correct), T6 (locking-test file placement). The FX-admin screen (§12) **already exists** from S5.1.
+
+**The exact next step:** push `7b58a8d..354236e` to PR #52 — deliberately left to you, and worth reading the two new open items (6 and 7) below first.
 
 ## Reusable facts (learned across S5.4/S5.5 SDD)
 - Caller id = `user.userId` (`RequestUser`); e2e actor `@db.Uuid` cols need cookie `sub: randomUUID()`.
