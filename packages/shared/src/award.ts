@@ -100,6 +100,18 @@ export interface ComparisonDto {
   // since this one feature is the only frontend consumer — see this file's `QueryAwardSnapshot`
   // doc comment above for the persisted shape.
   awardSnapshot: QueryAwardSnapshot | null;
+  // S5.6 Task 6 (review round 1 fix) — freightForwarderId -> companyName for EVERY forwarder
+  // quoted anywhere on this query, regardless of quote status. `QueryAwardSnapshotLeg` stores only
+  // ids, and a winner's own quote is always APPROVED by the time a snapshot exists — a status
+  // `COMPARABLE_STATUSES` (comparison.service.ts) deliberately excludes from `offers`/
+  // `pendingForwarders`, so those two lists alone can never name a winner on its own leg. This map
+  // is the SAME query-wide, status-unfiltered lookup `ComparisonService.getComparison` already
+  // builds (off `prisma.quote.findMany({ where: { queryId } })`, no status predicate) to label
+  // `offers[].freightForwarderName`/`pendingForwarders[].freightForwarderName` — just exposed
+  // directly so `QuotingClientPanel` can resolve `QueryAwardSnapshotLeg.freightForwarderId`
+  // without a second network call and without depending on that id happening to also show up in
+  // some other leg's (status-filtered) offer/pending list.
+  forwarderNames: Record<string, string>;
 }
 
 // ── Stage 5 (S5.4) request schemas — maker/checker approval-workflow endpoints ──

@@ -206,7 +206,21 @@ export class ComparisonService {
     // a shape nothing else in the codebase parses defensively either).
     const awardSnapshot = query.awardSnapshot as unknown as QueryAwardSnapshot | null;
 
-    return { queryId: query.id, priority: query.priority, fxAsOf, legs: legDtos, awardSnapshot };
+    // Review round 1 fix — reuse the SAME status-unfiltered `ffNameById` map built above (from
+    // every quote on this query, `APPROVED` winners included) rather than a second query. This is
+    // the one place a snapshot's `freightForwarderId` can be named without depending on that
+    // forwarder happening to also appear in some OTHER leg's (COMPARABLE_STATUSES-filtered)
+    // offers/pendingForwarders — see the `forwarderNames` doc comment on `ComparisonDto`.
+    const forwarderNames = Object.fromEntries(ffNameById);
+
+    return {
+      queryId: query.id,
+      priority: query.priority,
+      fxAsOf,
+      legs: legDtos,
+      awardSnapshot,
+      forwarderNames,
+    };
   }
 
   private buildLeg(

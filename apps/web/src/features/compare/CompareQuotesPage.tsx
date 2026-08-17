@@ -107,6 +107,7 @@ export function CompareQuotesPage() {
             queryId={id}
             snapshot={awardSnapshot}
             legs={legs}
+            forwarderNames={comparison.data.forwarderNames}
             fxAsOf={comparison.data.fxAsOf}
           />
         ) : (

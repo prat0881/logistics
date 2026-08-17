@@ -11,12 +11,12 @@ import { QuotingClientPanel } from "./QuotingClientPanel";
 
 afterEach(() => vi.unstubAllGlobals());
 
-// leg-1: the frozen winner (ff-1) was APPROVED by the time the snapshot exists, so
-// comparison.service.ts's COMPARABLE_STATUSES excludes it from leg-1's OWN offers/
-// pendingForwarders (see award.service.ts's generateClientQuote doc comment) — its name is only
-// recoverable because ff-1 also appears (as a still-pending forwarder) on leg-2 below. leg-2's
-// winner (ff-3) never appears anywhere in the live comparison at all, proving the graceful-degrade
-// fallback.
+// Minimal leg shells — only `legId`/`legCode`/`origin`/`destination` matter here (leg lookup is
+// unaffected by quote status, unlike forwarder lookup below), so `offers`/`pendingForwarders` are
+// deliberately left empty: this fixture must NOT rely on any forwarder name being recoverable
+// from them (review round 1 — that was the bug: leg-1's own winner is APPROVED, which
+// COMPARABLE_STATUSES excludes from every offers/pendingForwarders list, so a lookup scoped to
+// `legs` alone can never name it).
 const LEGS: LegComparisonDto[] = [
   {
     legId: "leg-1",
@@ -24,42 +24,11 @@ const LEGS: LegComparisonDto[] = [
     mode: "ROAD",
     origin: "Chennai",
     destination: "Mumbai",
-    offers: [
-      {
-        quoteId: "quote-losing",
-        freightForwarderId: "ff-2",
-        freightForwarderName: "Globex Logistics",
-        variant: "DEDICATED",
-        variantLabel: "Dedicated",
-        priced: true,
-        nativeTotal: 42000,
-        currency: "INR",
-        unitsPerUsd: 83,
-        usdTotal: 506.02,
-        transitDays: 4,
-        chargeableWeightKg: 500,
-        validUntil: null,
-        quoteStatus: "QUOTED",
-        charges: [],
-      },
-    ],
+    offers: [],
     pendingForwarders: [],
     awaitingReQuote: false,
     recommendation: null,
-    decision: {
-      legId: "leg-1",
-      status: "APPROVED",
-      shortlistedQuoteId: "quote-1",
-      shortlistedVariant: "DEDICATED",
-      recommendedQuoteId: "quote-1",
-      recommendedVariant: "DEDICATED",
-      overrideReason: null,
-      rejectionReason: null,
-      sentByUserId: "u1",
-      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
-      decidedByUserId: "u2",
-      decidedAt: "2026-08-14T10:00:00.000Z",
-    },
+    decision: null,
     timeline: [],
   },
   {
@@ -69,7 +38,7 @@ const LEGS: LegComparisonDto[] = [
     origin: "Mumbai",
     destination: "Rotterdam",
     offers: [],
-    pendingForwarders: [{ freightForwarderId: "ff-1", freightForwarderName: "TCI Freight", quoteStatus: "RFQ_SENT" }],
+    pendingForwarders: [],
     awaitingReQuote: false,
     recommendation: null,
     decision: null,
@@ -94,7 +63,7 @@ const SNAPSHOT: QueryAwardSnapshot = {
     {
       legId: "leg-2",
       winningQuoteId: "quote-9",
-      freightForwarderId: "ff-3",
+      freightForwarderId: "ff-404", // deliberately absent from FORWARDER_NAMES below
       variant: "FCL",
       currency: "USD",
       unitsPerUsd: 1,
@@ -105,6 +74,12 @@ const SNAPSHOT: QueryAwardSnapshot = {
   ],
   combinedUsd: 2642.17,
 };
+
+// `ComparisonDto.forwarderNames` — server-built (review round 1) from EVERY quote on the query,
+// no status filter, so it DOES cover an APPROVED winner. ff-1 is here (the leg-1 winner); ff-404
+// deliberately is not, to prove the graceful-degrade path still works for a genuinely unresolvable
+// id (e.g. a forwarder no longer on file at all).
+const FORWARDER_NAMES: Record<string, string> = { "ff-1": "TCI Freight" };
 
 // Mounted alongside the panel so the ["comparison", queryId]/["query", queryId] keys have an
 // active observer — invalidateQueries only refetches ACTIVE queries by default, so without a
@@ -130,7 +105,17 @@ function renderPanel(opts: { reopenResponse?: { status: number; body?: unknown }
       }
       if (url.endsWith("/api/queries/q1/comparison")) {
         calls.comparison++;
-        return { status: 200, body: { queryId: "q1", priority: "MEDIUM", fxAsOf: null, legs: [], awardSnapshot: null } };
+        return {
+          status: 200,
+          body: {
+            queryId: "q1",
+            priority: "MEDIUM",
+            fxAsOf: null,
+            legs: [],
+            awardSnapshot: null,
+            forwarderNames: {},
+          },
+        };
       }
       if (url.endsWith("/api/queries/q1")) {
         calls.query++;
@@ -142,7 +127,13 @@ function renderPanel(opts: { reopenResponse?: { status: number; body?: unknown }
   const result = renderWithProviders(
     <>
       <Probes queryId="q1" />
-      <QuotingClientPanel queryId="q1" snapshot={SNAPSHOT} legs={LEGS} fxAsOf="2026-08-14T00:00:00.000Z" />
+      <QuotingClientPanel
+        queryId="q1"
+        snapshot={SNAPSHOT}
+        legs={LEGS}
+        forwarderNames={FORWARDER_NAMES}
+        fxAsOf="2026-08-14T00:00:00.000Z"
+      />
     </>,
     { user: { id: "u1", name: "Exec", email: "e@x.com", role: "EXECUTIVE" } },
   );
@@ -150,21 +141,28 @@ function renderPanel(opts: { reopenResponse?: { status: number; body?: unknown }
 }
 
 describe("QuotingClientPanel", () => {
-  it("renders each leg's frozen winner (FF + variant + USD) and the combined USD total", async () => {
+  it("renders every winner's real forwarder name (including the APPROVED leg-1 winner) + variant + USD, and the combined USD total", async () => {
     renderPanel();
 
-    // leg-1's winner (ff-1) is resolved via leg-2's pendingForwarders entry, cross-leg.
+    // The happy path: leg-1's winner resolves to its real name via forwarderNames, NOT via any
+    // offer/pendingForwarders lookup (LEGS carries none) — this is the case review round 1 found
+    // broken (every single-leg query rendered "Unknown forwarder" here before the fix).
     expect(await screen.findByText(/TCI Freight — Dedicated/)).toBeInTheDocument();
     expect(screen.getByText(new RegExp(fmtUsd(542.17).replace("$", "\\$")))).toBeInTheDocument();
     expect(screen.getByText(/3 days/)).toBeInTheDocument();
 
-    // leg-2's winner (ff-3) is nowhere in the live comparison — degrades, doesn't crash.
-    expect(screen.getByText(/Unknown forwarder — FCL/)).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(fmtUsd(2100).replace("$", "\\$")))).toBeInTheDocument();
-
     expect(screen.getByText(fmtUsd(SNAPSHOT.combinedUsd))).toBeInTheDocument();
     expect(screen.getByText(/LEG-1/)).toBeInTheDocument();
     expect(screen.getByText(/LEG-2/)).toBeInTheDocument();
+  });
+
+  it("degrades to a generic label for a forwarder id genuinely absent from forwarderNames, without crashing", async () => {
+    renderPanel();
+
+    // leg-2's winner (ff-404) has no entry in FORWARDER_NAMES at all — proves the fallback still
+    // fires for a real miss, not just the (now-fixed) common case.
+    expect(await screen.findByText(/Unknown forwarder — FCL/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(fmtUsd(2100).replace("$", "\\$")))).toBeInTheDocument();
   });
 
   it("posts reopen-comparison with no body and refreshes the comparison + query reads", async () => {

@@ -26,6 +26,7 @@ const COMPARISON = {
   priority: "MEDIUM",
   fxAsOf: "2026-08-14T00:00:00.000Z",
   awardSnapshot: null,
+  forwarderNames: { ff1: "TCI Freight", ff2: "CMA CGM", ff3: "Maersk" },
   legs: [
     {
       legId: "l1",

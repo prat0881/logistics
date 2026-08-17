@@ -469,4 +469,55 @@ describe("GET /queries/:id/comparison (e2e)", () => {
       .expect(200);
     expect(resNoSnapshot.body.awardSnapshot).toBeNull();
   });
+
+  it("names an APPROVED (snapshot-winner) forwarder in forwarderNames even though it's excluded from offers/pendingForwarders (S5.6 Task 6 review-round-1 fix)", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-5`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+      },
+    });
+
+    const ffWinner = await mkFf(`FF-${PREFIX}-WIN`);
+    const rfq = await mkRfq(query.id, ffWinner.id, "WIN", "INR");
+    // status: APPROVED directly (mirrors this file's existing direct-status-write convention for
+    // REQUOTED/RFQ_SENT/etc above) — this is the exact state `generateClientQuote` leaves a
+    // winning quote in once approve() has fired it (award.service.ts), and it's what
+    // COMPARABLE_STATUSES/PENDING_STATUSES both exclude.
+    await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffWinner.id,
+        rfqId: rfq.id,
+        status: "APPROVED",
+        submittedAt: new Date(),
+        draftJson: roadDraft(leg.id, origin.id, "INR", 45000, 3) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+
+    // Confirms the exclusion really is in effect for this fixture (otherwise the assertion below
+    // would be trivially true for the wrong reason).
+    expect(res.body.legs[0].offers).toEqual([]);
+    expect(res.body.legs[0].pendingForwarders).toEqual([]);
+    // ...yet forwarderNames still carries its name — the whole point of the fix.
+    expect(res.body.forwarderNames[ffWinner.id]).toBe(ffWinner.companyName);
+  });
 });
