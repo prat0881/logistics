@@ -6,7 +6,7 @@ import type { LegComparisonDto, OfferDto } from "@svyft/shared";
 import { AuthProvider } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
-import { ComparisonGrid } from "./ComparisonGrid";
+import { ComparisonGrid, STALE_OFFER_LABEL } from "./ComparisonGrid";
 import { OfferDetail } from "./OfferDetail";
 import type { ViewMode } from "./useViewMode";
 
@@ -211,13 +211,35 @@ const PARITY_UNPRICED_OFFER: OfferDto = {
   ],
 };
 
+// A third forwarder whose quote is REQUOTED — fix-round-1 addition (T2 review). Neither the
+// original parity fixture nor the pre-existing `renderPanel()`-driven stale-badge test exercises
+// the ROWS view's `cell.stale && <Badge>` block; the reviewer deleted that block from
+// `ComparisonGridRows.tsx` entirely and the (then two-case) parity suite stayed 24/24 green.
+const PARITY_STALE_OFFER: OfferDto = {
+  quoteId: "q3",
+  freightForwarderId: "ff3",
+  freightForwarderName: "Third Forwarder",
+  variant: "DEDICATED",
+  variantLabel: "Dedicated",
+  priced: true,
+  nativeTotal: 9000,
+  currency: "AED",
+  unitsPerUsd: 3.7, // deliberately NOT 3.6725 — collides with the priced offer's rate text otherwise
+  usdTotal: 2450.31,
+  transitDays: 6,
+  chargeableWeightKg: 100,
+  validUntil: "2026-09-16T00:00:00.000Z",
+  quoteStatus: "REQUOTED",
+  charges: [],
+};
+
 const PARITY_LEG: LegComparisonDto = {
   legId: "leg-parity",
   legCode: "LEG-PARITY",
   mode: "ROAD",
   origin: "Origin",
   destination: "Destination",
-  offers: [PARITY_PRICED_OFFER, PARITY_UNPRICED_OFFER],
+  offers: [PARITY_PRICED_OFFER, PARITY_UNPRICED_OFFER, PARITY_STALE_OFFER],
   pendingForwarders: [],
   awaitingReQuote: false,
   recommendation: { quoteId: "q1", variant: "DEDICATED", reason: "fastest transit" },
@@ -225,8 +247,26 @@ const PARITY_LEG: LegComparisonDto = {
   timeline: [],
 };
 
-function renderGrid({ viewMode, locked = false }: { viewMode: ViewMode; locked?: boolean }) {
-  return render(<ComparisonGrid leg={PARITY_LEG} viewMode={viewMode} locked={locked} />);
+function renderGrid({
+  viewMode,
+  locked = false,
+  selectedOfferKey,
+  onSelectOffer,
+}: {
+  viewMode: ViewMode;
+  locked?: boolean;
+  selectedOfferKey?: string;
+  onSelectOffer?: (quoteId: string, variant: string | null) => void;
+}) {
+  return render(
+    <ComparisonGrid
+      leg={PARITY_LEG}
+      viewMode={viewMode}
+      locked={locked}
+      selectedOfferKey={selectedOfferKey}
+      onSelectOffer={onSelectOffer}
+    />,
+  );
 }
 
 // The whole point of T1's shared row model is that the two orientations cannot drift — every
@@ -250,6 +290,51 @@ describe.each(["columns", "rows"] as const)("ComparisonGrid — %s view", (mode)
     renderGrid({ viewMode: mode, locked: true });
     expect(await screen.findByText("$1,824.37")).toBeInTheDocument();
     expect(screen.queryByText(/★ Recommended/)).not.toBeInTheDocument();
+  });
+
+  // ── fix round 1 (T2 review) — reviewer-proved gaps, added to the PARITY block on purpose: a
+  // rows-only test would leave the same hole open in the columns direction next time. ──────────
+  it("carries the recommendation reason as the badge's title", async () => {
+    renderGrid({ viewMode: mode });
+    expect(await screen.findByText("★ Recommended")).toHaveAttribute("title", "fastest transit");
+  });
+
+  it("badges a REQUOTED offer as stale re-quote-requested", async () => {
+    renderGrid({ viewMode: mode });
+    expect(await screen.findByText(STALE_OFFER_LABEL)).toBeInTheDocument();
+  });
+
+  it("keeps an un-priced offer's header non-interactive (never a button)", async () => {
+    renderGrid({ viewMode: mode });
+    // The unpriced offer (q2) is "Second Forwarder"'s only column/row — its variant label is the
+    // only "Dedicated" text belonging to a non-priced, non-recommended, non-stale offer, so this
+    // resolves unambiguously against the 3-offer PARITY_LEG fixture without a testid.
+    const header = await screen.findByTestId("offer-header-q2::DEDICATED");
+    expect(header.tagName).not.toBe("BUTTON");
+  });
+
+  // ── the other manual-symmetry risk the coordinator flagged: click-to-expand wiring. Both views
+  // build their header from the same `onOpenBreakdown`/`selectedOfferKey` props, but nothing
+  // previously proved ROWS actually wires its onClick/aria-expanded rather than just LOOKING like
+  // it does (`ComparisonGridColumns`'s own click test only runs through `renderPanel()`, whose
+  // `CompareLegPanel` always mounts columns by default — S5.7 T2 fix round 1). ─────────────────
+  it("clicking a priced offer's header reports that offer's identity via onSelectOffer", async () => {
+    const onSelectOffer = vi.fn();
+    renderGrid({ viewMode: mode, onSelectOffer });
+    await userEvent.click(await screen.findByTestId("offer-header-q1::DEDICATED"));
+    expect(onSelectOffer).toHaveBeenCalledWith("q1", "DEDICATED");
+  });
+
+  it("marks the header of the currently-selected offer aria-expanded", async () => {
+    renderGrid({ viewMode: mode, selectedOfferKey: "q1::DEDICATED" });
+    expect(await screen.findByTestId("offer-header-q1::DEDICATED")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByTestId("offer-header-q3::DEDICATED")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 });
 
