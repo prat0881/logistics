@@ -35,6 +35,14 @@ export function MakerPanel({ leg }: MakerPanelProps) {
   // `reject()` writes DRAFT + `rejectionReason` in a single update (award.service.ts:319-331,
   // design §9.5 "REJECTED -> back to DRAFT"), so a rejected leg is an editable DRAFT.
   const returnedReason = status === "DRAFT" ? leg.decision?.rejectionReason : null;
+  const isLocked = status === "PENDING_APPROVAL" || status === "APPROVED";
+
+  // Plain DRAFT, not locked, no rejection reason — every leg's default state — leaves nothing
+  // below for this panel to show. Render nothing rather than an empty bordered card (visual-
+  // acceptance fix, S5.7).
+  if (!returnedReason && !isLocked) {
+    return null;
+  }
 
   return (
     <div data-testid="maker-panel" className="space-y-5 rounded-lg border border-border bg-card p-4">

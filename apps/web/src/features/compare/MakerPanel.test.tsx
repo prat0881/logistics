@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen } from "@testing-library/react";
 import type { LegComparisonDto } from "@svyft/shared";
+import { useAuth } from "@/features/auth/AuthProvider";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
 import { MakerPanel } from "./MakerPanel";
@@ -118,6 +119,31 @@ function renderMaker(leg: LegComparisonDto) {
   });
 }
 
+// `AuthProvider`'s `/api/auth/me` round trip is async, so `user`/`loading` from `useAuth()` are
+// still settling for one or more microtask hops after `render()` returns (see
+// `CheckerPanel.test.tsx`'s `AuthProbe` for the fuller rationale). MakerPanel itself doesn't read
+// auth state — its output is fully determined by the `leg` prop — but an absence assertion taken
+// synchronously right after `render()` would still prove nothing about whether the tree has
+// actually settled. `AuthProbe` renders a value that only exists once `AuthProvider` has resolved,
+// so `await screen.findByText(...)` on it forces the maker-panel-absence assertion to run
+// post-settle rather than merely before anything has had a chance to mount.
+function AuthProbe() {
+  const { user, loading } = useAuth();
+  return <span data-testid="auth-probe">{loading ? "loading" : (user?.role ?? "anonymous")}</span>;
+}
+
+function renderMakerAfterAuthSettles(leg: LegComparisonDto) {
+  vi.stubGlobal("fetch", mockFetch(() => ({ status: 404 })));
+  renderWithProviders(
+    <>
+      <AuthProbe />
+      <Harness leg={leg} />
+    </>,
+    { user: { id: "u1", name: "Exec", email: "e@x.com", role: "EXECUTIVE" } },
+  );
+  return screen.findByText("EXECUTIVE");
+}
+
 describe("MakerPanel", () => {
   // S5.7 T4 — the shortlist RadioGroup and the Send-for-approval box moved into `ShortlistDialog`,
   // opened from a per-offer `Select` button in the grid. Their tests moved with them:
@@ -176,6 +202,16 @@ describe("MakerPanel", () => {
 
     expect(screen.queryByText(/a checker has to reject it/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/its shortlist is final here/i)).not.toBeInTheDocument();
+  });
+
+  // Visual-acceptance fix (S5.7) — a plain DRAFT leg (not locked, no rejection reason) is the
+  // default state of every leg, and nothing above is meant to render for it any more. Before this
+  // fix the container div rendered unconditionally, leaving a 34px empty bordered card between the
+  // comparison grid and the decision timeline.
+  it("renders nothing at all for a plain DRAFT leg that is neither locked nor carrying a rejection reason", async () => {
+    await renderMakerAfterAuthSettles(SAVED_LEG);
+
+    expect(screen.queryByTestId("maker-panel")).not.toBeInTheDocument();
   });
 
   // ── final review I2 — the rejection reason had no home in the UI ──────────────────────────
