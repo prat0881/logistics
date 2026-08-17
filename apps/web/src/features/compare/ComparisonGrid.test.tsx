@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LegComparisonDto, OfferDto } from "@svyft/shared";
@@ -7,6 +7,7 @@ import { AuthProvider } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { ComparisonGrid, STALE_OFFER_LABEL } from "./ComparisonGrid";
+import type { OfferCell } from "./comparisonRowModel";
 import type { ViewMode } from "./useViewMode";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -157,8 +158,23 @@ const LEG: LegComparisonDto = {
 // `/api/auth/me` probe from hitting the network; CheckerPanel then just self-hides as
 // unauthenticated), they only exercise the grid/detail through the SAME shell it now happens to
 // sit alongside.
-function renderPanel(leg: LegComparisonDto = LEG, { locked = false }: { locked?: boolean } = {}) {
-  vi.stubGlobal("fetch", mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })));
+function renderPanel(
+  leg: LegComparisonDto = LEG,
+  {
+    locked = false,
+    fetch,
+  }: {
+    locked?: boolean;
+    /** Optional handler for the few tests that drive a real maker mutation through the panel;
+     *  everything else keeps the blanket 401 (AuthProvider then self-reports unauthenticated and
+     *  `CheckerPanel` hides, exactly as before). */
+    fetch?: (url: string, init?: RequestInit) => { status: number; body?: unknown };
+  } = {},
+) {
+  vi.stubGlobal(
+    "fetch",
+    mockFetch(fetch ?? (() => ({ status: 401, body: { message: "Unauthorized" } }))),
+  );
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -261,11 +277,13 @@ function renderGrid({
   locked = false,
   selectedOfferKey,
   onSelectOffer,
+  onShortlistOffer = () => {},
 }: {
   viewMode: ViewMode;
   locked?: boolean;
   selectedOfferKey?: string;
   onSelectOffer?: (quoteId: string, variant: string | null) => void;
+  onShortlistOffer?: (cell: OfferCell) => void;
 }) {
   return render(
     <ComparisonGrid
@@ -274,6 +292,7 @@ function renderGrid({
       locked={locked}
       selectedOfferKey={selectedOfferKey}
       onSelectOffer={onSelectOffer}
+      onShortlistOffer={onShortlistOffer}
     />,
   );
 }
@@ -344,6 +363,51 @@ describe.each(["columns", "rows"] as const)("ComparisonGrid — %s view", (mode)
       "aria-expanded",
       "false",
     );
+  });
+
+  // ── S5.7 T4 — the maker's Select affordance, in the parity block on purpose: it is the only
+  // control in this grid that opens a MUTATING dialog, so a view that forgot it (or shipped it
+  // where it must not appear) is exactly the drift this suite exists to catch. ─────────────────
+  it("clicking a priced offer's Select reports that offer's cell", async () => {
+    const onShortlistOffer = vi.fn();
+    renderGrid({ viewMode: mode, onShortlistOffer });
+    await userEvent.click(await screen.findByTestId("shortlist-select-q1::DEDICATED"));
+    expect(onShortlistOffer).toHaveBeenCalledTimes(1);
+    expect(onShortlistOffer.mock.calls[0][0]).toMatchObject({
+      key: "q1::DEDICATED",
+      offer: { quoteId: "q1", variant: "DEDICATED" },
+    });
+  });
+
+  it("does not let the Select affordance move the charge-breakdown selection", async () => {
+    // The S5.6 Critical in miniature: the two affordances must stay independent, so pressing
+    // Select never silently re-points what the READ side is showing (or vice versa).
+    const onSelectOffer = vi.fn();
+    renderGrid({ viewMode: mode, onSelectOffer });
+    await userEvent.click(await screen.findByTestId("shortlist-select-q1::DEDICATED"));
+    expect(onSelectOffer).not.toHaveBeenCalled();
+  });
+
+  it("gives an un-priced offer no Select button (never interactive)", async () => {
+    renderGrid({ viewMode: mode });
+    const unpriced = await screen.findByTestId("shortlist-select-q2::DEDICATED");
+    expect(unpriced.tagName).not.toBe("BUTTON");
+    expect(unpriced).toHaveTextContent("—");
+    // Positive control: the priced offer in the SAME render does get a button.
+    expect(screen.getByTestId("shortlist-select-q1::DEDICATED").tagName).toBe("BUTTON");
+  });
+
+  it("unmounts the Select affordance entirely once the award is locked", async () => {
+    // Positive control first — the same fixture DOES render it when unlocked, so the absence
+    // assertion below can't pass for the wrong reason.
+    const { unmount } = renderGrid({ viewMode: mode });
+    expect(await screen.findByTestId("shortlist-select-q1::DEDICATED")).toBeInTheDocument();
+    unmount();
+
+    renderGrid({ viewMode: mode, locked: true });
+    expect(await screen.findByText("$1,824.37")).toBeInTheDocument(); // grid still rendered
+    expect(screen.queryByTestId("shortlist-select-q1::DEDICATED")).not.toBeInTheDocument();
+    expect(screen.queryByText("Shortlist")).not.toBeInTheDocument(); // no orphan row/column header
   });
 });
 
@@ -629,16 +693,23 @@ describe("ComparisonGrid edge cases", () => {
     expect(screen.queryByText("Shortlisted")).not.toBeInTheDocument();
   });
 
-  // ── final review C1, at the actual T3×T4 seam this file is the only place to exercise ─────
-  it("a grid-header click moves the maker's pick, and Send for approval then refuses to submit the stale saved offer", async () => {
+  // ── S5.7 T4: the third ported `unsavedPick` regression test ───────────────────────────────
+  // The S5.6 Critical (final review C1) lived at THIS seam and nowhere else: a click on a rival
+  // offer's charge-breakdown header — a pure read gesture — moved the maker's pick, while
+  // `POST /send-for-approval` carries no offer identity and re-reads the PERSISTED shortlist
+  // server-side. The old test asserted the `unsavedPick` guard DISABLED Send in that state; with
+  // the guard's root cause removed, the equivalent assertion is that the read gesture cannot
+  // influence what a submit acts on at all. This is the only file that mounts the real
+  // grid → dialog wiring, so the replacement stays here rather than moving to
+  // `ShortlistDialog.test.tsx` with the other two.
+  it("opening a rival offer's charge breakdown does not change which offer Select submits", async () => {
     const legWithSavedShortlist: LegComparisonDto = {
       ...LEG,
-      // Clear the A9 in-flight-re-quote block so the shortlist/send consistency guard is the ONLY
-      // thing that can disable Send here.
       awaitingReQuote: false,
       decision: {
         legId: "leg-1",
         status: "DRAFT",
+        // Persisted on Acme's DEDICATED offer — the offer the old bug would have submitted.
         shortlistedQuoteId: "quote-1",
         shortlistedVariant: "DEDICATED",
         recommendedQuoteId: "quote-1",
@@ -651,24 +722,64 @@ describe("ComparisonGrid edge cases", () => {
         decidedAt: null,
       },
     };
-    renderPanel(legWithSavedShortlist);
+    const shortlistBodies: unknown[] = [];
+    renderPanel(legWithSavedShortlist, {
+      fetch: (url, init) => {
+        if (url.endsWith("/api/queries/q1/legs/leg-1/shortlist") && init?.method === "PUT") {
+          shortlistBodies.push(JSON.parse((init.body as string) ?? "{}"));
+          return { status: 200, body: { legId: "leg-1", status: "DRAFT" } };
+        }
+        return { status: 401, body: { message: "Unauthorized" } };
+      },
+    });
 
-    const send = screen.getByRole("button", { name: /send for approval/i });
-    expect(send).not.toBeDisabled();
-
-    // Merely INSPECTING a rival column's charge breakdown re-points the shortlist radio — even
-    // though the radio itself is behind the (now-open) dialog's modal overlay and `aria-hidden`
-    // wrapper the moment the header is clicked, so it's queried once the dialog is dismissed
-    // again (Escape), the same way a real reviewer would open the breakdown, read it, and close
-    // it to see the panel underneath.
-    await userEvent.click(screen.getByTestId("offer-header-quote-2::DEDICATED"));
+    // Read a THIRD offer's breakdown (quote-3), then close it — the gesture that used to re-point
+    // the maker's pick behind the scenes.
+    await userEvent.click(screen.getByTestId("offer-header-quote-3::DEDICATED"));
     await screen.findByRole("dialog");
     await userEvent.keyboard("{Escape}");
 
-    expect(
-      await screen.findByRole("radio", { name: /Globex Logistics/i, checked: true }),
-    ).toBeInTheDocument();
-    expect(send).toBeDisabled();
-    expect(screen.getByTestId("unsaved-pick-note")).toBeInTheDocument();
+    // Now shortlist Globex's DEDICATED offer (quote-2) — neither the offer just inspected nor the
+    // one already persisted.
+    await userEvent.click(screen.getByTestId("shortlist-select-quote-2::DEDICATED"));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.type(within(dialog).getByLabelText(/override reason/i), "cheaper");
+    await userEvent.click(within(dialog).getByRole("button", { name: /^save shortlist$/i }));
+
+    await waitFor(() => expect(shortlistBodies).toHaveLength(1));
+    expect(shortlistBodies[0]).toMatchObject({ quoteId: "quote-2", variant: "DEDICATED" });
+  });
+
+  // ── S5.7 T4 — replaces MakerPanel.test.tsx's "the shortlist radio is disabled once the decision
+  // is past DRAFT". `locked` (and a decision past DRAFT) must UNMOUNT the maker affordance, not
+  // merely disable it. ─────────────────────────────────────────────────────────────────────────
+  it("withholds the Select affordance once the leg's decision has left DRAFT", () => {
+    const draft = {
+      legId: "leg-1",
+      status: "DRAFT" as const,
+      shortlistedQuoteId: "quote-1",
+      shortlistedVariant: "DEDICATED" as const,
+      recommendedQuoteId: "quote-1",
+      recommendedVariant: "DEDICATED" as const,
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: null,
+      sentForApprovalAt: null,
+      decidedByUserId: null,
+      decidedAt: null,
+    };
+
+    // Positive control — an editable DRAFT (including a rejected leg, which comes back as DRAFT)
+    // keeps its Select buttons.
+    const draftRender = renderPanel({ ...LEG, decision: draft });
+    expect(screen.getByTestId("shortlist-select-quote-1::DEDICATED")).toBeInTheDocument();
+    draftRender.unmount();
+
+    const pendingRender = renderPanel({ ...LEG, decision: { ...draft, status: "PENDING_APPROVAL" } });
+    expect(screen.queryByTestId("shortlist-select-quote-1::DEDICATED")).not.toBeInTheDocument();
+    pendingRender.unmount();
+
+    renderPanel({ ...LEG, decision: { ...draft, status: "APPROVED" } });
+    expect(screen.queryByTestId("shortlist-select-quote-1::DEDICATED")).not.toBeInTheDocument();
   });
 });

@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LegStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import { ComparisonGrid, offerKey } from "./ComparisonGrid";
+import { buildComparisonRowModel, type OfferCell } from "./comparisonRowModel";
 import { ChargeBreakdownDialog } from "./ChargeBreakdownDialog";
+import { ShortlistDialog } from "./ShortlistDialog";
 import { MakerPanel } from "./MakerPanel";
 import { CheckerPanel } from "./CheckerPanel";
 import { DecisionTimeline } from "./DecisionTimeline";
@@ -81,29 +83,28 @@ interface CompareLegPanelProps {
  * The body renders the read-only `(FF × variant)` comparison — a "N offers received" summary, the
  * `ComparisonGrid` itself (the recommendation now reads by column colour, not a separate banner —
  * S5.7 T1), and — once a column header is clicked — that offer's itemised breakdown in a
- * `ChargeBreakdownDialog` modal (S5.7 T3; used to be an inline detail block) — followed
- * by Task 4's `MakerPanel` (shortlist / send-for-approval / negotiate). Task 5 adds the checker
- * panel alongside this same body.
+ * `ChargeBreakdownDialog` modal (S5.7 T3; used to be an inline detail block). The maker's award
+ * actions now split in two: shortlist + send-for-approval happen in `ShortlistDialog`, opened from
+ * a per-offer `Select` button in the grid (S5.7 T4), while `MakerPanel` below keeps the leg's
+ * status/rejection messaging and the per-forwarder Negotiate buttons. `CheckerPanel` sits alongside
+ * in the same body.
  *
- * Two pieces of "which offer" state are lifted here, not one, despite both being keyed the same
- * way (`offerKey(quoteId, variant)`) — they answer genuinely different questions with different
- * defaults, and collapsing them into a single variable would make one of the two wrong:
+ * **The "which offer" state (S5.7 T4).** There used to be two lifted keys here — `selectedOfferKey`
+ * (whose breakdown is open) and `shortlistKey` (the maker's candidate pick) — wired so that a grid
+ * header click moved BOTH. That coupling was the S5.6 Critical: merely reading a rival offer's
+ * charges re-pointed the maker's pick, and `POST /send-for-approval` carries no offer identity, so
+ * Send then submitted the previously-SAVED offer under a UI showing a different one. `354236e`
+ * patched it with an `unsavedPick` guard on the Send button.
+ *
+ * T4 removes the second key instead of guarding it. What remains:
  *   - `selectedOfferKey` — which offer's charge breakdown dialog is open. Defaults to `undefined`
- *     (closed) and TOGGLES closed on a second click of the same header, same as closing the
- *     dialog any other way (Escape, overlay click, its own close button); both behaviours are
- *     pinned by `ComparisonGrid.test.tsx` and must not change.
- *   - `shortlistKey` — the maker's current candidate pick. Defaults (inside `MakerPanel`, via
- *     `defaultShortlistKey`) to the leg's existing shortlist or the recommendation, and a radio
- *     group can never legitimately go back to "nothing picked" the way a toggle can.
- * They're kept from diverging in the one direction that's safe and matches the brief ("wire it so
- * the grid's `onSelectOffer` and this selector stay in sync"): clicking a grid column header both
- * toggles that offer's detail AND moves the maker's candidate pick to it (a natural "inspect this
- * one → it's my pick" gesture). The reverse does NOT happen — picking a maker radio does not
- * force the grid's detail open — so `MakerPanel` never touches `selectedOfferKey`, and the
- * independently-tested expand/collapse toggle above is untouched by this task. `MakerPanel` is a
- * strictly controlled component for `shortlistKey` (it owns no competing local copy of "which
- * offer is picked"), so there is exactly one place this can diverge from — this component — and it
- * doesn't.
+ *     (closed) and TOGGLES closed on a second click of the same header, same as closing the dialog
+ *     any other way (Escape, overlay click, its own close button); both behaviours are pinned by
+ *     `ComparisonGrid.test.tsx` and must not change. It is now PURELY a read affordance — it no
+ *     longer moves anything a mutation reads.
+ *   - `shortlistCell` — the offer whose `Select` was clicked, i.e. which `ShortlistDialog` is open.
+ *     Set only by that button, cleared when the dialog closes; the dialog acts on this exact cell,
+ *     so there is no candidate-vs-persisted pair left to diverge.
  */
 export function CompareLegPanel({
   queryId,
@@ -121,15 +122,30 @@ export function CompareLegPanel({
   const [viewMode, setViewMode] = useViewMode();
 
   const [selectedOfferKey, setSelectedOfferKey] = useState<string | undefined>(undefined);
+  // The KEY, not the `OfferCell` object: the cell is re-resolved from the current `leg` on every
+  // render, so a background refetch (both maker mutations invalidate `["comparison", queryId]`)
+  // can't leave the open dialog rendering a frozen snapshot of the offer — everything else in it
+  // already reads the fresh read model. An offer that disappears from the read model entirely
+  // resolves to `undefined` and closes the dialog rather than acting on a ghost.
   const [shortlistKey, setShortlistKey] = useState<string | undefined>(undefined);
+  const shortlistCell: OfferCell | undefined = shortlistKey
+    ? buildComparisonRowModel(leg, locked).cells.find((c) => c.key === shortlistKey)
+    : undefined;
   const selectedOffer = leg.offers.find(
     (o) => offerKey(o.quoteId, o.variant) === selectedOfferKey,
   );
 
+  // Once the leg's decision has left DRAFT the server 409s a re-shortlist (award.service.ts's
+  // `shortlist` guard), so the Select affordance is withheld entirely rather than offered and
+  // rejected. `REJECTED` is never persisted — `reject()` writes DRAFT + `rejectionReason` in one
+  // update — so a returned leg is an editable DRAFT and keeps its Select buttons (final review I2).
+  const decisionStatus = leg.decision?.status;
+  const canShortlist =
+    !locked && decisionStatus !== "PENDING_APPROVAL" && decisionStatus !== "APPROVED";
+
   function handleSelectOffer(quoteId: string, variant: string | null) {
     const key = offerKey(quoteId, variant);
     setSelectedOfferKey((cur) => (cur === key ? undefined : key));
-    setShortlistKey(key);
   }
 
   // Radix funnels every close path (Escape, overlay click, the DialogContent corner X) through
@@ -183,7 +199,17 @@ export function CompareLegPanel({
             onSelectOffer={handleSelectOffer}
             locked={locked}
             viewMode={viewMode}
+            onShortlistOffer={canShortlist ? (cell) => setShortlistKey(cell.key) : undefined}
           />
+          {shortlistCell && (
+            <ShortlistDialog
+              open
+              onOpenChange={(next) => !next && setShortlistKey(undefined)}
+              queryId={queryId}
+              leg={leg}
+              cell={shortlistCell}
+            />
+          )}
           {selectedOffer && (
             <ChargeBreakdownDialog
               open
@@ -193,14 +219,7 @@ export function CompareLegPanel({
               fxAsOf={fxAsOf}
             />
           )}
-          {!locked && (
-            <MakerPanel
-              queryId={queryId}
-              leg={leg}
-              shortlistKey={shortlistKey}
-              onShortlistKeyChange={setShortlistKey}
-            />
-          )}
+          {!locked && <MakerPanel queryId={queryId} leg={leg} />}
           {!locked && <CheckerPanel queryId={queryId} leg={leg} />}
           <DecisionTimeline timeline={leg.timeline} />
         </div>

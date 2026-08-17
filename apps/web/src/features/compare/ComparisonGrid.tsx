@@ -26,6 +26,11 @@ export interface ComparisonGridProps {
    *  ambiguity resolution #1. `CompareLegPanel` is the only caller that threads a live value
    *  through, from its own `useViewMode()`. */
   viewMode?: ViewMode;
+  /** Opens the maker's `ShortlistDialog` for one offer (S5.7 T4). Omit it — or set `locked` — and
+   *  the Shortlist row/column is not rendered at all. Deliberately NOT folded into `onSelectOffer`
+   *  above: that one only opens the read-only charge breakdown, and the S5.6 Critical was precisely
+   *  a *reading* gesture silently moving what a submit would act on. */
+  onShortlistOffer?: (cell: OfferCell) => void;
 }
 
 /**
@@ -42,8 +47,14 @@ export function ComparisonGrid({
   onSelectOffer,
   locked = false,
   viewMode = "columns",
+  onShortlistOffer,
 }: ComparisonGridProps) {
   const model = buildComparisonRowModel(leg, locked);
+
+  // ONE place decides that a locked award has no maker affordance, so neither orientation can be
+  // the one that forgets (the panel above ALSO withholds the handler for a decision past DRAFT —
+  // these are different conditions, and both must unmount rather than disable).
+  const shortlistHandler = locked ? undefined : onShortlistOffer;
 
   function handleOpenBreakdown(cell: OfferCell) {
     onSelectOffer?.(cell.offer.quoteId, cell.offer.variant);
@@ -59,6 +70,7 @@ export function ComparisonGrid({
           leg={leg}
           onOpenBreakdown={handleOpenBreakdown}
           selectedOfferKey={selectedOfferKey}
+          onShortlistOffer={shortlistHandler}
         />
       ) : (
         <ComparisonGridColumns
@@ -66,6 +78,7 @@ export function ComparisonGrid({
           leg={leg}
           onOpenBreakdown={handleOpenBreakdown}
           selectedOfferKey={selectedOfferKey}
+          onShortlistOffer={shortlistHandler}
         />
       )}
 

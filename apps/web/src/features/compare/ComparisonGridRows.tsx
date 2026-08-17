@@ -20,6 +20,7 @@ import {
   type ComparisonRowModel,
   type OfferCell,
 } from "./comparisonRowModel";
+import { ShortlistSelectCell } from "./ShortlistSelectCell";
 
 export interface ComparisonGridRowsProps {
   model: ComparisonRowModel;
@@ -28,6 +29,9 @@ export interface ComparisonGridRowsProps {
   /** Which offer's charge breakdown is currently expanded below the grid — same meaning as
    *  `ComparisonGridColumns`'s prop of the same name; used only for `aria-expanded`. */
   selectedOfferKey?: string;
+  /** Opens the maker's `ShortlistDialog` for one offer — same meaning (and same unmount-when-absent
+   *  rule) as `ComparisonGridColumns`'s prop of the same name (S5.7 T4). */
+  onShortlistOffer?: (cell: OfferCell) => void;
 }
 
 /**
@@ -43,6 +47,7 @@ export function ComparisonGridRows({
   leg,
   onOpenBreakdown,
   selectedOfferKey,
+  onShortlistOffer,
 }: ComparisonGridRowsProps) {
   const { groups } = model;
 
@@ -58,6 +63,7 @@ export function ComparisonGridRows({
               </TableHead>
             ))}
             <TableHead className="text-center">Status</TableHead>
+            {onShortlistOffer && <TableHead className="text-center">Shortlist</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -138,6 +144,11 @@ export function ComparisonGridRows({
                       )}
                     </div>
                   </TableCell>
+                  {onShortlistOffer && (
+                    <TableCell className={cn("text-center", cell.recommended && RECOMMENDED_TINT)}>
+                      <ShortlistSelectCell cell={cell} onSelect={onShortlistOffer} />
+                    </TableCell>
+                  )}
                 </TableRow>
               );
             }),

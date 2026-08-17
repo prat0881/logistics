@@ -48,8 +48,9 @@ export interface QuotingClientPanelProps {
  * `offers[].freightForwarderName` for non-APPROVED quotes, just not status-filtered. A miss is
  * still possible in principle (the snapshot is frozen; a forwarder could in principle be deleted
  * from master data later) and degrades to a generic "Unknown forwarder" rather than crashing or
- * fabricating a name — the same defensive fallback convention `RecommendationBanner`/
- * `defaultShortlistKey` already use elsewhere in this feature.
+ * fabricating a name — the same defensive fallback convention `buildComparisonRowModel` already
+ * uses elsewhere in this feature (a recommendation naming an offer the leg no longer carries flags
+ * nothing rather than crashing).
  */
 export function QuotingClientPanel({
   queryId,

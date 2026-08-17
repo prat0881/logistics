@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -80,12 +79,8 @@ const PENDING_LEG: LegComparisonDto = {
   },
 };
 
-/**
- * The same leg with its CURRENT pick already persisted as a DRAFT shortlist. Send for approval is
- * only legitimate in this state: the endpoint carries no offer identity, so the server sends
- * whatever `legAwardDecision.shortlistedQuoteId` holds — sending while the UI shows anything else
- * awards the wrong forwarder silently (final review C1).
- */
+/** The same leg with a shortlist already persisted as a DRAFT decision — still fully editable
+ *  (`reject()` writes DRAFT + a reason, so this is also the shape a returned leg comes back as). */
 function withSavedShortlist(
   leg: LegComparisonDto,
   quoteId: string,
@@ -113,59 +108,19 @@ function withSavedShortlist(
 // LEG, shortlisted on the recommendation (quote-1/DEDICATED) — the consistent, sendable state.
 const SAVED_LEG = withSavedShortlist(LEG, "quote-1", "DEDICATED");
 
-// A leg with an in-flight re-quote (A9 "proceed without waiting" path). Shortlisted on the
-// still-QUOTED offer so the A9 confirm is the ONLY thing gating Send.
-const AWAITING_LEG: LegComparisonDto = withSavedShortlist(
-  {
-    ...LEG,
-    legId: "leg-3",
-    legCode: "LEG-3",
-    awaitingReQuote: true,
-    offers: [LEG.offers[0], { ...LEG.offers[1], quoteStatus: "REQUOTED" }],
-  },
-  "quote-1",
-  "DEDICATED",
-);
-
-/** Mirrors how `CompareLegPanel` will own the lifted shortlist-selection channel — MakerPanel
- *  itself never owns this piece of state (single source of truth lives in the parent). */
 function Harness({ leg }: { leg: LegComparisonDto }) {
-  const [shortlistKey, setShortlistKey] = useState<string | undefined>(undefined);
-  return (
-    <MakerPanel
-      queryId="q1"
-      leg={leg}
-      shortlistKey={shortlistKey}
-      onShortlistKeyChange={setShortlistKey}
-    />
-  );
+  return <MakerPanel queryId="q1" leg={leg} />;
 }
 
 function renderMaker(
   leg: LegComparisonDto,
   opts: {
-    onShortlistPut?: (body: unknown) => void;
-    sendResponse?: { status: number; body?: unknown };
-    onSendPost?: (body: unknown) => void;
     onRequotePost?: (quoteId: string, body: unknown) => void;
   } = {},
 ) {
   vi.stubGlobal(
     "fetch",
     mockFetch((url, init) => {
-      if (url.endsWith(`/api/queries/q1/legs/${leg.legId}/shortlist`) && init?.method === "PUT") {
-        const body = JSON.parse((init.body as string) ?? "{}") as unknown;
-        opts.onShortlistPut?.(body);
-        return { status: 200, body: { legId: leg.legId, status: "DRAFT", ...(body as object) } };
-      }
-      if (
-        url.endsWith(`/api/queries/q1/legs/${leg.legId}/send-for-approval`) &&
-        init?.method === "POST"
-      ) {
-        const body = JSON.parse((init.body as string) ?? "{}") as unknown;
-        opts.onSendPost?.(body);
-        return opts.sendResponse ?? { status: 200, body: { legId: leg.legId, status: "PENDING_APPROVAL" } };
-      }
       const requoteMatch = url.match(
         new RegExp(`/api/queries/q1/legs/${leg.legId}/quotes/([^/]+)/request-requote$`),
       );
@@ -183,124 +138,28 @@ function renderMaker(
 }
 
 describe("MakerPanel", () => {
-  it("pre-selects the recommended offer and shows no override-reason field for it", () => {
+  // S5.7 T4 — the shortlist RadioGroup and the Send-for-approval box moved into `ShortlistDialog`,
+  // opened from a per-offer `Select` button in the grid. Their tests moved with them:
+  //   - override-required / body-shape / A9 / inline-409 → `ShortlistDialog.test.tsx`;
+  //   - the three `unsavedPick` regression tests that guarded the S5.6 Critical → two into
+  //     `ShortlistDialog.test.tsx`'s "the offer submitted is the offer whose Select was clicked"
+  //     block, the grid-seam one into `ComparisonGrid.test.tsx` ("opening a rival offer's charge
+  //     breakdown does not change which offer Select submits");
+  //   - "the shortlist radio is disabled once the decision is past DRAFT" → `ComparisonGrid.test.tsx`
+  //     ("withholds the Select affordance once the leg's decision has left DRAFT"), which asserts the
+  //     affordance is UNMOUNTED rather than merely disabled.
+  // What is asserted here is only what MakerPanel still renders.
+
+  it("renders no shortlist or send-for-approval controls of its own any more", () => {
     renderMaker(LEG);
 
-    expect(screen.getByRole("radio", { name: /TCI Freight/i, checked: true })).toBeInTheDocument();
-    expect(
-      screen.getByRole("radio", { name: /Globex Logistics/i, checked: false }),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("maker-panel")).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /send for approval/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/override reason/i)).not.toBeInTheDocument();
-  });
-
-  it("requires an override reason for a non-recommended pick and blocks Shortlist until one is entered", async () => {
-    renderMaker(LEG);
-
-    await userEvent.click(screen.getByRole("radio", { name: /Globex Logistics/i }));
-
-    const overrideField = screen.getByLabelText(/override reason/i);
-    expect(overrideField).toBeInTheDocument();
-
-    const shortlistButton = screen.getByRole("button", { name: /^shortlist$/i });
-    expect(shortlistButton).toBeDisabled();
-
-    await userEvent.type(overrideField, "Cheaper and still within the transit window.");
-    expect(shortlistButton).not.toBeDisabled();
-  });
-
-  it("PUTs the exact {quoteId, variant, overrideReason} body on Shortlist", async () => {
-    const calls: unknown[] = [];
-    renderMaker(LEG, { onShortlistPut: (body) => calls.push(body) });
-
-    await userEvent.click(screen.getByRole("radio", { name: /Globex Logistics/i }));
-    await userEvent.type(
-      screen.getByLabelText(/override reason/i),
-      "Cheaper and still within the transit window.",
-    );
-    await userEvent.click(screen.getByRole("button", { name: /^shortlist$/i }));
-
-    await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]).toEqual({
-      quoteId: "quote-2",
-      variant: "DEDICATED",
-      overrideReason: "Cheaper and still within the transit window.",
-    });
-  });
-
-  it("PUTs {quoteId, variant} with no overrideReason when the pick equals the recommendation", async () => {
-    const calls: unknown[] = [];
-    renderMaker(LEG, { onShortlistPut: (body) => calls.push(body) });
-
-    // TCI Freight (quote-1/DEDICATED) is both the default selection and the recommendation — no
-    // override textarea should ever appear, and Shortlist should already be enabled.
-    expect(screen.queryByLabelText(/override reason/i)).not.toBeInTheDocument();
-    const shortlistButton = screen.getByRole("button", { name: /^shortlist$/i });
-    expect(shortlistButton).not.toBeDisabled();
-
-    await userEvent.click(shortlistButton);
-
-    await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]).toEqual({ quoteId: "quote-1", variant: "DEDICATED" });
-    expect(calls[0]).not.toHaveProperty("overrideReason");
-  });
-
-  it("posts an empty body on Send for approval when nothing is awaiting a re-quote", async () => {
-    const calls: unknown[] = [];
-    renderMaker(SAVED_LEG, { onSendPost: (body) => calls.push(body) });
-
-    const sendButton = screen.getByRole("button", { name: /send for approval/i });
-    expect(sendButton).not.toBeDisabled();
-    await userEvent.click(sendButton);
-
-    await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]).toEqual({});
-  });
-
-  it("disables Send for approval once the decision is already pending approval", () => {
-    renderMaker(PENDING_LEG);
-
-    const sendButton = screen.getByRole("button", { name: /sent for approval/i });
-    expect(sendButton).toBeDisabled();
-  });
-
-  // ── final review C1 — the send endpoint carries no offer identity ──────────────────────────
-  it("blocks Send for approval when nothing has been shortlisted yet (would be a guaranteed 400)", async () => {
-    const calls: unknown[] = [];
-    renderMaker(LEG, { onSendPost: (body) => calls.push(body) });
-
-    // LEG has no decision — the radio still PRE-SELECTS the recommendation, which is exactly what
-    // used to make Send look actionable.
-    expect(screen.getByRole("radio", { name: /TCI Freight/i, checked: true })).toBeInTheDocument();
-
-    const sendButton = screen.getByRole("button", { name: /send for approval/i });
-    expect(sendButton).toBeDisabled();
-    expect(screen.getByTestId("unsaved-pick-note")).toHaveTextContent(/press shortlist above/i);
-
-    await userEvent.click(sendButton);
-    expect(calls).toHaveLength(0);
-  });
-
-  it("blocks Send for approval while the pick has moved off the saved shortlist without being re-saved", async () => {
-    const calls: unknown[] = [];
-    renderMaker(SAVED_LEG, { onSendPost: (body) => calls.push(body) });
-
-    // Consistent to start with: saved shortlist === current pick.
-    const sendButton = screen.getByRole("button", { name: /send for approval/i });
-    expect(sendButton).not.toBeDisabled();
-
-    // Moving the pick (the same lifted channel a ComparisonGrid header click writes to — see
-    // CompareLegPanel.handleSelectOffer) without pressing Shortlist would otherwise send the
-    // PERSISTED offer while the screen shows this one.
-    await userEvent.click(screen.getByRole("radio", { name: /Globex Logistics/i }));
-    expect(sendButton).toBeDisabled();
-    expect(screen.getByTestId("unsaved-pick-note")).toHaveTextContent(/not the one saved/i);
-
-    await userEvent.click(sendButton);
-    expect(calls).toHaveLength(0);
-
-    // Back on the saved offer it re-enables — the guard tracks the pick, it isn't a one-way latch.
-    await userEvent.click(screen.getByRole("radio", { name: /TCI Freight/i }));
-    expect(sendButton).not.toBeDisabled();
+    // …while the negotiate half it still owns is present — so this isn't passing because the panel
+    // rendered nothing at all.
+    expect(screen.getByRole("button", { name: /negotiate.*tci freight/i })).toBeInTheDocument();
   });
 
   // ── final review I1 — post-reopen guidance ────────────────────────────────────────────────
@@ -314,13 +173,19 @@ describe("MakerPanel", () => {
     // Neither route exists for an APPROVED decision: reject 409s (requireDecidable) and reopen
     // only clears the query's snapshot, leaving every leg APPROVED.
     expect(screen.queryByText(/reject or reopen/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /TCI Freight/i })).toBeDisabled();
   });
 
   it("keeps the recoverable wording for a leg that is only pending approval", () => {
     renderMaker(PENDING_LEG);
 
     expect(screen.getByText(/a checker has to reject it/i)).toBeInTheDocument();
+    expect(screen.queryByText(/its shortlist is final here/i)).not.toBeInTheDocument();
+  });
+
+  it("shows neither locked message while the decision is still an editable DRAFT", () => {
+    renderMaker(SAVED_LEG);
+
+    expect(screen.queryByText(/a checker has to reject it/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/its shortlist is final here/i)).not.toBeInTheDocument();
   });
 
@@ -334,31 +199,17 @@ describe("MakerPanel", () => {
     expect(screen.getByTestId("rejection-notice")).toHaveTextContent(
       "Transit too slow for this client.",
     );
-    // Still editable — reject() writes DRAFT, so the maker can re-pick and re-send.
-    expect(screen.getByRole("radio", { name: /TCI Freight/i })).not.toBeDisabled();
+    // …and only on a DRAFT: a PENDING_APPROVAL decision carrying a stale reason must not re-show it.
+    expect(screen.getByTestId("rejection-notice")).toBeInTheDocument();
   });
 
-  // ── final review M2 — a stale offer is shortlistable, so say so ───────────────────────────
-  it("marks a REQUOTED offer as stale in the shortlist radio", () => {
-    renderMaker(AWAITING_LEG);
-
-    expect(
-      screen.getByRole("radio", { name: /Globex Logistics.*Re-quote requested/i }),
-    ).toBeInTheDocument();
-    // The still-QUOTED offer is not marked.
-    expect(
-      screen.queryByRole("radio", { name: /TCI Freight.*Re-quote requested/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("surfaces a 409 from Send for approval inline", async () => {
-    renderMaker(SAVED_LEG, {
-      sendResponse: { status: 409, body: { message: "This leg is not pending approval" } },
+  it("does not show the rejection notice once the leg has been re-sent for approval", () => {
+    renderMaker({
+      ...PENDING_LEG,
+      decision: { ...PENDING_LEG.decision!, rejectionReason: "Transit too slow for this client." },
     });
 
-    await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/not pending approval/i);
+    expect(screen.queryByTestId("rejection-notice")).not.toBeInTheDocument();
   });
 
   it("Negotiate opens the dialog and POSTs {comment} to the FF's quote", async () => {
@@ -433,24 +284,4 @@ describe("MakerPanel", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
-  it("A9: requires an explicit proceed-without-waiting confirm + reason when the leg is awaiting a re-quote", async () => {
-    const calls: unknown[] = [];
-    renderMaker(AWAITING_LEG, { onSendPost: (body) => calls.push(body) });
-
-    const sendButton = screen.getByRole("button", { name: /send for approval/i });
-    expect(sendButton).toBeDisabled();
-
-    await userEvent.click(screen.getByRole("checkbox", { name: /proceed without waiting/i }));
-    expect(sendButton).toBeDisabled(); // still needs a reason
-
-    await userEvent.type(screen.getByLabelText(/reason/i), "Deadline is today; cannot wait.");
-    expect(sendButton).not.toBeDisabled();
-
-    await userEvent.click(sendButton);
-    await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0]).toEqual({
-      proceedWithoutWaiting: true,
-      proceedReason: "Deadline is today; cannot wait.",
-    });
-  });
 });
