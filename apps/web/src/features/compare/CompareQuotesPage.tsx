@@ -93,6 +93,7 @@ export function CompareQuotesPage() {
               open={openLegId === leg.legId}
               onToggle={() => setOpenLegId((cur) => (cur === leg.legId ? null : leg.legId))}
               locked={locked}
+              fxAsOf={comparison.data.fxAsOf}
             />
           ))}
           {legs.length === 0 && (

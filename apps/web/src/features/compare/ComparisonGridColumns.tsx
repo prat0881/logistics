@@ -83,8 +83,8 @@ export function ComparisonGridColumns({
                 >
                   {/* An unpriced offer has nothing to expand (its "charges" are just the two real,
                       always-zero Additional/Warehousing lines buildCharges still emits — see
-                      OfferDetail's doc comment) — no click affordance at all, consistent with the
-                      grid greying its totals rather than showing $0. */}
+                      ChargeBreakdownDialog's doc comment) — no click affordance at all, consistent
+                      with the grid greying its totals rather than showing $0. */}
                   {cell.offer.priced ? (
                     <button
                       type="button"

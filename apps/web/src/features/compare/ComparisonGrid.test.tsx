@@ -7,7 +7,6 @@ import { AuthProvider } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { ComparisonGrid, STALE_OFFER_LABEL } from "./ComparisonGrid";
-import { OfferDetail } from "./OfferDetail";
 import type { ViewMode } from "./useViewMode";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -21,7 +20,9 @@ const FF1_DEDICATED_CHARGES = [
   { label: "Additional Charges", group: "additional", nativeAmount: 4000, usdAmount: 48.19 },
   // Deliberately 1 cent off usdTotal (542.17) when summed — 481.93 + 48.19 + 12.06 = 542.18 —
   // mirrors the T1-flagged per-line rounding drift on foreign-currency legs (Σ usdAmount can
-  // differ from usdTotal by a cent). OfferDetail must show usdTotal, never a client-side sum.
+  // differ from usdTotal by a cent). ChargeBreakdownDialog must show usdTotal, never a
+  // client-side sum (S5.7 T3 — carried over from the previous inline block; its own
+  // mutation-proven test lives in ChargeBreakdownDialog.test.tsx now).
   { label: "Warehousing", group: "warehouse", nativeAmount: 1000, usdAmount: 12.06 },
 ];
 
@@ -96,7 +97,8 @@ const LEG: LegComparisonDto = {
       // `charges` is deliberately NOT [] here: comparison.service.ts's `buildCharges` unconditionally
       // emits "Additional Charges" + "Warehousing" lines (only "Freight" is conditional), so a real
       // unpriced offer always carries these two real, zero-amount lines — the exact shape that
-      // would otherwise render a fake-looking $0.00 total in OfferDetail if not guarded against.
+      // would otherwise render a fake-looking $0.00 total in ChargeBreakdownDialog if not guarded
+      // against.
       quoteId: "quote-2",
       freightForwarderId: "ff2",
       freightForwarderName: "Globex Logistics",
@@ -161,7 +163,14 @@ function renderPanel(leg: LegComparisonDto = LEG, { locked = false }: { locked?:
   return render(
     <QueryClientProvider client={qc}>
       <AuthProvider>
-        <CompareLegPanel queryId="q1" leg={leg} open onToggle={() => {}} locked={locked} />
+        <CompareLegPanel
+          queryId="q1"
+          leg={leg}
+          open
+          onToggle={() => {}}
+          locked={locked}
+          fxAsOf="2026-08-14T00:00:00.000Z"
+        />
       </AuthProvider>
     </QueryClientProvider>,
   );
@@ -413,25 +422,16 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
     const header = screen.getByTestId("offer-header-quote-2::GROUPAGE");
     expect(header.tagName).not.toBe("BUTTON");
 
-    // Even so, clicking it must never surface OfferDetail's money — belt + suspenders. (Exact
-    // string, not a substring regex: "0.00 INR" would also match the tail of a real total like
-    // "45,000.00 INR", so this checks for the fake-zero text as its own standalone node.)
+    // Even so, clicking it must never open the breakdown dialog with fake money — belt +
+    // suspenders. (Exact string, not a substring regex: "0.00 INR" would also match the tail of
+    // a real total like "45,000.00 INR", so this checks for the fake-zero text as its own
+    // standalone node.) `ChargeBreakdownDialog`'s own not-priced guard is unit-tested directly in
+    // ChargeBreakdownDialog.test.tsx (defense in depth).
     await userEvent.click(header);
-    expect(screen.queryByTestId("offer-detail-total-usd")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("charge-total")).not.toBeInTheDocument();
     expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
     expect(screen.queryByText("0.00 INR")).not.toBeInTheDocument();
-  });
-
-  it("OfferDetail itself refuses to render a money total for an un-priced offer (defense in depth)", () => {
-    const unpriced = LEG.offers.find((o) => o.quoteId === "quote-2" && o.variant === "GROUPAGE")!;
-    render(<OfferDetail offer={unpriced} />);
-
-    expect(screen.getByText(/not priced by this forwarder/i)).toBeInTheDocument();
-    expect(screen.queryByTestId("offer-detail-total-usd")).not.toBeInTheDocument();
-    // The two real zero-amount "Additional Charges"/"Warehousing" lines buildCharges emits for an
-    // un-priced offer must not leak through as a charges table either.
-    expect(screen.queryByText("Additional Charges")).not.toBeInTheDocument();
-    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
   });
 
   it("badges a REQUOTED offer as stale re-quote-requested", () => {
@@ -453,25 +453,36 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
     expect(screen.getByText(/awaiting revised quote/i)).toBeInTheDocument();
   });
 
-  it("expands an offer's itemised charges on header click, using usdTotal as the authoritative total", async () => {
+  it("opens the charge breakdown dialog on header click, using usdTotal as the authoritative total", async () => {
     renderPanel();
 
-    expect(screen.queryByText("Warehousing")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByTestId("offer-header-quote-1::DEDICATED"));
 
-    expect(screen.getByText("Freight")).toBeInTheDocument();
-    expect(screen.getByText("Warehousing")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Freight")).toBeInTheDocument();
+    expect(within(dialog).getByText("Warehousing")).toBeInTheDocument();
 
     // charges' own usdAmount sum is 542.18 (481.93 + 48.19 + 12.06) — 1 cent off the offer's
     // authoritative usdTotal (542.17). The rendered total must be the latter, never the former.
-    const total = screen.getByTestId("offer-detail-total-usd");
+    const total = within(dialog).getByTestId("charge-total");
     expect(total).toHaveTextContent("$542.17");
     expect(total).not.toHaveTextContent("$542.18");
 
-    // Clicking the same header again collapses the detail.
+    // Closing the dialog (Escape, same as its own close button/overlay-click) routes back through
+    // `selectedOfferKey` (S5.7 T3's `handleBreakdownOpenChange`) — a real Radix modal blocks
+    // pointer interaction with the now-inert background header while open (`pointer-events: none`
+    // on its ancestor), so "click the same header again" is no longer how this closes; Escape is
+    // the equivalent user gesture that exercises the same state transition the old inline
+    // expand/collapse toggle used to.
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // Re-opening from the (now interactive again) header proves the toggle state actually reset
+    // to "closed" rather than merely dropping the Escape keypress.
     await userEvent.click(screen.getByTestId("offer-header-quote-1::DEDICATED"));
-    expect(screen.queryByText("Warehousing")).not.toBeInTheDocument();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
   it("keeps the leg-body offer-count summary the page test relies on", () => {
@@ -645,10 +656,18 @@ describe("ComparisonGrid edge cases", () => {
     const send = screen.getByRole("button", { name: /send for approval/i });
     expect(send).not.toBeDisabled();
 
-    // Merely INSPECTING a rival column's charge breakdown re-points the shortlist radio.
+    // Merely INSPECTING a rival column's charge breakdown re-points the shortlist radio — even
+    // though the radio itself is behind the (now-open) dialog's modal overlay and `aria-hidden`
+    // wrapper the moment the header is clicked, so it's queried once the dialog is dismissed
+    // again (Escape), the same way a real reviewer would open the breakdown, read it, and close
+    // it to see the panel underneath.
     await userEvent.click(screen.getByTestId("offer-header-quote-2::DEDICATED"));
+    await screen.findByRole("dialog");
+    await userEvent.keyboard("{Escape}");
 
-    expect(screen.getByRole("radio", { name: /Globex Logistics/i, checked: true })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("radio", { name: /Globex Logistics/i, checked: true }),
+    ).toBeInTheDocument();
     expect(send).toBeDisabled();
     expect(screen.getByTestId("unsaved-pick-note")).toBeInTheDocument();
   });

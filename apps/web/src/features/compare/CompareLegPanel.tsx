@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LegStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import { ComparisonGrid, offerKey } from "./ComparisonGrid";
-import { OfferDetail } from "./OfferDetail";
+import { ChargeBreakdownDialog } from "./ChargeBreakdownDialog";
 import { MakerPanel } from "./MakerPanel";
 import { CheckerPanel } from "./CheckerPanel";
 import { DecisionTimeline } from "./DecisionTimeline";
@@ -58,15 +58,20 @@ interface CompareLegPanelProps {
   /** S5.6 Task 6, ambiguity resolution #2 — `true` once `comparison.awardSnapshot != null` (the
    *  query is QUOTING_CLIENT). `MakerPanel`/`CheckerPanel` are NOT MOUNTED at all while locked
    *  (not merely disabled) — `CompareQuotesPage` computes this ONE boolean and threads it straight
-   *  through, so no child re-derives the condition. `OfferDetail`/`DecisionTimeline` stay mounted
-   *  and read-only either way. The grid stays too, but not untouched: Task 6 originally judged the
-   *  whole read-only half `locked`-agnostic, and the final review overturned that for the
+   *  through, so no child re-derives the condition. `ChargeBreakdownDialog`/`DecisionTimeline` stay
+   *  mounted and read-only either way. The grid stays too, but not untouched: Task 6 originally
+   *  judged the whole read-only half `locked`-agnostic, and the final review overturned that for the
    *  RECOMMENDATION specifically. Once the client quote is generated the winning quote is
    *  `APPROVED`, which `COMPARABLE_STATUSES` excludes from `offers` (comparison.service.ts), so
    *  `buildRecommendation` ranks only the offers that LOST — the column tint/badge would name a
    *  different forwarder than the award panel immediately below them. It is therefore suppressed
    *  while locked, at the model layer (`buildComparisonRowModel`, S5.7 T1) — final review M1. */
   locked: boolean;
+  /** `ComparisonDto.fxAsOf` (query-level) — threaded down from `CompareQuotesPage` so
+   *  `ChargeBreakdownDialog`'s footer can state which FX snapshot an offer's rate came from.
+   *  There's no leg- or offer-level equivalent; every offer on the query reads the same rate
+   *  table (S5.7 T3, ambiguity resolution #5). */
+  fxAsOf: string | null;
 }
 
 /**
@@ -75,16 +80,18 @@ interface CompareLegPanelProps {
  * badge), plus a decision-status chip derived from `leg.decision?.status` when a shortlist exists.
  * The body renders the read-only `(FF × variant)` comparison — a "N offers received" summary, the
  * `ComparisonGrid` itself (the recommendation now reads by column colour, not a separate banner —
- * S5.7 T1), and — once a column header is clicked — that offer's itemised `OfferDetail` — followed
+ * S5.7 T1), and — once a column header is clicked — that offer's itemised breakdown in a
+ * `ChargeBreakdownDialog` modal (S5.7 T3; used to be an inline detail block) — followed
  * by Task 4's `MakerPanel` (shortlist / send-for-approval / negotiate). Task 5 adds the checker
  * panel alongside this same body.
  *
  * Two pieces of "which offer" state are lifted here, not one, despite both being keyed the same
  * way (`offerKey(quoteId, variant)`) — they answer genuinely different questions with different
  * defaults, and collapsing them into a single variable would make one of the two wrong:
- *   - `selectedOfferKey` — which offer's charge breakdown is expanded below the grid. Defaults to
- *     `undefined` (nothing expanded) and TOGGLES off on a second click of the same header; both
- *     behaviours are pinned by `ComparisonGrid.test.tsx` and must not change.
+ *   - `selectedOfferKey` — which offer's charge breakdown dialog is open. Defaults to `undefined`
+ *     (closed) and TOGGLES closed on a second click of the same header, same as closing the
+ *     dialog any other way (Escape, overlay click, its own close button); both behaviours are
+ *     pinned by `ComparisonGrid.test.tsx` and must not change.
  *   - `shortlistKey` — the maker's current candidate pick. Defaults (inside `MakerPanel`, via
  *     `defaultShortlistKey`) to the leg's existing shortlist or the recommendation, and a radio
  *     group can never legitimately go back to "nothing picked" the way a toggle can.
@@ -105,6 +112,7 @@ export function CompareLegPanel({
   open,
   onToggle,
   locked,
+  fxAsOf,
 }: CompareLegPanelProps) {
   const route = `${leg.origin} → ${leg.destination}`;
   const offerCount = leg.offers.length;
@@ -122,6 +130,14 @@ export function CompareLegPanel({
     const key = offerKey(quoteId, variant);
     setSelectedOfferKey((cur) => (cur === key ? undefined : key));
     setShortlistKey(key);
+  }
+
+  // Radix funnels every close path (Escape, overlay click, the DialogContent corner X) through
+  // `onOpenChange` — routing all of them back through the SAME `selectedOfferKey` state that a
+  // second header click already toggles keeps "which offer's dialog is open" single-sourced, and
+  // the grid header's `aria-expanded` (driven by `selectedOfferKey`) in sync with the dialog.
+  function handleBreakdownOpenChange(next: boolean) {
+    if (!next) setSelectedOfferKey(undefined);
   }
 
   return (
@@ -168,7 +184,15 @@ export function CompareLegPanel({
             locked={locked}
             viewMode={viewMode}
           />
-          {selectedOffer && <OfferDetail offer={selectedOffer} />}
+          {selectedOffer && (
+            <ChargeBreakdownDialog
+              open
+              onOpenChange={handleBreakdownOpenChange}
+              offer={selectedOffer}
+              legLabel={`${leg.legCode} · ${route}`}
+              fxAsOf={fxAsOf}
+            />
+          )}
           {!locked && (
             <MakerPanel
               queryId={queryId}
