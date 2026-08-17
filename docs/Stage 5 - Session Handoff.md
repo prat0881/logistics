@@ -1,11 +1,11 @@
 # Stage 5 — Session Handoff
 
-_Last updated: 2026-08-17 (**S5.6 COMPLETE** — all 6 tasks built, reviewed, final-opus-reviewed + fixed, `pnpm run ci` green, visually verified. Commits `7b58a8d..354236e` are LOCAL — not yet pushed to PR #52.)_
+_Last updated: 2026-08-17 (S5.6 COMPLETE + pushed to PR #52 @ `33cc0b5`, CI green. **S5.7 UI enhancements specced, not started.**)_
 
 ## Current stage & branch
 - **Stage 5 — Compare Quotes & Award.** Branch `feat/stage-5-fx-master` → **PR #52** (OPEN, **not merged** — you merge manually).
-- PR #52 title: _"Stage 5 · S5.1 + S5.2 + S5.3 + S5.4 + S5.5"_ (35 commits). Tip: `d5a859a`.
-- `pnpm run ci` **GREEN** at the tip: shared 366 · api 90 suites / 379 tests · web 604 · lint + typecheck + 3 builds clean.
+- PR #52 title: _"Stage 5 · S5.1–S5.6 complete — Compare Quotes & Award"_ (51 commits). Tip: `33cc0b5`. **CI green** on run `32020072209`; mergeable/clean.
+- `pnpm run ci` **GREEN** at the tip: shared 366 · web 105 files / 665 tests · api 90 suites / 382 tests · lint + typecheck + 3 builds clean.
 
 ## What's built (all 5 sub-builds on PR #52)
 | SB | Scope | State |
@@ -15,7 +15,8 @@ _Last updated: 2026-08-17 (**S5.6 COMPLETE** — all 6 tasks built, reviewed, fi
 | S5.3 | Status & decision foundations (enums, machine edges, `LegAwardDecision`/`AwardDecisionEvent`, `awardSnapshot`) | ✅ |
 | **S5.4** | **Approval workflow endpoints** — shortlist / send-for-approval / approve / reject / generate-client-quote / reopen-comparison | ✅ delivered this session |
 | **S5.5** | **Negotiation §10.1 + Change-order reversal §10.2** | ✅ delivered this session |
-| **S5.6** | **Compare-Quotes frontend** (the screen per the mockup + FX admin) | ✅ COMPLETE — all 6 tasks, reviewed + final-review-fixed, ci green, visually verified. **LOCAL only** (`7b58a8d..354236e`), not yet on PR #52 |
+| **S5.6** | **Compare-Quotes frontend** (the screen per the mockup + FX admin) | ✅ COMPLETE — all 6 tasks, reviewed + final-review-fixed, ci green, visually verified, **pushed to PR #52** (`7b58a8d..354236e`) |
+| S5.7 | Compare-Quotes UI/UX enhancements (9 items) | 📋 SPECCED, not started — see the S5.7 section below |
 
 Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **opus whole-branch review**). S5.4's reviews caught 5 real defects before merge; S5.5's caught the `StatusRegistry` init-order issue + the request-requote/`QUOTING_CLIENT` teardown seam. All findings fixed or adjudicated.
 
@@ -42,7 +43,7 @@ Plan: `docs/plans/stage-5/Stage 5 - S5.6 - Compare Quotes Frontend - Implementat
 
 **⚠ Scope correction:** S5.6 is NOT pure-frontend as §15 implied — `GET …/comparison` didn't return the award decision / timeline / itemised charges the maker-checker UI needs. **Task 1 added them** (shared `AwardDecisionDto`/`AwardDecisionEventDto`/`OfferChargeLineDto` + `ComparisonService` join; NO DB migration — tables pre-existed).
 
-**Done — ALL 6 TASKS, all reviewed. LOCAL commits `7b58a8d..354236e` (13 commits, NOT pushed):**
+**Done — ALL 6 TASKS, all reviewed. Commits `7b58a8d..354236e` (13 commits), pushed to PR #52:**
 - **T1** `c87201f` — backend read-model extension (decision + timeline + itemised charges on `GET …/comparison`).
 - **T2** `99ca41f`/`d0e4d52` — route `/queries/:id/compare` + `CompareQuotesPage` shell (reuses `QueryOverviewHeader` + `RouteDiagram` w/ a new `selectedLegId`/`onSelectLeg` channel + a single-open `CompareLegPanel`) + `StageRail` "Quotes" step wiring (`isQuotesStageEnabled` at `RFQ_SENT`+).
 - **T3** `0b65db4`/`6c4c621` — read-only `ComparisonGrid` (`(FF×variant)` columns) + `RecommendationBanner` + click-FF `OfferDetail` + pending/awaiting. Unpriced offers greyed, never a fake `$0`.
@@ -70,7 +71,37 @@ Confirmed live: the full grid (6 `(FF×variant)` columns, USD+native, unpriced "
 
 **Parked minors (rulings in the S5.6 ledger; the final review triaged ALL as defer):** T1 M1 (1¢ per-line vs total rounding — `OfferDetail` shows the authoritative `usdTotal`, test-pinned), T2 M2 (`RANK.QUOTING_CLIENT=4` is spec-literal — do not key a new threshold off it), T3 #4/#5/#6 (REQUOTED wording / `money.ts` DRY / aria-controls), T4 M3 (RHF override text persists across picks — harmless now C1's guard exists), T5 M3 (CheckerPanel-self-gates vs GenerateGate-parent-gates — independently re-confirmed correct), T6 (locking-test file placement). The FX-admin screen (§12) **already exists** from S5.1.
 
-**The exact next step:** push `7b58a8d..354236e` to PR #52 — deliberately left to you, and worth reading the two new open items (6 and 7) below first.
+**Pushed to PR #52 on 2026-08-17** (fast-forward `fb4935b..33cc0b5`); PR title + body updated to cover S5.6; CI green. Open items 5 and 6 above remain for you.
+
+## S5.7 (Compare-Quotes UI/UX enhancements) — 📋 SPECCED, NOT STARTED
+Nine enhancements requested 2026-08-17 against the delivered S5.6 screen. Brainstormed and specced; **no code written yet.**
+- **Design of record:** `docs/Stage 5 - Compare Quotes UI Enhancements - Design.md`
+- **Implementation plan (SDD, 6 tasks):** `docs/plans/stage-5/Stage 5 - S5.7 - Compare Quotes UI Enhancements - Implementation Plan.md`
+- **Mockups** (kept, git-ignored): `.superpowers/brainstorm/62958-*/content/` — grid orientations, charge groupings, page structures, dialogs.
+
+**🔴 Hard constraint: FRONTEND ONLY** (requester's call). No api / `packages/shared` / prisma changes.
+
+| # | Item | Decision |
+| :-- | :-- | :-- |
+| 1 | Tabular grid, FF's variants grouped | **Both orientations, user-switchable** (`localStorage`), explicit FF separator |
+| 2 | Charge breakdown parent→child pop-up | UI-only against the 3 existing lines; component built tree-shaped for later |
+| 3 | Recommended by colour | Tint + badge; **`RecommendationBanner` deleted**, reason moves to a tooltip |
+| 4 | Shortlist in-grid → send-for-approval pop-up | **Merged into ONE dialog** |
+| 5 | No Negotiate once sent for approval | Disabled with a visible reason |
+| 6 | Leg-level multi-FF Negotiate | Shared note + optional per-FF notes; eligibility per FF |
+| 7 | Less scrolling | **No structural change** — legs stay stacked, one open; diagram-click already works (T2) |
+| 8 | Exec view aligned | Same screen, both roles tested explicitly |
+| 9 | Conversion rate shown | `OfferDto.unitsPerUsd` — already in the payload |
+
+**Notable:** item 4's merge **structurally eliminates** the Critical the S5.6 whole-sub-build review caught (picked offer and persisted shortlist could drift). The `unsavedPick` guard added in `354236e` becomes unreachable and is removed — **its regression tests are ported, not deleted** (plan Task 4 Step 5).
+
+### 🔶 Consequences of the frontend-only constraint — carry these forward
+Three real gaps, accepted deliberately. Full detail in the design doc's "Consequences" section.
+1. **C1 — item 5 is a UI convention, not a rule.** `AwardService.requestRequote` still accepts a re-quote on a `PENDING_APPROVAL` leg and resets the decision to `DRAFT`. The button is disabled; the endpoint is not. *Follow-up:* add a decision-status guard (409), or accept the reset and drop the UI restriction — the two currently contradict each other.
+2. **C2 — item 2 shows subtotals, not a breakdown.** `buildCharges` emits only 3 flat aggregates (`Freight`, `Additional Charges` = ONE sum over all origin/destination/ad-hoc lines, `Warehousing` = ONE sum). The itemised detail exists in each quote's `draftJson` (`charges[]` w/ zone+label+amount+note, `trucking[]`, `seaRates[]`, `warehouse[]`) but `computeQuoteTotals` returns only sums. *Follow-up:* a grouping-neutral read-model passthrough of the raw lines, letting the UI group them once business confirms. Business has NOT yet confirmed the grouping — that's why this is deferred.
+3. **C3 — multi-FF negotiate is not atomic.** N forwarders = N sequential `request-requote` calls, no transaction. A mid-batch failure leaves some asked and some not, and each success has already reissued that FF's portal token and reset their RFQ deadline — not rolled back. The dialog surfaces a per-FF result list rather than hiding it. *Follow-up:* a bulk endpoint taking `{quoteIds[], notes}` in one transaction.
+
+**Next step:** execute the plan with `superpowers:subagent-driven-development` from Task 1.
 
 ## Reusable facts (learned across S5.4/S5.5 SDD)
 - Caller id = `user.userId` (`RequestUser`); e2e actor `@db.Uuid` cols need cookie `sub: randomUUID()`.
