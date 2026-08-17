@@ -8,6 +8,8 @@ import { ComparisonGrid, offerKey } from "./ComparisonGrid";
 import { RecommendationBanner } from "./RecommendationBanner";
 import { OfferDetail } from "./OfferDetail";
 import { MakerPanel } from "./MakerPanel";
+import { CheckerPanel } from "./CheckerPanel";
+import { DecisionTimeline } from "./DecisionTimeline";
 
 type BadgeVariant =
   | "default" | "secondary" | "success" | "warning"
@@ -125,6 +127,8 @@ export function CompareLegPanel({ queryId, leg, legStatus, open, onToggle }: Com
             shortlistKey={shortlistKey}
             onShortlistKeyChange={setShortlistKey}
           />
+          <CheckerPanel queryId={queryId} leg={leg} />
+          <DecisionTimeline timeline={leg.timeline} />
         </div>
       )}
     </Card>

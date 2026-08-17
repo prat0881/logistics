@@ -1,10 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LegComparisonDto } from "@svyft/shared";
+import { AuthProvider } from "@/features/auth/AuthProvider";
+import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { OfferDetail } from "./OfferDetail";
+
+afterEach(() => vi.unstubAllGlobals());
 
 // FF1 ("Acme Forwarding") prices BOTH Road variants off one submitted quote (`quote-1`) — the
 // same `quoteId` fans out into two `OfferDto` rows (DEDICATED/GROUPAGE) exactly as
@@ -142,15 +146,21 @@ const LEG: LegComparisonDto = {
   timeline: [],
 };
 
-// CompareLegPanel now also renders Task 4's MakerPanel in its open body (below the grid), which
-// needs a QueryClientProvider ancestor for its useMutation hooks — this file's own tests never
-// touch MakerPanel's mutations (no fetch stub is installed), they only exercise the grid/detail
-// through the SAME shell it now happens to sit alongside.
+// CompareLegPanel now also renders Task 4's MakerPanel and Task 5's CheckerPanel in its open body
+// (below the grid), which need a QueryClientProvider ancestor for their useMutation hooks and an
+// AuthProvider ancestor for CheckerPanel's `useAuth()` role check — this file's own tests never
+// touch either panel's mutations or role-gating (a 401 fetch stub keeps AuthProvider's own
+// `/api/auth/me` probe from hitting the network; CheckerPanel then just self-hides as
+// unauthenticated), they only exercise the grid/detail through the SAME shell it now happens to
+// sit alongside.
 function renderPanel(leg: LegComparisonDto = LEG) {
+  vi.stubGlobal("fetch", mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <CompareLegPanel queryId="q1" leg={leg} open onToggle={() => {}} />
+      <AuthProvider>
+        <CompareLegPanel queryId="q1" leg={leg} open onToggle={() => {}} />
+      </AuthProvider>
     </QueryClientProvider>,
   );
 }

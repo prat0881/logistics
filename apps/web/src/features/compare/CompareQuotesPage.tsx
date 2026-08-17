@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
+import { Role } from "@svyft/shared";
+import { useAuth } from "@/features/auth/AuthProvider";
 import { useQueryDetail } from "@/features/query-wizard/useQueryDetail";
 import { StageRail, isRfqStageEnabled, isQuotesStageEnabled } from "@/features/rfq-workspace/StageRail";
 import { QueryOverviewHeader } from "@/features/rfq-workspace/QueryOverviewHeader";
 import { RouteDiagram } from "@/features/query-wizard/steps/legs/RouteDiagram";
 import { useComparison } from "./useComparison";
 import { CompareLegPanel } from "./CompareLegPanel";
+import { GenerateGate } from "./GenerateGate";
 
 /**
  * CompareQuotesPage — the Compare Quotes screen (`/queries/:id/compare`, S5.6 §12). Reuses the
@@ -17,6 +20,8 @@ import { CompareLegPanel } from "./CompareLegPanel";
  */
 export function CompareQuotesPage() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
+  const canCheck = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
   const query = useQueryDetail(id);
   const comparison = useComparison(id);
   const [openLegId, setOpenLegId] = useState<string | null>(null);
@@ -88,6 +93,8 @@ export function CompareQuotesPage() {
             </p>
           )}
         </div>
+
+        {canCheck && <GenerateGate queryId={id} legs={legs} />}
       </div>
     </div>
   );

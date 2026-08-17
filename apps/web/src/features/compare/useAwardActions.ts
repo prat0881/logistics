@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   AwardDecisionDto,
+  RejectInput,
   RequestRequoteInput,
   SendForApprovalInput,
   ShortlistInput,
@@ -45,5 +46,46 @@ export function useRequestRequote(queryId: string, legId: string, quoteId: strin
     mutationFn: (body: RequestRequoteInput) =>
       postJson(`/api/queries/${queryId}/legs/${legId}/quotes/${quoteId}/request-requote`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["comparison", queryId] }),
+  });
+}
+
+// ── Checker-half mutations (S5.6 Task 5, design §9 steps 2+4) ──────────────────────────────────
+// approve/reject/generate all move query-level workflow state (a leg's decision leaving
+// PENDING_APPROVAL, or the query rolling to QUOTING_CLIENT) — same both-keys invalidation as
+// `useSendForApproval` above, not just `useShortlist`'s comparison-only invalidate.
+
+export function useApprove(queryId: string, legId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => postJson<AwardDecisionDto>(`/api/queries/${queryId}/legs/${legId}/approve`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["comparison", queryId] });
+      qc.invalidateQueries({ queryKey: ["query", queryId] });
+    },
+  });
+}
+
+export function useReject(queryId: string, legId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: RejectInput) =>
+      postJson<AwardDecisionDto>(`/api/queries/${queryId}/legs/${legId}/reject`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["comparison", queryId] });
+      qc.invalidateQueries({ queryKey: ["query", queryId] });
+    },
+  });
+}
+
+// No :legId — query-scoped, the terminal "freeze the award + roll to QUOTING_CLIENT" action
+// (design §16 O4: Manager+ gated on the controller, deliberately NO four-eyes here).
+export function useGenerateClientQuote(queryId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => postJson(`/api/queries/${queryId}/generate-client-quote`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["comparison", queryId] });
+      qc.invalidateQueries({ queryKey: ["query", queryId] });
+    },
   });
 }
