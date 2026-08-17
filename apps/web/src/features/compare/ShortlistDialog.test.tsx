@@ -209,6 +209,29 @@ describe("ShortlistDialog", () => {
     expect(calledPaths().filter((p) => p.includes("/send-for-approval"))).toHaveLength(0);
   });
 
+  // Review fix F2 — the sibling above 409s the SHORTLIST call, which exercises a different render
+  // branch entirely (`shortlist.isError`). Every guard a maker realistically trips — A2 (missing
+  // override), A3 and A9 — fires server-side at SEND, so `sendForApproval.isError` is the alert
+  // they are most likely to actually see, and nothing proved it rendered: deleting that whole block
+  // left the suite green.
+  it("surfaces a send-for-approval failure inline and keeps the dialog open to retry", async () => {
+    const user = userEvent.setup();
+    const { onOpenChange } = renderDialog({
+      offer: BRIDGE_DEDICATED,
+      sendResponse: { status: 409, body: { message: "Another leg is already pending approval" } },
+    });
+
+    await user.click(screen.getByRole("button", { name: /save & send for approval/i }));
+
+    // The shortlist half SUCCEEDED — so this is genuinely the send-side alert, not the one above
+    // reached by a different route.
+    await waitFor(() => expect(calledPaths()).toHaveLength(2));
+    expect(calledPaths()[1]).toContain("/send-for-approval");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/already pending approval/i);
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
   // ── the S5.6 `.optional()` trap: `overrideReason` only accepts `undefined`, never "" ──────────
   // A `""` default makes zodResolver silently reject every submit of the RECOMMENDED offer — the
   // common path, and the one case that never renders the textarea at all, so there is nothing on
@@ -285,7 +308,16 @@ describe("ShortlistDialog — the offer submitted is the offer whose Select was 
     await user.click(screen.getByRole("button", { name: /^save shortlist$/i }));
     await waitFor(() => expect(calledPaths()).toHaveLength(1));
     const body = JSON.parse(lastFetchBody("/shortlist"));
-    expect(body).toMatchObject({ quoteId: FALCON_GROUPAGE.quoteId, variant: "GROUPAGE" });
+    // `toEqual`, not `toMatchObject` (review fix F1): the reason has to reach the WIRE, not just be
+    // typed. `overrideReason` silently dropping from this body is invisible here and then fails at
+    // SEND time as a 400 from rule A2 (award.service.ts:171-176) — a failure with no hint that the
+    // maker's justification was the thing that went missing. Mutation-proved: replacing the value
+    // with `undefined` at ShortlistDialog.tsx's mutate call must redden this.
+    expect(body).toEqual({
+      quoteId: FALCON_GROUPAGE.quoteId,
+      variant: "GROUPAGE",
+      overrideReason: "cheaper",
+    });
   });
 
   // Same drift, but down the send path — the one the Critical actually mis-awarded on. The send
@@ -306,9 +338,12 @@ describe("ShortlistDialog — the offer submitted is the offer whose Select was 
         expect.stringContaining("/send-for-approval"),
       ]),
     );
-    expect(JSON.parse(lastFetchBody("/shortlist"))).toMatchObject({
+    // Exact body again (review fix F1) — the send path is where a dropped `overrideReason` actually
+    // 400s, so this is the one that must carry it.
+    expect(JSON.parse(lastFetchBody("/shortlist"))).toEqual({
       quoteId: "q-falcon",
       variant: "GROUPAGE",
+      overrideReason: "cheaper",
     });
   });
 
