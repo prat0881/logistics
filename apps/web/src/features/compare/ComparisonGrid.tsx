@@ -19,7 +19,17 @@ export interface ComparisonGridProps {
   leg: LegComparisonDto;
   selectedOfferKey?: string;
   onSelectOffer?: (quoteId: string, variant: string | null) => void;
+  /** `true` once the query is QUOTING_CLIENT (an award snapshot exists). The grid stays fully
+   *  readable, but the engine's live recommendation is SUPPRESSED: the winning quote is `APPROVED`
+   *  by then, `COMPARABLE_STATUSES` excludes it from `offers`, and `buildRecommendation` therefore
+   *  re-ranks whatever is left — i.e. the losers — so a "Recommended" ring here would flag a
+   *  forwarder the award panel directly below contradicts (final review M1). Defaults to `false`. */
+  locked?: boolean;
 }
+
+/** The stale-price marker for a REQUOTED offer (design §14). One constant, because it labels the
+ *  same offer in two places — this grid's Status-row badge and `MakerPanel`'s shortlist radio. */
+export const STALE_OFFER_LABEL = "Re-quote requested";
 
 /**
  * The stable identity of one (FF × variant) column. NOT `quoteId` alone: one submitted Quote fans
@@ -130,7 +140,12 @@ function MetricRow({
  * RHF, nothing here is ever editable. One column per offer (not per FF): a FF with both Road
  * variants priced gets two adjacent columns, grouped under one FF-name header cell.
  */
-export function ComparisonGrid({ leg, selectedOfferKey, onSelectOffer }: ComparisonGridProps) {
+export function ComparisonGrid({
+  leg,
+  selectedOfferKey,
+  onSelectOffer,
+  locked = false,
+}: ComparisonGridProps) {
   const groups = groupByForwarder(leg);
 
   return (
@@ -158,7 +173,7 @@ export function ComparisonGrid({ leg, selectedOfferKey, onSelectOffer }: Compari
                 {groups.flatMap((g) =>
                   g.offers.map((o) => {
                     const key = offerKey(o.quoteId, o.variant);
-                    const recommended = isRecommended(leg, o);
+                    const recommended = !locked && isRecommended(leg, o);
                     const variantText = o.variant ? rateVariantLabel(o.variant) : "—";
                     return (
                       <TableHead
@@ -243,7 +258,7 @@ export function ComparisonGrid({ leg, selectedOfferKey, onSelectOffer }: Compari
                         data-testid={`offer-stale-${offerKey(o.quoteId, o.variant)}`}
                         className="whitespace-nowrap"
                       >
-                        Re-quote requested
+                        {STALE_OFFER_LABEL}
                       </Badge>
                     )}
                   </div>

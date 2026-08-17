@@ -80,14 +80,52 @@ const PENDING_LEG: LegComparisonDto = {
   },
 };
 
-// A leg with an in-flight re-quote (A9 "proceed without waiting" path).
-const AWAITING_LEG: LegComparisonDto = {
-  ...LEG,
-  legId: "leg-3",
-  legCode: "LEG-3",
-  awaitingReQuote: true,
-  offers: [LEG.offers[0], { ...LEG.offers[1], quoteStatus: "REQUOTED" }],
-};
+/**
+ * The same leg with its CURRENT pick already persisted as a DRAFT shortlist. Send for approval is
+ * only legitimate in this state: the endpoint carries no offer identity, so the server sends
+ * whatever `legAwardDecision.shortlistedQuoteId` holds — sending while the UI shows anything else
+ * awards the wrong forwarder silently (final review C1).
+ */
+function withSavedShortlist(
+  leg: LegComparisonDto,
+  quoteId: string,
+  variant: LegComparisonDto["offers"][number]["variant"],
+): LegComparisonDto {
+  return {
+    ...leg,
+    decision: {
+      legId: leg.legId,
+      status: "DRAFT",
+      shortlistedQuoteId: quoteId,
+      shortlistedVariant: variant,
+      recommendedQuoteId: leg.recommendation?.quoteId ?? null,
+      recommendedVariant: leg.recommendation?.variant ?? null,
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: null,
+      sentForApprovalAt: null,
+      decidedByUserId: null,
+      decidedAt: null,
+    },
+  };
+}
+
+// LEG, shortlisted on the recommendation (quote-1/DEDICATED) — the consistent, sendable state.
+const SAVED_LEG = withSavedShortlist(LEG, "quote-1", "DEDICATED");
+
+// A leg with an in-flight re-quote (A9 "proceed without waiting" path). Shortlisted on the
+// still-QUOTED offer so the A9 confirm is the ONLY thing gating Send.
+const AWAITING_LEG: LegComparisonDto = withSavedShortlist(
+  {
+    ...LEG,
+    legId: "leg-3",
+    legCode: "LEG-3",
+    awaitingReQuote: true,
+    offers: [LEG.offers[0], { ...LEG.offers[1], quoteStatus: "REQUOTED" }],
+  },
+  "quote-1",
+  "DEDICATED",
+);
 
 /** Mirrors how `CompareLegPanel` will own the lifted shortlist-selection channel — MakerPanel
  *  itself never owns this piece of state (single source of truth lives in the parent). */
@@ -208,7 +246,7 @@ describe("MakerPanel", () => {
 
   it("posts an empty body on Send for approval when nothing is awaiting a re-quote", async () => {
     const calls: unknown[] = [];
-    renderMaker(LEG, { onSendPost: (body) => calls.push(body) });
+    renderMaker(SAVED_LEG, { onSendPost: (body) => calls.push(body) });
 
     const sendButton = screen.getByRole("button", { name: /send for approval/i });
     expect(sendButton).not.toBeDisabled();
@@ -225,8 +263,96 @@ describe("MakerPanel", () => {
     expect(sendButton).toBeDisabled();
   });
 
+  // ── final review C1 — the send endpoint carries no offer identity ──────────────────────────
+  it("blocks Send for approval when nothing has been shortlisted yet (would be a guaranteed 400)", async () => {
+    const calls: unknown[] = [];
+    renderMaker(LEG, { onSendPost: (body) => calls.push(body) });
+
+    // LEG has no decision — the radio still PRE-SELECTS the recommendation, which is exactly what
+    // used to make Send look actionable.
+    expect(screen.getByRole("radio", { name: /TCI Freight/i, checked: true })).toBeInTheDocument();
+
+    const sendButton = screen.getByRole("button", { name: /send for approval/i });
+    expect(sendButton).toBeDisabled();
+    expect(screen.getByTestId("unsaved-pick-note")).toHaveTextContent(/press shortlist above/i);
+
+    await userEvent.click(sendButton);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("blocks Send for approval while the pick has moved off the saved shortlist without being re-saved", async () => {
+    const calls: unknown[] = [];
+    renderMaker(SAVED_LEG, { onSendPost: (body) => calls.push(body) });
+
+    // Consistent to start with: saved shortlist === current pick.
+    const sendButton = screen.getByRole("button", { name: /send for approval/i });
+    expect(sendButton).not.toBeDisabled();
+
+    // Moving the pick (the same lifted channel a ComparisonGrid header click writes to — see
+    // CompareLegPanel.handleSelectOffer) without pressing Shortlist would otherwise send the
+    // PERSISTED offer while the screen shows this one.
+    await userEvent.click(screen.getByRole("radio", { name: /Globex Logistics/i }));
+    expect(sendButton).toBeDisabled();
+    expect(screen.getByTestId("unsaved-pick-note")).toHaveTextContent(/not the one saved/i);
+
+    await userEvent.click(sendButton);
+    expect(calls).toHaveLength(0);
+
+    // Back on the saved offer it re-enables — the guard tracks the pick, it isn't a one-way latch.
+    await userEvent.click(screen.getByRole("radio", { name: /TCI Freight/i }));
+    expect(sendButton).not.toBeDisabled();
+  });
+
+  // ── final review I1 — post-reopen guidance ────────────────────────────────────────────────
+  it("tells an APPROVED leg its shortlist is final instead of pointing at reject/reopen", () => {
+    renderMaker({
+      ...SAVED_LEG,
+      decision: { ...SAVED_LEG.decision!, status: "APPROVED" },
+    });
+
+    expect(screen.getByText(/its shortlist is final here/i)).toBeInTheDocument();
+    // Neither route exists for an APPROVED decision: reject 409s (requireDecidable) and reopen
+    // only clears the query's snapshot, leaving every leg APPROVED.
+    expect(screen.queryByText(/reject or reopen/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /TCI Freight/i })).toBeDisabled();
+  });
+
+  it("keeps the recoverable wording for a leg that is only pending approval", () => {
+    renderMaker(PENDING_LEG);
+
+    expect(screen.getByText(/a checker has to reject it/i)).toBeInTheDocument();
+    expect(screen.queryByText(/its shortlist is final here/i)).not.toBeInTheDocument();
+  });
+
+  // ── final review I2 — the rejection reason had no home in the UI ──────────────────────────
+  it("surfaces the checker's rejection reason on the DRAFT decision it comes back as", () => {
+    renderMaker({
+      ...SAVED_LEG,
+      decision: { ...SAVED_LEG.decision!, rejectionReason: "Transit too slow for this client." },
+    });
+
+    expect(screen.getByTestId("rejection-notice")).toHaveTextContent(
+      "Transit too slow for this client.",
+    );
+    // Still editable — reject() writes DRAFT, so the maker can re-pick and re-send.
+    expect(screen.getByRole("radio", { name: /TCI Freight/i })).not.toBeDisabled();
+  });
+
+  // ── final review M2 — a stale offer is shortlistable, so say so ───────────────────────────
+  it("marks a REQUOTED offer as stale in the shortlist radio", () => {
+    renderMaker(AWAITING_LEG);
+
+    expect(
+      screen.getByRole("radio", { name: /Globex Logistics.*Re-quote requested/i }),
+    ).toBeInTheDocument();
+    // The still-QUOTED offer is not marked.
+    expect(
+      screen.queryByRole("radio", { name: /TCI Freight.*Re-quote requested/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("surfaces a 409 from Send for approval inline", async () => {
-    renderMaker(LEG, {
+    renderMaker(SAVED_LEG, {
       sendResponse: { status: 409, body: { message: "This leg is not pending approval" } },
     });
 

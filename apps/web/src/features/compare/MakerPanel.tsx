@@ -8,23 +8,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { offerKey } from "./ComparisonGrid";
+import { offerKey, STALE_OFFER_LABEL } from "./ComparisonGrid";
 import { fmtUsd } from "./money";
 import { useSendForApproval, useShortlist } from "./useAwardActions";
 import { NegotiateDialog } from "./NegotiateDialog";
 import { errorMessage } from "./errorMessage";
 
-type DecisionStatus = NonNullable<LegComparisonDto["decision"]>["status"];
-
-// Only reached once `locked` is true, i.e. `status !== "DRAFT"` — the DRAFT entry is unreachable
-// at runtime (kept only so this is a plain `Record` over the full status union, not an `Exclude`
-// TypeScript can't verify against `leg.decision!.status`'s wider type below).
-const LOCKED_STATUS_LABEL: Record<DecisionStatus, string> = {
-  DRAFT: "draft",
-  PENDING_APPROVAL: "pending approval",
-  APPROVED: "approved",
-  REJECTED: "rejected",
-};
+/** The offer this leg's decision actually has PERSISTED, keyed the same way the grid/radio key
+ *  their columns — `undefined` when no shortlist has ever been saved. This is what
+ *  `POST /send-for-approval` would submit (`award.service.ts` re-reads the row and never looks at
+ *  anything the client sends), so it's the only safe thing to compare a candidate pick against. */
+function savedShortlistKey(leg: LegComparisonDto): string | undefined {
+  const dec = leg.decision;
+  if (!dec?.shortlistedQuoteId) return undefined;
+  return offerKey(dec.shortlistedQuoteId, dec.shortlistedVariant);
+}
 
 export interface MakerPanelProps {
   queryId: string;
@@ -81,12 +79,31 @@ export function MakerPanel({ queryId, leg, shortlistKey, onShortlistKeyChange }:
   const overrideRequired = effectiveKey != null && effectiveKey !== recommendedKey;
 
   // A re-shortlist attempt once the decision has moved past DRAFT 409s server-side
-  // (award.service.ts's `shortlist` guard) — locking the form here avoids a guaranteed round
-  // trip just to learn that; reject/reopen puts the decision back to DRAFT and re-enables it.
-  const locked = leg.decision != null && leg.decision.status !== "DRAFT";
+  // (award.service.ts's `shortlist` guard) — locking the form here avoids a guaranteed round trip
+  // just to learn that. Enumerated rather than `!== "DRAFT"` because `REJECTED` is never persisted:
+  // `reject()` writes DRAFT + `rejectionReason` in a single update (award.service.ts:319-331,
+  // design §9.5 "REJECTED -> back to DRAFT"), so a rejected leg is an editable DRAFT — see
+  // `rejectionReason` below.
+  const status = leg.decision?.status;
+  const locked = status === "PENDING_APPROVAL" || status === "APPROVED";
+  // A rejected leg comes back as DRAFT carrying the checker's reason. Without this the maker's
+  // only clue is the timeline at the very bottom of the panel body (final review I2).
+  const returnedReason = status === "DRAFT" ? leg.decision?.rejectionReason : null;
 
   return (
     <div data-testid="maker-panel" className="space-y-5 rounded-lg border border-border bg-card p-4">
+      {returnedReason && (
+        <div
+          role="alert"
+          data-testid="rejection-notice"
+          className="space-y-1 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm"
+        >
+          <p className="font-medium text-destructive">
+            Returned by the checker — revise this shortlist
+          </p>
+          <p className="text-foreground">{returnedReason}</p>
+        </div>
+      )}
       <ShortlistSection
         queryId={queryId}
         leg={leg}
@@ -97,7 +114,7 @@ export function MakerPanel({ queryId, leg, shortlistKey, onShortlistKeyChange }:
         locked={locked}
         onPick={onShortlistKeyChange}
       />
-      <SendForApprovalSection queryId={queryId} leg={leg} />
+      <SendForApprovalSection queryId={queryId} leg={leg} effectiveKey={effectiveKey} />
       <NegotiateSection queryId={queryId} leg={leg} pricedOffers={pricedOffers} />
     </div>
   );
@@ -173,9 +190,15 @@ function ShortlistSection({
         {pricedOffers.map((o) => {
           const key = offerKey(o.quoteId, o.variant);
           const id = `shortlist-${key}`;
+          // A REQUOTED offer is still shortlistable (the server's A1 guard checks `priced` only,
+          // award.service.ts:91-96) but its price is stale — the engine already drops it from the
+          // ranking (comparison.service.ts) and the grid badges it. Same wording as the grid's
+          // badge, from the one shared constant, so the maker can see what they are picking
+          // without cross-referencing the table (final review M2 + T3 #4).
+          const stale = o.quoteStatus === "REQUOTED" ? ` — ${STALE_OFFER_LABEL}` : "";
           const label = o.variant
-            ? `${o.freightForwarderName} — ${o.variantLabel} — ${fmtUsd(o.usdTotal)}`
-            : `${o.freightForwarderName} — ${fmtUsd(o.usdTotal)}`;
+            ? `${o.freightForwarderName} — ${o.variantLabel} — ${fmtUsd(o.usdTotal)}${stale}`
+            : `${o.freightForwarderName} — ${fmtUsd(o.usdTotal)}${stale}`;
           return (
             <label
               key={key}
@@ -190,10 +213,22 @@ function ShortlistSection({
         })}
       </RadioGroup>
 
-      {locked && (
+      {/* Two genuinely different dead-ends, so two messages (final review I1). PENDING_APPROVAL is
+          recoverable: a checker's Reject writes the decision back to DRAFT and clears
+          `sentByUserId`, re-enabling this form. APPROVED is NOT — `reject` 409s on anything that
+          isn't PENDING_APPROVAL (`requireDecidable`) and Reopen only clears the query's award
+          snapshot, deliberately leaving every leg APPROVED (`reopenComparison`). Telling the user
+          to "reject or reopen" there pointed at two impossible actions. */}
+      {leg.decision?.status === "PENDING_APPROVAL" && (
         <p className="text-sm text-muted-foreground">
-          Locked while the decision is {LOCKED_STATUS_LABEL[leg.decision!.status]} — reject or
-          reopen it to change the shortlist.
+          Locked while this leg is pending approval — a checker has to reject it (which returns it
+          to draft) before the shortlist can change.
+        </p>
+      )}
+      {leg.decision?.status === "APPROVED" && (
+        <p className="text-sm text-muted-foreground">
+          This leg is approved — its shortlist is final here. Revising the award needs a change
+          request or a fresh negotiation with the forwarder.
         </p>
       )}
 
@@ -234,7 +269,18 @@ function ShortlistSection({
   );
 }
 
-function SendForApprovalSection({ queryId, leg }: { queryId: string; leg: LegComparisonDto }) {
+function SendForApprovalSection({
+  queryId,
+  leg,
+  effectiveKey,
+}: {
+  queryId: string;
+  leg: LegComparisonDto;
+  /** The maker's CURRENT candidate pick (the radio / last-clicked grid column). Threaded in so
+   *  this section can refuse to send while it disagrees with what's actually persisted — see
+   *  `unsavedPick` below. */
+  effectiveKey: string | undefined;
+}) {
   const sendForApproval = useSendForApproval(queryId, leg.legId);
   const [proceed, setProceed] = useState(false);
   const [proceedReason, setProceedReason] = useState("");
@@ -243,6 +289,18 @@ function SendForApprovalSection({ queryId, leg }: { queryId: string; leg: LegCom
   const blockedByReQuote = leg.awaitingReQuote && !alreadySent && (!proceed || !proceedReason.trim());
   const reasonId = `proceed-reason-${leg.legId}`;
 
+  // The send endpoint carries NO offer identity — `award.service.ts`'s `sendForApproval` re-reads
+  // `legAwardDecision.shortlistedQuoteId` and sends THAT. Meanwhile a click on any grid column
+  // header moves the maker's pick (`CompareLegPanel.handleSelectOffer`), so merely INSPECTING a
+  // rival offer's charge breakdown re-points the radio without touching the saved decision. Sending
+  // in that state silently submits the previously-saved offer under a UI showing a different one
+  // (final review C1) — or, with nothing saved at all, guarantees a 400. Both keys come from the
+  // same `offerKey` helper the grid columns use, so the comparison is apples-to-apples.
+  // `savedKey == null` is spelled out rather than left to the `!==` (which would call
+  // "nothing saved" equal to "nothing picked" on a leg with no priced offers at all).
+  const savedKey = savedShortlistKey(leg);
+  const unsavedPick = !alreadySent && (savedKey == null || savedKey !== effectiveKey);
+
   // `.mutate()`, same reasoning as ShortlistSection.onSubmit above — the 409/400 path (A2/A3/A9
   // guards in award.service.ts) is surfaced via `sendForApproval.isError`, not a caught rejection.
   // `disabled` below already covers `isPending` (a fast double-click can't reach a disabled native
@@ -250,7 +308,7 @@ function SendForApprovalSection({ queryId, leg }: { queryId: string; leg: LegCom
   // that window at the handler level too, so a second invocation can never fire a second POST
   // regardless of DOM/render timing (task-4 review Fix #2).
   function onSend() {
-    if (sendForApproval.isPending) return;
+    if (sendForApproval.isPending || unsavedPick) return;
     if (leg.awaitingReQuote) {
       sendForApproval.mutate({ proceedWithoutWaiting: true, proceedReason: proceedReason.trim() });
     } else {
@@ -291,6 +349,14 @@ function SendForApprovalSection({ queryId, leg }: { queryId: string; leg: LegCom
         </div>
       )}
 
+      {unsavedPick && (
+        <p data-testid="unsaved-pick-note" className="text-sm text-muted-foreground">
+          {savedKey == null
+            ? "Save your shortlist first — press Shortlist above before sending this leg for approval."
+            : "Save your shortlist first — the offer selected above is not the one saved on this leg, and Send would submit the saved one."}
+        </p>
+      )}
+
       {sendForApproval.isError && (
         <p role="alert" className="text-sm text-destructive">
           {errorMessage(sendForApproval.error, "Failed to send this leg for approval.")}
@@ -300,7 +366,7 @@ function SendForApprovalSection({ queryId, leg }: { queryId: string; leg: LegCom
       <Button
         type="button"
         onClick={onSend}
-        disabled={alreadySent || sendForApproval.isPending || blockedByReQuote}
+        disabled={alreadySent || sendForApproval.isPending || blockedByReQuote || unsavedPick}
       >
         {alreadySent ? "Sent for approval" : sendForApproval.isPending ? "Sending…" : "Send for approval"}
       </Button>

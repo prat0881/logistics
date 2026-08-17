@@ -153,13 +153,13 @@ const LEG: LegComparisonDto = {
 // `/api/auth/me` probe from hitting the network; CheckerPanel then just self-hides as
 // unauthenticated), they only exercise the grid/detail through the SAME shell it now happens to
 // sit alongside.
-function renderPanel(leg: LegComparisonDto = LEG) {
+function renderPanel(leg: LegComparisonDto = LEG, { locked = false }: { locked?: boolean } = {}) {
   vi.stubGlobal("fetch", mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <AuthProvider>
-        <CompareLegPanel queryId="q1" leg={leg} open onToggle={() => {}} locked={false} />
+        <CompareLegPanel queryId="q1" leg={leg} open onToggle={() => {}} locked={locked} />
       </AuthProvider>
     </QueryClientProvider>,
   );
@@ -366,5 +366,85 @@ describe("ComparisonGrid edge cases", () => {
 
     expect(screen.getByText("No comparable quotes yet.")).toBeInTheDocument();
     expect(screen.getByText("Only Pending Forwarder")).toBeInTheDocument();
+  });
+
+  // ── final review M1 ───────────────────────────────────────────────────────────────────────
+  it("suppresses the recommendation banner and the Recommended flag once the award is locked", () => {
+    // Post-generate, the WINNING quote is APPROVED — a status COMPARABLE_STATUSES excludes from
+    // `offers` — so whatever `recommendation` still points at is ranked among the losers only.
+    renderPanel(LEG, { locked: true });
+
+    expect(screen.queryByTestId("recommendation-banner")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("offer-header-quote-1::DEDICATED")).queryByText("Recommended"),
+    ).not.toBeInTheDocument();
+
+    // …while the grid itself stays fully readable.
+    expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).toHaveTextContent("$542.17");
+    expect(screen.getByText("Acme Forwarding")).toBeInTheDocument();
+  });
+
+  // ── final review I2 — a rejected leg comes back as DRAFT + a reason ───────────────────────
+  it("labels a returned (rejected) leg's chip 'Rejected — revise' rather than 'Shortlisted'", () => {
+    const draft = {
+      legId: "leg-1",
+      status: "DRAFT" as const,
+      shortlistedQuoteId: "quote-1",
+      shortlistedVariant: "DEDICATED" as const,
+      recommendedQuoteId: "quote-1",
+      recommendedVariant: "DEDICATED" as const,
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: null,
+      sentForApprovalAt: null,
+      decidedByUserId: null,
+      decidedAt: null,
+    };
+
+    const { unmount } = renderPanel({ ...LEG, decision: draft });
+    expect(screen.getByText("Shortlisted")).toBeInTheDocument();
+    unmount();
+
+    renderPanel({
+      ...LEG,
+      decision: { ...draft, rejectionReason: "Transit too slow for this client." },
+    });
+    expect(screen.getByText("Rejected — revise")).toBeInTheDocument();
+    expect(screen.queryByText("Shortlisted")).not.toBeInTheDocument();
+  });
+
+  // ── final review C1, at the actual T3×T4 seam this file is the only place to exercise ─────
+  it("a grid-header click moves the maker's pick, and Send for approval then refuses to submit the stale saved offer", async () => {
+    const legWithSavedShortlist: LegComparisonDto = {
+      ...LEG,
+      // Clear the A9 in-flight-re-quote block so the shortlist/send consistency guard is the ONLY
+      // thing that can disable Send here.
+      awaitingReQuote: false,
+      decision: {
+        legId: "leg-1",
+        status: "DRAFT",
+        shortlistedQuoteId: "quote-1",
+        shortlistedVariant: "DEDICATED",
+        recommendedQuoteId: "quote-1",
+        recommendedVariant: "DEDICATED",
+        overrideReason: null,
+        rejectionReason: null,
+        sentByUserId: null,
+        sentForApprovalAt: null,
+        decidedByUserId: null,
+        decidedAt: null,
+      },
+    };
+    renderPanel(legWithSavedShortlist);
+
+    const send = screen.getByRole("button", { name: /send for approval/i });
+    expect(send).not.toBeDisabled();
+
+    // Merely INSPECTING a rival column's charge breakdown re-points the shortlist radio.
+    await userEvent.click(screen.getByTestId("offer-header-quote-2::DEDICATED"));
+
+    expect(screen.getByRole("radio", { name: /Globex Logistics/i, checked: true })).toBeInTheDocument();
+    expect(send).toBeDisabled();
+    expect(screen.getByTestId("unsaved-pick-note")).toBeInTheDocument();
   });
 });

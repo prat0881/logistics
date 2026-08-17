@@ -2,11 +2,23 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route } from "react-router-dom";
+import { useAuth } from "@/features/auth/AuthProvider";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareQuotesPage } from "./CompareQuotesPage";
 
 afterEach(() => vi.unstubAllGlobals());
+
+/** `AuthProvider`'s `/api/auth/me` round trip is async, so `useAuth()`'s `user` is `null` for one
+ *  or more microtask hops after `render()`. Any absence assertion taken before it settles proves
+ *  nothing about a role-aware gate — `CheckerPanel` self-hides and `GenerateGate` is parent-gated
+ *  on `canCheck`, both of which are false for an anonymous viewer regardless of `locked`. Awaiting
+ *  this probe's resolved role forces the assertions to run post-settle (same mechanism as
+ *  `CheckerPanel.test.tsx`; final review M3). */
+function AuthProbe() {
+  const { user, loading } = useAuth();
+  return <span data-testid="auth-probe">{loading ? "loading" : (user?.role ?? "anonymous")}</span>;
+}
 
 const QUERY_DETAIL = {
   id: "q1",
@@ -229,9 +241,12 @@ describe("CompareQuotesPage", () => {
       }),
     );
     renderWithProviders(
-      <Routes>
-        <Route path="/queries/:id/compare" element={<CompareQuotesPage />} />
-      </Routes>,
+      <>
+        <AuthProbe />
+        <Routes>
+          <Route path="/queries/:id/compare" element={<CompareQuotesPage />} />
+        </Routes>
+      </>,
       {
         route: "/queries/q1/compare",
         user: { id: "u1", name: "Mgr", email: "m@x.com", role: "MANAGER" },
@@ -241,6 +256,10 @@ describe("CompareQuotesPage", () => {
     const leg2 = await screen.findByRole("button", { name: /LEG-2/i });
     await userEvent.click(leg2);
     await screen.findByTestId("leg-body");
+    // Without this, `checker-panel`/`generate-gate` would be absent for the WRONG reason (no
+    // viewer yet ⇒ `canCheck` false) and the assertions below would pass even with `locked`
+    // inverted — final review M3.
+    await screen.findByText("MANAGER");
 
     expect(screen.queryByTestId("maker-panel")).not.toBeInTheDocument();
     expect(screen.queryByTestId("checker-panel")).not.toBeInTheDocument();

@@ -15,21 +15,35 @@ type BadgeVariant =
   | "default" | "secondary" | "success" | "warning"
   | "accent" | "destructive" | "outline" | "pending";
 
-type DecisionStatus = NonNullable<LegComparisonDto["decision"]>["status"];
+type AwardDecision = NonNullable<LegComparisonDto["decision"]>;
 
-const DECISION_LABEL: Record<DecisionStatus, string> = {
-  DRAFT: "Shortlisted",
-  PENDING_APPROVAL: "Pending approval",
-  APPROVED: "Approved",
-  REJECTED: "Rejected",
-};
+interface DecisionBadge {
+  label: string;
+  variant: BadgeVariant;
+}
 
-const DECISION_VARIANT: Record<DecisionStatus, BadgeVariant> = {
-  DRAFT: "secondary",
-  PENDING_APPROVAL: "warning",
-  APPROVED: "success",
-  REJECTED: "destructive",
-};
+/**
+ * The collapsed card's decision chip. `AwardDecisionStatus.REJECTED` exists in the Prisma enum (and
+ * so in the DTO union) but is NEVER persisted: `reject()` writes DRAFT + `rejectionReason` in a
+ * single update (award.service.ts:319-331, design §9.5 "REJECTED -> back to DRAFT"), keeping the
+ * rejection as audit intent on the event log rather than as a decision state. So a rejected leg is
+ * a DRAFT that carries a reason — and labelling that "Shortlisted" hid the rework signal entirely
+ * (final review I2). The `REJECTED` case is folded in with DRAFT rather than kept as a dead map
+ * entry: were the server ever to start persisting it, it would carry the same reason and should
+ * read the same way.
+ */
+function decisionBadge(decision: AwardDecision): DecisionBadge {
+  switch (decision.status) {
+    case "PENDING_APPROVAL":
+      return { label: "Pending approval", variant: "warning" };
+    case "APPROVED":
+      return { label: "Approved", variant: "success" };
+    default:
+      return decision.rejectionReason
+        ? { label: "Rejected — revise", variant: "destructive" }
+        : { label: "Shortlisted", variant: "secondary" };
+  }
+}
 
 interface CompareLegPanelProps {
   queryId: string;
@@ -42,8 +56,14 @@ interface CompareLegPanelProps {
   /** S5.6 Task 6, ambiguity resolution #2 — `true` once `comparison.awardSnapshot != null` (the
    *  query is QUOTING_CLIENT). `MakerPanel`/`CheckerPanel` are NOT MOUNTED at all while locked
    *  (not merely disabled) — `CompareQuotesPage` computes this ONE boolean and threads it straight
-   *  through, so no child re-derives the condition. The grid/`RecommendationBanner`/`OfferDetail`/
-   *  `DecisionTimeline` stay mounted and read-only either way — they need no `locked` awareness. */
+   *  through, so no child re-derives the condition. `OfferDetail`/`DecisionTimeline` stay mounted
+   *  and read-only either way. The grid stays too, but not untouched: Task 6 originally judged the
+   *  whole read-only half `locked`-agnostic, and the final review overturned that for the
+   *  RECOMMENDATION specifically. Once the client quote is generated the winning quote is
+   *  `APPROVED`, which `COMPARABLE_STATUSES` excludes from `offers` (comparison.service.ts), so
+   *  `buildRecommendation` ranks only the offers that LOST — the banner and the column ring would
+   *  name a different forwarder than the award panel immediately below them. Both are therefore
+   *  suppressed while locked (final review M1). */
   locked: boolean;
 }
 
@@ -114,8 +134,8 @@ export function CompareLegPanel({
         {leg.mode && <Badge variant="secondary">{leg.mode}</Badge>}
         <span className="ml-auto flex items-center gap-2">
           {leg.decision && (
-            <Badge variant={DECISION_VARIANT[leg.decision.status]}>
-              {DECISION_LABEL[leg.decision.status]}
+            <Badge variant={decisionBadge(leg.decision).variant}>
+              {decisionBadge(leg.decision).label}
             </Badge>
           )}
           {legStatus && <LegStatusBadge status={legStatus} />}
@@ -127,11 +147,14 @@ export function CompareLegPanel({
           <p className="text-sm text-muted-foreground">
             {offerCount} offer{offerCount === 1 ? "" : "s"} received
           </p>
-          <RecommendationBanner recommendation={leg.recommendation} offers={leg.offers} />
+          {!locked && (
+            <RecommendationBanner recommendation={leg.recommendation} offers={leg.offers} />
+          )}
           <ComparisonGrid
             leg={leg}
             selectedOfferKey={selectedOfferKey}
             onSelectOffer={handleSelectOffer}
+            locked={locked}
           />
           {selectedOffer && <OfferDetail offer={selectedOffer} />}
           {!locked && (
