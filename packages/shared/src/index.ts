@@ -24,5 +24,7 @@ export * from "./recommend";
 export * from "./ff-portal";
 export * from "./fx";
 export * from "./quotation-charges";
+export * from "./quotation-pricing";
+export * from "./quotation";
 export * from "./award";
 export * from "./negotiation";
