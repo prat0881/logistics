@@ -18,6 +18,7 @@ import { QueriesListPage } from "@/features/query-list/QueriesListPage";
 import { QueryWizardPage } from "@/features/query-wizard/QueryWizardPage";
 import { QueryWorkspaceHub } from "@/features/rfq-workspace/QueryWorkspaceHub";
 import { CompareQuotesPage } from "@/features/compare/CompareQuotesPage";
+import { QuotationPage } from "@/features/quotation/QuotationPage";
 import { FfPortalPage } from "@/features/ff-portal/FfPortalPage";
 
 function Protected({ children }: { children: ReactNode }) {
@@ -68,6 +69,14 @@ export function App() {
         element={
           <Protected>
             <CompareQuotesPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/queries/:id/quotation"
+        element={
+          <Protected>
+            <QuotationPage />
           </Protected>
         }
       />

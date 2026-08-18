@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { StageRail, isRfqStageEnabled, isQuotesStageEnabled } from "./StageRail";
+import { StageRail, isRfqStageEnabled, isQuotesStageEnabled, isAwardStageEnabled } from "./StageRail";
 
 describe("StageRail", () => {
   it("computes RFQ-stage enablement from status rank", () => {
@@ -23,6 +23,54 @@ describe("StageRail", () => {
     // QUOTING_CLIENT was the RANK entry this task added (previously missing, which misranked
     // any past-comparison query) — assert it lands on the enabled side of the gate.
     expect(isQuotesStageEnabled("QUOTING_CLIENT")).toBe(true);
+  });
+
+  it("computes Award-stage enablement from the status VALUE, not the RANK threshold (S5.8)", () => {
+    // The trap this guards: RANK.QUOTING_CLIENT === RANK.QUOTED === 4 (a spec-literal collision,
+    // S5.7 T2 M2). A `(RANK[status] ?? 0) >= RANK.QUOTING_CLIENT` implementation would ALSO enable
+    // Award for a merely-QUOTED query — before the award has even been frozen — because it shares
+    // QUOTING_CLIENT's rank. Award must not be reachable there.
+    expect(isAwardStageEnabled("QUOTED")).toBe(false);
+    expect(isAwardStageEnabled("RFQ_SENT")).toBe(false);
+    expect(isAwardStageEnabled("NO_RESPONSE")).toBe(false);
+
+    expect(isAwardStageEnabled("QUOTING_CLIENT")).toBe(true);
+    expect(isAwardStageEnabled("AWAITING_CLIENT_DECISION")).toBe(true);
+    expect(isAwardStageEnabled("WON")).toBe(true);
+    expect(isAwardStageEnabled("LOST")).toBe(true);
+    expect(isAwardStageEnabled("CLOSED")).toBe(true);
+  });
+
+  it("links the Award step to /quotation when awardEnabled, and leaves it a non-navigable placeholder otherwise", () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <StageRail queryId="q1" active="quotes" rfqEnabled quotesEnabled awardEnabled />
+      </MemoryRouter>,
+    );
+    const awardLink = screen.getByRole("link", { name: /award/i });
+    expect(awardLink).toHaveAttribute("href", "/queries/q1/quotation");
+
+    rerender(
+      <MemoryRouter>
+        <StageRail queryId="q1" active="quotes" rfqEnabled quotesEnabled awardEnabled={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("link", { name: /award/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Award")).toBeInTheDocument();
+  });
+
+  it("renders the Award stage as current when active, with every earlier stage done", () => {
+    render(
+      <MemoryRouter>
+        <StageRail queryId="q1" active="award" rfqEnabled quotesEnabled awardEnabled />
+      </MemoryRouter>,
+    );
+    const awardLink = screen.getByRole("link", { name: /award/i });
+    expect(awardLink).toHaveAttribute("aria-current", "step");
+    // Create/RFQ/Quotes all read as done (checkmarks) now that Award is active.
+    expect(screen.queryByText("1")).toBeNull();
+    expect(screen.queryByText("2")).toBeNull();
+    expect(screen.queryByText("3")).toBeNull();
   });
 
   it("renders the Quotes stage as current and links it to /compare when enabled, with earlier stages done", () => {
