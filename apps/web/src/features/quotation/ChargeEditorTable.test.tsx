@@ -149,6 +149,19 @@ describe("ChargeEditorTable", () => {
     expect(onCommitOverride).toHaveBeenCalledWith("l1", "FREIGHT:0", undefined);
   });
 
+  // S5.8 Task 6, ambiguity resolution #3 — an ISSUED/SUPERSEDED quotation's charge editor "must
+  // render read-only — no editable prices". `QuotationPage` passes `readOnly` for either status.
+  it("renders client prices as plain text, not inputs, when readOnly", async () => {
+    render(
+      <ChargeEditorTable leg={LEG} marginPct={20} onCommitOverride={vi.fn()} readOnly />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^freight$/i }));
+
+    const row = screen.getByTestId("line-l1-FREIGHT:0");
+    expect(within(row).getByText("$60.00")).toBeInTheDocument();
+    expect(within(row).queryByRole("spinbutton")).not.toBeInTheDocument();
+  });
+
   it("does not commit anything when a field is blurred without its value changing", async () => {
     // The regression this guards: `userEvent.tab()`/a click elsewhere blurs whichever field last
     // had focus. Without this guard, simply tabbing past an UNTOUCHED field (still showing the

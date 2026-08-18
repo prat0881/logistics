@@ -52,6 +52,16 @@ export type QuotationIssue = z.infer<typeof quotationIssueSchema>;
  * Withheld by design (design doc "Screens" section) from anything the CLIENT sees, but present
  * here because this DTO is the INTERNAL builder/API contract: charge lines, forwarder cost,
  * margin and forwarder names are all included for the operator-facing builder screen (T5).
+ *
+ * `previewSubject`/`previewBody` (T6) are what the seeded `quotation.issued.email` template would
+ * render RIGHT NOW from this row's own current `marginPct`/`overrides` — computed by the exact
+ * same `buildIssueTokens` → `omitEmptyTokenLine` → `renderTemplate` chain `issue()` itself uses to
+ * freeze `subject`/`bodyText`, so a DRAFT's preview is byte-identical to what issuing it would
+ * persist (T6 ruling — the client preview must never be reconstructed client-side, since that can
+ * drift from the template). Read-only: nothing in `quotationPatchSchema`/`quotationIssueSchema`
+ * sets these directly; only `POST .../issue` writes the persisted `subject`/`bodyText`. Both are
+ * `""` in the (should-be-unreachable) case where the `quotation.issued.email` template itself
+ * isn't configured.
  */
 export interface QuotationDto {
   id: string;
@@ -62,6 +72,8 @@ export interface QuotationDto {
   overrides: Record<string, number>;
   pricing: PricedQuotation;
   validUntil: string | null;
+  previewSubject: string;
+  previewBody: string;
   recipientEmail: string | null;
   subject: string | null;
   bodyText: string | null;

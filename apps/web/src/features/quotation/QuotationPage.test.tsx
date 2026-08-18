@@ -27,6 +27,7 @@ const QUERY_DETAIL = {
   queryCode: "YAL26-0001",
   status: "QUOTING_CLIENT",
   incoterms: "FOB",
+  contactEmail: null as string | null,
   freightMode: [],
   origin: [],
   destination: [],
@@ -111,6 +112,8 @@ function baseQuotation(overrides: Partial<QuotationDto> = {}): QuotationDto {
       marginValueUsd: 30,
     },
     validUntil: null,
+    previewSubject: "Quotation YAL26-0001-Q1 · Ref YAL26-0001",
+    previewBody: "Dear Acme Ltd,\n\nTotal — all inclusive: USD 330.00\n\nRegards,\nYankalfa Logistics",
     recipientEmail: null,
     subject: null,
     bodyText: null,
@@ -126,19 +129,25 @@ function renderPage(
   opts: {
     role?: string;
     quotation?: QuotationDto;
+    queryDetail?: typeof QUERY_DETAIL;
     onPatch?: (body: unknown) => void;
     /** nth PATCH call gets the nth response; the last entry repeats once exhausted. */
     patchResponses?: QuotationDto[];
+    onIssuePost?: (body: unknown) => void;
+    issueResponse?: { status: number; body?: unknown };
+    onRevisePost?: () => void;
+    reviseResponse?: { status: number; body?: unknown };
     captureUrl?: (url: string) => void;
   } = {},
 ) {
   const role = opts.role ?? "MANAGER";
-  // Stateful, not a fixed closed-over value: `usePatchQuotation` both `setQueryData`s AND
-  // `invalidateQueries`s on the same key (the brief's explicit "invalidate after a mutation"
-  // instruction), so a successful PATCH triggers a background re-GET. A REAL server would answer
-  // that re-GET with the just-patched state; a mock that always hands back the original fixture
-  // would race the fresh `setQueryData` and win, making every post-PATCH assertion flaky/false —
-  // so `currentQuotation` tracks what the "server" would actually have after each PATCH.
+  // Stateful, not a fixed closed-over value: `usePatchQuotation`/`useIssueQuotation`/
+  // `useReviseQuotation` all `setQueryData` AND `invalidateQueries` on the same key (the brief's
+  // explicit "invalidate after a mutation" instruction), so a successful mutation triggers a
+  // background re-GET. A REAL server would answer that re-GET with the just-mutated state; a mock
+  // that always hands back the original fixture would race the fresh `setQueryData` and win,
+  // making every post-mutation assertion flaky/false — so `currentQuotation` tracks what the
+  // "server" would actually have after each PATCH/issue/revise.
   let currentQuotation = opts.quotation ?? baseQuotation();
   let patchCall = 0;
   vi.stubGlobal(
@@ -154,8 +163,27 @@ function renderPage(
         currentQuotation = res;
         return { status: 200, body: res };
       }
+      if (url.endsWith("/api/queries/q1/quotation/issue") && init?.method === "POST") {
+        const body = init.body ? JSON.parse(init.body as string) : undefined;
+        opts.onIssuePost?.(body);
+        const res = opts.issueResponse ?? {
+          status: 200,
+          body: { ...currentQuotation, status: "ISSUED", recipientEmail: body?.recipientEmail ?? null },
+        };
+        if (res.status < 300) currentQuotation = res.body as QuotationDto;
+        return res;
+      }
+      if (url.endsWith("/api/queries/q1/quotation/revise") && init?.method === "POST") {
+        opts.onRevisePost?.();
+        const res = opts.reviseResponse ?? {
+          status: 200,
+          body: { ...currentQuotation, status: "DRAFT", version: currentQuotation.version + 1 },
+        };
+        if (res.status < 300) currentQuotation = res.body as QuotationDto;
+        return res;
+      }
       if (url.endsWith("/api/queries/q1/quotation")) return { status: 200, body: currentQuotation };
-      if (url.endsWith("/api/queries/q1")) return { status: 200, body: QUERY_DETAIL };
+      if (url.endsWith("/api/queries/q1")) return { status: 200, body: opts.queryDetail ?? QUERY_DETAIL };
       return { status: 404 };
     }),
   );
@@ -171,14 +199,19 @@ function renderPage(
 }
 
 describe("QuotationPage", () => {
-  it("renders the builder for a MANAGER, with a disabled Preview button seaming Task 6", async () => {
+  // S5.8 Task 6 replaces the Task-5 disabled stub with the real dialog — clicking "Preview
+  // quotation" on a DRAFT opens `QuotationPreviewDialog`, showing the server-rendered letter.
+  it("renders the builder for a MANAGER, with a working Preview quotation button", async () => {
     renderPage();
     await screen.findByText("MANAGER");
     expect(await screen.findByTestId("quotation-page")).toBeInTheDocument();
 
     const preview = screen.getByRole("button", { name: /preview quotation/i });
-    expect(preview).toBeDisabled();
-    expect(preview).toHaveAttribute("title", "Preview arrives in the next task");
+    expect(preview).not.toBeDisabled();
+
+    await userEvent.click(preview);
+    const letter = await screen.findByTestId("quotation-letter");
+    expect(letter).toHaveTextContent("USD 330.00");
   });
 
   it("hides the builder for an EXECUTIVE and never issues the Manager+-only quotation request", async () => {
@@ -632,5 +665,73 @@ describe("QuotationPage", () => {
     expect(patchBodies[0]).toEqual({
       overrides: { "l1:ORIGIN:1": 50, "l1:ORIGIN:0": 45 },
     });
+  });
+
+  // S5.8 Task 6 end-to-end: preview → issue → the page itself flips to the read-only ISSUED view
+  // with "Revise" in place of "Preview quotation" — the whole point of ambiguity resolution #3/#4.
+  it("previews, issues, then renders read-only with Revise in place of Preview", async () => {
+    const issueBodies: unknown[] = [];
+    const issued = baseQuotation({
+      status: "ISSUED",
+      recipientEmail: "buyer@client.test",
+      subject: "Quotation YAL26-0001-Q1 · Ref YAL26-0001",
+      bodyText: "Dear Acme Ltd,\n\nTotal — all inclusive: USD 330.00\n\nRegards,\nYankalfa Logistics",
+      issuedAt: "2026-08-19T00:00:00.000Z",
+      issuedByUserId: "u1",
+    });
+
+    renderPage({
+      queryDetail: { ...QUERY_DETAIL, contactEmail: "buyer@client.test" },
+      onIssuePost: (b) => issueBodies.push(b),
+      issueResponse: { status: 200, body: issued },
+    });
+
+    await screen.findByText("MANAGER");
+    await userEvent.click(await screen.findByRole("button", { name: /preview quotation/i }));
+    await screen.findByTestId("quotation-letter");
+    expect(screen.getByLabelText("Recipient")).toHaveValue("buyer@client.test");
+
+    await userEvent.click(screen.getByRole("button", { name: /issue quotation/i }));
+
+    await waitFor(() => expect(issueBodies).toHaveLength(1));
+    // Never a `bodyText` field — the letter is always server-rendered, never posted by the client.
+    expect(issueBodies[0]).toEqual({
+      recipientEmail: "buyer@client.test",
+      subject: "Quotation YAL26-0001-Q1 · Ref YAL26-0001",
+    });
+
+    // The dialog closes and the page itself flips to the read-only ISSUED view.
+    await waitFor(() => expect(screen.queryByTestId("quotation-letter")).not.toBeInTheDocument());
+    expect(await screen.findByTestId("quotation-status-note")).toHaveTextContent(/issued/i);
+    expect(screen.queryByRole("button", { name: /preview quotation/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^revise$/i })).toBeInTheDocument();
+
+    // No margin input, no editable prices (ambiguity resolution #3) — plain text throughout.
+    expect(screen.queryByLabelText(/margin %/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /origin charges/i }));
+    expect(within(screen.getByTestId("line-l1-ORIGIN:0")).getByText("$66.00")).toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+  });
+
+  it("Revise on an ISSUED quotation starts a fresh, editable DRAFT", async () => {
+    const revisePosts: number[] = [];
+    const issued = baseQuotation({ status: "ISSUED", recipientEmail: "buyer@client.test" });
+    const revised = baseQuotation({ status: "DRAFT", version: 2 });
+
+    renderPage({
+      quotation: issued,
+      onRevisePost: () => revisePosts.push(1),
+      reviseResponse: { status: 200, body: revised },
+    });
+
+    await screen.findByText("MANAGER");
+    expect(await screen.findByTestId("quotation-status-note")).toHaveTextContent(/issued/i);
+    expect(screen.queryByRole("button", { name: /preview quotation/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /^revise$/i }));
+
+    await waitFor(() => expect(revisePosts).toHaveLength(1));
+    expect(await screen.findByRole("button", { name: /preview quotation/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("quotation-status-note")).not.toBeInTheDocument();
   });
 });

@@ -11,6 +11,12 @@ export interface ChargeEditorTableProps {
    *  recompute `clientUsd`/`overridden` for display: those always come straight from `leg`. */
   marginPct: number;
   onCommitOverride: (legId: string, lineId: string, value: number | undefined) => void;
+  /** S5.8 Task 6, ambiguity resolution #3: once a quotation is ISSUED/SUPERSEDED it "must render
+   *  read-only — no margin input, no editable prices" — `QuotationPage` passes `true` for either
+   *  status. Every client-price cell renders as plain text (`fmtUsd`) instead of an `<input>`;
+   *  `onCommitOverride` is simply never called (no input exists to blur). The "Pinned" badge still
+   *  shows — it's a historical fact about how that line was priced, not an editing affordance. */
+  readOnly?: boolean;
 }
 
 /**
@@ -27,7 +33,12 @@ export interface ChargeEditorTableProps {
  * `priceQuotation`), and a value-comparison badge would be wrong for the (real, tested) case where
  * a user pins a line to the exact value the formula would also have produced.
  */
-export function ChargeEditorTable({ leg, marginPct, onCommitOverride }: ChargeEditorTableProps) {
+export function ChargeEditorTable({
+  leg,
+  marginPct,
+  onCommitOverride,
+  readOnly = false,
+}: ChargeEditorTableProps) {
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
 
   function toggleGroup(group: string) {
@@ -84,6 +95,7 @@ export function ChargeEditorTable({ leg, marginPct, onCommitOverride }: ChargeEd
               open={openGroups.has(group.group)}
               onToggle={() => toggleGroup(group.group)}
               onCommitOverride={onCommitOverride}
+              readOnly={readOnly}
             />
           ))}
         </tbody>
@@ -99,6 +111,7 @@ function GroupRows({
   open,
   onToggle,
   onCommitOverride,
+  readOnly,
 }: {
   legId: string;
   group: PricedGroup;
@@ -106,6 +119,7 @@ function GroupRows({
   open: boolean;
   onToggle: () => void;
   onCommitOverride: (legId: string, lineId: string, value: number | undefined) => void;
+  readOnly: boolean;
 }) {
   return (
     <>
@@ -136,6 +150,7 @@ function GroupRows({
             line={line}
             marginPct={marginPct}
             onCommitOverride={onCommitOverride}
+            readOnly={readOnly}
           />
         ))}
     </>
@@ -147,11 +162,13 @@ function LineRow({
   line,
   marginPct,
   onCommitOverride,
+  readOnly,
 }: {
   legId: string;
   line: PricedLine;
   marginPct: number;
   onCommitOverride: (legId: string, lineId: string, value: number | undefined) => void;
+  readOnly: boolean;
 }) {
   // A genuinely controlled input, not a `key`-reset uncontrolled one: an earlier `key={line.id}-
   // ${line.clientUsd}` approach forced React to unmount/remount this input on every server round
@@ -222,15 +239,19 @@ function LineRow({
       </td>
       <td className="py-1.5 text-right text-muted-foreground">{fmtUsd(line.costUsd)}</td>
       <td className="py-1.5 text-right">
-        <input
-          type="number"
-          step="0.01"
-          value={displayValue}
-          onChange={onChange}
-          onBlur={onBlur}
-          aria-label={`${line.label} client price`}
-          className="w-28 rounded-md border border-border bg-background px-2 py-1 text-right text-sm"
-        />
+        {readOnly ? (
+          <span className="font-medium">{fmtUsd(line.clientUsd)}</span>
+        ) : (
+          <input
+            type="number"
+            step="0.01"
+            value={displayValue}
+            onChange={onChange}
+            onBlur={onBlur}
+            aria-label={`${line.label} client price`}
+            className="w-28 rounded-md border border-border bg-background px-2 py-1 text-right text-sm"
+          />
+        )}
       </td>
     </tr>
   );

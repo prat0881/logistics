@@ -16,8 +16,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { fmtUsd } from "@/features/compare/money";
 import { errorMessage } from "@/features/compare/errorMessage";
-import { useQuotation, usePatchQuotation } from "./useQuotation";
+import { useQuotation, usePatchQuotation, useReviseQuotation } from "./useQuotation";
 import { ChargeEditorTable } from "./ChargeEditorTable";
+import { QuotationPreviewDialog } from "./QuotationPreviewDialog";
 
 const MARGIN_DEBOUNCE_MS = 400;
 
@@ -38,8 +39,13 @@ const MARGIN_DEBOUNCE_MS = 400;
  * wholesale, so sending only the just-edited key would silently release every other pin (the brief's
  * flagged contract; see `useQuotation.ts`'s doc comment).
  *
- * The "Preview quotation" button is a deliberate stub — disabled, with a `title` pointing at Task 6,
- * which replaces it with the real dialog.
+ * A DRAFT renders fully editable (margin input, per-line overrides, "Reset overrides", "Preview
+ * quotation" opening `QuotationPreviewDialog`). Once ISSUED or SUPERSEDED, the design's rule is
+ * absolute (S5.8 Task 6, ambiguity resolution #3): "no margin input, no editable prices, no issue
+ * button" — so the margin bar's `Input` becomes plain text, every `ChargeEditorTable` renders
+ * `readOnly`, "Reset overrides" and "Preview quotation" both disappear, and an ISSUED quotation
+ * gets a "Revise" button (`useReviseQuotation`) in their place — the ONLY door back to an editable
+ * DRAFT once something has been issued (backend: `QuotationService.revise`).
  */
 export function QuotationPage() {
   const { id } = useParams<{ id: string }>();
@@ -49,6 +55,9 @@ export function QuotationPage() {
   const query = useQueryDetail(id);
   const quotation = useQuotation(id, canWrite);
   const patch = usePatchQuotation(id);
+  const revise = useReviseQuotation(id);
+
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   // Local, editable margin text — seeded from the server's own value and re-seeded whenever THAT
   // changes (first load, or after a PATCH round-trips), but never overwritten mid-keystroke.
@@ -114,6 +123,9 @@ export function QuotationPage() {
   const q = query.data;
   const qu = quotation.data;
   const pricing = qu.pricing;
+  // S5.8 Task 6, ambiguity resolution #3 — ISSUED/SUPERSEDED both render read-only; only a DRAFT
+  // is still editable or previewable-then-issuable.
+  const isDraft = qu.status === "DRAFT";
 
   return (
     <div className="space-y-4" data-testid="quotation-page">
@@ -143,17 +155,21 @@ export function QuotationPage() {
           className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-card p-4 shadow-sm"
         >
           <div className="flex items-center gap-2">
-            <Label htmlFor="margin-pct">Margin %</Label>
-            <Input
-              id="margin-pct"
-              type="number"
-              step="0.01"
-              min={0}
-              max={100}
-              value={marginInput}
-              onChange={(e) => onMarginChange(e.target.value)}
-              className="w-24"
-            />
+            <Label htmlFor={isDraft ? "margin-pct" : undefined}>Margin %</Label>
+            {isDraft ? (
+              <Input
+                id="margin-pct"
+                type="number"
+                step="0.01"
+                min={0}
+                max={100}
+                value={marginInput}
+                onChange={(e) => onMarginChange(e.target.value)}
+                className="w-24"
+              />
+            ) : (
+              <span className="font-medium">{qu.marginPct}%</span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-6 text-sm">
@@ -177,14 +193,29 @@ export function QuotationPage() {
             </div>
           </div>
 
-          <Button type="button" variant="outline" onClick={onResetOverrides} disabled={patch.isPending}>
-            Reset overrides
-          </Button>
+          {isDraft && (
+            <Button type="button" variant="outline" onClick={onResetOverrides} disabled={patch.isPending}>
+              Reset overrides
+            </Button>
+          )}
         </div>
+
+        {!isDraft && (
+          <p data-testid="quotation-status-note" className="text-sm text-muted-foreground">
+            {qu.status === "ISSUED"
+              ? "This quotation has been issued and is read-only. Use Revise to start a new draft."
+              : "This quotation was superseded and is read-only."}
+          </p>
+        )}
 
         {patch.isError && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(patch.error, "Failed to save the quotation change.")}
+          </p>
+        )}
+        {revise.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessage(revise.error, "Failed to start a new draft.")}
           </p>
         )}
 
@@ -195,6 +226,7 @@ export function QuotationPage() {
               leg={leg}
               marginPct={qu.marginPct}
               onCommitOverride={onCommitOverride}
+              readOnly={!isDraft}
             />
           ))}
           {pricing.legs.length === 0 && (
@@ -202,16 +234,39 @@ export function QuotationPage() {
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
           <span data-testid="grand-total" className="text-lg font-semibold">
             Grand total {fmtUsd(pricing.clientTotalUsd)}
           </span>
-          {/* Task 6 wires the real preview dialog and removes this stub. */}
-          <Button type="button" disabled title="Preview arrives in the next task">
-            Preview quotation
-          </Button>
+          <div className="flex items-center gap-2">
+            {qu.status === "ISSUED" && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => revise.mutate()}
+                disabled={revise.isPending}
+              >
+                {revise.isPending ? "Revising…" : "Revise"}
+              </Button>
+            )}
+            {isDraft && (
+              <Button type="button" onClick={() => setPreviewOpen(true)}>
+                Preview quotation
+              </Button>
+            )}
+          </div>
         </div>
       </div>
+
+      {isDraft && (
+        <QuotationPreviewDialog
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          queryId={id}
+          quotation={qu}
+          defaultRecipientEmail={q.contactEmail ?? ""}
+        />
+      )}
     </div>
   );
 }

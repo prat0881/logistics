@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { QuotationDto, QuotationPatch } from "@svyft/shared";
-import { fetchJson, patchJson } from "@/lib/api";
+import type { QuotationDto, QuotationIssue, QuotationPatch } from "@svyft/shared";
+import { fetchJson, patchJson, postJson } from "@/lib/api";
 
 /**
  * The Client Quotation builder's read model (S5.8 Task 5). `GET .../quotation` creates the DRAFT
@@ -35,6 +35,48 @@ export function usePatchQuotation(queryId?: string) {
   return useMutation({
     mutationFn: (body: QuotationPatch) =>
       patchJson<QuotationDto>(`/api/queries/${queryId}/quotation`, body),
+    onSuccess: (data) => {
+      qc.setQueryData(["quotation", queryId], data);
+      qc.invalidateQueries({ queryKey: ["quotation", queryId] });
+    },
+  });
+}
+
+/**
+ * `POST /api/queries/:id/quotation/issue` (S5.8 Task 6). Body is exactly `quotationIssueSchema`
+ * — `recipientEmail` + optional `subject`, never a `bodyText` (the letter is always rendered
+ * server-side; see `QuotationDto.previewBody`'s doc comment and `QuotationPreviewDialog`).
+ *
+ * Issuing moves the query to `AWAITING_CLIENT_DECISION` (Task 4), which `QueryOverviewHeader`'s
+ * status pill and `StageRail`'s stage-enablement both read straight off `QueryDetail.status` — so
+ * on success this invalidates BOTH `["quotation", queryId]` (T6 ambiguity resolution #4) so this
+ * page's own read picks up the just-issued row (read-only from here), AND `["query", queryId]` so
+ * the shell around it (header/rail) picks up the new query status too. `setQueryData` on the
+ * quotation key mirrors `usePatchQuotation`'s own pattern, so the UI reflects ISSUED immediately
+ * rather than waiting on the round trip the invalidate's background refetch will also do.
+ */
+export function useIssueQuotation(queryId?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: QuotationIssue) =>
+      postJson<QuotationDto>(`/api/queries/${queryId}/quotation/issue`, body),
+    onSuccess: (data) => {
+      qc.setQueryData(["quotation", queryId], data);
+      qc.invalidateQueries({ queryKey: ["quotation", queryId] });
+      qc.invalidateQueries({ queryKey: ["query", queryId] });
+    },
+  });
+}
+
+/**
+ * `POST /api/queries/:id/quotation/revise` (S5.8 Task 6) — no body. Clones the latest ISSUED
+ * quotation into a fresh, editable DRAFT at `version + 1` (Task 4); the query's own status is
+ * untouched by revise itself, so only `["quotation", queryId]` needs invalidating.
+ */
+export function useReviseQuotation(queryId?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => postJson<QuotationDto>(`/api/queries/${queryId}/quotation/revise`),
     onSuccess: (data) => {
       qc.setQueryData(["quotation", queryId], data);
       qc.invalidateQueries({ queryKey: ["quotation", queryId] });
