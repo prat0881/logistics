@@ -23,5 +23,6 @@ export * from "./quote-engine";
 export * from "./recommend";
 export * from "./ff-portal";
 export * from "./fx";
+export * from "./quotation-charges";
 export * from "./award";
 export * from "./negotiation";
