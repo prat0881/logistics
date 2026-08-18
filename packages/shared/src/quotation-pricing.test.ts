@@ -35,6 +35,17 @@ describe("priceQuotation", () => {
     expect(p.clientTotalUsd).toBe(620);
   });
 
+  it("pins a line whose override happens to equal the computed markup", () => {
+    // clientAmount(100, 20) === 120, so this override is indistinguishable from the
+    // computed value by comparison — only key presence can tell the two apart.
+    const a = priceQuotation(legs, 20, { "l1:ORIGIN:0": 120 });
+    expect(a.legs[0].groups[0].lines[0]).toMatchObject({ clientUsd: 120, overridden: true });
+
+    // and it must hold when the margin moves
+    const b = priceQuotation(legs, 50, { "l1:ORIGIN:0": 120 });
+    expect(b.legs[0].groups[0].lines[0].clientUsd).toBe(120);
+  });
+
   it("changing the margin moves unpinned lines only", () => {
     const a = priceQuotation(legs, 20, { "l1:ORIGIN:1": 500 });
     const b = priceQuotation(legs, 50, { "l1:ORIGIN:1": 500 });
