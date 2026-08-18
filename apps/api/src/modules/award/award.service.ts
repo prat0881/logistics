@@ -511,6 +511,15 @@ export class AwardService {
         // rfq.service.ts/rfq-schedule.listener.ts's draftJson clears.
         data: { awardSnapshot: Prisma.DbNull },
       });
+      // S5.8 Task 4 — the cost basis a quotation was priced from just disappeared above, so a
+      // DRAFT can no longer be repriced (discard it) while an ISSUED version must survive only
+      // as audit (supersede, never delete). Both before the projector recompute below so its
+      // `issued > 0` count already reflects the supersede.
+      await tx.quotation.updateMany({
+        where: { queryId, status: "ISSUED" },
+        data: { status: "SUPERSEDED" },
+      });
+      await tx.quotation.deleteMany({ where: { queryId, status: "DRAFT" } });
       for (const leg of legs) {
         await tx.awardDecisionEvent.create({
           data: { legId: leg.id, queryId, type: "REOPEN", actorId: user.userId },

@@ -87,6 +87,16 @@ export const MESSAGE_TEMPLATES: {
     subject: null,
     body: "Revised quote requested for RFQ {{RFQ_Number}} — {{Comment}}",
   },
+  // S5.8 (client quotation, Task 4): fired when a Manager+ issues a client quotation
+  // (QuotationService.issue) — audited as a MessageLog row; no channel actually transmits it
+  // yet (comms/transport.ts's LogTransport is a no-op until the go-live SMTP gate, design doc
+  // Q1). Grand total only, by design — no charge lines, no forwarder names (design doc
+  // "Withheld from the client").
+  {
+    key: "quotation.issued.email", eventKey: "quotation.issued", channel: "EMAIL",
+    subject: "Quotation {{Quotation_Ref}} · Ref {{Query_ID}}",
+    body: "Dear {{Client_Name}},\n\nThank you for your enquiry. We are pleased to quote for the shipment below.\n\nOur reference: {{Query_ID}}\nYour reference: {{Reference_Tags}}\nShipment: {{Shipment_Description}}\nVessel: {{Vessel}}\nPort of call: {{Port_Of_Call}}\nCargo: {{Cargo_Summary}}\nCargo ready: {{Ready_Date}}\nQuotation valid until: {{Valid_Until}}\n\nTotal — all inclusive: USD {{Grand_Total}}\n\nCovers all charges for the scope described above, subject to space and equipment availability at the time of booking and to the validity date shown.\n\nTo proceed, simply reply to this email and we will confirm the booking.\n\nRegards,\nYankalfa Logistics",
+  },
 ];
 
 export async function seedMessageTemplates(prisma: PrismaClient): Promise<void> {

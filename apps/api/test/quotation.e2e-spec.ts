@@ -41,11 +41,17 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
 
   // A minimal ROAD draft priced only on the DEDICATED variant, with one trucking charge line —
   // exactly enough for buildQuotationCostLines to produce one FREIGHT group with one line.
-  const roadDraft = (legId: string, originPointId: string, currency: string, amount: number): QuoteDraft => ({
+  const roadDraft = (
+    legId: string,
+    originPointId: string,
+    currency: string,
+    amount: number,
+    quoteValidityUntil: string | null = "2099-01-01T00:00:00.000Z",
+  ): QuoteDraft => ({
     legId,
     mode: "ROAD",
     currency,
-    quoteValidityUntil: "2099-01-01T00:00:00.000Z",
+    quoteValidityUntil,
     chargedWeightKg: 500,
     notes: null,
     cargo: [],
@@ -74,7 +80,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
   // Builds one query + one leg + one APPROVED winning quote (8320 INR @ 83.2 units/USD = $100
   // cost) and freezes Query.awardSnapshot so the query has something to price. Returns the ids
   // the tests need.
-  const mkAwardedQuery = async (suffix: string) => {
+  const mkAwardedQuery = async (suffix: string, quoteValidityUntil: string | null = "2099-01-01T00:00:00.000Z") => {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-${suffix}`, priority: "MEDIUM", incoterms: "FOB" },
     });
@@ -101,7 +107,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
         freightForwarderId: ff.id,
         status: "APPROVED",
         submittedAt: new Date(),
-        draftJson: roadDraft(leg.id, origin.id, "INR", 8320) as unknown as Prisma.InputJsonValue,
+        draftJson: roadDraft(leg.id, origin.id, "INR", 8320, quoteValidityUntil) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -130,12 +136,16 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     return { query, leg, ff, quote };
   };
 
+  // Task 4's issue() writes a MessageLog keyed by entityId = queryId — a plain field, not a
+  // relation (no FK, no cascade) — so it survives a Query delete unless cleaned up explicitly,
+  // exactly like ScheduledEvent/MessageLog rows in rfq-distribute-comms.e2e-spec.ts.
   const cleanup = async () => {
     const qs = await prisma.query.findMany({
       where: { queryCode: { startsWith: CODE } },
       select: { id: true },
     });
     for (const q of qs) {
+      await prisma.messageLog.deleteMany({ where: { entityId: q.id } });
       await prisma.quotation.deleteMany({ where: { queryId: q.id } });
       await prisma.quote.deleteMany({ where: { queryId: q.id } });
       await prisma.query.delete({ where: { id: q.id } }); // cascades points/legs
@@ -144,6 +154,14 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
       where: { freightForwarderCode: { startsWith: `FF-${PFX}` } },
     });
   };
+
+  // Task 4 — the composed client email body for `.../issue`. Every field quotationIssueSchema
+  // requires; content is arbitrary since no web compose screen exists yet to exercise.
+  const issueBody = (suffix: string) => ({
+    recipientEmail: `client-${suffix}@e2e.test`,
+    subject: `Quotation for your shipment — ${suffix}`,
+    bodyText: `Dear Client,\n\nPlease find our quotation for shipment ${suffix} below.\n\nTotal — all inclusive: USD 100.00\n\nRegards,\nYankalfa Logistics`,
+  });
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -163,6 +181,20 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
+  // Task 4, pre-authorised decision (design doc Q2) — validUntil is null, not an empty string
+  // or today's date, when every winning quote's own validity is null. Not one of the six
+  // brief-listed cases but the only test that distinguishes "no data" from "zero-value".
+  it("validUntil is null (not empty) when the winning quote's own validity is null", async () => {
+    const { query } = await mkAwardedQuery("1b", null);
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    expect(res.body.validUntil).toBeNull();
+  });
+
   it("creates a DRAFT on first GET, priced from the awarded quotes at margin 0", async () => {
     const { query, leg } = await mkAwardedQuery("1");
 
@@ -176,7 +208,9 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     expect(res.body.status).toBe("DRAFT");
     expect(res.body.marginPct).toBe(0);
     expect(res.body.overrides).toEqual({});
-    expect(res.body.validUntil).toBeNull();
+    // Task 4 — validUntil is now the winning quote's own quoteValidityUntil (roadDraft's
+    // fixture value below), no longer the Task 1-3 placeholder null.
+    expect(res.body.validUntil).toBe("2099-01-01T00:00:00.000Z");
     expect(res.body.pricing.clientTotalUsd).toBe(res.body.pricing.costTotalUsd);
     expect(res.body.pricing.costTotalUsd).toBe(100);
     expect(res.body.pricing.legs).toHaveLength(1);
@@ -303,5 +337,179 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
       .send({ marginPct: 15 })
       .expect(409);
+  });
+
+  // ── Task 4: issue / revise / AWAITING_CLIENT_DECISION / reopen supersedes ─────────────────
+
+  it("issue freezes a snapshot, stamps ISSUED, and rolls the query to AWAITING_CLIENT_DECISION", async () => {
+    const userId = randomUUID();
+    const { query } = await mkAwardedQuery("8");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    const body = issueBody("8");
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(userId, Role.MANAGER))
+      .send(body)
+      .expect(200);
+
+    expect(res.body.status).toBe("ISSUED");
+    expect(res.body.version).toBe(1);
+    expect(res.body.issuedByUserId).toBe(userId);
+    expect(res.body.issuedAt).not.toBeNull();
+    expect(res.body.recipientEmail).toBe(body.recipientEmail);
+    expect(res.body.subject).toBe(body.subject);
+    expect(res.body.bodyText).toBe(body.bodyText);
+    expect(res.body.pricing.clientTotalUsd).toBe(100);
+
+    const row = await prisma.quotation.findUnique({ where: { id: res.body.id } });
+    expect(row?.status).toBe("ISSUED");
+    expect(row?.issuedSnapshot).not.toBeNull();
+    expect(row?.issuedByUserId).toBe(userId);
+
+    const updatedQuery = await prisma.query.findUnique({ where: { id: query.id } });
+    expect(updatedQuery?.status).toBe("AWAITING_CLIENT_DECISION");
+  });
+
+  it("issue composes exactly one MessageLog row against quotation.issued.email", async () => {
+    const { query } = await mkAwardedQuery("9");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    const body = issueBody("9");
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(body)
+      .expect(200);
+
+    const logs = await prisma.messageLog.findMany({
+      where: { entityType: "QUERY", entityId: query.id, eventKey: "quotation.issued" },
+    });
+    expect(logs).toHaveLength(1);
+    expect(logs[0].templateKey).toBe("quotation.issued.email");
+    expect(logs[0].channel).toBe("EMAIL");
+    expect(logs[0].toAddress).toBe(body.recipientEmail);
+    expect(logs[0].subject).toBe(body.subject);
+    expect(logs[0].bodyRendered).toBe(body.bodyText);
+  });
+
+  it("issue 409s when the draft has no priced legs", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-10`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    await prisma.quotation.create({
+      data: {
+        queryId: query.id,
+        version: 1,
+        status: "DRAFT",
+        marginPct: 0,
+        draftJson: { legs: [], overrides: {} } as unknown as Prisma.InputJsonValue,
+        costTotalUsd: 0,
+        clientTotalUsd: 0,
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("10"))
+      .expect(409);
+  });
+
+  it("403s an EXECUTIVE on issue", async () => {
+    const { query } = await mkAwardedQuery("11");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.EXECUTIVE))
+      .send(issueBody("11"))
+      .expect(403);
+  });
+
+  it("revise clones the issued version into a new DRAFT at version + 1, carrying margin and overrides", async () => {
+    const { query, leg } = await mkAwardedQuery("12");
+    const getRes = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    const lineId = getRes.body.pricing.legs[0].groups[0].lines[0].id as string;
+    const key = `${leg.id}:${lineId}`;
+
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 15, overrides: { [key]: 99 } })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("12"))
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/revise`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    expect(res.body.version).toBe(2);
+    expect(res.body.status).toBe("DRAFT");
+    expect(res.body.marginPct).toBe(15);
+    expect(res.body.overrides).toEqual({ [key]: 99 });
+
+    const rows = await prisma.quotation.findMany({
+      where: { queryId: query.id },
+      orderBy: { version: "asc" },
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[0].status).toBe("ISSUED");
+    expect(rows[1].status).toBe("DRAFT");
+  });
+
+  it("reopening the comparison supersedes issued quotations, discards the draft, and returns the query to QUOTED", async () => {
+    const { query, leg } = await mkAwardedQuery("13");
+    // A genuinely-awarded leg is always APPROVED by the time a client quote exists; this
+    // fixture otherwise leaves the leg at its DRAFT default (irrelevant to Tasks 1-3's
+    // pricing-only tests), which would make the post-reopen rollup land on DRAFT instead of
+    // QUOTED — set it explicitly so this assertion actually exercises the leg-rollup path.
+    await prisma.leg.update({ where: { id: leg.id }, data: { status: "APPROVED" } });
+
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("13"))
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/revise`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/reopen-comparison`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    const rows = await prisma.quotation.findMany({ where: { queryId: query.id } });
+    expect(rows).toHaveLength(1); // the v2 DRAFT was discarded; only the superseded v1 remains
+    expect(rows[0].status).toBe("SUPERSEDED");
+    expect(rows[0].version).toBe(1);
+
+    const updatedQuery = await prisma.query.findUnique({ where: { id: query.id } });
+    expect(updatedQuery?.status).toBe("QUOTED");
+    expect(updatedQuery?.awardSnapshot).toBeNull();
   });
 });
