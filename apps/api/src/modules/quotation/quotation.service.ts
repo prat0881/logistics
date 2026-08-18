@@ -48,11 +48,31 @@ interface IssueTokens {
 /** Strips the entire line containing `{{token}}` (plus its own trailing newline) out of a
  *  template body when `value` is empty — the pre-authorised "omit the line entirely rather than
  *  print an empty value" rule (design doc Q2), made real at render time instead of only living
- *  as `QuotationDto.validUntil: null`. Generic over any token, used here for `Valid_Until`. */
+ *  as `QuotationDto.validUntil: null`. Generic over any token. */
 function omitEmptyTokenLine(body: string, token: string, value: string): string {
   if (value) return body;
   return body.replace(new RegExp(`^.*\\{\\{${token}\\}\\}.*\\n?`, "m"), "");
 }
+
+/** Every token in the seeded `quotation.issued.email` body that (a) occupies a whole line of its
+ *  own — `Label: {{Token}}` — and (b) can legitimately be empty, because the underlying query
+ *  column is nullable or the collection behind it can come back empty.
+ *
+ *  🔴 Final review IMPORTANT #5: only `Valid_Until` was ever run through `omitEmptyTokenLine`,
+ *  so a query with no vessel (or no PO reference, no shipment description, no packages, no ready
+ *  date — all nullable, none unusual) sent the client a letter containing bare dangling labels:
+ *  `Vessel: `, `Your reference: `, `Port of call: `. On this sub-build's ENTIRE deliverable.
+ *  `Query_ID` and `Grand_Total` are deliberately NOT here — both are always populated, and a
+ *  silently vanishing total would be far worse than an empty one. */
+const OMITTABLE_TOKENS = [
+  "Reference_Tags",
+  "Shipment_Description",
+  "Vessel",
+  "Port_Of_Call",
+  "Cargo_Summary",
+  "Ready_Date",
+  "Valid_Until",
+] as const;
 
 /** One leg's priceable input, cached verbatim in `Quotation.draftJson` at creation time so a
  *  later GET/PATCH never has to re-read the winning quotes or re-run `buildQuotationCostLines` —
@@ -98,25 +118,33 @@ export class QuotationService {
     @Inject(MESSAGE_TRANSPORT) private readonly transport: MessageTransport,
   ) {}
 
-  /** `GET /api/queries/:id/quotation` — idempotent: creates the one-and-only DRAFT (version 1)
-   *  the very first time a query is priced, then always returns the query's CURRENT quotation
-   *  row exactly as-is on every later call — DRAFT (still editable), or ISSUED (T6: a read-only
-   *  view, with "Revise" as the only door back to a new DRAFT) once one exists.
+  /** `GET /api/queries/:id/quotation` — idempotent: creates the one-and-only DRAFT the very first
+   *  time a query is priced, then always returns the query's CURRENT quotation row exactly as-is
+   *  on every later call — DRAFT (still editable), or ISSUED (T6: a read-only view, with "Revise"
+   *  as the only door back to a new DRAFT) once one exists.
    *
-   *  🔴 T6 fix: this must never fall through to the `create` below just because the current row
-   *  isn't a DRAFT. `Quotation` has `@@unique([queryId, version])`, and every draft this service
-   *  creates is hardcoded to `version: 1` — the old "only look for a DRAFT" query came back empty
-   *  the instant `issue()` flipped that same row to ISSUED, then tried to `create` a SECOND
-   *  `(queryId, 1)` row and 409'd on the unique violation instead of just showing it. That is
-   *  exactly the request the web preview dialog's `useIssueQuotation` fires via its post-success
-   *  `invalidateQueries(["quotation", queryId])` (T6 ambiguity resolution #4) the instant "Issue
-   *  quotation" succeeds — undetected until T6 because no earlier task's flow ever issued a
-   *  quotation and then re-GET'd it in the same session. Deliberately narrow: only the ISSUED
-   *  case is special-cased here: a SUPERSEDED-with-no-current-DRAFT-or-ISSUED row (reachable only
-   *  after a reopen-then-re-award, a flow no task has built a "start a fresh quotation" door for
-   *  yet) still falls through to `create` and still 409s on the version collision, unchanged from
-   *  Tasks 1-5 — fixing that unrelated, pre-existing gap is out of this task's scope. */
-  async getOrCreateDraft(queryId: string): Promise<QuotationDto> {
+   *  "Current" means the HIGHEST-VERSION row, the same definition `patch()`/`issue()` already use.
+   *  A DRAFT always holds the highest version when one exists (`revise()` refuses to create a
+   *  second DRAFT and mints `version + 1`; `issue()` flips a DRAFT in place), so this reads the
+   *  latest row ONCE instead of probing for a DRAFT and then for an ISSUED.
+   *
+   *  🔴 Final review CRITICAL #3 — the version must be derived, never hardcoded. Every draft used
+   *  to be created at `version: 1`, which broke the design's own "a new quotation starts fresh
+   *  once the award is re-frozen": `reopenComparison` supersedes the ISSUED v1 and deletes the
+   *  DRAFT, so after a re-award this method found neither, fell through to `create({version: 1})`,
+   *  and violated `@@unique([queryId, version])` against the SUPERSEDED v1 — a PERMANENT 409 on
+   *  every subsequent GET, with no way back. (T6 patched only the ISSUED half of this and ruled
+   *  the rest "unrelated, pre-existing"; the final review overturned that — it is the second half
+   *  of the reopen behaviour T4 built.)
+   *
+   *  The re-read immediately before the `create` is deliberate, and is BOTH the version source and
+   *  the "only one DRAFT per query" guard (deferred minor T3 M1) — one read, so the two can never
+   *  disagree. Two concurrent first-GETs either (a) both see the same latest row, compute the same
+   *  next version, and the unique constraint makes the loser 409 rather than minting a second
+   *  DRAFT, or (b) the loser's re-read now sees the winner's committed DRAFT and simply returns
+   *  it. What must never happen — a naive `max(version) + 1` with no DRAFT check — is two live
+   *  drafts at different versions, which `patch()`/`issue()` would then silently disagree about. */
+  async getOrCreateDraft(queryId: string, user: RequestUser): Promise<QuotationDto> {
     const query = await this.prisma.query.findUnique({
       where: { id: queryId },
       select: { id: true, awardSnapshot: true },
@@ -127,24 +155,24 @@ export class QuotationService {
       throw new ConflictException("this query has no frozen award to price");
     }
 
-    const existingDraft = await this.prisma.quotation.findFirst({
-      where: { queryId, status: "DRAFT" },
-    });
-    if (existingDraft) return this.toDto(existingDraft);
-
-    const latestIssued = await this.prisma.quotation.findFirst({
-      where: { queryId, status: "ISSUED" },
-      orderBy: { version: "desc" },
-    });
-    if (latestIssued) return this.toDto(latestIssued);
+    const current = await this.latestQuotation(queryId);
+    if (current && current.status !== "SUPERSEDED") return this.toDto(current);
 
     const draft = await this.buildInitialDraft(query.awardSnapshot as unknown as QueryAwardSnapshot);
     const priced = priceQuotation(draft.legs, 0, draft.overrides);
 
+    // Re-read (see doc comment): the guard and the version come from the SAME row, taken as late
+    // as possible — `buildInitialDraft` above is several round trips wide.
+    const latest = await this.latestQuotation(queryId);
+    if (latest && latest.status !== "SUPERSEDED") return this.toDto(latest);
+
     const created = await this.prisma.quotation.create({
       data: {
         queryId,
-        version: 1,
+        // Final review MINOR #9 — every peer service stamps the caller's tenant (queries.service
+        // .ts:312 and friends); this one never did, leaving `@@index([tenantId])` dead.
+        tenantId: user.tenantId,
+        version: (latest?.version ?? 0) + 1,
         status: "DRAFT",
         marginPct: 0,
         draftJson: draft as unknown as Prisma.InputJsonValue,
@@ -155,6 +183,12 @@ export class QuotationService {
     return this.toDto(created);
   }
 
+  /** The query's CURRENT quotation — highest version wins. One definition, shared by
+   *  `getOrCreateDraft`/`patch`/`issue`, so they can never disagree about which row is live. */
+  private latestQuotation(queryId: string): Promise<Quotation | null> {
+    return this.prisma.quotation.findFirst({ where: { queryId }, orderBy: { version: "desc" } });
+  }
+
   /** `PATCH /api/queries/:id/quotation` — merges whichever of `marginPct`/`overrides` was sent
    *  (each optional, editable independently) into the current DRAFT and reprices. `overrides`,
    *  when present in the body, REPLACES the stored map wholesale (the builder screen always
@@ -162,10 +196,7 @@ export class QuotationService {
    *  overrides" action release a pin simply by omitting its key); when absent, the stored map is
    *  left untouched, which is what lets a pinned line survive a margin-only PATCH. */
   async patch(queryId: string, body: QuotationPatch): Promise<QuotationDto> {
-    const current = await this.prisma.quotation.findFirst({
-      where: { queryId },
-      orderBy: { version: "desc" },
-    });
+    const current = await this.latestQuotation(queryId);
     if (!current) {
       throw new NotFoundException("no quotation exists for this query yet — GET .../quotation first");
     }
@@ -204,10 +235,7 @@ export class QuotationService {
    *  `transport.send` fires only AFTER that transaction commits (fix round 1, review
    *  IMPORTANT #2 — mirrors `StatusService.fire`'s post-commit `emitAsync`). */
   async issue(queryId: string, body: QuotationIssue, user: RequestUser): Promise<QuotationDto> {
-    const current = await this.prisma.quotation.findFirst({
-      where: { queryId },
-      orderBy: { version: "desc" },
-    });
+    const current = await this.latestQuotation(queryId);
     if (!current) {
       throw new NotFoundException("no quotation exists for this query yet — GET .../quotation first");
     }
@@ -382,8 +410,12 @@ export class QuotationService {
     tokens: IssueTokens,
   ): { subject: string; body: string } {
     // "omit the line entirely rather than print an empty value" (design doc Q2) — real at render
-    // time, not just `QuotationDto.validUntil: null`.
-    const bodyTemplate = omitEmptyTokenLine(template.body, "Valid_Until", tokens.Valid_Until);
+    // time, not just `QuotationDto.validUntil: null`, and applied to EVERY optional whole-line
+    // token rather than to `Valid_Until` alone (final review IMPORTANT #5).
+    const bodyTemplate = OMITTABLE_TOKENS.reduce(
+      (body, token) => omitEmptyTokenLine(body, token, tokens[token]),
+      template.body,
+    );
     return {
       subject: renderTemplate(template.subject ?? "", tokens),
       body: renderTemplate(bodyTemplate, tokens),
@@ -415,6 +447,7 @@ export class QuotationService {
     const created = await this.prisma.quotation.create({
       data: {
         queryId,
+        tenantId: latestIssued.tenantId, // carried forward, same as every other field (MINOR #9)
         version: latestIssued.version + 1,
         status: "DRAFT",
         marginPct,
@@ -471,24 +504,24 @@ export class QuotationService {
     return { legs: stakedLegs, overrides: {} };
   }
 
-  /** T6: `previewSubject`/`previewBody` are computed on EVERY read (GET/PATCH/issue/revise all
-   *  funnel through this one method) — reusing `buildIssueTokens` + `renderFromTemplate`, the
-   *  exact chain `issue()` itself uses, is what makes the preview byte-identical to what issuing
-   *  actually persists, rather than a second, drift-prone implementation. `""` for both when the
-   *  `quotation.issued.email` template isn't configured — defensive only (seeding is idempotent
-   *  and always run); GET/PATCH must not 500/409 over it the way `issue()` deliberately does. */
+  /** T6: for a DRAFT, `previewSubject`/`previewBody` are RENDERED on every read — reusing
+   *  `buildIssueTokens` + `renderFromTemplate`, the exact chain `issue()` itself uses, is what
+   *  makes the preview byte-identical to what issuing it will actually persist, rather than a
+   *  second, drift-prone implementation. `""` for both when the `quotation.issued.email` template
+   *  isn't configured — defensive only (seeding is idempotent and always run); GET/PATCH must not
+   *  500/409 over it the way `issue()` deliberately does.
+   *
+   *  Once the row is ISSUED (or SUPERSEDED) the preview is the PERSISTED letter, not a re-render
+   *  (final review MINOR #8). Re-rendering read live query data, so a vessel name or ready date
+   *  edited after issuing would silently change what the UI shows as "the quotation we sent" —
+   *  the exact drift the server-side-render ruling exists to prevent, just in the other direction.
+   *  It also skips 3 queries + a template lookup per read on a row that can never change. */
   private async toDto(row: Quotation): Promise<QuotationDto> {
     const stored = row.draftJson as unknown as StoredQuotationDraft;
     const marginPct = Number(row.marginPct);
     const pricing = priceQuotation(stored.legs, marginPct, stored.overrides);
 
-    const template = await this.messageTemplates.lookup("quotation.issued", Channel.EMAIL);
-    const preview = template
-      ? this.renderFromTemplate(
-          template,
-          await this.buildIssueTokens(row.queryId, row.version, pricing, stored),
-        )
-      : { subject: "", body: "" };
+    const preview = await this.previewFor(row, pricing, stored);
 
     return {
       id: row.id,
@@ -509,5 +542,20 @@ export class QuotationService {
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
+  }
+
+  /** See `toDto` — rendered for a DRAFT, replayed from the frozen columns for anything else. */
+  private async previewFor(
+    row: Quotation,
+    pricing: PricedQuotation,
+    stored: StoredQuotationDraft,
+  ): Promise<{ subject: string; body: string }> {
+    if (row.status !== "DRAFT") return { subject: row.subject ?? "", body: row.bodyText ?? "" };
+    const template = await this.messageTemplates.lookup("quotation.issued", Channel.EMAIL);
+    if (!template) return { subject: "", body: "" };
+    return this.renderFromTemplate(
+      template,
+      await this.buildIssueTokens(row.queryId, row.version, pricing, stored),
+    );
   }
 }

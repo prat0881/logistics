@@ -1,15 +1,11 @@
 import { useState, type ChangeEvent, type FocusEvent } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { clientAmount, type PricedGroup, type PricedLeg, type PricedLine } from "@svyft/shared";
+import { ChevronDown, ChevronRight, X } from "lucide-react";
+import type { PricedGroup, PricedLeg, PricedLine } from "@svyft/shared";
 import { Badge } from "@/components/ui/badge";
 import { fmtUsd } from "@/features/compare/money";
 
 export interface ChargeEditorTableProps {
   leg: PricedLeg;
-  /** The quotation's current `marginPct` — used only to decide, on blur, whether a typed value
-   *  differs from the formula (and so should be sent as an override at all). Never used to
-   *  recompute `clientUsd`/`overridden` for display: those always come straight from `leg`. */
-  marginPct: number;
   onCommitOverride: (legId: string, lineId: string, value: number | undefined) => void;
   /** S5.8 Task 6, ambiguity resolution #3: once a quotation is ISSUED/SUPERSEDED it "must render
    *  read-only — no margin input, no editable prices" — `QuotationPage` passes `true` for either
@@ -27,18 +23,21 @@ export interface ChargeEditorTableProps {
  * editable client-price input (resolution #5 — cost is internal context, it never leaves this
  * screen).
  *
- * The "pinned" badge is rendered from `line.overridden` alone (resolution #3) — never from
- * comparing `clientUsd` to `clientAmount(costUsd, marginPct)` here. The server is the source of
- * truth for what counts as pinned (key presence in the overrides map, per Task 2's
- * `priceQuotation`), and a value-comparison badge would be wrong for the (real, tested) case where
- * a user pins a line to the exact value the formula would also have produced.
+ * 🔴 Pinning is KEY PRESENCE, never value comparison — the server's own rule (`priceQuotation`
+ * derives `overridden` from `key in overrides`, and Task 2's fix round exists precisely to pin the
+ * case "a user who types the formula's own number has still pinned that line"). Both the badge and
+ * the commit logic here obey it: the badge reads `line.overridden` alone, and a pin is released
+ * ONLY by an explicit action — this table's per-line clear button, or the page's "Reset overrides".
+ *
+ * It used to release a pin whenever the typed value happened to equal `clientAmount(costUsd,
+ * marginPct)` (final review IMPORTANT #4). That made the server's pinned-at-the-formula-value state
+ * unreachable from the UI, and — much worse — silently UNPINNED a line whose pinned value later
+ * coincided with the formula (cost 50, pinned at 60, margin moves to 20%) merely because the user
+ * clicked into the field and tabbed out again: the release slipped past the no-op guard, since
+ * `undefined !== 60`. Hence `marginPct` is no longer a prop at all — nothing here needs to know
+ * the formula, which is the structural guarantee that this can't come back.
  */
-export function ChargeEditorTable({
-  leg,
-  marginPct,
-  onCommitOverride,
-  readOnly = false,
-}: ChargeEditorTableProps) {
+export function ChargeEditorTable({ leg, onCommitOverride, readOnly = false }: ChargeEditorTableProps) {
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
 
   function toggleGroup(group: string) {
@@ -91,7 +90,6 @@ export function ChargeEditorTable({
               key={group.group}
               legId={leg.legId}
               group={group}
-              marginPct={marginPct}
               open={openGroups.has(group.group)}
               onToggle={() => toggleGroup(group.group)}
               onCommitOverride={onCommitOverride}
@@ -107,7 +105,6 @@ export function ChargeEditorTable({
 function GroupRows({
   legId,
   group,
-  marginPct,
   open,
   onToggle,
   onCommitOverride,
@@ -115,7 +112,6 @@ function GroupRows({
 }: {
   legId: string;
   group: PricedGroup;
-  marginPct: number;
   open: boolean;
   onToggle: () => void;
   onCommitOverride: (legId: string, lineId: string, value: number | undefined) => void;
@@ -148,7 +144,6 @@ function GroupRows({
             key={line.id}
             legId={legId}
             line={line}
-            marginPct={marginPct}
             onCommitOverride={onCommitOverride}
             readOnly={readOnly}
           />
@@ -160,13 +155,11 @@ function GroupRows({
 function LineRow({
   legId,
   line,
-  marginPct,
   onCommitOverride,
   readOnly,
 }: {
   legId: string;
   line: PricedLine;
-  marginPct: number;
   onCommitOverride: (legId: string, lineId: string, value: number | undefined) => void;
   readOnly: boolean;
 }) {
@@ -203,25 +196,24 @@ function LineRow({
   }
 
   function onBlur(e: FocusEvent<HTMLInputElement>) {
+    const edited = draft !== null;
     setDraft(null);
+    // 🔴 An UNTOUCHED field can never commit anything (final review IMPORTANT #4). `draft` is
+    // non-null iff a change event has fired on this input, so this is the strongest possible form
+    // of the old value-based no-op guard: `userEvent.tab()`, or a click anywhere else on the page,
+    // blurs whichever field last had focus, and that blur must be inert. The old guard compared
+    // computed values instead, which let a "release the pin" commit (`undefined`) slip through on a
+    // line the user had merely clicked into.
+    if (!edited) return;
     const parsed = Number(e.currentTarget.value);
     if (!Number.isFinite(parsed)) return;
-    const formula = clientAmount(line.costUsd, marginPct);
-    // Step 3 of the brief: PATCH it as an override only when it differs from the formula; typing
-    // the formula's own value back is how a pin gets released (`undefined` tells the page-level
-    // handler to delete this key from the map, not to store a redundant override at it).
-    const nextValue = parsed === formula ? undefined : parsed;
-    // Skip the round trip entirely when nothing would actually change — `line.overridden`/
-    // `clientUsd` are the props' record of what's already committed. Without this guard, tabbing
-    // (or even just clicking) through an UNTOUCHED field still fires a full-map PATCH on every
-    // blur, since `nextValue` is computed from the formula regardless of whether the value was
-    // ever edited. That isn't just wasted traffic: `userEvent.tab()`/a click elsewhere blurs
-    // whichever field last had focus, so an edit-then-navigate sequence could fire this on a
-    // SIBLING field the user never touched, racing (and clobbering the ordering of) whatever PATCH
-    // the user's actual edit already triggered.
+    // A pin is KEY PRESENCE — a typed value is always an override, even when it equals what the
+    // margin formula would have produced anyway (that is a real, server-supported state, and the
+    // only way to hold a line steady across a later margin change). Releasing is a separate,
+    // explicit act: the clear button below, or the page's "Reset overrides".
     const currentValue = line.overridden ? line.clientUsd : undefined;
-    if (nextValue === currentValue) return;
-    onCommitOverride(legId, line.id, nextValue);
+    if (parsed === currentValue) return;
+    onCommitOverride(legId, line.id, parsed);
   }
 
   return (
@@ -242,15 +234,33 @@ function LineRow({
         {readOnly ? (
           <span className="font-medium">{fmtUsd(line.clientUsd)}</span>
         ) : (
-          <input
-            type="number"
-            step="0.01"
-            value={displayValue}
-            onChange={onChange}
-            onBlur={onBlur}
-            aria-label={`${line.label} client price`}
-            className="w-28 rounded-md border border-border bg-background px-2 py-1 text-right text-sm"
-          />
+          <span className="inline-flex items-center justify-end gap-1">
+            <input
+              type="number"
+              step="0.01"
+              value={displayValue}
+              onChange={onChange}
+              onBlur={onBlur}
+              aria-label={`${line.label} client price`}
+              className="w-28 rounded-md border border-border bg-background px-2 py-1 text-right text-sm"
+            />
+            {/* The per-line door back to the formula, now that typing the formula's own value no
+                longer releases a pin. Without it "Reset overrides" — which clears EVERY pin on the
+                whole quotation — would be the only way to undo a single line. */}
+            {line.overridden ? (
+              <button
+                type="button"
+                onClick={() => onCommitOverride(legId, line.id, undefined)}
+                aria-label={`Clear ${line.label} override`}
+                title="Clear override"
+                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : (
+              <span className="inline-block w-[1.625rem]" aria-hidden />
+            )}
+          </span>
         )}
       </td>
     </tr>

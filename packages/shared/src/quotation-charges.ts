@@ -6,6 +6,7 @@ import {
   type QuoteDraft,
   type TruckingBasis,
 } from "./quote";
+import { effectiveChargeAmount } from "./quote-engine";
 
 export type ChargeGroupKey = "ORIGIN" | "FREIGHT" | "DESTINATION" | "WAREHOUSE";
 
@@ -41,8 +42,8 @@ const TRUCKING_BASIS_LABELS: Record<TruckingBasis, string> = {
   FIXED: "Fixed",
 };
 
-/** `"PER_TRIP"` -> `"Per trip"`, `"PICKUP"` -> `"Pickup"`. Used as a fallback for values outside
- *  the known label maps above (e.g. a trucking sub-type not yet given its own label). */
+/** `"DEDICATED"` -> `"Dedicated"`, `"PER_TRUCK"` -> `"Per truck"`. Used for `TruckingType` (which
+ *  has no label map of its own) and as a fallback for values outside the known label maps above. */
 function humanize(raw: string): string {
   const lower = raw.toLowerCase().replace(/_/g, " ");
   return lower.charAt(0).toUpperCase() + lower.slice(1);
@@ -58,10 +59,18 @@ export function buildQuotationCostLines(
   currency: string | null,
   unitsPerUsd: number | null,
 ): QuotationCostGroup[] {
+  const needsConversion = currency != null && currency !== "USD";
+  // Final review MINOR #10 — a non-USD leg with no usable FX rate used to price EVERY line at
+  // `0`, i.e. a silent "this shipment costs us nothing" on the one read path a client price is
+  // marked up from. Unreachable in practice (award check A7 409s a leg whose currency has no FX
+  // rate long before a quotation can be built off it), but a money path must fail loudly rather
+  // than quietly produce a wrong number if that ever stops holding. Checked once, up front, so
+  // the failure can't depend on which line happens to be converted first.
+  if (needsConversion && !(unitsPerUsd != null && unitsPerUsd > 0)) {
+    throw new Error(`cannot price a ${currency} leg: no usable FX rate (unitsPerUsd=${unitsPerUsd})`);
+  }
   const usd = (native: number): number =>
-    currency == null || currency === "USD"
-      ? round2(native)
-      : round2(unitsPerUsd && unitsPerUsd > 0 ? native / unitsPerUsd : 0);
+    needsConversion ? round2(native / (unitsPerUsd as number)) : round2(native);
 
   const linesByGroup: Record<ChargeGroupKey, QuotationCostLine[]> = {
     ORIGIN: [],
@@ -84,9 +93,17 @@ export function buildQuotationCostLines(
   };
 
   for (const charge of draft.charges) {
-    if (charge.zone === "ORIGIN") push("ORIGIN", charge.label, charge.amount, charge.note);
-    else if (charge.zone === "DESTINATION") push("DESTINATION", charge.label, charge.amount, charge.note);
-    else push("FREIGHT", charge.label, charge.amount, charge.note); // MAIN_FREIGHT, or null = ad-hoc
+    // 🔴 Final review CRITICAL #1 — NOT `charge.amount`. A HEAVY_WEIGHT_CALC line's `amount` is
+    // null BY CONSTRUCTION: its value is derived from the three calc inputs. Reading the raw
+    // column priced every excess-weight surcharge at $0.00 here, which made the quotation's leg
+    // cost fall BELOW the awarded cost and marked the client's price up from the wrong base —
+    // silently, since nothing reconciles this against `awardSnapshot.combinedUsd`.
+    // `effectiveChargeAmount` is the same fold `computeQuoteTotals` (and therefore every S5.4
+    // figure, including `awardSnapshot.usdTotal`) applies — one source of truth, no drift.
+    const amount = effectiveChargeAmount(charge);
+    if (charge.zone === "ORIGIN") push("ORIGIN", charge.label, amount, charge.note);
+    else if (charge.zone === "DESTINATION") push("DESTINATION", charge.label, amount, charge.note);
+    else push("FREIGHT", charge.label, amount, charge.note); // MAIN_FREIGHT, or null = ad-hoc
   }
 
   for (const t of draft.trucking) {

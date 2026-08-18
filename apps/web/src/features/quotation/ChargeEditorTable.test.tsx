@@ -5,7 +5,10 @@ import type { PricedLeg } from "@svyft/shared";
 import { ChargeEditorTable } from "./ChargeEditorTable";
 
 /**
- * `LEG` fixture, margin 20% (`clientAmount(costUsd, 20) = costUsd * 1.2`):
+ * `LEG` fixture. The quotation it came from is at margin 20% (`clientAmount(costUsd, 20) =
+ * costUsd * 1.2`) — stated for the reader only: this component no longer takes `marginPct` at all,
+ * which is the structural half of the final review's IMPORTANT #4 fix (nothing here can compare a
+ * typed value against the formula, because nothing here knows the formula).
  *  - ORIGIN:0  cost 100, client 120, overridden TRUE  — a pin that happens to equal the formula
  *              value (`clientAmount(100, 20) === 120`), the exact edge case Task 2's report flagged
  *              as the only case that can tell key-presence semantics apart from value-comparison.
@@ -68,9 +71,23 @@ const LEG: PricedLeg = {
   clientUsd: 300,
 };
 
+/** `LEG` with its single FREIGHT line replaced — the shape the server hands back for a pinned
+ *  line, rather than re-editing one static fixture twice in a single render (which would never
+ *  see `line.overridden` flip; that only happens via a fresh prop from the server). */
+function withFreightLine(over: { clientUsd: number; overridden: boolean }): PricedLeg {
+  return {
+    ...LEG,
+    groups: LEG.groups.map((g) =>
+      g.group !== "FREIGHT"
+        ? g
+        : { ...g, lines: [{ ...g.lines[0], ...over }], clientUsd: over.clientUsd },
+    ),
+  };
+}
+
 describe("ChargeEditorTable", () => {
   it("collapses groups by default — group totals show, lines don't — and expanding reveals only that group's lines", async () => {
-    render(<ChargeEditorTable leg={LEG} marginPct={20} onCommitOverride={vi.fn()} />);
+    render(<ChargeEditorTable leg={LEG} onCommitOverride={vi.fn()} />);
 
     // Group-level cost/client totals are visible before anything is expanded (ambiguity
     // resolution #1 — a group row shows its own totals whether collapsed or open).
@@ -89,7 +106,7 @@ describe("ChargeEditorTable", () => {
   });
 
   it("shows both the forwarder cost and the client price for a line once its group is expanded", async () => {
-    render(<ChargeEditorTable leg={LEG} marginPct={20} onCommitOverride={vi.fn()} />);
+    render(<ChargeEditorTable leg={LEG} onCommitOverride={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: /^freight$/i }));
 
     const row = screen.getByTestId("line-l1-FREIGHT:0");
@@ -98,7 +115,7 @@ describe("ChargeEditorTable", () => {
   });
 
   it("renders the pinned badge purely from line.overridden, even when the value equals the formula result", async () => {
-    render(<ChargeEditorTable leg={LEG} marginPct={20} onCommitOverride={vi.fn()} />);
+    render(<ChargeEditorTable leg={LEG} onCommitOverride={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: /origin charges/i }));
 
     // Both lines display the SAME client price (120.00 === clientAmount(100, 20)) — only
@@ -111,9 +128,9 @@ describe("ChargeEditorTable", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("commits the typed value on blur when it differs from the formula", async () => {
+  it("commits the typed value on blur", async () => {
     const onCommitOverride = vi.fn();
-    render(<ChargeEditorTable leg={LEG} marginPct={20} onCommitOverride={onCommitOverride} />);
+    render(<ChargeEditorTable leg={LEG} onCommitOverride={onCommitOverride} />);
     await userEvent.click(screen.getByRole("button", { name: /^freight$/i }));
 
     const input = within(screen.getByTestId("line-l1-FREIGHT:0")).getByRole("spinbutton");
@@ -124,42 +141,93 @@ describe("ChargeEditorTable", () => {
     expect(onCommitOverride).toHaveBeenCalledWith("l1", "FREIGHT:0", 75);
   });
 
-  it("releases an already-pinned line when the typed value matches the formula", async () => {
-    // Starts from what the server would actually hand back for a pinned line — clientUsd 75,
-    // overridden true — rather than re-editing the same static fixture twice in one render, which
-    // would never see `line.overridden` flip (that only happens via a fresh prop from the server).
-    const pinnedLeg: PricedLeg = {
-      ...LEG,
-      groups: LEG.groups.map((g) =>
-        g.group !== "FREIGHT"
-          ? g
-          : { ...g, lines: [{ ...g.lines[0], clientUsd: 75, overridden: true }], clientUsd: 75 },
-      ),
-    };
+  // 🔴 Final review IMPORTANT #4. This test previously asserted the OPPOSITE — that typing the
+  // formula's own value RELEASED the pin — which encoded a divergence from the server's semantics
+  // as a requirement, so the suite itself protected the bug. The server treats `overridden` as KEY
+  // PRESENCE (`priceQuotation`: `key in overrides`), and Task 2's fix round exists precisely to
+  // support "pinned at the value the formula would also have produced". That state has to be
+  // reachable — and survivable — from the UI too.
+  it("keeps the line pinned when the user types the formula's own value into it", async () => {
     const onCommitOverride = vi.fn();
-    render(<ChargeEditorTable leg={pinnedLeg} marginPct={20} onCommitOverride={onCommitOverride} />);
+    // Pinned at 75; clientAmount(50, 20) === 60, so 60 is "the formula's own value".
+    render(
+      <ChargeEditorTable
+        leg={withFreightLine({ clientUsd: 75, overridden: true })}
+        onCommitOverride={onCommitOverride}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: /^freight$/i }));
 
     const input = within(screen.getByTestId("line-l1-FREIGHT:0")).getByRole("spinbutton");
-    // clientAmount(50, 20) === 60 — typing the formula's own value back releases the pin.
     await userEvent.clear(input);
     await userEvent.type(input, "60");
     await userEvent.tab();
 
-    expect(onCommitOverride).toHaveBeenCalledWith("l1", "FREIGHT:0", undefined);
+    // 60 as an OVERRIDE — never `undefined`, which would have deleted the key and released the pin.
+    expect(onCommitOverride).toHaveBeenCalledWith("l1", "FREIGHT:0", 60);
   });
 
-  // S5.8 Task 6, ambiguity resolution #3 — an ISSUED/SUPERSEDED quotation's charge editor "must
-  // render read-only — no editable prices". `QuotationPage` passes `readOnly` for either status.
-  it("renders client prices as plain text, not inputs, when readOnly", async () => {
+  // 🔴 The worst shape of IMPORTANT #4: a line pinned at a value that LATER coincides with the
+  // formula (pinned at 60; the margin then moves to 20%, where clientAmount(50, 20) is also 60) was
+  // silently unpinned by nothing more than clicking into the field and tabbing out, because the
+  // release (`undefined`) sailed past the no-op guard — `undefined !== 60`.
+  it("never releases a pin whose value coincides with the formula, on focus/blur or on retyping it", async () => {
+    const onCommitOverride = vi.fn();
     render(
-      <ChargeEditorTable leg={LEG} marginPct={20} onCommitOverride={vi.fn()} readOnly />,
+      <ChargeEditorTable
+        leg={withFreightLine({ clientUsd: 60, overridden: true })}
+        onCommitOverride={onCommitOverride}
+      />,
     );
     await userEvent.click(screen.getByRole("button", { name: /^freight$/i }));
+    const input = within(screen.getByTestId("line-l1-FREIGHT:0")).getByRole("spinbutton");
+
+    // (a) focused and blurred, never edited.
+    await userEvent.click(input);
+    await userEvent.tab();
+    expect(onCommitOverride).not.toHaveBeenCalled();
+
+    // (b) genuinely retyped, to the same number it already holds — still a no-op, not a release.
+    await userEvent.clear(input);
+    await userEvent.type(input, "60");
+    await userEvent.tab();
+    expect(onCommitOverride).not.toHaveBeenCalled();
+  });
+
+  // Releasing a pin is an EXPLICIT act now that typing the formula's value no longer does it.
+  // Without this per-line control, the page-wide "Reset overrides" — which clears every pin on the
+  // whole quotation — would be the only way to undo one line.
+  it("releases a pin through the per-line clear control, which only pinned lines have", async () => {
+    const onCommitOverride = vi.fn();
+    render(<ChargeEditorTable leg={LEG} onCommitOverride={onCommitOverride} />);
+    await userEvent.click(screen.getByRole("button", { name: /origin charges/i }));
+
+    // ORIGIN:1 isn't pinned — no clear control at all.
+    expect(
+      within(screen.getByTestId("line-l1-ORIGIN:1")).queryByRole("button", { name: /clear/i }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      within(screen.getByTestId("line-l1-ORIGIN:0")).getByRole("button", { name: /clear/i }),
+    );
+    expect(onCommitOverride).toHaveBeenCalledWith("l1", "ORIGIN:0", undefined);
+  });
+
+  // S5.8 Task 6, ambiguity resolution #3 — an ISSUED quotation's charge editor "must render
+  // read-only — no editable prices". `QuotationPage` passes `readOnly` for any non-DRAFT status.
+  it("renders client prices as plain text, with no inputs and no clear controls, when readOnly", async () => {
+    render(<ChargeEditorTable leg={LEG} onCommitOverride={vi.fn()} readOnly />);
+    await userEvent.click(screen.getByRole("button", { name: /^freight$/i }));
+    await userEvent.click(screen.getByRole("button", { name: /origin charges/i }));
 
     const row = screen.getByTestId("line-l1-FREIGHT:0");
     expect(within(row).getByText("$60.00")).toBeInTheDocument();
     expect(within(row).queryByRole("spinbutton")).not.toBeInTheDocument();
+    // The badge is a historical fact about how the line was priced, so it stays; the control that
+    // would change it must not.
+    const pinnedRow = screen.getByTestId("line-l1-ORIGIN:0");
+    expect(within(pinnedRow).getByText(/pinned/i)).toBeInTheDocument();
+    expect(within(pinnedRow).queryByRole("button", { name: /clear/i })).not.toBeInTheDocument();
   });
 
   it("does not commit anything when a field is blurred without its value changing", async () => {
@@ -170,7 +238,7 @@ describe("ChargeEditorTable", () => {
     // integration test tabbing from an edited line towards the margin input blurred an untouched
     // sibling on the way, which fired a second, spurious commit).
     const onCommitOverride = vi.fn();
-    render(<ChargeEditorTable leg={LEG} marginPct={20} onCommitOverride={onCommitOverride} />);
+    render(<ChargeEditorTable leg={LEG} onCommitOverride={onCommitOverride} />);
     await userEvent.click(screen.getByRole("button", { name: /^freight$/i }));
 
     const input = within(screen.getByTestId("line-l1-FREIGHT:0")).getByRole("spinbutton");

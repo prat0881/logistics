@@ -25,8 +25,11 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
   // issue()'s post-commit `transport.send(...)` call is observable without a real SMTP transport.
   let transportSend: jest.Mock;
 
-  const cookieFor = (userId: string, role: Role) =>
-    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role, tenantId: null })}`;
+  // `tenantId` is optional because almost every test here is tenant-agnostic; the one that isn't
+  // (final review MINOR #9 — `Quotation.tenantId` was never written, leaving `@@index([tenantId])`
+  // dead) needs a real uuid on the token to tell "stamped from the caller" apart from "left null".
+  const cookieFor = (userId: string, role: Role, tenantId: string | null = null) =>
+    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role, tenantId })}`;
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
@@ -422,11 +425,21 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
   // by the shape of a request body nobody can send withheld content through anymore. Mutation
   // proof (a): reverting the render back to a verbatim/hand-built body (one that includes the
   // forwarder's name and native cost instead of the grand total) must turn this red.
-  it("renders the body server-side from the template — grand total present, forwarder identity and native cost withheld", async () => {
+  it("renders the body server-side from the template — grand total present, forwarder identity and OUR OWN COST withheld", async () => {
     const { query, ff } = await mkAwardedQuery("15");
     await request(app.getHttpServer())
       .get(`/api/queries/${query.id}/quotation`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    // 🔴 Final review MINOR #7 — this test used to run at the default margin 0, where cost and
+    // client total are the SAME number ("100.00"), so a body leaking the COST total passed the
+    // "grand total present" assertion identically to one that didn't. At 25% they are distinct
+    // ($100 cost → $125 client), which is what lets `not.toContain("100.00")` actually bite.
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 25 })
       .expect(200);
 
     const res = await request(app.getHttpServer())
@@ -435,9 +448,11 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
       .send(issueBody("15"))
       .expect(200);
 
-    // present: the one number the client is allowed to see.
-    expect(res.body.bodyText).toContain("USD 100.00");
-    // withheld: forwarder identity, native currency/amount, anything margin-shaped.
+    // present: the one number the client is allowed to see — the CLIENT total.
+    expect(res.body.bodyText).toContain("USD 125.00");
+    // withheld: our own cost total, forwarder identity, native currency/amount, anything
+    // margin-shaped.
+    expect(res.body.bodyText).not.toContain("100.00");
     expect(res.body.bodyText).not.toContain(ff.companyName);
     expect(res.body.bodyText).not.toContain("8320");
     expect(res.body.bodyText).not.toContain("INR");
@@ -588,21 +603,31 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
   // as two new read-only `QuotationDto` fields. This test is the DRAFT-time equivalent of the
   // existing "renders the body server-side..." issue-time test above — same withheld-content
   // assertions, but read straight off a plain GET, before anything has ever been issued.
-  it("GET exposes a previewSubject/previewBody rendered from the SAME template — grand total present, forwarder identity and native cost withheld", async () => {
+  it("GET exposes a previewSubject/previewBody rendered from the SAME template — grand total present, forwarder identity and OUR OWN COST withheld", async () => {
     const { query, ff } = await mkAwardedQuery("19");
 
-    const res = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .get(`/api/queries/${query.id}/quotation`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    // Margin 25 for the same reason as the issue-time test above (final review MINOR #7): at the
+    // default 0 the cost and client totals are the same string, so "leaks the cost" and "shows the
+    // client total" are indistinguishable.
+    const res = await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 25 })
       .expect(200);
 
     expect(res.body.status).toBe("DRAFT");
     expect(typeof res.body.previewSubject).toBe("string");
     expect(res.body.previewSubject.length).toBeGreaterThan(0);
-    // present: the one number the client is allowed to see.
-    expect(res.body.previewBody).toContain("USD 100.00");
-    // withheld: forwarder identity, native currency/amount, anything margin-shaped — same rule as
-    // the issue-time render, since this is generated by the identical renderLetter() call.
+    // present: the one number the client is allowed to see — the CLIENT total.
+    expect(res.body.previewBody).toContain("USD 125.00");
+    // withheld: our own cost total, forwarder identity, native currency/amount, anything
+    // margin-shaped — same rule as the issue-time render, since this is generated by the identical
+    // renderFromTemplate() call.
+    expect(res.body.previewBody).not.toContain("100.00");
     expect(res.body.previewBody).not.toContain(ff.companyName);
     expect(res.body.previewBody).not.toContain("8320");
     expect(res.body.previewBody).not.toContain("INR");
@@ -706,5 +731,205 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const updatedQuery = await prisma.query.findUnique({ where: { id: query.id } });
     expect(updatedQuery?.status).toBe("QUOTED");
     expect(updatedQuery?.awardSnapshot).toBeNull();
+  });
+
+  // ── Final review fixes ────────────────────────────────────────────────────────────────────
+
+  // 🔴 CRITICAL #3 — the OTHER half of the reopen behaviour Task 4 built, which no e2e reached.
+  // `reopenComparison` supersedes v1 and deletes the draft; re-freezing the award and opening the
+  // builder then found neither a DRAFT nor an ISSUED row and fell through to a hardcoded
+  // `create({ version: 1 })`, colliding with the SUPERSEDED v1 on `@@unique([queryId, version])`
+  // — a PERMANENT 409 on every subsequent GET, directly contradicting the design's "a new
+  // quotation starts fresh once the award is re-frozen". Mutation proof: hardcode `version: 1`
+  // back into `getOrCreateDraft`'s create and this test 409s.
+  it("reopen → re-award → GET starts a FRESH draft at the next version instead of colliding with the superseded one", async () => {
+    const { query, leg } = await mkAwardedQuery("22");
+    await prisma.leg.update({ where: { id: leg.id }, data: { status: "APPROVED" } });
+
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("22"))
+      .expect(200);
+
+    // Capture the frozen award before the reopen clears it — the "re-award" step below re-freezes
+    // exactly the same snapshot, which is what `generateClientQuote` would produce again.
+    const frozen = await prisma.query.findUniqueOrThrow({
+      where: { id: query.id },
+      select: { awardSnapshot: true },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/reopen-comparison`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    expect((await prisma.quotation.findFirstOrThrow({ where: { queryId: query.id } })).status).toBe(
+      "SUPERSEDED",
+    );
+
+    await prisma.query.update({
+      where: { id: query.id },
+      data: { awardSnapshot: frozen.awardSnapshot as Prisma.InputJsonValue },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    expect(res.body.status).toBe("DRAFT");
+    expect(res.body.version).toBe(2);
+    expect(res.body.marginPct).toBe(0); // genuinely fresh, not a clone of the superseded one
+
+    const rows = await prisma.quotation.findMany({
+      where: { queryId: query.id },
+      orderBy: { version: "asc" },
+    });
+    expect(rows.map((r) => [r.version, r.status])).toEqual([
+      [1, "SUPERSEDED"],
+      [2, "DRAFT"],
+    ]);
+
+    // …and it stays idempotent from there — the second GET returns that same v2 draft.
+    const again = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    expect(again.body.id).toBe(res.body.id);
+  });
+
+  // 🔴 IMPORTANT #5 — `omitEmptyTokenLine` was applied to `Valid_Until` alone, so a query with no
+  // vessel (or no PO reference, no description, no packages, no ready date — all nullable, none
+  // unusual) sent the CLIENT a letter full of bare labels: `Vessel: `, `Your reference: `,
+  // `Port of call: `. `mkAwardedQuery` already leaves every one of those null, which is exactly
+  // how invisible this was. Mutation proof: narrow OMITTABLE_TOKENS back to ["Valid_Until"].
+  it("omits an optional token's whole line rather than sending the client a dangling label", async () => {
+    const { query } = await mkAwardedQuery("23", null);
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("23"))
+      .expect(200);
+
+    const body = res.body.bodyText as string;
+    for (const label of [
+      "Your reference",
+      "Shipment:",
+      "Vessel:",
+      "Port of call",
+      "Cargo:",
+      "Cargo ready",
+      "Quotation valid until",
+    ]) {
+      expect(body).not.toContain(label);
+    }
+    // The generic net, so a token added to the template later can't quietly reintroduce this:
+    // no line may be left as a bare "Some label:" with nothing after it.
+    expect(body.split("\n").filter((l) => /\S.*:\s*$/.test(l))).toEqual([]);
+    // …while everything that IS populated survives untouched.
+    expect(body).toContain(`Our reference: ${query.queryCode}`);
+    expect(body).toContain("USD 100.00");
+  });
+
+  // The other half of the pair above: proof the omission is data-driven, not the template quietly
+  // having lost those lines. Without this, deleting them from the seed would pass the test above.
+  it("keeps an optional token's line when the query actually carries that data", async () => {
+    const { query } = await mkAwardedQuery("24");
+    await prisma.query.update({
+      where: { id: query.id },
+      data: {
+        vesselName: "MV Testarossa",
+        portOfCall: "Jebel Ali",
+        shipmentDescription: "Spare parts, palletised",
+      },
+    });
+
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("24"))
+      .expect(200);
+
+    expect(res.body.bodyText).toContain("Vessel: MV Testarossa");
+    expect(res.body.bodyText).toContain("Port of call: Jebel Ali");
+    expect(res.body.bodyText).toContain("Shipment: Spare parts, palletised");
+    expect(res.body.bodyText).toContain("Quotation valid until: 2099-01-01");
+  });
+
+  // MINOR #8 — `toDto` re-rendered the preview from LIVE query data for every status, so an
+  // ISSUED quotation's "this is what we sent" could drift from the `bodyText` actually sent the
+  // moment anyone touched the query afterwards. Mutation proof: drop the `status !== "DRAFT"`
+  // early return in `previewFor` and this test sees "MV Renamed".
+  it("a non-DRAFT quotation's preview replays the letter that was issued, not a re-render off live query data", async () => {
+    const { query } = await mkAwardedQuery("25");
+    await prisma.query.update({ where: { id: query.id }, data: { vesselName: "MV Original" } });
+
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    const issueRes = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("25"))
+      .expect(200);
+    expect(issueRes.body.bodyText).toContain("MV Original");
+
+    // The query keeps moving after the letter has gone out.
+    await prisma.query.update({ where: { id: query.id }, data: { vesselName: "MV Renamed" } });
+
+    const after = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    expect(after.body.status).toBe("ISSUED");
+    expect(after.body.previewBody).toBe(issueRes.body.bodyText);
+    expect(after.body.previewSubject).toBe(issueRes.body.subject);
+    expect(after.body.previewBody).not.toContain("MV Renamed");
+  });
+
+  // MINOR #9 — every peer service stamps `tenantId` from the caller; this one never did, so
+  // `@@index([tenantId])` indexed a column that was always null. Mutation proof: drop
+  // `tenantId: user.tenantId` from `getOrCreateDraft`'s create.
+  it("stamps the caller's tenant on the quotation it creates, and carries it into a revision", async () => {
+    const tenantId = randomUUID();
+    const { query } = await mkAwardedQuery("26");
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER, tenantId))
+      .expect(200);
+    expect((await prisma.quotation.findUniqueOrThrow({ where: { id: res.body.id } })).tenantId).toBe(
+      tenantId,
+    );
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER, tenantId))
+      .send(issueBody("26"))
+      .expect(200);
+    const revised = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/revise`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER, tenantId))
+      .expect(200);
+
+    expect(
+      (await prisma.quotation.findUniqueOrThrow({ where: { id: revised.body.id } })).tenantId,
+    ).toBe(tenantId);
   });
 });

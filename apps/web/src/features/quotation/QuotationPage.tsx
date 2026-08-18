@@ -89,18 +89,36 @@ export function QuotationPage() {
     }, MARGIN_DEBOUNCE_MS);
   }
 
-  // 🔴 See module doc comment — always the FULL map, seeded from the server's last-known state.
+  // 🔴 See module doc comment — always the FULL map. Seeded from the LAST MAP WE SENT, falling
+  // back to the server's own copy only before the first send (final review IMPORTANT #6):
+  // `quotation.data.overrides` is refreshed by a PATCH's `onSuccess`, so blurring line A and then
+  // line B before A's response lands seeded B's wholesale PATCH from pre-A state and silently
+  // discarded A's hand-set price — a lost update on a money field, with no error and no visual tell
+  // until the next refetch snapped the line back.
+  const sentOverridesRef = useRef<Record<string, number> | null>(null);
+
+  function sendOverrides(next: Record<string, number>) {
+    sentOverridesRef.current = next;
+    patch.mutate(
+      { overrides: next },
+      // A rejected PATCH never reached the server, so the ref would otherwise keep seeding every
+      // later edit from state that doesn't exist there. Fall back to the server's own last-known
+      // map instead.
+      { onError: () => { sentOverridesRef.current = null; } },
+    );
+  }
+
   function onCommitOverride(legId: string, lineId: string, value: number | undefined) {
     if (!quotation.data) return;
     const key = `${legId}:${lineId}`;
-    const nextOverrides = { ...quotation.data.overrides };
+    const nextOverrides = { ...(sentOverridesRef.current ?? quotation.data.overrides) };
     if (value === undefined) delete nextOverrides[key];
     else nextOverrides[key] = value;
-    patch.mutate({ overrides: nextOverrides });
+    sendOverrides(nextOverrides);
   }
 
   function onResetOverrides() {
-    patch.mutate({ overrides: {} });
+    sendOverrides({});
   }
 
   if (!id) return <p role="alert" className="text-sm text-destructive">Missing query id.</p>;
@@ -200,11 +218,18 @@ export function QuotationPage() {
           )}
         </div>
 
+        {/* `!isDraft` here means ISSUED, full stop. A SUPERSEDED row can never reach this
+            component: `getOrCreateDraft` returns only the current DRAFT or ISSUED row (and mints a
+            fresh DRAFT past a superseded one — final review CRITICAL #3), while `patch`/`issue`/
+            `revise` answer a non-DRAFT with 409/404 rather than a DTO. The final review flagged
+            the old `status === "ISSUED" ? … : "…superseded…"` ternary's second arm as dead, and it
+            stays dead after the CRITICAL #3 fix — that fix makes the reopen-then-re-award path
+            hand back a NEW DRAFT, which is precisely what keeps a SUPERSEDED row off this screen.
+            `readOnly={!isDraft}` below is kept as-is: it is a status-agnostic "not editable" gate,
+            not a second copy of this reasoning. */}
         {!isDraft && (
           <p data-testid="quotation-status-note" className="text-sm text-muted-foreground">
-            {qu.status === "ISSUED"
-              ? "This quotation has been issued and is read-only. Use Revise to start a new draft."
-              : "This quotation was superseded and is read-only."}
+            This quotation has been issued and is read-only. Use Revise to start a new draft.
           </p>
         )}
 
@@ -224,7 +249,6 @@ export function QuotationPage() {
             <ChargeEditorTable
               key={leg.legId}
               leg={leg}
-              marginPct={qu.marginPct}
               onCommitOverride={onCommitOverride}
               readOnly={!isDraft}
             />

@@ -3,7 +3,12 @@ import { useParams } from "react-router-dom";
 import { Role } from "@svyft/shared";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { useQueryDetail } from "@/features/query-wizard/useQueryDetail";
-import { StageRail, isRfqStageEnabled, isQuotesStageEnabled } from "@/features/rfq-workspace/StageRail";
+import {
+  StageRail,
+  isRfqStageEnabled,
+  isQuotesStageEnabled,
+  isAwardStageEnabled,
+} from "@/features/rfq-workspace/StageRail";
 import { QueryOverviewHeader } from "@/features/rfq-workspace/QueryOverviewHeader";
 import { RouteDiagram } from "@/features/query-wizard/steps/legs/RouteDiagram";
 import { useComparison } from "./useComparison";
@@ -63,11 +68,16 @@ export function CompareQuotesPage() {
 
   return (
     <div className="space-y-4">
+      {/* 🔴 Final review CRITICAL #2 — `awardEnabled` was omitted here, so the Award step rendered
+          with `to: undefined` and the S5.8 Client Quotation builder had NO entry point anywhere in
+          the app: `/queries/:id/quotation` was reachable only by typing the URL. This screen is
+          where the award is frozen, so it is the builder's natural predecessor. */}
       <StageRail
         queryId={id}
         active="quotes"
         rfqEnabled={isRfqStageEnabled(q.status)}
         quotesEnabled={isQuotesStageEnabled(q.status)}
+        awardEnabled={isAwardStageEnabled(q.status)}
       />
 
       <div className="space-y-5">

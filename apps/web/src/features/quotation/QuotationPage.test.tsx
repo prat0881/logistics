@@ -667,6 +667,79 @@ describe("QuotationPage", () => {
     });
   });
 
+  // 🔴 Final review IMPORTANT #6 — a lost update on a money field. `onCommitOverride` seeded the
+  // wholesale override map from `quotation.data.overrides`, which is only refreshed by the PREVIOUS
+  // PATCH's `onSuccess`. Blur line A, then blur line B before A's response lands, and B's PATCH was
+  // composed from pre-A state — so the server replaced the map with one that never contained A, and
+  // the manager's hand-set price on A vanished with no error and no visual tell until the next
+  // refetch snapped it back. The fix seeds from the LAST MAP SENT (a ref), falling back to the
+  // server's copy only before the first send.
+  it("a second line edit made before the first PATCH responds still carries the first line's override", async () => {
+    const patchBodies: unknown[] = [];
+    // A property on an object, not a `let` — TS's control-flow analysis narrows a `let` that is
+    // only ever assigned inside a callback down to `null`, which makes the call below a type error
+    // (esbuild transpiles the test fine, so `tsc` is the only thing that catches it).
+    const firstPatch: { release?: () => void } = {};
+    const res = (body: unknown) =>
+      ({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(body),
+        text: () => Promise.resolve(JSON.stringify(body)),
+      }) as Response;
+
+    const quotation = baseQuotation();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        if (url.endsWith("/api/queries/q1/quotation") && init?.method === "PATCH") {
+          patchBodies.push(JSON.parse(init.body as string));
+          // Hold the FIRST PATCH's response open — that in-flight window IS the bug.
+          if (patchBodies.length === 1) {
+            return new Promise<Response>((resolve) => {
+              firstPatch.release = () => resolve(res(quotation));
+            });
+          }
+          return Promise.resolve(res(quotation));
+        }
+        if (url.endsWith("/api/queries/q1/quotation")) return Promise.resolve(res(quotation));
+        if (url.endsWith("/api/queries/q1")) return Promise.resolve(res(QUERY_DETAIL));
+        return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}), text: () => Promise.resolve("") } as Response);
+      }),
+    );
+    renderWithProviders(
+      <>
+        <AuthProbe />
+        <Routes>
+          <Route path="/queries/:id/quotation" element={<QuotationPage />} />
+        </Routes>
+      </>,
+      { route: "/queries/q1/quotation", user: { id: "u1", name: "Viewer", email: "v@x.com", role: "MANAGER" } },
+    );
+
+    await screen.findByText("MANAGER");
+    await userEvent.click(await screen.findByRole("button", { name: /origin charges/i }));
+
+    const first = within(screen.getByTestId("line-l1-ORIGIN:0")).getByRole("spinbutton");
+    await userEvent.clear(first);
+    await userEvent.type(first, "45");
+    await userEvent.tab();
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+    expect(patchBodies[0]).toEqual({ overrides: { "l1:ORIGIN:0": 45 } });
+
+    // Second edit while the first request is STILL in flight — nothing has refreshed
+    // `quotation.data.overrides`, which is still `{}`.
+    const second = within(screen.getByTestId("line-l1-ORIGIN:1")).getByRole("spinbutton");
+    await userEvent.clear(second);
+    await userEvent.type(second, "33");
+    await userEvent.tab();
+    await waitFor(() => expect(patchBodies).toHaveLength(2));
+
+    expect(patchBodies[1]).toEqual({ overrides: { "l1:ORIGIN:0": 45, "l1:ORIGIN:1": 33 } });
+
+    firstPatch.release?.();
+  });
+
   // S5.8 Task 6 end-to-end: preview → issue → the page itself flips to the read-only ISSUED view
   // with "Revise" in place of "Preview quotation" — the whole point of ambiguity resolution #3/#4.
   it("previews, issues, then renders read-only with Revise in place of Preview", async () => {

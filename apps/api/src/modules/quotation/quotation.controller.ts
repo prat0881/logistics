@@ -21,8 +21,8 @@ export class QuotationController {
   constructor(private readonly quotation: QuotationService) {}
 
   @Get()
-  get(@Param("id") id: string) {
-    return this.quotation.getOrCreateDraft(id);
+  get(@Param("id") id: string, @CurrentUser() user: RequestUser) {
+    return this.quotation.getOrCreateDraft(id, user);
   }
 
   @Patch()
