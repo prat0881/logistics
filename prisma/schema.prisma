@@ -763,6 +763,8 @@ model Query {
   awardDecisions      LegAwardDecision[]
   awardDecisionEvents AwardDecisionEvent[]
 
+  quotations Quotation[]
+
   @@index([tenantId])
   @@index([clientId])
   @@index([assignedUserId])
@@ -1040,4 +1042,36 @@ model FxRate {
   createdAt    DateTime @default(now())
 
   @@index([currency, effectiveFrom])
+}
+
+// ── S5.8 — client quotation (design doc "Data model") ──────────────────────────
+enum QuotationStatus {
+  DRAFT
+  ISSUED
+  SUPERSEDED
+}
+
+model Quotation {
+  id             String          @id @default(uuid()) @db.Uuid
+  tenantId       String?         @db.Uuid
+  queryId        String          @db.Uuid
+  query          Query           @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  version        Int
+  status         QuotationStatus @default(DRAFT)
+  marginPct      Decimal         @db.Decimal(5, 2)
+  draftJson      Json // lines + overrides, editable
+  issuedSnapshot Json? // frozen at issue
+  costTotalUsd   Decimal         @db.Decimal(14, 2)
+  clientTotalUsd Decimal         @db.Decimal(14, 2)
+  recipientEmail String?
+  subject        String?
+  bodyText       String?
+  issuedAt       DateTime?
+  issuedByUserId String?         @db.Uuid
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([queryId, version])
+  @@index([queryId, status])
+  @@index([tenantId])
 }

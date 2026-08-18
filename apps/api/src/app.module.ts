@@ -28,6 +28,7 @@ import { CommsModule } from "./modules/comms/comms.module";
 import { FxRatesModule } from "./modules/fx-rates/fx-rates.module";
 import { ComparisonModule } from "./modules/comparison/comparison.module";
 import { AwardModule } from "./modules/award/award.module";
+import { QuotationModule } from "./modules/quotation/quotation.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -68,6 +69,7 @@ const staticImports =
     FxRatesModule,
     ComparisonModule,
     AwardModule,
+    QuotationModule,
     HealthModule,
   ],
 })
