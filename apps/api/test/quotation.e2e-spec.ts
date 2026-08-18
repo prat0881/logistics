@@ -12,6 +12,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { MESSAGE_TRANSPORT, type MessageTransport } from "../src/modules/comms/transport";
 
 const PFX = "s58q";
 const CODE = `YAL00-${PFX}`;
@@ -20,6 +21,9 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let jwt: JwtService;
+  // Fix round 1 (review IMPORTANT #2) — spies on the MESSAGE_TRANSPORT the whole app shares, so
+  // issue()'s post-commit `transport.send(...)` call is observable without a real SMTP transport.
+  let transportSend: jest.Mock;
 
   const cookieFor = (userId: string, role: Role) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role, tenantId: null })}`;
@@ -155,16 +159,20 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     });
   };
 
-  // Task 4 — the composed client email body for `.../issue`. Every field quotationIssueSchema
-  // requires; content is arbitrary since no web compose screen exists yet to exercise.
+  // Task 4, fix round 1 — `.../issue`'s body no longer carries `bodyText` at all (schema
+  // change, packages/shared/src/quotation.ts): the letter is always rendered server-side from
+  // the seeded template, never accepted as free text.
   const issueBody = (suffix: string) => ({
     recipientEmail: `client-${suffix}@e2e.test`,
     subject: `Quotation for your shipment — ${suffix}`,
-    bodyText: `Dear Client,\n\nPlease find our quotation for shipment ${suffix} below.\n\nTotal — all inclusive: USD 100.00\n\nRegards,\nYankalfa Logistics`,
   });
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    transportSend = jest.fn().mockResolvedValue(undefined);
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(MESSAGE_TRANSPORT)
+      .useValue({ send: transportSend } satisfies MessageTransport)
+      .compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
     app.useGlobalFilters(new PrismaExceptionFilter());
@@ -361,8 +369,10 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     expect(res.body.issuedByUserId).toBe(userId);
     expect(res.body.issuedAt).not.toBeNull();
     expect(res.body.recipientEmail).toBe(body.recipientEmail);
-    expect(res.body.subject).toBe(body.subject);
-    expect(res.body.bodyText).toBe(body.bodyText);
+    expect(res.body.subject).toBe(body.subject); // caller-supplied subject wins over the template's
+    // bodyText is always server-rendered now (fix round 1) — never the caller's, since there is
+    // no bodyText field on the request body anymore.
+    expect(res.body.bodyText).toContain("USD 100.00");
     expect(res.body.pricing.clientTotalUsd).toBe(100);
 
     const row = await prisma.quotation.findUnique({ where: { id: res.body.id } });
@@ -382,7 +392,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
       .expect(200);
 
     const body = issueBody("9");
-    await request(app.getHttpServer())
+    const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
       .send(body)
@@ -396,7 +406,102 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     expect(logs[0].channel).toBe("EMAIL");
     expect(logs[0].toAddress).toBe(body.recipientEmail);
     expect(logs[0].subject).toBe(body.subject);
-    expect(logs[0].bodyRendered).toBe(body.bodyText);
+    // The MessageLog's rendered body is the SAME text frozen onto Quotation.bodyText — one
+    // render, written to both places (fix round 1).
+    expect(logs[0].bodyRendered).toBe(res.body.bodyText);
+    expect(logs[0].bodyRendered).toContain("USD 100.00");
+    // Real tokens now (fix round 1, review MINOR #3) — not the placeholder `{}`.
+    expect(logs[0].tokens).toMatchObject({
+      Query_ID: expect.any(String),
+      Grand_Total: "100.00",
+    });
+  });
+
+  // Fix round 1, review IMPORTANT #1 — the design's absolute rule ("grand total only, no
+  // forwarder names, no cost, no margin") has to be enforced by the render itself, not merely
+  // by the shape of a request body nobody can send withheld content through anymore. Mutation
+  // proof (a): reverting the render back to a verbatim/hand-built body (one that includes the
+  // forwarder's name and native cost instead of the grand total) must turn this red.
+  it("renders the body server-side from the template — grand total present, forwarder identity and native cost withheld", async () => {
+    const { query, ff } = await mkAwardedQuery("15");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("15"))
+      .expect(200);
+
+    // present: the one number the client is allowed to see.
+    expect(res.body.bodyText).toContain("USD 100.00");
+    // withheld: forwarder identity, native currency/amount, anything margin-shaped.
+    expect(res.body.bodyText).not.toContain(ff.companyName);
+    expect(res.body.bodyText).not.toContain("8320");
+    expect(res.body.bodyText).not.toContain("INR");
+    expect(res.body.bodyText.toLowerCase()).not.toContain("margin");
+
+    const log = await prisma.messageLog.findFirst({
+      where: { entityType: "QUERY", entityId: query.id, eventKey: "quotation.issued" },
+    });
+    expect(log?.bodyRendered).toBe(res.body.bodyText);
+  });
+
+  it("omits the valid-until line entirely from the rendered body when every winning quote's validity is null", async () => {
+    const { query } = await mkAwardedQuery("16", null);
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("16"))
+      .expect(200);
+
+    expect(res.body.bodyText).not.toMatch(/valid until/i);
+  });
+
+  it("falls back to the template's own rendered subject when the caller omits subject", async () => {
+    const { query } = await mkAwardedQuery("17");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ recipientEmail: "client-17@e2e.test" }) // no subject
+      .expect(200);
+
+    expect(res.body.subject).toContain(query.queryCode);
+  });
+
+  // Fix round 1, review IMPORTANT #2 — transport.send() must fire post-commit or quotations
+  // will silently never be delivered once SmtpTransport lands at go-live, with nothing to show
+  // why. Mutation proof (b): removing the `this.transport.send(logId)` call must turn this red.
+  it("issue hands the composed MessageLog to the transport after the transaction commits", async () => {
+    transportSend.mockClear();
+    const { query } = await mkAwardedQuery("18");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(issueBody("18"))
+      .expect(200);
+
+    const log = await prisma.messageLog.findFirst({
+      where: { entityType: "QUERY", entityId: query.id, eventKey: "quotation.issued" },
+    });
+    expect(transportSend).toHaveBeenCalledWith(log?.id);
   });
 
   it("issue 409s when the draft has no priced legs", async () => {

@@ -1,10 +1,13 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type { Prisma, Quotation } from "@prisma/client";
 import {
   Channel,
   buildQuotationCostLines,
+  formatInZone,
   priceQuotation,
   rateVariantLabel,
+  renderTemplate,
+  type PricedQuotation,
   type QueryAwardSnapshot,
   type QuotationCostGroup,
   type QuotationDto,
@@ -14,12 +17,42 @@ import {
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { MessageTemplateService } from "../comms/message-template.service";
+import { MESSAGE_TRANSPORT, type MessageTransport } from "../comms/transport";
 import { QueryStatusProjector } from "../status/query-status.projector";
 import type { RequestUser } from "../auth/types";
 
 // Same FROM address notification-dispatcher.service.ts uses for every other outbound EMAIL —
 // duplicated locally rather than imported since that module doesn't export its constant.
 const QUOTATION_EMAIL_FROM = "logistics@yankalfa.com";
+
+// The tokens the seeded `quotation.issued.email` template's subject/body reference (Task 4 fix
+// round 1, review IMPORTANT #1) — every value a plain string, "" when the underlying data is
+// absent (`renderTemplate` blanks a missing token the same way).
+interface IssueTokens {
+  Query_ID: string;
+  Client_Name: string;
+  Reference_Tags: string;
+  Shipment_Description: string;
+  Vessel: string;
+  Port_Of_Call: string;
+  Cargo_Summary: string;
+  Ready_Date: string;
+  Valid_Until: string;
+  Grand_Total: string;
+  Quotation_Ref: string;
+  // Index signature so this satisfies renderTemplate's `Record<string, string>` param — every
+  // key above is already a string, this just makes the structural match explicit to tsc.
+  [key: string]: string;
+}
+
+/** Strips the entire line containing `{{token}}` (plus its own trailing newline) out of a
+ *  template body when `value` is empty — the pre-authorised "omit the line entirely rather than
+ *  print an empty value" rule (design doc Q2), made real at render time instead of only living
+ *  as `QuotationDto.validUntil: null`. Generic over any token, used here for `Valid_Until`. */
+function omitEmptyTokenLine(body: string, token: string, value: string): string {
+  if (value) return body;
+  return body.replace(new RegExp(`^.*\\{\\{${token}\\}\\}.*\\n?`, "m"), "");
+}
 
 /** One leg's priceable input, cached verbatim in `Quotation.draftJson` at creation time so a
  *  later GET/PATCH never has to re-read the winning quotes or re-run `buildQuotationCostLines` —
@@ -62,6 +95,7 @@ export class QuotationService {
     private readonly prisma: PrismaService,
     private readonly messageTemplates: MessageTemplateService,
     private readonly projector: QueryStatusProjector,
+    @Inject(MESSAGE_TRANSPORT) private readonly transport: MessageTransport,
   ) {}
 
   /** `GET /api/queries/:id/quotation` — idempotent: creates the one-and-only DRAFT (version 1)
@@ -138,17 +172,16 @@ export class QuotationService {
     return this.toDto(updated);
   }
 
-  /** Builds the cached per-leg cost lines for a brand-new draft. One query each for legs,
-   *  forwarders and winning quotes — batched over every snapshot leg (`findMany({ where: { id:
-   *  { in: [...] } } })`), never one query per leg, so an award with several legs doesn't cost
-   *  an N+1 round-trip. */
   /** `POST /api/queries/:id/quotation/issue` — Manager+. Freezes the current DRAFT: reprices
-   *  one more time off its own `draftJson` (never re-reads the award), stamps `ISSUED` +
-   *  `issuedAt`/`issuedByUserId` + the caller's composed `recipientEmail`/`subject`/`bodyText`,
-   *  writes `issuedSnapshot` (the priced output, verbatim — decoupled from any future change to
-   *  `priceQuotation`'s own logic), and logs one audit `MessageLog` row against the seeded
-   *  `quotation.issued.email` template. All in one transaction, closing with the projector's
-   *  `client` recompute — same shape as `generateClientQuote` (award.service.ts). */
+   *  one more time off its own `draftJson` (never re-reads the award), renders the seeded
+   *  `quotation.issued.email` template server-side (fix round 1, review IMPORTANT #1 — the ONLY
+   *  way "grand total only, no forwarder names" is enforced by code rather than by the shape of
+   *  a UI that doesn't exist yet), stamps `ISSUED` + `issuedAt`/`issuedByUserId` + the rendered
+   *  `recipientEmail`/`subject`/`bodyText`, writes `issuedSnapshot` (the priced output,
+   *  verbatim), and logs one audit `MessageLog` row. All in one transaction, closing with the
+   *  projector's `client` recompute — same shape as `generateClientQuote` (award.service.ts).
+   *  `transport.send` fires only AFTER that transaction commits (fix round 1, review
+   *  IMPORTANT #2 — mirrors `StatusService.fire`'s post-commit `emitAsync`). */
   async issue(queryId: string, body: QuotationIssue, user: RequestUser): Promise<QuotationDto> {
     const current = await this.prisma.quotation.findFirst({
       where: { queryId },
@@ -176,24 +209,47 @@ export class QuotationService {
       throw new ConflictException("the quotation.issued.email template is not configured");
     }
 
+    const tokens = await this.buildIssueTokens(queryId, current.version, priced, stored);
+    // "omit the line entirely rather than print an empty value" (design doc Q2) — real at
+    // render time now, not just `QuotationDto.validUntil: null`.
+    const bodyTemplate = omitEmptyTokenLine(template.body, "Valid_Until", tokens.Valid_Until);
+    const renderedBody = renderTemplate(bodyTemplate, tokens);
+    // Subject stays caller-editable (design doc: the envelope names it as such); the letter
+    // itself never is — `body` no longer carries a `bodyText` field at all (schema change,
+    // packages/shared/src/quotation.ts).
+    const renderedSubject = renderTemplate(template.subject ?? "", tokens);
+    const finalSubject = body.subject?.trim() || renderedSubject;
+
     const issuedAt = new Date();
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const row = await tx.quotation.update({
-        where: { id: current.id },
+    const { row, logId } = await this.prisma.$transaction(async (tx) => {
+      // Re-check DRAFT atomically WITH the write (fix round 1, review MINOR #4) — a plain
+      // re-read here wouldn't actually close the race: Prisma's `.update({ where: { id } })`
+      // has no status guard of its own, so a second concurrent `issue()` call could still
+      // blindly overwrite an already-ISSUED row after re-reading DRAFT moments earlier. Folding
+      // the guard into the UPDATE's own WHERE clause makes the check atomic with the write: a
+      // losing concurrent call's `updateMany` affects 0 rows once the winner has committed.
+      const guard = await tx.quotation.updateMany({
+        where: { id: current.id, status: "DRAFT" },
         data: {
           status: "ISSUED",
           issuedAt,
           issuedByUserId: user.userId,
           recipientEmail: body.recipientEmail,
-          subject: body.subject,
-          bodyText: body.bodyText,
+          subject: finalSubject,
+          bodyText: renderedBody,
           issuedSnapshot: priced as unknown as Prisma.InputJsonValue,
           costTotalUsd: priced.costTotalUsd,
           clientTotalUsd: priced.clientTotalUsd,
         },
       });
-      await tx.messageLog.create({
+      if (guard.count === 0) {
+        throw new ConflictException("this quotation is not a draft and cannot be issued");
+      }
+      const row = await tx.quotation.findUniqueOrThrow({ where: { id: current.id } });
+
+      const log = await tx.messageLog.create({
         data: {
+          tenantId: user.tenantId,
           entityType: "QUERY",
           entityId: queryId,
           eventKey: "quotation.issued",
@@ -201,9 +257,9 @@ export class QuotationService {
           templateKey: template.key,
           fromAddress: QUOTATION_EMAIL_FROM,
           toAddress: body.recipientEmail,
-          subject: body.subject,
-          bodyRendered: body.bodyText,
-          tokens: {} as unknown as Prisma.InputJsonValue,
+          subject: finalSubject,
+          bodyRendered: renderedBody,
+          tokens: tokens as unknown as Prisma.InputJsonValue,
           composedById: user.userId,
         },
       });
@@ -211,9 +267,86 @@ export class QuotationService {
       // visible to the `issued > 0` count this reads, so AWAITING_CLIENT_DECISION lands atomically
       // with the freeze rather than via the eventual-consistency leg.status.changed listener.
       await this.projector.recompute(queryId, tx);
-      return row;
+      return { row, logId: log.id };
     });
-    return this.toDto(updated);
+
+    await this.transport.send(logId);
+    return this.toDto(row);
+  }
+
+  /** Gathers the `IssueTokens` `issue()` renders the `quotation.issued.email` template with —
+   *  every value straight off the query's own persisted data, never off caller input (that's
+   *  the whole point: the letter's content is not something a request body can shape). One
+   *  round trip each for the query header, its cargo rows (client PO references) and its
+   *  packages (a plain package-count + gross-weight summary), run in parallel. */
+  private async buildIssueTokens(
+    queryId: string,
+    version: number,
+    priced: PricedQuotation,
+    stored: StoredQuotationDraft,
+  ): Promise<IssueTokens> {
+    const [query, cargos, packages] = await Promise.all([
+      this.prisma.query.findUnique({
+        where: { id: queryId },
+        select: {
+          queryCode: true,
+          contactName: true,
+          client: { select: { companyName: true } },
+          shipmentDescription: true,
+          vesselName: true,
+          imoNumber: true,
+          portOfCall: true,
+          readyDate: true,
+          readyDateTimezone: true,
+        },
+      }),
+      this.prisma.cargo.findMany({ where: { queryId }, select: { poReference: true } }),
+      this.prisma.package.findMany({ where: { queryId }, select: { grossWt: true } }),
+    ]);
+
+    // "their reference tags" (design doc) — the CLIENT's own PO/booking references (per-cargo-row
+    // `poReference`), matching the template's "Your reference:" label. Not `Package.tags`
+    // (the internal HEAVY/FRAGILE/DG handling classification) — that isn't something we "echo
+    // back" as the client's own reference.
+    const referenceTags = [...new Set(cargos.map((c) => c.poReference?.trim()).filter((v): v is string => !!v))];
+
+    const vessel = query?.vesselName
+      ? `${query.vesselName}${query.imoNumber ? ` (IMO ${query.imoNumber})` : ""}`
+      : query?.imoNumber
+        ? `IMO ${query.imoNumber}`
+        : "";
+
+    const packageCount = packages.length;
+    const grossKg = packages.reduce((sum, p) => sum + Number(p.grossWt), 0);
+    const cargoSummary =
+      packageCount > 0 ? `${packageCount} package${packageCount === 1 ? "" : "s"}, ${grossKg.toFixed(0)} kg gross` : "";
+
+    const readyDate = query?.readyDate
+      ? query.readyDateTimezone
+        ? formatInZone(query.readyDate.toISOString(), query.readyDateTimezone)
+        : query.readyDate.toISOString().slice(0, 10)
+      : "";
+
+    const validUntil = earliestValidUntil(stored.legs);
+
+    return {
+      Query_ID: query?.queryCode ?? "",
+      Client_Name: query?.client?.companyName ?? query?.contactName ?? "",
+      Reference_Tags: referenceTags.join(", "),
+      Shipment_Description: query?.shipmentDescription ?? "",
+      Vessel: vessel,
+      Port_Of_Call: query?.portOfCall ?? "",
+      Cargo_Summary: cargoSummary,
+      Ready_Date: readyDate,
+      Valid_Until: validUntil ? validUntil.slice(0, 10) : "",
+      Grand_Total: priced.clientTotalUsd.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+      // No dedicated "quotation reference" concept exists elsewhere in the codebase — judgment
+      // call (see task-4-report.md fix-round section): the query's own code plus this version.
+      Quotation_Ref: `${query?.queryCode ?? ""}-Q${version}`,
+    };
   }
 
   /** `POST /api/queries/:id/quotation/revise` — Manager+. Clones the latest ISSUED version into
@@ -252,6 +385,10 @@ export class QuotationService {
     return this.toDto(created);
   }
 
+  /** Builds the cached per-leg cost lines for a brand-new draft. One query each for legs,
+   *  forwarders and winning quotes — batched over every snapshot leg (`findMany({ where: { id:
+   *  { in: [...] } } })`), never one query per leg, so an award with several legs doesn't cost
+   *  an N+1 round-trip. */
   private async buildInitialDraft(snapshot: QueryAwardSnapshot): Promise<StoredQuotationDraft> {
     const legIds = snapshot.legs.map((l) => l.legId);
     const forwarderIds = [...new Set(snapshot.legs.map((l) => l.freightForwarderId))];

@@ -14,11 +14,24 @@ export const quotationPatchSchema = z.object({
 });
 export type QuotationPatch = z.infer<typeof quotationPatchSchema>;
 
-/** `POST /api/queries/:id/quotation/issue` body — the composed client email. */
+/**
+ * `POST /api/queries/:id/quotation/issue` body.
+ *
+ * Fix round 1 (S5.8 Task 4 review, IMPORTANT #1): the letter's BODY is always rendered
+ * server-side from the seeded `quotation.issued.email` template + tokens computed from the
+ * query's own data — never accepted as free text. That is the only way "grand total only, no
+ * charge lines, no forwarder names" (design doc, "Withheld from the client") is a rule the
+ * backend actually enforces, rather than one only the (not-yet-built) compose screen happens to
+ * respect. `bodyText` is therefore NOT a field here — not kept-as-override, not kept-but-ignored,
+ * since either would reopen the hole this closes.
+ *
+ * `subject` stays caller-suppliable but now OPTIONAL — the design's envelope names subject as
+ * editable (unlike the letter, which "has no controls inside it"); omit it to fall back to the
+ * template's own rendered subject.
+ */
 export const quotationIssueSchema = z.object({
   recipientEmail: z.string().email(),
-  subject: z.string().trim().min(1).max(200),
-  bodyText: z.string().trim().min(1).max(20000),
+  subject: z.string().trim().min(1).max(200).optional(),
 });
 export type QuotationIssue = z.infer<typeof quotationIssueSchema>;
 

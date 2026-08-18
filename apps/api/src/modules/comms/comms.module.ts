@@ -15,6 +15,16 @@ import { MESSAGE_TRANSPORT, LogTransport } from "./transport";
     CommsSettingsService,
     { provide: MESSAGE_TRANSPORT, useClass: LogTransport },
   ],
-  exports: [MessageTemplateService, NotificationDispatcher, ScheduledEventService, CommsSettingsService],
+  // MESSAGE_TRANSPORT exported (fix round 1, S5.8 Task 4 review IMPORTANT #2) — QuotationService
+  // writes its own MessageLog row directly (its issue() needs the transaction client, which
+  // NotificationDispatcher doesn't take), so it needs the same transport NotificationDispatcher
+  // uses to actually call .send() after that transaction commits.
+  exports: [
+    MessageTemplateService,
+    NotificationDispatcher,
+    ScheduledEventService,
+    CommsSettingsService,
+    MESSAGE_TRANSPORT,
+  ],
 })
 export class CommsModule {}
