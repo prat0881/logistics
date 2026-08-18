@@ -112,6 +112,19 @@ Reopening the comparison clears `Query.awardSnapshot`, so the cost basis a quota
 
 **Q3 — a client question about composition is a manual reply.** Following from "grand total only". Revisit if it generates support load.
 
+## Built — S5.8 (2026-08-19)
+
+Delivered on `feat/stage-5-fx-master`, commits `05d137b..b54a3ef` (9). Six SDD tasks, per-task reviews with fix loops, an opus whole-sub-build review, and one fix wave. `pnpm run ci` green: shared 383 · web 768 · api 91 suites / 408 tests.
+
+**What the broad review caught that the task-scoped ones could not** — worth recording, because all three were invisible within a single task's diff:
+- **Heavy-weight-calc charges priced at $0.** `HEAVY_WEIGHT_CALC` lines carry a null `amount`; their value comes from `effectiveChargeAmount()`, which `computeQuoteTotals` uses and this new read path did not. The client would have been **quoted below our own cost**, silently — nothing reconciles quotation cost against `awardSnapshot.combinedUsd`.
+- **The builder had no entry point.** `awardEnabled` was never passed by `CompareQuotesPage` or `QueryWorkspaceHub`, so the Award step rendered as dead and the screen was reachable only by typing the URL. The fix wave found the same defect one line over: `quotesEnabled` was missing on the hub too, leaving Compare Quotes equally dead there.
+- **Reopen → re-award → open builder was a permanent 409**, because `version: 1` was hardcoded against a `@@unique([queryId, version])`. The design promised the opposite ("a new quotation starts fresh once the award is re-frozen").
+
+Two more worth knowing: the UI's pin semantics **contradicted the server's** (value comparison vs key presence), so a pinned line could be silently unpinned by clicking in and tabbing out — and the test suite encoded that divergence as required. And the client letter printed dangling labels (`Vessel: `, `Your reference: `) for every absent optional field, on the sub-build's entire deliverable.
+
+**One policy note that survives the go-live SMTP gate:** the commercial rule is enforced in the body by server-side template rendering — there is no path by which charge lines, cost, margin or forwarder names reach it. The **subject** remains caller-supplied free text. That is this design's own envelope-editable decision, made by an authorised Manager, so it is a policy choice rather than a hole — but it is the only one.
+
 ## Testing
 
 - Pricing and grouping are pure functions in `@svyft/shared` — unit-tested directly, including the override/recalculate interaction and the sum-then-re-round guard.

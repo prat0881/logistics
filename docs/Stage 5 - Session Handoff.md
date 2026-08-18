@@ -1,13 +1,13 @@
 # Stage 5 — Session Handoff
 
-_Last updated: 2026-08-18 (S5.6 + **S5.7 both COMPLETE**. S5.7 = 11 commits `6c5f5d1..5f5c7bf`, all reviewed + final-opus-reviewed + fixed, `pnpm run ci` green, visually verified in both grid orientations as Executive and Manager.)_
+_Last updated: 2026-08-19 (S5.6 + S5.7 + **S5.8 all COMPLETE**. S5.8 = client quotation, 9 commits `05d137b..b54a3ef`, ci green. S5.6/S5.7 pushed to PR #52; S5.8 pending push.)_
 
 ## Current stage & branch
 - **Stage 5 — Compare Quotes & Award.** Branch `feat/stage-5-fx-master` → **PR #52** (OPEN, **not merged** — you merge manually).
-- PR #52 title: _"Stage 5 · S5.1–S5.6 complete — Compare Quotes & Award"_ (51 commits). Tip: `33cc0b5`. **CI green** on run `32020072209`; mergeable/clean.
-- `pnpm run ci` **GREEN** at the tip: shared 366 · web 105 files / 665 tests · api 90 suites / 382 tests · lint + typecheck + 3 builds clean.
+- PR #52 title: _"Stage 5 · S5.1–S5.7 complete — Compare Quotes & Award"_ (64 commits pushed). Local tip: `b54a3ef` — **S5.8's 9 commits are not yet pushed**.
+- `pnpm run ci` **GREEN** at the local tip `b54a3ef`: shared 383 · web 768 · api 91 suites / 408 tests · lint + typecheck + 3 builds clean.
 
-## What's built (all 5 sub-builds on PR #52)
+## What's built (8 sub-builds; S5.1–S5.7 on PR #52, S5.8 local)
 | SB | Scope | State |
 | :-- | :-- | :-- |
 | S5.1 | FX master (`FxRate` + `toUsd` + `fx-rates` module + `masters/fx-rates` screen) | ✅ merged into PR |
@@ -17,6 +17,7 @@ _Last updated: 2026-08-18 (S5.6 + **S5.7 both COMPLETE**. S5.7 = 11 commits `6c5
 | **S5.5** | **Negotiation §10.1 + Change-order reversal §10.2** | ✅ delivered this session |
 | **S5.6** | **Compare-Quotes frontend** (the screen per the mockup + FX admin) | ✅ COMPLETE — all 6 tasks, reviewed + final-review-fixed, ci green, visually verified, **pushed to PR #52** (`7b58a8d..354236e`) |
 | **S5.7** | **Compare-Quotes UI/UX enhancements** (9 items, frontend-only) | ✅ COMPLETE — 6 tasks + final review + visual acceptance (`6c5f5d1..5f5c7bf`) |
+| **S5.8** | **Client quotation** — margin, editable charges, preview, issue | ✅ COMPLETE — 6 tasks + final review + fix wave (`05d137b..b54a3ef`), ci green |
 
 Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **opus whole-branch review**). S5.4's reviews caught 5 real defects before merge; S5.5's caught the `StatusRegistry` init-order issue + the request-requote/`QUOTING_CLIENT` teardown seam. All findings fixed or adjudicated.
 
@@ -114,6 +115,26 @@ Almost every finding this run was **missing coverage, not broken code**: the imp
 **Notable:** merging shortlist + send (#4) **structurally eliminated** the Critical S5.6's final review had caught — the drift between the grid's live pick and the persisted shortlist that could award the wrong forwarder silently. Two independent reviewers traced it and confirmed it is now unreachable, not merely guarded; the `unsavedPick` guard was removed and its regression coverage **ported, not deleted**.
 
 **⚠ Observed once, not reproduced:** `award-generate.e2e-spec.ts`'s "combinedUsd is re-rounded" test failed in a single full-suite run, then passed 5/5 on re-runs (isolated and whole-file) and in two subsequent full `ci` runs. Its `rawSum` assertion depends on float summation **order** over `snapshot.legs`. Stage-5 backend, untouched by S5.7 — flagged in case hosted CI ever hits it.
+
+## S5.8 (Client quotation) — ✅ COMPLETE
+Pulled forward from Stage 6 at the requester's direction (*"We will finish all the quotations in Stage 5"*). Design: `docs/Stage 5 - Client Quotation - Design.md`. Plan + SDD ledger: `docs/plans/stage-5/Stage 5 - S5.8 …` and `.superpowers/sdd/Stage 5 - S5.8 …/progress.md`. Mockups: `.superpowers/brainstorm/1145-*/content/`.
+
+**What it does.** Once every leg is approved and the award frozen, a Manager opens `/queries/:id/quotation`: a margin % marks up every charge line (markup on cost — `cost × (1 + m/100)`, **not** `cost ÷ (1 − m)`), individual lines can be hand-adjusted and are pinned as overrides, and the quotation is previewed and issued. Issuing freezes a snapshot, renders the client email **server-side**, and moves the query to `AWAITING_CLIENT_DECISION` — wiring up one of the four query statuses that were previously declared but unreachable.
+
+**The client sees the grand total only** — no charge lines, no per-leg totals, no cost, no margin, no forwarder names. Their own enquiry particulars are echoed back instead of our route/scope. That rule is enforced by server-side template rendering, not by the UI.
+
+**Locked decisions:** markup on cost · one margin applied per line with pinned overrides · grand total only · no PDF (removed by that decision) · saved draft, versioned on each issue · USD · Manager+.
+
+### 🔶 Open items for you
+1. **Q2 — quotation validity still needs business confirmation.** The letter shows "valid until", but no such field exists on the query or award. It is currently the **earliest `validUntil` across the winning quotes** — never promising the client longer than the forwarders promised us. The final review ruled this the right rule; it is the one commercial assumption made on your behalf.
+2. **Nothing is actually delivered.** `LogTransport.send()` is a no-op until `SmtpTransport` lands at the go-live gate, so issuing composes, records and advances the status but **no email reaches the client**. The UI says "Issue quotation", not "Send", and states delivery is pending.
+3. **The email subject is caller-supplied free text.** The body is safe by construction (one shared render call site, no path to cost/margin/forwarder names), but the subject is not. A deliberate policy choice — the envelope is editable by an authorised Manager — and the only such opening. It survives the SMTP gate.
+4. **Pre-existing Prisma drift, worth a cleanup migration.** Five earlier migrations hand-wrote `DEFAULT gen_random_uuid()` in raw SQL while `schema.prisma` uses client-side `@default(uuid())`. Every future `migrate dev` will keep proposing 10 unrelated `ALTER COLUMN "id" DROP DEFAULT` statements. I verified this drift is unchanged by S5.8 and that all 33 migrations apply cleanly to a fresh DB.
+5. **The api e2e suite has an intermittent cross-test flake.** Two specs have each failed once in a full `--runInBand` run and then passed on every re-run and in isolation: `award-generate.e2e-spec.ts`'s "combinedUsd is re-rounded" (float summation order) and `ff-portal-v3.e2e-spec.ts`. Both are shared-DB state interactions, not defects introduced by this work. Flagged because hosted CI could hit either.
+6. **Not visually verified.** S5.8 has no live browser pass — the builder and preview are covered by tests only. Worth eyeballing before it goes near a client.
+
+### What the final review caught
+Three Criticals invisible inside any single task's diff: **calc charges pricing at $0** (client quoted below our own cost, silently), **no entry point to the builder** (reachable only by typing the URL), and **reopen → re-award → permanent 409**. Plus a UI/server contradiction where a pinned price could be silently unpinned by clicking in and tabbing out — with the test suite encoding that divergence as required. Detail in the ledger.
 
 ## Reusable facts (learned across S5.4/S5.5 SDD)
 - Caller id = `user.userId` (`RequestUser`); e2e actor `@db.Uuid` cols need cookie `sub: randomUUID()`.
