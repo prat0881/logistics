@@ -27,6 +27,21 @@ Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **o
 - **S5.5 D-B — modified the delivered SB6 change-order subsystem** to cascade `APPROVED` quotes (`scope.resolver.ts` + `change-order.strategy.ts`). Required for §10.2 to fire at all (an approved leg was invisible to change-order before). Low blast radius (APPROVED post-dates SB6); full SB6 regression green.
 - **S5.5 D-C — new `rfq.requote_requested` notification template** (rather than overloading `rfq.updated`, whose copy is "a leg was added").
 
+## ⚠️ Vocabulary — read before touching any user-facing string
+
+**Nothing in Stage 5 is *awarded*.** Design decision **D5** locks this: *"'Approved' is provisional; term 'Awarded' is reserved for Stage 6+"* — approval selects a forwarder for a leg **with no forwarder notification**, and stays reversible until the client wins. At the end of Stage 5: no forwarder has been told anything, and the client has not accepted.
+
+| Say this | Not this | Because |
+| :-- | :-- | :-- |
+| **Approved** (a leg, provisionally) | Awarded | No FF has been notified; still reversible |
+| **Quotation** (the stage, the screen) | Award | The step produces and issues a client quotation |
+| **Issue** a quotation | Send | `LogTransport.send()` is a no-op — nothing is transmitted yet |
+| **Quoting client / Awaiting client decision** | Won | The client hasn't accepted |
+
+`LegStatus.AWARDED` exists in the enum but is **deliberately unreachable** — reserved for the post-Won execution phase. Internal backend names (`awardSnapshot`, `LegAwardDecision`, `award.service.ts`, `AwardModule`) keep "award" and that is fine; the design itself uses them. **The rule applies to user-visible strings.**
+
+*This was caught by the product owner on 2026-08-19: the S5.8 stage rail said "Award" and linked to the quotation screen. Fixed in `ac424f1` (label and key are now "Quotation"). Recording it here so a fresh session doesn't reintroduce it.*
+
 ## 📋 Open points register — consolidated 2026-08-19
 
 Everything still open across S5.4–S5.8, in one place so nothing is lost between sessions. Nothing here blocks merging PR #52.
@@ -64,6 +79,7 @@ All are API-shape changes on the same feature. Four of them exist because S5.7 w
 | **C7** | **A re-quote is invisible at query level.** Asking a forwarder to revise a price on an already-`FULLY_QUOTED` leg moves neither the leg nor the query — there is no backward edge and the projector excludes re-quotes from "settled". The compare screen shows it; no status does. Related: a `REQUOTED` quote expiring on a `FULLY_QUOTED` leg fires no transition, so the query can read `QUOTED` while that leg holds only an `EXPIRED` quote. |
 
 ### D · Reviewed and sound — informational only
+- **Terminology (D5) — corrected 2026-08-19.** The S5.8 stage rail labelled the quotation step "Award", violating a locked decision. Renamed label *and* internal key to "Quotation" (`ac424f1`); `LegStatus.AWARDED` and the backend's internal `award*` names deliberately untouched. See the Vocabulary section above.
 - **`StatusRegistry.contribute()` is now module-init-order-independent** (`pending`-merge + an `OnApplicationBootstrap` orphan-key guard). Touches the Extensibility Core used by every domain module; the merge was proven correct for all orderings against the actual `@nestjs/core` scanner source. Flagged only because it is shared infra.
 - **The two status reference views** built during the status alignment discussion — a technical one (four axes, what can coexist beneath a query status) and a business one (the full lifecycle, one line per transition) — are Claude artifacts, not in the repo. Regenerate from the code if needed; both were derived from source, not the design docs.
 
