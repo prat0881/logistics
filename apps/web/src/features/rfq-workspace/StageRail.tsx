@@ -19,10 +19,10 @@ export function isQuotesStageEnabled(status: string): boolean {
 // S5.8 T5 — statuses that are "QUOTING_CLIENT or later". Deliberately NOT
 // `(RANK[status] ?? 0) >= RANK.QUOTING_CLIENT`: QUOTING_CLIENT shares rank 4 with QUOTED (a
 // spec-literal value recorded as a parked minor in S5.7 T2 M2, precisely so nobody builds a
-// threshold on it) — that comparison would also enable Award for a query that's merely QUOTED,
-// before the award has even been frozen. Enumerating the exact statuses and comparing the status
-// value directly sidesteps RANK's collision entirely.
-const AWARD_ENABLED_STATUSES = new Set([
+// threshold on it) — that comparison would also enable the Quotation step for a query that's
+// merely QUOTED, before the award has even been frozen. Enumerating the exact statuses and
+// comparing the status value directly sidesteps RANK's collision entirely.
+const QUOTATION_ENABLED_STATUSES = new Set([
   "QUOTING_CLIENT",
   "AWAITING_CLIENT_DECISION",
   "WON",
@@ -32,20 +32,20 @@ const AWARD_ENABLED_STATUSES = new Set([
 
 /** The Client Quotation builder (S5.8) becomes reachable once the award has been frozen and the
  *  query is quoting the client (or has moved past that point). */
-export function isAwardStageEnabled(status: string): boolean {
-  return AWARD_ENABLED_STATUSES.has(status);
+export function isQuotationStageEnabled(status: string): boolean {
+  return QUOTATION_ENABLED_STATUSES.has(status);
 }
 
 type StepState = "done" | "current" | "upcoming";
 
 interface StageRailProps {
   queryId: string;
-  active: "create" | "rfq" | "quotes" | "award";
+  active: "create" | "rfq" | "quotes" | "quotation";
   rfqEnabled: boolean;
   /** Mirrors `rfqEnabled` for the "quotes" step — pass `isQuotesStageEnabled(query.status)`. */
   quotesEnabled?: boolean;
-  /** Mirrors `rfqEnabled` for the "award" step — pass `isAwardStageEnabled(query.status)`. */
-  awardEnabled?: boolean;
+  /** Mirrors `rfqEnabled` for the "quotation" step — pass `isQuotationStageEnabled(query.status)`. */
+  quotationEnabled?: boolean;
 }
 
 // Canonical step order, used to derive each step's state from its index relative to `active`'s
@@ -53,9 +53,9 @@ interface StageRailProps {
 // generalizes what used to be two hand-written ternaries (correct only for active="create"|"rfq")
 // so a step further right — "quotes" — also correctly marks the steps before it as done instead of
 // leaving them stuck on "upcoming".
-const STEP_KEYS = ["create", "rfq", "quotes", "award"] as const;
+const STEP_KEYS = ["create", "rfq", "quotes", "quotation"] as const;
 
-export function StageRail({ queryId, active, rfqEnabled, quotesEnabled, awardEnabled }: StageRailProps) {
+export function StageRail({ queryId, active, rfqEnabled, quotesEnabled, quotationEnabled }: StageRailProps) {
   const activeIndex = STEP_KEYS.indexOf(active);
   const stateAt = (index: number): StepState =>
     index === activeIndex ? "current" : index < activeIndex ? "done" : "upcoming";
@@ -64,7 +64,7 @@ export function StageRail({ queryId, active, rfqEnabled, quotesEnabled, awardEna
     { key: "create", label: "Create", to: `/queries/${queryId}`, state: stateAt(0) },
     { key: "rfq", label: "RFQ", to: rfqEnabled ? `/queries/${queryId}/workspace` : undefined, state: stateAt(1) },
     { key: "quotes", label: "Quotes", to: quotesEnabled ? `/queries/${queryId}/compare` : undefined, state: stateAt(2) },
-    { key: "award", label: "Award", to: awardEnabled ? `/queries/${queryId}/quotation` : undefined, state: stateAt(3) },
+    { key: "quotation", label: "Quotation", to: quotationEnabled ? `/queries/${queryId}/quotation` : undefined, state: stateAt(3) },
   ];
 
   return (

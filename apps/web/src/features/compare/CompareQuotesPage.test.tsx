@@ -327,27 +327,28 @@ describe("CompareQuotesPage", () => {
   });
 
   // 🔴 Final review CRITICAL #2 — the S5.8 Client Quotation builder had NO entry point anywhere in
-  // the app. `isAwardStageEnabled` was passed only by `QuotationPage` (the destination itself), so
-  // this screen — where the award is frozen, and the builder's natural predecessor — rendered its
-  // Award step with `to: undefined`. `/queries/:id/quotation` was reachable only by typing the URL.
-  it("links the Award step to the client quotation builder once the award is frozen", async () => {
+  // the app. `isQuotationStageEnabled` was passed only by `QuotationPage` (the destination itself),
+  // so this screen — where the award is frozen, and the builder's natural predecessor — rendered
+  // its Quotation step with `to: undefined`. `/queries/:id/quotation` was reachable only by typing
+  // the URL.
+  it("links the Quotation step to the client quotation builder once the award is frozen", async () => {
     renderPage({ awardSnapshot: SNAPSHOT });
     await screen.findByText("EXECUTIVE");
 
     const rail = await screen.findByRole("navigation", { name: /query stages/i });
-    expect(within(rail).getByRole("link", { name: /award/i })).toHaveAttribute(
+    expect(within(rail).getByRole("link", { name: /quotation/i })).toHaveAttribute(
       "href",
       "/queries/q1/quotation",
     );
   });
 
-  it("leaves the Award step non-navigable while no award has been frozen", async () => {
+  it("leaves the Quotation step non-navigable while no award has been frozen", async () => {
     renderPage(); // QUERY_DETAIL.status === "QUOTED", awardSnapshot null
     await screen.findByText("EXECUTIVE");
 
     const rail = await screen.findByRole("navigation", { name: /query stages/i });
-    expect(within(rail).queryByRole("link", { name: /award/i })).not.toBeInTheDocument();
-    expect(within(rail).getByText("Award")).toBeInTheDocument();
+    expect(within(rail).queryByRole("link", { name: /quotation/i })).not.toBeInTheDocument();
+    expect(within(rail).getByText("Quotation")).toBeInTheDocument();
   });
 
   it("shows checker controls only to a MANAGER", async () => {

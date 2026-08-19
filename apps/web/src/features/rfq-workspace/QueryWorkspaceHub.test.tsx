@@ -50,13 +50,14 @@ describe("QueryWorkspaceHub", () => {
     expect(screen.getByRole("link", { name: /create/i })).toHaveAttribute("href", "/queries/q1");
     // RFQ_READY is before both later gates — neither step is navigable yet.
     expect(screen.queryByRole("link", { name: /quotes/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /award/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /quotation/i })).not.toBeInTheDocument();
   });
 
-  // 🔴 Final review CRITICAL #2 — this rail passed ONLY `rfqEnabled`, so its Quotes and Award steps
-  // both rendered with `to: undefined` regardless of the query's status: from the RFQ workspace
-  // there was no way forward at all, and the S5.8 quotation builder had no entry point anywhere.
-  it("links the Quotes and Award steps once the query has reached QUOTING_CLIENT", async () => {
+  // 🔴 Final review CRITICAL #2 — this rail passed ONLY `rfqEnabled`, so its Quotes and Quotation
+  // steps both rendered with `to: undefined` regardless of the query's status: from the RFQ
+  // workspace there was no way forward at all, and the S5.8 quotation builder had no entry point
+  // anywhere.
+  it("links the Quotes and Quotation steps once the query has reached QUOTING_CLIENT", async () => {
     renderHub("QUOTING_CLIENT");
     expect(await screen.findByText("YAL26-0001")).toBeInTheDocument();
 
@@ -64,7 +65,7 @@ describe("QueryWorkspaceHub", () => {
       "href",
       "/queries/q1/compare",
     );
-    expect(screen.getByRole("link", { name: /award/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /quotation/i })).toHaveAttribute(
       "href",
       "/queries/q1/quotation",
     );

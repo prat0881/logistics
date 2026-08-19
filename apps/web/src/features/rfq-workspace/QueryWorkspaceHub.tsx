@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
 import { useQueryDetail } from "@/features/query-wizard/useQueryDetail";
-import { StageRail, isRfqStageEnabled, isQuotesStageEnabled, isAwardStageEnabled } from "./StageRail";
+import { StageRail, isRfqStageEnabled, isQuotesStageEnabled, isQuotationStageEnabled } from "./StageRail";
 import { RfqWorkspace } from "./RfqWorkspace";
 
 export function QueryWorkspaceHub() {
@@ -22,7 +22,7 @@ export function QueryWorkspaceHub() {
         active="rfq"
         rfqEnabled={isRfqStageEnabled(query.status)}
         quotesEnabled={isQuotesStageEnabled(query.status)}
-        awardEnabled={isAwardStageEnabled(query.status)}
+        quotationEnabled={isQuotationStageEnabled(query.status)}
       />
       <RfqWorkspace queryId={id} />
     </div>

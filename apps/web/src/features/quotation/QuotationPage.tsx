@@ -7,7 +7,7 @@ import {
   StageRail,
   isRfqStageEnabled,
   isQuotesStageEnabled,
-  isAwardStageEnabled,
+  isQuotationStageEnabled,
 } from "@/features/rfq-workspace/StageRail";
 import { QueryOverviewHeader } from "@/features/rfq-workspace/QueryOverviewHeader";
 import { RouteDiagram } from "@/features/query-wizard/steps/legs/RouteDiagram";
@@ -30,7 +30,7 @@ const MARGIN_DEBOUNCE_MS = 400;
  * result.
  *
  * Reuses the Stage-4/5 executive shell exactly like `CompareQuotesPage`: `StageRail` (active
- * "award") + `QueryOverviewHeader` + `RouteDiagram`, then a sticky margin bar and one
+ * "quotation") + `QueryOverviewHeader` + `RouteDiagram`, then a sticky margin bar and one
  * `ChargeEditorTable` per priced leg.
  *
  * Margin edits are debounced (ambiguity resolution #2); a line edit commits on blur. Both PATCH
@@ -149,10 +149,10 @@ export function QuotationPage() {
     <div className="space-y-4" data-testid="quotation-page">
       <StageRail
         queryId={id}
-        active="award"
+        active="quotation"
         rfqEnabled={isRfqStageEnabled(q.status)}
         quotesEnabled={isQuotesStageEnabled(q.status)}
-        awardEnabled={isAwardStageEnabled(q.status)}
+        quotationEnabled={isQuotationStageEnabled(q.status)}
       />
 
       <div className="space-y-5">
