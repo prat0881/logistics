@@ -1,13 +1,13 @@
 # Stage 5 — Session Handoff
 
-_Last updated: 2026-08-19 (S5.6 + S5.7 + **S5.8 all COMPLETE**. S5.8 = client quotation, 9 commits `05d137b..b54a3ef`, ci green. S5.6/S5.7 pushed to PR #52; S5.8 pending push.)_
+_Last updated: 2026-08-19 (S5.6 + S5.7 + **S5.8 all COMPLETE and pushed**. PR #52 = 75 commits, CI green, mergeable. **All open points are consolidated in the register below** — start there.)_
 
 ## Current stage & branch
 - **Stage 5 — Compare Quotes & Award.** Branch `feat/stage-5-fx-master` → **PR #52** (OPEN, **not merged** — you merge manually).
-- PR #52 title: _"Stage 5 · S5.1–S5.7 complete — Compare Quotes & Award"_ (64 commits pushed). Local tip: `b54a3ef` — **S5.8's 9 commits are not yet pushed**.
-- `pnpm run ci` **GREEN** at the local tip `b54a3ef`: shared 383 · web 768 · api 91 suites / 408 tests · lint + typecheck + 3 builds clean.
+- PR #52 title: _"Stage 5 · S5.1–S5.8 complete — Compare Quotes, Award & Client Quotation"_ — **75 commits, CI green, mergeable/clean**. Tip: `bd0101e`.
+- `pnpm run ci` **GREEN** at the tip: shared 383 · web 768 · api 91 suites / 408 tests · lint + typecheck + 3 builds clean. Hosted CI green on run `32183296721`.
 
-## What's built (8 sub-builds; S5.1–S5.7 on PR #52, S5.8 local)
+## What's built (8 sub-builds, all on PR #52)
 | SB | Scope | State |
 | :-- | :-- | :-- |
 | S5.1 | FX master (`FxRate` + `toUsd` + `fx-rates` module + `masters/fx-rates` screen) | ✅ merged into PR |
@@ -27,13 +27,45 @@ Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **o
 - **S5.5 D-B — modified the delivered SB6 change-order subsystem** to cascade `APPROVED` quotes (`scope.resolver.ts` + `change-order.strategy.ts`). Required for §10.2 to fire at all (an approved leg was invisible to change-order before). Low blast radius (APPROVED post-dates SB6); full SB6 regression green.
 - **S5.5 D-C — new `rfq.requote_requested` notification template** (rather than overloading `rfq.updated`, whose copy is "a leg was added").
 
-## Open items needing YOUR input
-1. **Deferred follow-up (ticket filed): "Wire REQUOTED into change-order cascade"** (background task `task_44674c1e`). A change-order field edit on a leg whose only quote is `REQUOTED` (mid-renegotiation) currently free-paths — the FF could re-quote against a stale basis. Reviewed as **safe to defer** (narrow window, no corruption, maker-checker + A8 catch it). Needs a new `REQUOTED→INVALIDATE→INVALID` edge. Chip is on the session for one-click start.
-2. **Product question — earlier price lost on re-quote expiry (S5.5 Minor #4).** §10.1 promises the FF's earlier price "stays visible, badged stale." But the expiry sweep clears `draftJson` for a `REQUOTED` quote on deadline, so if the FF ignores a re-quote request, the original offer is **lost** (no fallback). Is that the intended business rule, or should the prior price be preserved?
-3. **Minor #3 (display-lag, folded into the follow-up ticket):** a `REQUOTED` quote expiring on an already-`FULLY_QUOTED` leg fires no leg transition, so the query status can read `QUOTED` while that leg holds only an `EXPIRED` quote.
-4. **`StatusRegistry` infra change (FYI — reviewed sound):** `contribute()` is now module-init-order-independent (`pending`-merge + an `OnApplicationBootstrap` orphan-key guard). This touches the Extensibility Core used by every domain module; it was deeply reviewed (merge proven correct for all orderings against the actual `@nestjs/core` scanner source). Flagging only because it's shared infra.
-5. **PRODUCT QUESTION (new, S5.6 final review) — is Reopen meant to be actionable?** `reopenComparison` (`award.service.ts:491-520`) deliberately leaves every leg's decision `APPROVED`. So after a reopen there is **no path to revise any shortlist**: reject 409s (`requireDecidable` — the decision isn't `PENDING_APPROVAL`) and the reopen already happened. The fix wave corrected the misleading UI copy only, as scoped; the flow question is yours. Either Reopen should also reset decisions to `DRAFT`, or the UI should say plainly that reopening only unfreezes the snapshot.
-6. **PRE-EXISTING server gap (new finding, NOT introduced by S5.6) — `sendForApproval` has no decision-status guard.** `award.service.ts:154` checks only that a decision exists with a `shortlistedQuoteId`, never `decision.status`, so an **`APPROVED` leg can be re-sent back to `PENDING_APPROVAL`** (and the UI's Send is enabled for it — `alreadySent` covers only `PENDING_APPROVAL`). Confirmed via `git merge-base` to predate S5.6's base `7b58a8d` (commit `03928dc`) and untouched by all 13 commits. Bounded — four-eyes still applies, so it is not a silent-award hole like C1 — but a workflow-integrity gap, and entangled with item 5.
+## 📋 Open points register — consolidated 2026-08-19
+
+Everything still open across S5.4–S5.8, in one place so nothing is lost between sessions. Nothing here blocks merging PR #52.
+
+### A · Business decisions — these need your answer, not engineering
+| # | Question | Why it's open | Raised |
+| :-- | :-- | :-- | :-- |
+| **A1** | **What is a quotation "valid until"?** Currently the **earliest `validUntil` across the winning quotes** — never promising the client longer than the forwarders promised us. | No such field exists on the query or the award. The final review ruled the current rule correct, but it is the one commercial assumption made on your behalf. | S5.8 Q2 |
+| **A2** | **How should charges be grouped for the client-facing breakdown?** | S5.7's charge dialog shows three rolled-up subtotals because the itemised lines never leave the server. Exposing them is easy; **which grouping** is a business call. Blocks B5. | S5.7 C2 |
+| **A3** | **Is Reopen meant to be actionable?** `reopenComparison` deliberately leaves every decision `APPROVED`, so after a reopen there is **no path to revise a shortlist** — reject 409s and the reopen already happened. | Either Reopen should also reset decisions to `DRAFT`, or the UI should say plainly that it only unfreezes the snapshot. The misleading copy was fixed; the flow question stands. | S5.6 |
+| **A4** | **Should the earlier price survive a re-quote that expires?** §10.1 promises the FF's earlier price "stays visible, badged stale", but the expiry sweep clears `draftJson`, so if the FF ignores the request the original offer is **lost** with no fallback. | Intended business rule, or a gap? | S5.5 |
+| **A5** | **Should query status surface approval progress?** Shortlist → send → approve → every leg approved all happen **inside `QUOTED`** without the status changing once. | A query at `QUOTED` may have nothing shortlisted or be one click from a client quote. Cheapest fix isn't a new status — it's a "2 of 3 legs approved" indicator, and the data is already in the read model. | Status review |
+
+### B · Backend follow-ups — bundle these into ONE API task
+All are API-shape changes on the same feature. Four of them exist because S5.7 was constrained to frontend-only; doing them as four separate trips would be wasteful.
+
+| # | Gap | Fix |
+| :-- | :-- | :-- |
+| **B1** | The **negotiate block at `PENDING_APPROVAL` is UI-only** — the server still accepts such a re-quote and resets the decision to `DRAFT`. Button and endpoint contradict each other. | Add a decision-status guard (409), or accept the reset and drop the UI restriction. |
+| **B2** | **`sendForApproval` has no decision-status guard** — an `APPROVED` leg can be re-sent to `PENDING_APPROVAL`. Predates S5.6 (commit `03928dc`). | Guard on `decision.status`. |
+| **B3** | **`send-for-approval` carries no offer identity** — the server trusts the persisted shortlist. S5.7 shrank the window from unbounded to a few-ms concurrent-maker race, but can't close it from the frontend. | Accept `{quoteId, variant}` and verify server-side, 409 on mismatch. |
+| **B4** | **Multi-forwarder negotiate is not atomic** — N sequential calls, no transaction. A mid-batch failure leaves some forwarders asked and others not, with tokens already reissued and deadlines reset for the successes. | A bulk endpoint taking `{quoteIds[], notes}` in one transaction. |
+| **B5** | **Itemised charges never leave the server** for the compare screen — `computeQuoteTotals` collapses them to three sums. *(S5.8 built its own server-side read path; this is the compare-screen half.)* | A grouping-neutral passthrough of the raw lines. **Blocked on A2.** |
+| **B6** | **Wire `REQUOTED` into the change-order cascade.** A field edit on a leg whose only quote is `REQUOTED` free-paths, so the FF could re-quote against a stale basis. Reviewed as safe to defer. | New `REQUOTED→INVALIDATE→INVALID` edge. Background task `task_44674c1e`. |
+
+### C · Known gaps and tech debt
+| # | Item |
+| :-- | :-- |
+| **C1** | **Nothing is actually emailed.** `LogTransport.send()` is a no-op until `SmtpTransport` lands at the go-live gate. Issuing composes, records and advances status; no email reaches the client. Already a planned go-live item. |
+| **C2** | **The quotation email subject is caller-supplied free text.** The body is safe by construction (one shared render call site; no path to cost, margin or forwarder names). The subject is the only opening — a deliberate envelope-editable decision that survives the SMTP gate. |
+| **C3** | **Pre-existing Prisma drift.** Five earlier migrations hand-wrote `DEFAULT gen_random_uuid()` in raw SQL while `schema.prisma` uses client-side `@default(uuid())`, so every future `migrate dev` proposes 10 unrelated `ALTER COLUMN "id" DROP DEFAULT` statements. **Verified unchanged by S5.8, and all 33 migrations apply cleanly to a fresh DB.** Worth one dedicated cleanup migration. |
+| **C4** | **Eight enum values are unreachable** — `WON`/`LOST`/`CLOSED`/`AWAITING_CLIENT_DECISION` were declared on the query (S5.8 now reaches the last of these); `AWARDED`/`IN_TRANSIT`/`DELIVERED`/`CLOSED` on the leg; `CLOSED` on the quote. Plus `AwardDecisionStatus.REJECTED`, which nothing writes (reject writes `DRAFT` + a reason). Stage 6–9 vocabulary declared early — harmless, but it makes the status picture look twice its real size. |
+| **C5** | **The api e2e suite has an intermittent cross-test flake.** `award-generate.e2e-spec.ts` ("combinedUsd is re-rounded", float summation order) and `ff-portal-v3.e2e-spec.ts` have each failed once in a full `--runInBand` run and passed on every re-run and in isolation. Shared-DB state interactions, not defects. Hosted CI could hit either. |
+| **C6** | **S5.8 has no visual pass.** Builder and preview are test-covered only. Worth eyeballing before it goes near a client. S5.6 and S5.7 were both verified live. |
+| **C7** | **A re-quote is invisible at query level.** Asking a forwarder to revise a price on an already-`FULLY_QUOTED` leg moves neither the leg nor the query — there is no backward edge and the projector excludes re-quotes from "settled". The compare screen shows it; no status does. Related: a `REQUOTED` quote expiring on a `FULLY_QUOTED` leg fires no transition, so the query can read `QUOTED` while that leg holds only an `EXPIRED` quote. |
+
+### D · Reviewed and sound — informational only
+- **`StatusRegistry.contribute()` is now module-init-order-independent** (`pending`-merge + an `OnApplicationBootstrap` orphan-key guard). Touches the Extensibility Core used by every domain module; the merge was proven correct for all orderings against the actual `@nestjs/core` scanner source. Flagged only because it is shared infra.
+- **The two status reference views** built during the status alignment discussion — a technical one (four axes, what can coexist beneath a query status) and a business one (the full lifecycle, one line per transition) — are Claude artifacts, not in the repo. Regenerate from the code if needed; both were derived from source, not the design docs.
 
 ## Approaches that didn't work
 - **S5.5 module-init ordering:** wiring `AwardModule → RfqModule` shifted NestJS's computed module-init "distance", flipping `RfqModule.contribute("leg")` ahead of `LegsModule.register(legMachine)`. Import-graph tweaks (e.g. `RfqModule` importing `LegsModule`) do **not** fix it (single-pass non-fixed-point DFS). Root-fixed in `StatusRegistry` instead (see item 4).
@@ -96,7 +128,7 @@ Nine enhancements against the delivered S5.6 screen. Built subagent-driven (6 ta
 
 **Notable:** item 4's merge **structurally eliminates** the Critical the S5.6 whole-sub-build review caught (picked offer and persisted shortlist could drift). The `unsavedPick` guard added in `354236e` becomes unreachable and is removed — **its regression tests are ported, not deleted** (plan Task 4 Step 5).
 
-### 🔶 Consequences of the frontend-only constraint — carry these forward
+### 🔶 Consequences of the frontend-only constraint — now tracked as B1–B5 in the register
 Three real gaps, accepted deliberately. Full detail in the design doc's "Consequences" section.
 1. **C1 — item 5 is a UI convention, not a rule.** `AwardService.requestRequote` still accepts a re-quote on a `PENDING_APPROVAL` leg and resets the decision to `DRAFT`. The button is disabled; the endpoint is not. *Follow-up:* add a decision-status guard (409), or accept the reset and drop the UI restriction — the two currently contradict each other.
 2. **C2 — item 2 shows subtotals, not a breakdown.** `buildCharges` emits only 3 flat aggregates (`Freight`, `Additional Charges` = ONE sum over all origin/destination/ad-hoc lines, `Warehousing` = ONE sum). The itemised detail exists in each quote's `draftJson` (`charges[]` w/ zone+label+amount+note, `trucking[]`, `seaRates[]`, `warehouse[]`) but `computeQuoteTotals` returns only sums. *Follow-up:* a grouping-neutral read-model passthrough of the raw lines, letting the UI group them once business confirms. Business has NOT yet confirmed the grouping — that's why this is deferred.
@@ -125,13 +157,8 @@ Pulled forward from Stage 6 at the requester's direction (*"We will finish all t
 
 **Locked decisions:** markup on cost · one margin applied per line with pinned overrides · grand total only · no PDF (removed by that decision) · saved draft, versioned on each issue · USD · Manager+.
 
-### 🔶 Open items for you
-1. **Q2 — quotation validity still needs business confirmation.** The letter shows "valid until", but no such field exists on the query or award. It is currently the **earliest `validUntil` across the winning quotes** — never promising the client longer than the forwarders promised us. The final review ruled this the right rule; it is the one commercial assumption made on your behalf.
-2. **Nothing is actually delivered.** `LogTransport.send()` is a no-op until `SmtpTransport` lands at the go-live gate, so issuing composes, records and advances the status but **no email reaches the client**. The UI says "Issue quotation", not "Send", and states delivery is pending.
-3. **The email subject is caller-supplied free text.** The body is safe by construction (one shared render call site, no path to cost/margin/forwarder names), but the subject is not. A deliberate policy choice — the envelope is editable by an authorised Manager — and the only such opening. It survives the SMTP gate.
-4. **Pre-existing Prisma drift, worth a cleanup migration.** Five earlier migrations hand-wrote `DEFAULT gen_random_uuid()` in raw SQL while `schema.prisma` uses client-side `@default(uuid())`. Every future `migrate dev` will keep proposing 10 unrelated `ALTER COLUMN "id" DROP DEFAULT` statements. I verified this drift is unchanged by S5.8 and that all 33 migrations apply cleanly to a fresh DB.
-5. **The api e2e suite has an intermittent cross-test flake.** Two specs have each failed once in a full `--runInBand` run and then passed on every re-run and in isolation: `award-generate.e2e-spec.ts`'s "combinedUsd is re-rounded" (float summation order) and `ff-portal-v3.e2e-spec.ts`. Both are shared-DB state interactions, not defects introduced by this work. Flagged because hosted CI could hit either.
-6. **Not visually verified.** S5.8 has no live browser pass — the builder and preview are covered by tests only. Worth eyeballing before it goes near a client.
+### Open items
+All of S5.8's open points are folded into the **register at the top of this document** — A1 (quotation validity, the one commercial assumption made on your behalf), C1 (no SMTP delivery), C2 (subject is free text), C3 (Prisma drift), C5 (api e2e flake) and C6 (no visual pass). Nothing S5.8-specific lives only here.
 
 ### What the final review caught
 Three Criticals invisible inside any single task's diff: **calc charges pricing at $0** (client quoted below our own cost, silently), **no entry point to the builder** (reachable only by typing the URL), and **reopen → re-award → permanent 409**. Plus a UI/server contradiction where a pinned price could be silently unpinned by clicking in and tabbing out — with the test suite encoding that divergence as required. Detail in the ledger.
