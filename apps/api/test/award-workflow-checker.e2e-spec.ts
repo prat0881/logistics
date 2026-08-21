@@ -445,14 +445,29 @@ describe("award workflow — checker endpoints (e2e)", () => {
       .expect(409);
   });
 
-  it("A8 — approve when the shortlisted quote is no longer QUOTED (stale) -> 409", async () => {
+  // S5.9 Task 4 review round — IMPORTANT 1. The original single-quote fixture couldn't reach A8
+  // at all: flipping the ONLY quote on the leg to REQUOTED makes `legRollupTarget(["REQUOTED"])`
+  // return `null` (REQUOTED isn't "resolved" — status.ts's LEG_ROLLUP_RESOLVED), so the EARLIER
+  // guard at approve()'s `legRollupTarget !== FULLY_QUOTED` check 409s first and A8's own check
+  // (`quote.status !== PENDING_APPROVAL`) is never reached — mutation-proven: deleting A8
+  // entirely left this test green. A8 is only reachable once the rollup still says FULLY_QUOTED
+  // (every quote "resolved") but the SPECIFICALLY SHORTLISTED quote isn't PENDING_APPROVAL any
+  // more — e.g. it moved to APPROVED/EXPIRED/CLOSED while a sibling FF is still QUOTED. Two FFs
+  // here (mirrors the "reshortlist" test's fixture below): REC (the shortlisted, sent one) and
+  // OTH (a second live QUOTED offer, left untouched) — flipping REC alone to a resolved-but-not-
+  // PENDING_APPROVAL status keeps the rollup at FULLY_QUOTED (both count as "resolved") so the
+  // earlier guard passes and A8 is the one that actually fires.
+  it("A8 — approve when the shortlisted quote is no longer PENDING_APPROVAL (stale) -> 409", async () => {
     const senderId = randomUUID();
-    const { query, leg, quotes } = await seedPendingApproval("stale", senderId);
+    const { query, leg, quotes } = await seedPendingApproval("stale", senderId, [
+      { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
+      { key: "OTH", status: "QUOTED", deadline: future(), draft: { amount: 166400, transitDays: 5 } },
+    ]);
 
-    // Simulate a concurrent change (e.g. a re-quote request) invalidating the shortlisted
-    // quote's status out from under the pending decision, without going through StatusService
-    // (this test only needs the DB row to reflect "no longer QUOTED", not a legal transition).
-    await prisma.quote.update({ where: { id: quotes.REC.id }, data: { status: "REQUOTED" } });
+    // Simulate a concurrent change (e.g. the quote independently resolving elsewhere) moving the
+    // SHORTLISTED quote off PENDING_APPROVAL, without going through StatusService (this test only
+    // needs the DB row to reflect "no longer PENDING_APPROVAL", not a legal transition).
+    await prisma.quote.update({ where: { id: quotes.REC.id }, data: { status: "EXPIRED" } });
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
@@ -493,6 +508,49 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(quote?.status).toBe("PENDING_APPROVAL"); // untouched
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("PENDING_APPROVAL"); // untouched
+  });
+
+  // S5.9 Task 4 review round — IMPORTANT 2: requireDecidable used to reach the leg through a
+  // typed `prisma.leg.findFirst`, which Prisma's own client-side validation rejects with a 400
+  // ("Invalid identifier", via PrismaExceptionFilter's P2023 mapping) for a malformed id. Once
+  // that read moved onto lockLeg's raw `${legId}::uuid`/`${queryId}::uuid` casts, a malformed id
+  // reaches Postgres itself (22P02), which $queryRaw wraps in a Prisma error code
+  // PrismaExceptionFilter does NOT map — falls through to a bare 500. This regressed both
+  // approve() and reject() (lockLeg is the first thing either does); sendForApproval is
+  // unaffected because it reaches ComparisonService.getComparison(queryId) — a typed Prisma call
+  // — before it ever calls lockLeg.
+  it("IMPORTANT 2 — approve/reject with a malformed (non-UUID) legId -> 400, not 500", async () => {
+    const senderId = randomUUID();
+    const { query } = await seedPendingApproval("malformedleg", senderId);
+
+    const approveRes = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/not-a-uuid/approve`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send();
+    expect(approveRes.status).toBe(400);
+
+    const rejectRes = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/not-a-uuid/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "irrelevant — should never be reached" });
+    expect(rejectRes.status).toBe(400);
+  });
+
+  it("IMPORTANT 2 — approve/reject with a malformed (non-UUID) queryId -> 400, not 500", async () => {
+    const senderId = randomUUID();
+    const { leg } = await seedPendingApproval("malformedquery", senderId);
+
+    const approveRes = await request(app.getHttpServer())
+      .post(`/api/queries/not-a-uuid/legs/${leg.id}/approve`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send();
+    expect(approveRes.status).toBe(400);
+
+    const rejectRes = await request(app.getHttpServer())
+      .post(`/api/queries/not-a-uuid/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "irrelevant — should never be reached" });
+    expect(rejectRes.status).toBe(400);
   });
 
   it("CRITICAL — approve on a PARTIALLY_QUOTED leg that reached PENDING_APPROVAL via the A3 deadline-passed path -> 409, no partial commit", async () => {
@@ -562,6 +620,36 @@ describe("award workflow — checker endpoints (e2e)", () => {
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("DRAFT");
     expect(decision?.rejectionReason).toBe("Wait for the straggler before deciding");
+  });
+
+  // S5.9 Task 4 review round — IMPORTANT 3. Mirrors the A8 test above, but for reject(): if the
+  // shortlisted quote has moved off PENDING_APPROVAL since it was sent (e.g. a racing
+  // change-order invalidated it — see reject()'s own doc comment), reject() must refuse (409)
+  // BEFORE writing anything, not commit the decision to DRAFT and then blow up trying to fire a
+  // now-illegal quote transition. Simulates the race the same way the A8 test does — a direct DB
+  // write, not through StatusService, since only the DB row's shape (not a legal transition)
+  // matters for exercising this guard in isolation.
+  it("IMPORTANT 3 — reject when the shortlisted quote is no longer PENDING_APPROVAL (raced by e.g. a change-order) -> 409, nothing moves", async () => {
+    const senderId = randomUUID();
+    const { query, leg, quotes } = await seedPendingApproval("rejectstale", senderId);
+
+    await prisma.quote.update({ where: { id: quotes.REC.id }, data: { status: "INVALID" } });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "should not matter — refused before any write" })
+      .expect(409);
+
+    // Nothing moved: decision still PENDING_APPROVAL (not DRAFT — the half-committed hazard this
+    // guard exists to prevent), leg still PENDING_APPROVAL (never fired), quote left exactly as
+    // the test set it (INVALID — reject() never touched it).
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("PENDING_APPROVAL");
+    const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
+    expect(updatedLeg?.status).toBe("PENDING_APPROVAL");
+    const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
+    expect(quote?.status).toBe("INVALID");
   });
 
   it("reject a leg whose decision is still DRAFT (a name picked, never sent) -> 409", async () => {

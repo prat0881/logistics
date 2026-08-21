@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { AwardDecisionStatus, Prisma, type LegAwardDecision, type Query } from "@prisma/client";
+import { z } from "zod";
 import {
   AIR_VARIANT_KEY,
   LegEvent,
@@ -40,6 +41,13 @@ const OUTSTANDING_QUOTE_STATUSES: readonly QuoteStatus[] = [
   QuoteStatus.REQUOTED,
   QuoteStatus.INVALID,
 ];
+
+// S5.9 Task 4 review round — IMPORTANT 2. lockLeg's raw SQL casts both ids to `::uuid` directly
+// against Postgres, unlike a typed Prisma call, which validates the shape client-side first —
+// see lockLeg's own doc for why that matters. Same `.uuid()` check `@svyft/shared`'s schemas use
+// for every other UUID-shaped field (award.ts's `quoteId`, etc.), applied here to a path param
+// instead of a body field.
+const UUID_SCHEMA = z.string().uuid();
 
 // S5.4 — the maker-checker award workflow (design §9). approve/reject (Task 3, steps 2+4,
 // Manager+ + four-eyes) are the checker half. sendForApproval (Task 2, steps 1+3, validation
@@ -126,6 +134,18 @@ export class AwardService {
     queryId: string,
     legId: string,
   ): Promise<void> {
+    // S5.9 Task 4 review round — IMPORTANT 2. A typed Prisma call (what `requireDecidable` used
+    // to do, and what `sendForApproval` still does first via `ComparisonService.getComparison`)
+    // validates a `@db.Uuid` argument client-side and a malformed one surfaces as a Prisma error
+    // code `PrismaExceptionFilter` maps to 400. This raw query bypasses that entirely: a
+    // malformed `legId`/`queryId` reaches Postgres itself, which rejects the `::uuid` cast with
+    // its own `22P02`, wrapped by `$queryRaw` in a Prisma error code the filter does NOT map —
+    // falling through to a bare 500. `approve`/`reject` call this as their very first operation
+    // (no prior typed read to catch it), so validate the shape ourselves first and 400
+    // identically to what a typed Prisma call would have done.
+    if (!UUID_SCHEMA.safeParse(legId).success || !UUID_SCHEMA.safeParse(queryId).success) {
+      throw new BadRequestException("Invalid identifier");
+    }
     const locked = await tx.$queryRaw<Array<{ id: string }>>`
       SELECT "id" FROM "Leg" WHERE "id" = ${legId}::uuid AND "queryId" = ${queryId}::uuid
       FOR UPDATE
@@ -472,6 +492,27 @@ export class AwardService {
   // pre- or post-return can never change which of those two edges fires. Computing it inside the
   // same locked transaction as the decision write (rather than as a separate pre-tx read, per
   // the brief's own illustrative ordering) is what lets the lock cover it.
+  //
+  // S5.9 Task 4 review round — IMPORTANT 3. reject() used to fire QuoteEvent.RETURN
+  // unconditionally on `decision.shortlistedQuoteId`. `lockLeg` only locks the LEG row, not the
+  // quote — a change-order can race in on the SAME leg (ChangeOrderStrategy takes no leg lock;
+  // `award.module.ts` registers `PENDING_APPROVAL --invalidate--> INVALID`) and move the
+  // shortlisted quote off PENDING_APPROVAL between this transaction's commit and the post-commit
+  // fire below. Without a check, that fire throws `IllegalTransitionError` AFTER the decision
+  // has already committed to DRAFT — the leg's own RETURN_FULL/RETURN_PARTIAL fire (sequenced
+  // after) never runs, leaving a DRAFT decision on a leg still wedged at PENDING_APPROVAL that no
+  // HTTP path recovers (approve/reject both 409 in requireDecidable; send-for-approval has no
+  // edge from PENDING_APPROVAL). Mirrors A8 exactly: checked and refused (409) BEFORE any write,
+  // not "skip the quote fire but still move the leg" — firing the leg's RETURN_FULL/
+  // RETURN_PARTIAL from a `target` computed against the OLD quote statuses, while a concurrent
+  // change-order's own INVALIDATE+REOPEN cascade for the SAME leg is independently in flight,
+  // risks moving the leg to a status the change-order never intended (e.g. FULLY_QUOTED off a
+  // now-invalid quote) and that the change-order's own queued REOPEN fire then can't find an
+  // edge from — corrupting or aborting its cascade. A clean 409 here leaves the decision at
+  // PENDING_APPROVAL, untouched; the change-order's own listener
+  // (`award-change-order.listener.ts`) independently resets this exact decision to DRAFT and
+  // reopens the leg moments later regardless, so nothing is lost by refusing. Not reachable on
+  // the happy path (hardening, not a live bug) — mutation-proven in the e2e spec.
   async reject(
     queryId: string,
     legId: string,
@@ -480,10 +521,22 @@ export class AwardService {
   ): Promise<LegAwardDecision> {
     const { decision, target } = await this.prisma.$transaction(async (tx) => {
       await this.lockLeg(tx, queryId, legId);
-      // The pre-update decision itself is not needed here — only that requireDecidable's checks
-      // pass (existence, PENDING_APPROVAL, four-eyes). `updated` below (returned as `decision`)
-      // already carries `shortlistedQuoteId` unchanged, which is all the post-commit fire needs.
-      await this.requireDecidable(tx, legId, user);
+      const { decision } = await this.requireDecidable(tx, legId, user);
+
+      // IMPORTANT 3 (above) — same shape as approve()'s A8: refuse before any write if the
+      // shortlisted quote has moved off PENDING_APPROVAL since it was sent.
+      if (decision.shortlistedQuoteId) {
+        const quote = await tx.quote.findUnique({
+          where: { id: decision.shortlistedQuoteId },
+          select: { status: true },
+        });
+        if (!quote || quote.status !== QuoteStatus.PENDING_APPROVAL) {
+          throw new ConflictException(
+            "The shortlisted quote is no longer available to reject — it may already have been resolved elsewhere",
+          );
+        }
+      }
+
       const target = await this.legRollupTarget(tx, legId);
 
       // Single final write straight to DRAFT (design §9.5: "REJECTED -> back to DRAFT") rather
