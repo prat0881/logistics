@@ -22,31 +22,24 @@ import { StatusService } from "../src/modules/status/status.service";
 // PUT .../shortlist + POST .../send-for-approval shape is retired) so a PENDING_APPROVAL
 // decision is reached honestly, exactly like a live workflow would produce it.
 //
-// S5.9 Task 3 CARRY-FORWARD (progress.md), CORRECTED — an earlier version of this comment
-// described approve()'s failure as "an illegal edge -> 500". Verified by actually running the
-// suite: that is not what happens. Task 3's sendForApproval now correctly fires the leg through
-// FULLY_QUOTED/PARTIALLY_QUOTED -> PENDING_APPROVAL as part of send (that's the whole point of
-// routing selection+send through the new machine edges), so by the time approve() runs, its OWN
-// `leg.status !== LegStatus.FULLY_QUOTED` guard (award.service.ts) is unconditionally true and
-// throws a 409 — approve() never even reaches the QuoteEvent.APPROVE fire that would hit the
-// retired edge. Same root cause (approve() not yet updated for the new status flow), different
-// mechanism. reject() has the mirrored gap: it never fires the QUOTED/PENDING_APPROVAL ->
-// RETURN(_FULL/_PARTIAL) edges Task 2 registered for exactly this purpose, so a rejected leg's
-// quote/leg rows stay stuck at PENDING_APPROVAL instead of reverting. Task 4 owns approve()/
-// reject(); none of this is Task 3's to fix.
+// S5.9 Task 3 CARRY-FORWARD (progress.md) / CLOSED BY TASK 4 — until Task 4 landed, approve()
+// still guarded on the retired `leg.status !== LegStatus.FULLY_QUOTED` check (award.service.ts),
+// which Task 3's sendForApproval made unconditionally true (it advances the leg straight to
+// PENDING_APPROVAL as part of send) — every approve() 409'd before ever reaching the
+// QuoteEvent.APPROVE fire. reject() had the mirrored gap: it fired no QUOTED/PENDING_APPROVAL ->
+// RETURN(_FULL/_PARTIAL) edges at all, so a rejected leg's quote/leg rows stayed stuck at
+// PENDING_APPROVAL instead of reverting. Task 4 rewrote approve() to ask the quotes directly (via
+// the shared `rollupLegTarget` rule, D4) and gave reject() its RETURN/RETURN_FULL/RETURN_PARTIAL
+// fires, choosing between the latter two with that same rule so a leg sent from PARTIALLY_QUOTED
+// via the A3 deadline-passed path returns to PARTIALLY_QUOTED, not a promoted FULLY_QUOTED.
 //
-// Three tests below document that gap, deliberately, in two different ways (review round 2,
-// IMPORTANT 4). "a different Manager approves..." and "...re-sending an APPROVED leg with the
-// LOSING..." are plain `it()` and stay RED — both call approve() and hit its stale guard before
-// the behaviour under test is even reached, so there is nothing design-intent left to assert.
-// "reject (by a different Manager) -> ... quote back to QUOTED + leg back to FULLY_QUOTED ..." is
-// `it.failing()` — every assertion in it is written at DESIGN INTENT (what reject() and a
-// following re-send SHOULD do once Task 4 lands, per task-4-brief.md), which makes it fail today
-// on purpose; `it.failing()` reports that as a healthy pass rather than a fourth red entry. The
-// day Task 4's fix makes those assertions genuinely true, `it.failing()` will itself go red
-// ("Failing test passed even though it was supposed to fail") — Jest's own prompt to delete
-// `.failing` and land it as a normal green test. Every OTHER assertion in this file has been
-// verified against the real, running behaviour.
+// The "reject (by a different Manager) -> ..." test below used to be wrapped in `it.failing()`
+// (review round 2, IMPORTANT 4): every assertion in it was written at DESIGN INTENT for what
+// Task 4 should make true, so it failed on purpose and `it.failing()` reported that as a healthy
+// pass rather than a fourth red entry. Task 4's fix made those assertions genuinely true, which
+// is exactly the "Failing test passed even though it was supposed to fail" signal `it.failing()`
+// promises for that moment — the `.failing` marker has been removed and it now runs as a normal
+// green test, guarding the behaviour going forward.
 const PREFIX = "AWCK";
 const CODE = `YAL00-${PREFIX}`;
 
@@ -368,21 +361,18 @@ describe("award workflow — checker endpoints (e2e)", () => {
   });
 
   // S5.9 Task 3 review round 2, IMPORTANT 4 — this test used to pin two CONTRADICTORY intents in
-  // one always-red test: mid-test assertions at today's actual (broken) behaviour (quote/leg
-  // still PENDING_APPROVAL — reject() doesn't revert them) alongside a final assertion at design
-  // intent (re-send succeeds, 200) that can only pass once reject() DOES revert them — so the
-  // test could never go green either way, which isn't an honest signal, just permanently red for
-  // an unclear reason. Rewritten with EVERY assertion at design intent (§9.5 + task-4-brief.md's
-  // own "returns a rejected leg to FULLY_QUOTED and its quote to QUOTED" test) and wrapped in
-  // `it.failing()`: today, every one of these assertions is false, so the test body throws, and
-  // `it.failing()` reports that as a healthy pass (Jest's documented behaviour for a known,
-  // not-yet-fixed case) rather than a raw, unexplained red. The day Task 4 lands its RETURN/
-  // RETURN_FULL/RETURN_PARTIAL fires, this test's body will genuinely succeed — and `it.failing()`
-  // will then report THAT as a failure ("Failing test passed even though it was supposed to
-  // fail"), which is Jest's own prompt to delete `.failing` and land it as a real green test.
-  // That is the "flips" moment this test is carrying: not a silent colour change, but the CI
-  // itself telling Task 4 the fix is in and the marker can come off.
-  it.failing("reject (by a different Manager) -> decision DRAFT + quote back to QUOTED + leg back to FULLY_QUOTED + a REJECT event, then a re-send by an Executive succeeds again", async () => {
+  // one always-red test: mid-test assertions at then-actual (broken) behaviour (quote/leg still
+  // PENDING_APPROVAL — reject() didn't revert them) alongside a final assertion at design intent
+  // (re-send succeeds, 200) that could only pass once reject() DID revert them — so the test
+  // could never go green either way. It was rewritten with EVERY assertion at design intent
+  // (§9.5 + task-4-brief.md's own "returns a rejected leg to FULLY_QUOTED and its quote to
+  // QUOTED" test) and temporarily wrapped in `it.failing()` while that was still untrue.
+  //
+  // S5.9 TASK 4 — `it.failing()` reported "Failing test passed even though it was supposed to
+  // fail" the moment reject()'s RETURN/RETURN_FULL/RETURN_PARTIAL fires landed and made this
+  // body genuinely succeed, exactly the flip Jest's own docs promise for that marker. The
+  // `.failing` is removed below and this now runs as a plain, green test guarding the behaviour.
+  it("reject (by a different Manager) -> decision DRAFT + quote back to QUOTED + leg back to FULLY_QUOTED + a REJECT event, then a re-send by an Executive succeeds again", async () => {
     const senderId = randomUUID(); // M1
     const rejectorId = randomUUID(); // M2
     const { query, leg, quotes } = await seedPendingApproval("reject", senderId);
@@ -400,10 +390,10 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(decision?.decidedByUserId).toBe(rejectorId);
     expect(decision?.decidedAt).toBeTruthy();
 
-    // DESIGN INTENT (task-4-brief.md Step 5) — reject() fires QuoteEvent.RETURN and
-    // LegEvent.RETURN_FULL/RETURN_PARTIAL (picking the rollup-justified target, not a hard-coded
-    // FULLY_QUOTED — D4) BEFORE writing the decision, so a rejected leg's quote/leg genuinely go
-    // back to QUOTED/FULLY_QUOTED, not stay wedged at PENDING_APPROVAL. Not true yet.
+    // reject() fires QuoteEvent.RETURN and LegEvent.RETURN_FULL/RETURN_PARTIAL (picking the
+    // rollup-justified target via the shared rollupLegTarget rule, not a hard-coded FULLY_QUOTED
+    // — D4) after committing the decision write, so a rejected leg's quote/leg genuinely go back
+    // to QUOTED/FULLY_QUOTED rather than staying wedged at PENDING_APPROVAL.
     const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
     expect(quote?.status).toBe("QUOTED");
 
@@ -539,6 +529,41 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(decision?.status).toBe("PENDING_APPROVAL");
   });
 
+  // D4 (task-4-brief.md's own regression case) — the case a hard-coded `FULLY_QUOTED` reject
+  // target gets wrong. This leg reached PENDING_APPROVAL via the A3 deadline-passed path above
+  // (never itself FULLY_QUOTED — the second FF's RFQ window simply closed without a submission),
+  // so rejecting it must land back on PARTIALLY_QUOTED: promoting it to FULLY_QUOTED would claim
+  // every forwarder quoted when one simply timed out. reject()'s legRollupTarget picks this from
+  // the SAME shared `rollupLegTarget` rule LegQuoteProjector uses, so the two can never disagree.
+  it("D4 — rejects a leg that reached PENDING_APPROVAL via the A3 deadline-passed path back to PARTIALLY_QUOTED, not a promoted FULLY_QUOTED", async () => {
+    const senderId = randomUUID();
+    const { query, leg, quotes } = await seedPendingApproval(
+      "rejectpartial",
+      senderId,
+      [
+        { key: "REC", status: "QUOTED", deadline: past(), draft: { amount: 83200, transitDays: 3 } },
+        { key: "PENDING", status: "RFQ_SENT", deadline: past() },
+      ],
+      "PARTIALLY_QUOTED",
+    );
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "Wait for the straggler before deciding" })
+      .expect(200);
+
+    const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
+    expect(quote?.status).toBe("QUOTED"); // reverted off PENDING_APPROVAL
+
+    const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
+    expect(updatedLeg?.status).toBe("PARTIALLY_QUOTED"); // NOT FULLY_QUOTED — the RFQ_SENT FF never quoted
+
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("DRAFT");
+    expect(decision?.rejectionReason).toBe("Wait for the straggler before deciding");
+  });
+
   it("reject a leg whose decision is still DRAFT (a name picked, never sent) -> 409", async () => {
     const { query, leg, quotes } = await seedLeg("rejectdraft", "FULLY_QUOTED", [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
@@ -616,5 +641,63 @@ describe("award workflow — checker endpoints (e2e)", () => {
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("PENDING_APPROVAL");
     expect(decision?.shortlistedQuoteId).toBe(quotes.REC.id); // unchanged
+  });
+
+  // S5.9 Task 4 — approve()/reject() now take the SAME leg lock sendForApproval does (lockLeg),
+  // closing a real gap: before this task neither method took any lock at all, so an approve and
+  // a reject racing on the same leg were unserialized under READ COMMITTED — both could read
+  // PENDING_APPROVAL before either had written anything, both pass requireDecidable's own
+  // guards, and both commit + fire their own status transitions, leaving the quote/leg/decision
+  // in whatever order the two independent post-commit fires happened to land — potentially a
+  // mix of both outcomes (e.g. quote APPROVED but leg reverted to FULLY_QUOTED). Mirrors
+  // award-workflow-maker.e2e-spec.ts's own "CRITICAL 1 — two concurrent sends" test.
+  it("CRITICAL — approve and reject racing on the same leg: exactly one wins, the other 409s, and the DB lands in ONE coherent state (never a mix of both outcomes)", async () => {
+    const senderId = randomUUID();
+    const approverId = randomUUID();
+    const rejectorId = randomUUID();
+    const { query, leg, quotes } = await seedPendingApproval("racecheck", senderId);
+
+    // Fired via Promise.all (not sequential awaits) so both requests are genuinely in flight at
+    // once — each reaches its own `$transaction` and `lockLeg`'s `SELECT ... FOR UPDATE` before
+    // either commits.
+    const [approveRes, rejectRes] = await Promise.all([
+      request(app.getHttpServer())
+        .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+        .set("Cookie", cookieFor(approverId, Role.MANAGER))
+        .send(),
+      request(app.getHttpServer())
+        .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+        .set("Cookie", cookieFor(rejectorId, Role.MANAGER))
+        .send({ reason: "racing on purpose" }),
+    ]);
+
+    // Exactly one winner, exactly one loser — lockLeg fully serializes the two: the second to
+    // reach the lock blocks until the first transaction commits or rolls back, then its own
+    // requireDecidable read sees the real, already-decided outcome (decision.status is no
+    // longer PENDING_APPROVAL) and 409s cleanly, before writing anything of its own.
+    const responses = [approveRes, rejectRes];
+    const winners = responses.filter((r) => r.status === 200);
+    const losers = responses.filter((r) => r.status === 409);
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+
+    const [decision, quote, updatedLeg] = await Promise.all([
+      prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: leg.id } }),
+      prisma.quote.findUniqueOrThrow({ where: { id: quotes.REC.id } }),
+      prisma.leg.findUniqueOrThrow({ where: { id: leg.id } }),
+    ]);
+
+    // ONE coherent outcome — either approve won (decision/quote/leg all APPROVED) or reject won
+    // (decision back to DRAFT, quote/leg reverted) — never a mix, e.g. quote APPROVED while the
+    // leg is still PENDING_APPROVAL/FULLY_QUOTED, or a DRAFT decision next to an APPROVED quote.
+    if (approveRes.status === 200) {
+      expect(decision.status).toBe("APPROVED");
+      expect(quote.status).toBe("APPROVED");
+      expect(updatedLeg.status).toBe("APPROVED");
+    } else {
+      expect(decision.status).toBe("DRAFT");
+      expect(quote.status).toBe("QUOTED");
+      expect(updatedLeg.status).toBe("FULLY_QUOTED");
+    }
   });
 });

@@ -14,6 +14,7 @@ import {
   QuoteStatus,
   computeQuoteTotals,
   latestRateByCurrency,
+  rollupLegTarget,
   toUsd,
   transitKeyForVariant,
   type QueryAwardSnapshot,
@@ -110,6 +111,44 @@ export class AwardService {
     });
   }
 
+  // S5.9 Task 4 — the SAME mutual-exclusion lock sendForApproval originally inlined (Task 3,
+  // review round 2, CRITICAL 1 / register B3), extracted so every entry point that can race
+  // another on the same leg (send-for-approval, approve, reject) takes it identically: same
+  // row, same order (Leg first, nothing else locked before or after it in the same call), same
+  // raw SQL. `SELECT ... FOR UPDATE` on the leg's own row (always extant by the time any of
+  // these three can run) turns the caller's whole guard-then-write sequence into that leg's
+  // critical section — a second concurrent call on the same leg blocks HERE, before it reads
+  // anything its own guards depend on, until this transaction commits or rolls back. Prisma has
+  // no typed API for row locks, hence raw SQL — parameterized via the tagged template, never
+  // string-interpolated.
+  private async lockLeg(
+    tx: Prisma.TransactionClient,
+    queryId: string,
+    legId: string,
+  ): Promise<void> {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "Leg" WHERE "id" = ${legId}::uuid AND "queryId" = ${queryId}::uuid
+      FOR UPDATE
+    `;
+    if (locked.length === 0) throw new NotFoundException("Leg not found");
+  }
+
+  // The leg status the quotes currently justify. Delegates to the ONE pure rule in @svyft/shared
+  // that LegQuoteProjector also uses, so approve/reject and the rollup can never disagree (D4).
+  // Takes `tx`, not `this.prisma`: approve()/reject() call this from inside the same transaction
+  // that holds lockLeg's row lock, so the read is against that transaction's own consistent
+  // snapshot rather than a second, unlocked connection.
+  private async legRollupTarget(
+    tx: Prisma.TransactionClient,
+    legId: string,
+  ): Promise<LegStatus | null> {
+    const quotes = await tx.quote.findMany({
+      where: { legId, status: { not: QuoteStatus.SELECT } },
+      select: { status: true },
+    });
+    return rollupLegTarget(quotes.map((q) => q.status));
+  }
+
   // S5.9 Task 3 (register B2/B3) — selecting an offer and sending it for approval are now ONE
   // call that NAMES the offer it acts on, in ONE transaction. The old two-call shape (PUT
   // .../shortlist, then POST .../send-for-approval) let a concurrent shortlist change the
@@ -161,21 +200,14 @@ export class AwardService {
     const rec = compLeg.recommendation;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      // 0. MUTUAL EXCLUSION (review round 2, CRITICAL 1 / register B3) — `SELECT ... FOR UPDATE`
-      // on the leg's own row (always extant by the time anyone can be sending for approval,
-      // unlike the decision row this call may be about to CREATE) turns the whole guard-then-
-      // write sequence below into that leg's critical section. A second concurrent
-      // `sendForApproval` on the same leg blocks HERE — before it reads anything the guards
-      // depend on — until this transaction commits or rolls back, then proceeds against state
-      // that actually reflects the outcome: if this call won, the second call's B2 read (step 1)
-      // now sees PENDING_APPROVAL and 409s cleanly, with nothing of its own ever written and no
-      // quote it fires into PENDING_APPROVAL. Prisma has no typed API for row locks, hence raw
-      // SQL — parameterized via the tagged template, not string-interpolated.
-      const locked = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT "id" FROM "Leg" WHERE "id" = ${legId}::uuid AND "queryId" = ${queryId}::uuid
-        FOR UPDATE
-      `;
-      if (locked.length === 0) throw new NotFoundException("Leg not found");
+      // 0. MUTUAL EXCLUSION (review round 2, CRITICAL 1 / register B3) — see lockLeg's own doc
+      // (S5.9 Task 4 extracted it there so approve()/reject() take the identical lock). A second
+      // concurrent `sendForApproval`/approve/reject on the same leg blocks HERE — before it reads
+      // anything the guards depend on — until this transaction commits or rolls back, then
+      // proceeds against state that actually reflects the outcome: if this call won, the second
+      // call's B2 read (step 1) now sees PENDING_APPROVAL and 409s cleanly, with nothing of its
+      // own ever written and no quote it fires into PENDING_APPROVAL.
+      await this.lockLeg(tx, queryId, legId);
 
       // 1. Load the leg (scoped to queryId) with its non-SELECT quotes. `quotes.id` (added
       // review round 2, CRITICAL 2) is what step 2 below needs to find the NAMED quote among
@@ -314,26 +346,27 @@ export class AwardService {
     return updated;
   }
 
-  // Shared preconditions for both checker actions, in order: (0) the leg must actually belong
-  // to the URL's queryId — 404 otherwise. This mirrors sendForApproval's own
-  // `where: { id: legId, queryId }` scoping (line ~114 above); without it, a mismatched queryId
-  // in the URL (any other real query, correct legId) would still succeed and thread the WRONG
-  // queryId into the fire()s / AwardDecisionEvent / QueryStatusProjector rollup — corrupting the
-  // audit trail and recomputing the wrong query's status. (1) the decision must exist (404);
-  // (2) it must be PENDING_APPROVAL — you cannot decide something not sent for approval (409);
-  // (3) four-eyes — the Manager (or Admin) deciding may not be the same user who sent it (403).
-  // The @Roles guard already keeps plain Executives out before this ever runs; this additionally
-  // stops a Manager from approving/rejecting their own send. Returns the leg's status alongside
-  // the decision since approve() needs it for its own FULLY_QUOTED guard below.
+  // Shared preconditions for both checker actions: (1) the decision must exist (404); (2) it
+  // must be PENDING_APPROVAL — you cannot decide something not sent for approval (409); (3)
+  // four-eyes — the Manager (or Admin) deciding may not be the same user who sent it (403). The
+  // @Roles guard already keeps plain Executives out before this ever runs; this additionally
+  // stops a Manager from approving/rejecting their own send.
+  //
+  // S5.9 Task 4 — takes `tx`, not `this.prisma`: both callers now run this from inside the SAME
+  // transaction that holds lockLeg's row lock on this leg (see approve()/reject() below), so the
+  // decision read is against that transaction's own consistent snapshot rather than a second,
+  // unlocked connection racing whichever of send/approve/reject currently holds the lock. The
+  // leg-belongs-to-queryId 404 that used to live here is now lockLeg's job — its
+  // `WHERE id = ... AND queryId = ...` raw query 404s identically (mirrors sendForApproval's own
+  // scoping) and runs BEFORE this, so a mismatched queryId in the URL never reaches this method
+  // at all. Only returns `decision` now (not the leg) — approve() used to read `leg.status` for
+  // its own FULLY_QUOTED guard, but that guard moved onto the quotes (see legRollupTarget below).
   private async requireDecidable(
-    queryId: string,
+    tx: Prisma.TransactionClient,
     legId: string,
     user: RequestUser,
-  ): Promise<{ leg: { status: string }; decision: LegAwardDecision }> {
-    const leg = await this.prisma.leg.findFirst({ where: { id: legId, queryId }, select: { status: true } });
-    if (!leg) throw new NotFoundException("Leg not found");
-
-    const decision = await this.prisma.legAwardDecision.findUnique({ where: { legId } });
+  ): Promise<{ decision: LegAwardDecision }> {
+    const decision = await tx.legAwardDecision.findUnique({ where: { legId } });
     if (!decision) throw new NotFoundException("No award decision on this leg");
     if (decision.status !== AwardDecisionStatus.PENDING_APPROVAL) {
       throw new ConflictException("This leg is not pending approval");
@@ -341,56 +374,50 @@ export class AwardService {
     if (decision.sentByUserId === user.userId) {
       throw new ForbiddenException("SELF_APPROVAL");
     }
-    return { leg, decision };
+    return { decision };
   }
 
+  // S5.9 Task 4 — approve() used to guard on `leg.status !== FULLY_QUOTED`, straight off the
+  // OLD machine (QUOTED/FULLY_QUOTED --approve--> APPROVED). After Task 3, the leg is always
+  // PENDING_APPROVAL by the time anyone can approve (sendForApproval put it there), so that
+  // guard would reject EVERY approval. What it actually meant — "no RFQ on this leg may still
+  // be open" — is a property of the QUOTES, not the leg's own status, so it now asks
+  // legRollupTarget directly (D4 — the same rule reject() below uses to pick its return target,
+  // so the two can never disagree about what the quotes justify).
+  //
+  // Lock/transaction shape mirrors sendForApproval (S5.9 Task 3): lockLeg FIRST inside the
+  // transaction, every guard and the decision write itself INSIDE it, commit, THEN fire the
+  // quote/leg transitions. `StatusService.fire` opens its own transaction on a different pool
+  // connection — firing from inside a transaction that still holds this leg's row lock would
+  // have that inner transaction block on the outer one's own lock until Prisma's interactive-tx
+  // timeout (P2028). Firing after commit also gives approve()/reject() the SAME mutual exclusion
+  // sendForApproval has: a concurrent send/approve/reject on this leg blocks on lockLeg until
+  // this transaction resolves, then sees the real outcome.
   async approve(queryId: string, legId: string, user: RequestUser): Promise<LegAwardDecision> {
-    const { leg, decision } = await this.requireDecidable(queryId, legId, user);
+    const { decision, quoteId } = await this.prisma.$transaction(async (tx) => {
+      await this.lockLeg(tx, queryId, legId);
+      const { decision } = await this.requireDecidable(tx, legId, user);
 
-    // The only registered "leg" edge for the APPROVE event is FULLY_QUOTED -> APPROVED
-    // (award.module.ts). sendForApproval's A3 path can legally reach PENDING_APPROVAL from a
-    // PARTIALLY_QUOTED leg (outstanding FFs' deadlines passed) — approving that leg would fire
-    // the quote first (which commits), then hit this illegal leg transition (uncaught ->
-    // IllegalTransitionError -> 500), stranding a half-approved state: quote APPROVED, leg still
-    // PARTIALLY_QUOTED, decision still PENDING_APPROVAL. Guard BEFORE firing anything so nothing
-    // half-commits. Completing a deadline-passed PARTIALLY_QUOTED leg (expiring the stragglers
-    // -> FULLY_QUOTED, then approving) is SB5's expiry-sweep job — deliberately not done here; a
-    // bare EXPIRE fire here would strand SB5's own ScheduledEvents for those quotes.
-    if (leg.status !== LegStatus.FULLY_QUOTED) {
-      throw new ConflictException(
-        "This leg is not fully quoted; its outstanding RFQs must be closed out before approval",
-      );
-    }
+      if ((await this.legRollupTarget(tx, legId)) !== LegStatus.FULLY_QUOTED) {
+        throw new ConflictException(
+          "This leg is not fully quoted; its outstanding RFQs must be closed out before approval",
+        );
+      }
 
-    // sendForApproval only ever reaches PENDING_APPROVAL with shortlistedQuoteId set (it
-    // guards on that itself) — re-narrow defensively since the column is nullable.
-    const quoteId = decision.shortlistedQuoteId;
-    if (!quoteId) throw new ConflictException("This leg has no shortlisted offer");
+      // sendForApproval only ever reaches PENDING_APPROVAL with shortlistedQuoteId set (it
+      // guards on that itself) — re-narrow defensively since the column is nullable.
+      const quoteId = decision.shortlistedQuoteId;
+      if (!quoteId) throw new ConflictException("This leg has no shortlisted offer");
 
-    // A8 — a concurrent re-quote/change-order may have moved the shortlisted quote off QUOTED
-    // between send-for-approval and this decision; re-check freshness right before firing.
-    const quote = await this.prisma.quote.findUnique({ where: { id: quoteId }, select: { status: true } });
-    if (!quote || quote.status !== QuoteStatus.QUOTED) {
-      throw new ConflictException("The shortlisted quote is no longer available for approval");
-    }
+      // A8 — moved from QUOTED to PENDING_APPROVAL: Task 3's send already advanced the
+      // shortlisted quote there, so freshness now means "still PENDING_APPROVAL", not "still
+      // QUOTED". A concurrent re-quote/change-order could still have knocked it off that status
+      // between send and this decision; re-check right before writing anything.
+      const quote = await tx.quote.findUnique({ where: { id: quoteId }, select: { status: true } });
+      if (!quote || quote.status !== QuoteStatus.PENDING_APPROVAL) {
+        throw new ConflictException("The shortlisted quote is no longer available for approval");
+      }
 
-    // Fire ORDER is load-bearing. fire() awaits emitAsync (status.service.ts), so
-    // LegQuoteProjector.onQuoteStatusChanged runs synchronously inside the quote fire below.
-    // Quote first: while the leg is still FULLY_QUOTED, the projector's
-    // `leg.status !== FULLY_QUOTED` guard is false, so it correctly no-ops (the quote is now
-    // APPROVED — a RESOLVED status — and all quotes resolved, but the leg hasn't moved yet).
-    // Firing leg first would leave the projector seeing leg=APPROVED + all-resolved on the
-    // subsequent quote fire and attempt an illegal QUOTE_FULL (APPROVED -> FULLY_QUOTED) edge
-    // (caught+logged, no corruption, but wrong). Each fire owns its own transaction, so a
-    // partial failure between the two is an accepted risk for this task.
-    await this.status.fire("quote", quoteId, QuoteEvent.APPROVE, {
-      queryId,
-      actorId: user.userId,
-      reason: null,
-    });
-    await this.status.fire("leg", legId, LegEvent.APPROVE, { queryId, actorId: user.userId });
-
-    return this.prisma.$transaction(async (tx) => {
       const updated = await tx.legAwardDecision.update({
         where: { legId },
         data: {
@@ -409,25 +436,60 @@ export class AwardService {
           actorId: user.userId,
         },
       });
-      return updated;
+      return { decision: updated, quoteId };
     });
+
+    // Quote first, then leg — kept consistent with sendForApproval and the e2e call-order spy.
+    // Ordering is no longer load-bearing for correctness the way it was pre-Task-2: the
+    // projector now skips legs in PENDING_APPROVAL/APPROVED outright (its ROLLUP_FROZEN guard),
+    // so neither order can trigger a spurious rollup attempt on the leg this fires against.
+    await this.status.fire("quote", quoteId, QuoteEvent.APPROVE, {
+      queryId,
+      actorId: user.userId,
+      reason: null,
+    });
+    await this.status.fire("leg", legId, LegEvent.APPROVE, { queryId, actorId: user.userId });
+
+    return decision;
   }
 
+  // S5.9 Task 4 — reject() used to fire no status transitions at all, leaving the quote and leg
+  // wedged at PENDING_APPROVAL forever. It now returns both, choosing the leg's target via
+  // legRollupTarget (D4) rather than a hard-coded FULLY_QUOTED: sendForApproval's A3 path can
+  // legally reach PENDING_APPROVAL from a PARTIALLY_QUOTED leg (outstanding FFs' deadlines
+  // passed, not every FF actually quoted) — rejecting that leg back to a hard-coded FULLY_QUOTED
+  // would promote it into a state it never earned. Same lock/transaction shape as approve()
+  // above: lockLeg + every guard + the target computation + the decision write all happen
+  // INSIDE one transaction, commit, THEN fire — see approve()'s doc for why (deadlock avoidance
+  // — StatusService.fire cannot run while this transaction still holds the leg's row lock).
+  //
+  // The target is computed from the quotes' statuses AS THEY STAND at guard time, i.e. BEFORE
+  // the quote RETURN fire below reverts the shortlisted quote off PENDING_APPROVAL — not "after
+  // the return" as it might seem more natural to compute. This is deliberately safe: the shared
+  // rollup rule (status.ts) treats PENDING_APPROVAL and QUOTED identically as "resolved" for the
+  // FULLY_QUOTED branch, and reject() only ever uses `target` to pick between RETURN_FULL (exact
+  // match on FULLY_QUOTED) and RETURN_PARTIAL (everything else, including `null`) — so computing
+  // pre- or post-return can never change which of those two edges fires. Computing it inside the
+  // same locked transaction as the decision write (rather than as a separate pre-tx read, per
+  // the brief's own illustrative ordering) is what lets the lock cover it.
   async reject(
     queryId: string,
     legId: string,
     input: RejectInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
-    await this.requireDecidable(queryId, legId, user);
+    const { decision, target } = await this.prisma.$transaction(async (tx) => {
+      await this.lockLeg(tx, queryId, legId);
+      // The pre-update decision itself is not needed here — only that requireDecidable's checks
+      // pass (existence, PENDING_APPROVAL, four-eyes). `updated` below (returned as `decision`)
+      // already carries `shortlistedQuoteId` unchanged, which is all the post-commit fire needs.
+      await this.requireDecidable(tx, legId, user);
+      const target = await this.legRollupTarget(tx, legId);
 
-    // Single final write straight to DRAFT (design §9.5: "REJECTED -> back to DRAFT") rather
-    // than two updates (REJECTED then DRAFT) — the "REJECTED" moment is captured as audit
-    // intent by the REJECT event + rejectionReason, not as a persisted intermediate decision
-    // status. Clearing sentByUserId re-enables the maker to shortlist/send again. The quote is
-    // UNCHANGED — reject fires no status transition (design §8: reject is not a quote
-    // transition; the quote stays QUOTED).
-    return this.prisma.$transaction(async (tx) => {
+      // Single final write straight to DRAFT (design §9.5: "REJECTED -> back to DRAFT") rather
+      // than two updates (REJECTED then DRAFT) — the "REJECTED" moment is captured as audit
+      // intent by the REJECT event + rejectionReason, not as a persisted intermediate decision
+      // status. Clearing sentByUserId re-enables the maker to send again.
       const updated = await tx.legAwardDecision.update({
         where: { legId },
         data: {
@@ -447,8 +509,30 @@ export class AwardService {
           actorId: user.userId,
         },
       });
-      return updated;
+      return { decision: updated, target };
     });
+
+    // Quote first, then leg — same order as approve()/sendForApproval. The leg is still
+    // PENDING_APPROVAL for the whole duration of the quote fire, so the projector's freeze
+    // (Task 2) skips the rollup it would otherwise trigger off this quote's status change; the
+    // leg's own RETURN_FULL/RETURN_PARTIAL fire right after is what actually moves it, using the
+    // `target` already computed above.
+    if (decision.shortlistedQuoteId) {
+      await this.status.fire("quote", decision.shortlistedQuoteId, QuoteEvent.RETURN, {
+        queryId,
+        actorId: user.userId,
+        reason: input.reason,
+      });
+    }
+
+    await this.status.fire(
+      "leg",
+      legId,
+      target === LegStatus.FULLY_QUOTED ? LegEvent.RETURN_FULL : LegEvent.RETURN_PARTIAL,
+      { queryId, actorId: user.userId, reason: input.reason },
+    );
+
+    return decision;
   }
 
   // The two TERMINAL endpoints (design §5.6/§8.3/§9, S5.4 Task 4). Both are QUERY-scoped (no

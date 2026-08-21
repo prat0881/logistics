@@ -81,8 +81,9 @@ export class NegotiationService {
 
     // 2) Leg: only reopen if the negotiated quote had actually carried an approval — a leg
     // whose shortlist was merely QUOTED (never sent/approved) stays exactly where it was
-    // (LegQuoteProjector's own listener on quote.status.changed is a no-op here too: REQUOTED
-    // is not in its RESOLVED set, so it never fires a forward transition off this event). Fired
+    // (LegQuoteProjector's own listener on quote.status.changed is a no-op here too: REQUOTED is
+    // not one of the "resolved" statuses the shared `rollupLegTarget` rule (status.ts) treats as
+    // settled, so it computes no forward target off this event). Fired
     // BEFORE step 3's transaction, deliberately: fire() commits its own tx and only emits its
     // event after that commit (status.service.ts), so by the time this call resolves the leg
     // row is durably FULLY_QUOTED — which step 3's own QueryStatusProjector.recompute needs to
