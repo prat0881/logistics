@@ -40,10 +40,18 @@ const OUTSTANDING_QUOTE_STATUSES: readonly QuoteStatus[] = [
   QuoteStatus.INVALID,
 ];
 
-// S5.4 — the maker-checker award workflow (design §9). sendForApproval (validation catalogue
-// §13 A1/A2/A3/A9) is only ever a write to LegAwardDecision + an audit event. approve/reject
-// (Task 3, steps 2+4, Manager+ + four-eyes) are the checker half — unlike the maker method, they
-// actually fire quote/leg status transitions via StatusService.
+// S5.4 — the maker-checker award workflow (design §9). approve/reject (Task 3, steps 2+4,
+// Manager+ + four-eyes) are the checker half. sendForApproval (Task 2, steps 1+3, validation
+// catalogue §13 A1/A2/A3/A9/B2) is the maker half.
+//
+// CORRECTED (S5.9 Task 3 review round 2, IMPORTANT 3) — this comment used to claim
+// sendForApproval "is only ever a write to LegAwardDecision + an audit event" and that,
+// "unlike the maker method", only approve/reject "actually fire quote/leg status transitions".
+// Both clauses went false the moment S5.9 Task 3 gave sendForApproval its own post-commit
+// `status.fire` calls (see below, and the class-level note on that method) — it now fires both
+// transitions itself, before approve() ever runs. What still distinguishes the two halves is WHO
+// may call them and WHEN in the workflow (auth-only + before a decision exists, vs Manager+
+// four-eyes + only once PENDING_APPROVAL), not whether either one touches status.
 //
 // S5.9 Task 3 (register B2/B3) — selecting an offer and sending it for approval used to be two
 // separate calls (PUT .../shortlist then POST .../send-for-approval): the second call re-read
@@ -111,11 +119,24 @@ export class AwardService {
   // Read/transaction boundary: A1 (offer validity) and D3 (recommendation snapshot) are reads
   // through ComparisonService.getComparison, which queries `this.prisma` directly — it cannot
   // run inside `$transaction` and see `tx`. They run first, before the transaction opens. Every
-  // other step — the leg load, the B2/A3/A2/A9 guards, persistSelection's write, the decision's
-  // update to PENDING_APPROVAL, and the AwardDecisionEvent — runs inside the ONE transaction
-  // below, in the order the guard catalogue (§13) numbers them, so the B2/A3 checks that gate
-  // the write and the A2 check that reads the freshly-written decision are all atomic with the
-  // write itself: a guard failure anywhere in there rolls the whole selection back too.
+  // other step — the leg lock + load, the B2/A1-refresh/A3/A2/A9 guards, persistSelection's
+  // write, the decision's update to PENDING_APPROVAL, and the AwardDecisionEvent — runs inside
+  // the ONE transaction below.
+  //
+  // CORRECTED (S5.9 Task 3 review round 2, CRITICAL 1) — this comment used to say the in-tx
+  // guards are "atomic with the write itself" and stop there. That is true for ROLLBACK (a guard
+  // failing after persistSelection's write correctly undoes it) but says nothing about MUTUAL
+  // EXCLUSION between two concurrent callers, which is what B2 actually needs and did not have:
+  // under READ COMMITTED, the B2 read below (`tx.legAwardDecision.findUnique`) took no lock, so
+  // two simultaneous sends on the same leg could both read "no decision yet" before either had
+  // written anything, both pass every guard, and both commit — the SECOND to commit silently
+  // overwrites the FIRST's persisted selection while the FIRST's already-returned response still
+  // claims success naming its own, now-stale offer. Reproduced empirically (two concurrent sends,
+  // different quoteIds, one leg): 200/200, decision landed on the second caller's offer, BOTH
+  // quotes fired into PENDING_APPROVAL because each request's post-commit fire uses its OWN
+  // `input.quoteId`, independent of what actually persisted. That is register B3's bug verbatim,
+  // just moved from "two sequential HTTP calls" to "two concurrent HTTP calls of the merged one".
+  // Step 0 below closes it with a real mutual-exclusion lock, not just an ordering guarantee.
   async sendForApproval(
     queryId: string,
     legId: string,
@@ -124,7 +145,10 @@ export class AwardService {
   ): Promise<LegAwardDecision> {
     // A1 (offer validity) + D3 (recommendation snapshot) — see the boundary note above. `&&
     // o.priced` keeps a never-quoted, zero-freight variant placeholder (comparison.service.ts
-    // emits one per `variantsForMode` slot unconditionally) from passing A1.
+    // emits one per `variantsForMode` slot unconditionally) from passing A1. NOTE (review round
+    // 2, deferred minor): this pre-tx read is not re-validated against `rec` inside the
+    // transaction — only the NAMED offer's own status is (step 2 below, CRITICAL 2). A `rec`
+    // that goes stale between this read and commit is out of scope for this round.
     const comparison = await this.comparison.getComparison(queryId);
     const compLeg = comparison.legs.find((l) => l.legId === legId);
     if (!compLeg) throw new NotFoundException("Leg not found");
@@ -137,25 +161,65 @@ export class AwardService {
     const rec = compLeg.recommendation;
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      // 1. Load the leg (scoped to queryId) with its non-SELECT quotes.
+      // 0. MUTUAL EXCLUSION (review round 2, CRITICAL 1 / register B3) — `SELECT ... FOR UPDATE`
+      // on the leg's own row (always extant by the time anyone can be sending for approval,
+      // unlike the decision row this call may be about to CREATE) turns the whole guard-then-
+      // write sequence below into that leg's critical section. A second concurrent
+      // `sendForApproval` on the same leg blocks HERE — before it reads anything the guards
+      // depend on — until this transaction commits or rolls back, then proceeds against state
+      // that actually reflects the outcome: if this call won, the second call's B2 read (step 1)
+      // now sees PENDING_APPROVAL and 409s cleanly, with nothing of its own ever written and no
+      // quote it fires into PENDING_APPROVAL. Prisma has no typed API for row locks, hence raw
+      // SQL — parameterized via the tagged template, not string-interpolated.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "Leg" WHERE "id" = ${legId}::uuid AND "queryId" = ${queryId}::uuid
+        FOR UPDATE
+      `;
+      if (locked.length === 0) throw new NotFoundException("Leg not found");
+
+      // 1. Load the leg (scoped to queryId) with its non-SELECT quotes. `quotes.id` (added
+      // review round 2, CRITICAL 2) is what step 2 below needs to find the NAMED quote among
+      // them — the pre-tx `getComparison` read above proved it was a real, priced offer as of
+      // BEFORE this transaction opened; it says nothing about whether it still is.
       const leg = await tx.leg.findFirst({
         where: { id: legId, queryId },
         select: {
           status: true,
           quotes: {
             where: { status: { not: QuoteStatus.SELECT } },
-            select: { status: true, rfq: { select: { submissionDeadline: true } } },
+            select: { id: true, status: true, rfq: { select: { submissionDeadline: true } } },
           },
         },
       });
       if (!leg) throw new NotFoundException("Leg not found");
 
-      // 2. B2 guard — a decision that has already moved past DRAFT (sent for approval, or
+      // 2. A1 IN-TRANSACTION REFRESH (review round 2, CRITICAL 2) — the named quote must be
+      // QUOTED right now, not merely "comparable" (COMPARABLE_STATUSES in comparison.service.ts
+      // is QUOTED | REQUOTED | PENDING_APPROVAL — a REQUOTED offer is still visible/priced in
+      // the grid, stale-flagged, and passes the pre-tx A1 check above). The quote machine
+      // registers exactly ONE source for `send_for_approval`: QUOTED -> PENDING_APPROVAL.
+      // Without this, naming a REQUOTED (or otherwise non-QUOTED) offer sails through every
+      // guard below, commits persistSelection's write and the PENDING_APPROVAL decision update,
+      // and only THEN throws `IllegalTransitionError` out of the post-commit quote fire — a
+      // committed, wedged decision with nothing to undo it but reject() (B2 blocks a re-send,
+      // approve()'s A8 blocks approval). This is independent of A9 below: A9 is about a
+      // DIFFERENT, still-outstanding quote elsewhere on the leg (proceed past it, with reason);
+      // naming the re-quoted offer itself is refused unconditionally, override or not — mirrors
+      // approve()'s own A8 freshness re-check, just applied at send time instead of decide time.
+      const namedQuote = leg.quotes.find((q) => q.id === input.quoteId);
+      if (!namedQuote || namedQuote.status !== QuoteStatus.QUOTED) {
+        throw new ConflictException(
+          "The named offer is no longer QUOTED — refresh the comparison and pick again",
+        );
+      }
+
+      // 3. B2 guard — a decision that has already moved past DRAFT (sent for approval, or
       // approved) must not be silently reset by a fresh send. Without this: send the winner ->
       // a different Manager approves (leg=APPROVED, quote=APPROVED, decision={APPROVED,
       // shortlist=winner}) -> send AGAIN with the LOSING (still-QUOTED) offer resets the
       // decision to PENDING_APPROVAL while the leg/quote stay APPROVED — an orphaned approval
-      // with no way forward.
+      // with no way forward. Now genuinely exclusive against a concurrent sender too — see the
+      // step-0 lock above.
       const existing = await tx.legAwardDecision.findUnique({ where: { legId } });
       if (
         existing &&
@@ -165,7 +229,7 @@ export class AwardService {
         throw new ConflictException("This leg has already been sent for approval");
       }
 
-      // 3. A3 (D10) — either the rollup already reached FULLY_QUOTED, or every still-outstanding
+      // 4. A3 (D10) — either the rollup already reached FULLY_QUOTED, or every still-outstanding
       // FF's RFQ window has closed (so waiting longer cannot produce a better offer).
       const fullyQuoted = leg.status === LegStatus.FULLY_QUOTED;
       const outstanding = leg.quotes.filter((q) => OUTSTANDING_QUOTE_STATUSES.includes(q.status));
@@ -180,10 +244,10 @@ export class AwardService {
         );
       }
 
-      // 4. Write the selection — the named offer + the recommendation snapshotted above.
+      // 5. Write the selection — the named offer + the recommendation snapshotted above.
       const decision = await this.persistSelection(tx, queryId, legId, input, rec);
 
-      // 5. A2 — an override reason is required whenever the named offer deviates from the
+      // 6. A2 — an override reason is required whenever the named offer deviates from the
       // recommendation snapshotted just now (including "there was no recommendation"). Computed
       // from the freshly-written decision, not a stale read — and because this runs inside the
       // transaction, throwing here rolls persistSelection's write back too.
@@ -196,7 +260,7 @@ export class AwardService {
         );
       }
 
-      // 6. A9 — a re-quote in flight on this leg must be explicitly proceeded past.
+      // 7. A9 — a re-quote in flight on this leg must be explicitly proceeded past.
       const hasInFlightRequote = leg.quotes.some((q) => q.status === QuoteStatus.REQUOTED);
       if (hasInFlightRequote && !(input.proceedWithoutWaiting === true && input.proceedReason)) {
         throw new BadRequestException(
@@ -204,7 +268,7 @@ export class AwardService {
         );
       }
 
-      // 7. Every guard passed — advance the decision and append the single audit event covering
+      // 8. Every guard passed — advance the decision and append the single audit event covering
       // this whole call (selection + send, formerly two events: SHORTLIST + SEND_FOR_APPROVAL).
       const updated = await tx.legAwardDecision.update({
         where: { legId },

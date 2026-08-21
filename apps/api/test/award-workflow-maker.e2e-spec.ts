@@ -477,4 +477,122 @@ describe("award workflow — maker endpoints (e2e)", () => {
       .send({})
       .expect(400);
   });
+
+  // ── S5.9 Task 3 review round 2 — CRITICAL 1 (register B3): the merged call is still a race ──
+  it("CRITICAL 1 — two concurrent sends naming different offers on the same leg: exactly one wins, the loser 409s with nothing persisted, and the winner's response names exactly what got persisted", async () => {
+    const { query, leg, quotes } = await seedLeg("race", "FULLY_QUOTED", [
+      { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
+      { key: "OTH", status: "QUOTED", deadline: future(), draft: { amount: 166400, transitDays: 5 } },
+    ]);
+
+    // Fired via Promise.all (not sequential awaits) so both requests are genuinely in flight at
+    // once — each reaches its own `$transaction` and the step-0 `SELECT ... FOR UPDATE` before
+    // either commits. `overrideReason` on B pre-empts A2 (OTH is never the recommendation, REC
+    // is) so the ONLY guard either request can fail on on is the race itself.
+    const [resA, resB] = await Promise.all([
+      request(app.getHttpServer())
+        .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+        .set("Cookie", cookieFor(randomUUID()))
+        .send({ quoteId: quotes.REC.id, variant: "DEDICATED" }),
+      request(app.getHttpServer())
+        .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+        .set("Cookie", cookieFor(randomUUID()))
+        .send({ quoteId: quotes.OTH.id, variant: "DEDICATED", overrideReason: "racing on purpose" }),
+    ]);
+
+    // Requirement 1 — exactly one winner, exactly one loser.
+    const responses = [resA, resB];
+    const winners = responses.filter((r) => r.status === 200);
+    const losers = responses.filter((r) => r.status === 409);
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+
+    const decision = await prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: leg.id } });
+    expect(decision.status).toBe("PENDING_APPROVAL");
+
+    // Requirement 2 — the WINNER's response body names exactly what the decision row actually
+    // holds. Without the step-0 lock this can diverge: the request that returns 200 is not
+    // necessarily the one whose write survived (see award.service.ts's CRITICAL-1 comment).
+    expect(winners[0].body.shortlistedQuoteId).toBe(decision.shortlistedQuoteId);
+    expect(winners[0].body.shortlistedVariant).toBe(decision.shortlistedVariant);
+    expect([quotes.REC.id, quotes.OTH.id]).toContain(decision.shortlistedQuoteId);
+
+    // No stranded quote: the loser's transaction rolled back before persistSelection, so its own
+    // post-commit fire never ran — only the winner's named quote moved. Exactly one of the two
+    // is PENDING_APPROVAL, and it is the one the decision actually names.
+    const [rec, oth] = await Promise.all([
+      prisma.quote.findUniqueOrThrow({ where: { id: quotes.REC.id } }),
+      prisma.quote.findUniqueOrThrow({ where: { id: quotes.OTH.id } }),
+    ]);
+    const pendingStatuses = [rec.status, oth.status].filter((s) => s === "PENDING_APPROVAL");
+    expect(pendingStatuses).toHaveLength(1);
+    const winningQuoteStatus = decision.shortlistedQuoteId === quotes.REC.id ? rec.status : oth.status;
+    expect(winningQuoteStatus).toBe("PENDING_APPROVAL");
+    const losingQuoteStatus = decision.shortlistedQuoteId === quotes.REC.id ? oth.status : rec.status;
+    expect(losingQuoteStatus).toBe("QUOTED"); // untouched — the loser never reached its fire()
+
+    // Exactly one audit event — the loser's transaction never reached the event write.
+    const events = await prisma.awardDecisionEvent.findMany({
+      where: { legId: leg.id, type: "SEND_FOR_APPROVAL" },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].quoteId).toBe(decision.shortlistedQuoteId);
+  });
+
+  // ── S5.9 Task 3 review round 2 — CRITICAL 2: a guard-passing send can 500 on the fire ──
+  it("CRITICAL 2 — refuses to send a REQUOTED offer (still visible/priced in the comparison) even with overrideReason + proceedWithoutWaiting + proceedReason, and leaves nothing committed", async () => {
+    // FULLY_QUOTED leg with one QUOTED offer and one REQUOTED offer that's cheaper AND faster —
+    // mirrors the reviewer's exact repro: the projector never walks an already-FULLY_QUOTED leg
+    // backwards just because one of its quotes goes REQUOTED (leg-quote.projector.ts only fires
+    // QUOTE_PARTIAL from RFQ_SENT), so this is the realistic shape, not a contrived one.
+    const { query, leg, quotes } = await seedLeg("stale-offer", "FULLY_QUOTED", [
+      { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
+      { key: "REQ", status: "REQUOTED", deadline: future(), draft: { amount: 50000, transitDays: 2 } },
+    ]);
+
+    // Every OTHER guard is pre-empted on purpose (valid overrideReason, valid A9 proceed pair)
+    // so a 409 here can only be the new in-transaction freshness check, not A2 or A9.
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({
+        quoteId: quotes.REQ.id,
+        variant: "DEDICATED",
+        overrideReason: "picking the requoted one anyway",
+        proceedWithoutWaiting: true,
+        proceedReason: "cannot wait for the re-quote",
+      })
+      .expect(409);
+
+    // Nothing committed at all — no decision, and neither quote nor the leg moved. Before this
+    // fix, the guard sequence would commit a PENDING_APPROVAL decision naming REQ and then throw
+    // `IllegalTransitionError` out of the post-commit quote fire (REQUOTED has no
+    // `send_for_approval` source on the quote machine), leaving a wedged leg only reject() could
+    // free.
+    expect(await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } })).toBeNull();
+    const [rec, req] = await Promise.all([
+      prisma.quote.findUniqueOrThrow({ where: { id: quotes.REC.id } }),
+      prisma.quote.findUniqueOrThrow({ where: { id: quotes.REQ.id } }),
+    ]);
+    expect(rec.status).toBe("QUOTED");
+    expect(req.status).toBe("REQUOTED");
+    const updatedLeg = await prisma.leg.findUniqueOrThrow({ where: { id: leg.id } });
+    expect(updatedLeg.status).toBe("FULLY_QUOTED");
+
+    // The still-QUOTED offer on the SAME leg remains sendable — this guard is about the NAMED
+    // offer's own freshness, not a blanket freeze of the leg. REQ is still genuinely
+    // REQUOTED/outstanding on this leg (the earlier 409 never touched it), so A9 correctly still
+    // requires its own override for THIS send too — proving the two guards are independent, not
+    // that CRITICAL 2 subsumes A9.
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({
+        quoteId: quotes.REC.id,
+        variant: "DEDICATED",
+        proceedWithoutWaiting: true,
+        proceedReason: "REC is fine, don't need to wait on the other forwarder's re-quote",
+      })
+      .expect(200);
+  });
 });
