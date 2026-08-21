@@ -329,7 +329,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
       transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { DEDICATED: 4 } },
     };
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(priced).expect(200);
-    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    const submitRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
+      .expect(201);
     const quoteId = submitRes.body.quoteId as string;
 
     const trucking = await prisma.truckingCharge.findMany({ where: { quoteId } });
@@ -363,7 +366,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
       transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { SEA: 18 } },
     };
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(priced).expect(200);
-    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    const submitRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
+      .expect(201);
     const quoteId = submitRes.body.quoteId as string;
 
     const seaRates = await prisma.seaFreightRate.findMany({ where: { quoteId } });
@@ -394,7 +400,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
       transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { SEA: 18 } },
     };
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(base).expect(200);
-    const blocked = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(422);
+    const blocked = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
+      .expect(422);
     expect(blocked.body.findings.map((f: { rule: string }) => f.rule)).toContain("Q_RATE");
     expect((await prisma.quote.findFirst({ where: { legId } }))?.status).toBe("RFQ_SENT");
 
@@ -406,7 +415,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
       ),
     };
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(fixed).expect(200);
-    const ok = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    const ok = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
+      .expect(201);
     expect(ok.body.status).toBe("QUOTED");
   });
 
@@ -439,7 +451,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
       transit: { ...draft.transit!, guaranteedTransitDaysByVariant: { DEDICATED: 4 } },
     };
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(priced).expect(200);
-    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    const submitRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
+      .expect(201);
     const quoteId = submitRes.body.quoteId as string;
 
     const whLines = await prisma.warehouseStagingLine.findMany({ where: { quoteId } });
@@ -518,7 +533,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     };
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(draft).expect(200);
-    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    const submitRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: legDto.version })
+      .expect(201);
     expect(submitRes.body.status).toBe("QUOTED");
     const quoteId = submitRes.body.quoteId as string;
 
@@ -584,7 +602,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     };
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(draft).expect(200);
-    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(201);
+    const submitRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: legDto.version })
+      .expect(201);
     expect(submitRes.body.status).toBe("QUOTED");
 
     // The end-to-end proof: a brand-new GET, exactly what the portal's Preview/print/
@@ -645,7 +666,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     };
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(draft).expect(200);
-    const res = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(422);
+    const res = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: legDto.version })
+      .expect(422);
     expect(res.body.findings.map((f: { rule: string }) => f.rule)).toEqual(
       expect.arrayContaining(["Q_TRANSIT"]),
     );
@@ -697,7 +721,10 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     };
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${legId}`).send(draft).expect(200);
-    const res = await api().post(`/api/ff/rfq/${token}/quotes/${legId}/submit`).expect(422);
+    const res = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: legDto.version })
+      .expect(422);
     expect(res.body.findings.map((f: { rule: string }) => f.rule)).toEqual(
       expect.arrayContaining(["Q_WEIGHT"]),
     );

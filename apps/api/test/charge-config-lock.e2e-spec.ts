@@ -500,6 +500,7 @@ describe(`${PREFIX} (e2e)`, () => {
     //     set is EXACTLY the new config's lines (the removed TAIL_LIFT line is absent) ---
     const submitRes = await request(server)
       .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .send({ version: legDto2.version })
       .expect(201);
     expect(submitRes.body.status).toBe("QUOTED");
 

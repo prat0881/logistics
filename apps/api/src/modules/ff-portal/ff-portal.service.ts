@@ -5,6 +5,7 @@ import {
   Logger,
   UnprocessableEntityException,
 } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import {
   classifyWarehousePositions,
   validateQuote,
@@ -32,6 +33,7 @@ import type {
   ChargeRateVariant,
   TransitVariantKey,
   SeedEndpoint,
+  SubmitQuoteInput,
 } from "@svyft/shared";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -214,6 +216,7 @@ export class FfPortalService {
         draft: q.draftJson
           ? (q.draftJson as QuoteDraft)
           : seedQuoteDraft(q.legId, mode, snap.lines, endpoints, snap.warehouseIncluded),
+        version: this.legVersion(q, scope.rfq.submissionDeadline),
       };
     });
 
@@ -232,6 +235,31 @@ export class FfPortalService {
     const q = scope.quotes.find((x) => x.legId === legId);
     if (!q) throw new ForbiddenException("This leg is not part of your RFQ");
     return q;
+  }
+
+  /** Opaque fingerprint of everything a submit is priced against (S5.9 D10) — quote status,
+   *  submission deadline, manifest snapshot, charge-config snapshot. Deliberately NOT
+   *  `Quote.updatedAt`: the portal autosaves drafts, which bumps `@updatedAt` on every keystroke
+   *  — that would invalidate the forwarder's own open page while they're still typing. Every
+   *  input here is Prisma-parsed JSON/plain values (never a Decimal/Date instance), so
+   *  JSON.stringify's output — and therefore this hash — is deterministic across reads and across
+   *  processes for the same row content; see the Task-7 report for how this was verified.
+   *  Deterministic across processes — plain sha256 over a stable field order. */
+  private legVersion(
+    q: { status: string; manifestSnapshot: unknown; chargeConfigSnapshot: unknown },
+    submissionDeadline: Date,
+  ): string {
+    return createHash("sha256")
+      .update(
+        JSON.stringify([
+          q.status,
+          submissionDeadline.toISOString(),
+          q.manifestSnapshot,
+          q.chargeConfigSnapshot,
+        ]),
+      )
+      .digest("hex")
+      .slice(0, 16);
   }
 
   async saveDraft(scope: FfScope, legId: string, draft: QuoteDraft): Promise<{ savedAt: string }> {
@@ -255,8 +283,23 @@ export class FfPortalService {
     return { savedAt: now.toISOString() };
   }
 
-  async submit(scope: FfScope, legId: string): Promise<{ quoteId: string; status: "QUOTED" }> {
+  async submit(
+    scope: FfScope,
+    legId: string,
+    input: SubmitQuoteInput,
+  ): Promise<{ quoteId: string; status: "QUOTED" }> {
     const q = this.quoteForLeg(scope, legId);
+
+    // ── stale-page guard (S5.9 D10) — MUST run before the status guard below: a page that went
+    // stale because the basis moved (e.g. a requote landed, the RFQ was re-frozen) needs the
+    // actionable "please refresh" message, not the generic "already submitted or is not open" one
+    // the status guard would otherwise produce for the very same stale request. ──
+    if (this.legVersion(q, scope.rfq.submissionDeadline) !== input.version) {
+      throw new ConflictException(
+        "This RFQ has been updated — please refresh the page before submitting.",
+      );
+    }
+
     if (q.status !== "RFQ_SENT" && q.status !== "REQUOTED") {
       throw new ConflictException("This quote has already been submitted or is not open");
     }

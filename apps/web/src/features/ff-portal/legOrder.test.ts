@@ -31,7 +31,8 @@ function leg(over: {
     seededCharges: [],
     warehouseIncluded: false,
     draft: null,
-  } as FfPortalLegDto;
+    version: "v1",
+  };
 }
 
 const p1: FfPortalEndpoint = {

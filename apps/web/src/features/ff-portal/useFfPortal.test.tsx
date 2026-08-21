@@ -38,15 +38,21 @@ describe("useFfPortal", () => {
     expect(fx).toHaveBeenCalledWith("/api/ff/rfq/tok/quotes/L1", expect.objectContaining({ method: "PATCH" }));
   });
 
-  it("useSubmit POSTs {} to the submit endpoint and returns { quoteId, status }", async () => {
+  it("useSubmit POSTs { version } to the submit endpoint and returns { quoteId, status }", async () => {
     const fx = mockFetch(() => ({ status: 201, body: { quoteId: "Q9", status: "QUOTED" } }));
     vi.stubGlobal("fetch", fx);
     const { result } = renderHook(() => useSubmit("tok", "L1"), { wrapper: wrapper() });
-    const res = await result.current.mutateAsync();
+    // S5.9 D10: the caller passes the leg's current `version` (echoed from the GET DTO it's
+    // rendering) — the stale-page guard's whole point is that this must NOT be omittable.
+    const res = await result.current.mutateAsync("v-abc123");
     expect(res).toEqual({ quoteId: "Q9", status: "QUOTED" });
     expect(fx).toHaveBeenCalledWith(
       "/api/ff/rfq/tok/quotes/L1/submit",
-      expect.objectContaining({ method: "POST", credentials: "omit", body: "{}" }),
+      expect.objectContaining({
+        method: "POST",
+        credentials: "omit",
+        body: JSON.stringify({ version: "v-abc123" }),
+      }),
     );
   });
 });

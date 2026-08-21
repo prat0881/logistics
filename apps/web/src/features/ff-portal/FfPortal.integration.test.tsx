@@ -222,6 +222,10 @@ const sentLeg: FfPortalLegDto = {
   ],
   // Pre-built draft: 12 charges pre-priced, Air Freight at null → test only needs to price one
   draft: sentDraft,
+  // S5.9 D10: opaque stale-page-guard fingerprint — the form must echo this back verbatim on
+  // submit (LegSection.tsx reads `leg.version`, never a cached value). Test 1 below asserts the
+  // submit POST body carries exactly this string.
+  version: "v-fixture-1",
 };
 
 const sentRfq: FfPortalRfqDto = {
@@ -385,6 +389,12 @@ describe("FfPortal integration — happy path", () => {
     const airFreightCharge = patchCharges?.find((c) => c.presetKey === "AIR_MAIN_FREIGHT");
     expect(airFreightCharge).toBeDefined();
     expect(airFreightCharge?.amount).toBe(2000);
+
+    // Assert: the submit POST body echoes back sentLeg.version verbatim (S5.9 D10) — the whole
+    // point of the stale-page guard is that this comes from the DTO the form is rendering, not a
+    // value reconstructed or cached elsewhere.
+    const postBody = calls[postIdx].body as Record<string, unknown>;
+    expect(postBody?.version).toBe("v-fixture-1");
   });
 });
 
@@ -456,6 +466,67 @@ describe("FfPortal integration — 422 surfacing", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toBeInTheDocument();
     expect(alert.textContent).toMatch(/charge line.*air freight.*must be priced/i);
+  });
+});
+
+// ── Test: 409 stale-page guard surfacing (S5.9 D10) ───────────────────────────
+describe("FfPortal integration — stale-page 409 surfacing", () => {
+  it("shows the server's refresh message in role=alert when /submit returns 409", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+
+        const ok = (status: number, b: unknown) =>
+          Promise.resolve({
+            ok: status < 300,
+            status,
+            json: () => Promise.resolve(b),
+            text: () => Promise.resolve(JSON.stringify(b)),
+          } as Response);
+
+        if (url.endsWith("/api/ff/rfq/tok") && method === "GET") {
+          return ok(200, sentRfq);
+        }
+
+        if (url.includes("/quotes/L1") && !url.includes("/submit") && method === "PATCH") {
+          return ok(200, {});
+        }
+
+        // POST /submit → 409, Nest's default HttpException shape ({statusCode, message, error})
+        if (url.includes("/quotes/L1/submit") && method === "POST") {
+          return ok(409, {
+            statusCode: 409,
+            message: "This RFQ has been updated — please refresh the page before submitting.",
+            error: "Conflict",
+          });
+        }
+
+        return ok(401, {});
+      }),
+    );
+
+    renderAt("tok");
+    await screen.findByText(/Acme/i);
+
+    const amountInput = screen.getByLabelText(/^air freight$/i);
+    await userEvent.clear(amountInput);
+    await userEvent.type(amountInput, "2000");
+
+    const departureInput = screen.getByLabelText(/departure/i);
+    fireEvent.change(departureInput, { target: { value: FUTURE_DEPARTURE } });
+
+    const arrivalInput = screen.getByLabelText(/arrival/i);
+    fireEvent.change(arrivalInput, { target: { value: FUTURE_ARRIVAL } });
+
+    const checkbox = screen.getByRole("checkbox");
+    await userEvent.click(checkbox);
+
+    await userEvent.click(screen.getByRole("button", { name: /submit quote/i }));
+
+    // Server 409 → shown inline, not a silent/generic failure.
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/refresh/i);
   });
 });
 

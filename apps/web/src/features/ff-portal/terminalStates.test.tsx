@@ -258,6 +258,7 @@ describe("terminalStates", () => {
       ],
       warehouseIncluded: false,
       draft,
+      version: "v3",
     };
 
     render(<AlreadySubmittedSummary leg={leg} rfq={rfq} />);

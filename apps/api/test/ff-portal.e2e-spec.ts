@@ -341,6 +341,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
     const res = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
       .expect(201);
 
     expect(res.body.status).toBe("QUOTED");
@@ -362,6 +363,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
   it("submit: missing charged weight/currency → 422 findings, Quote stays RFQ_SENT", async () => {
     const { token, legId } = await distributeFixture();
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
 
     // PATCH a draft that is missing currency and chargedWeightKg (v3: the one leg-level
     // Chargeable Weight — Q_WEIGHT gates directly on it now, not a per-package derivation) + no
@@ -390,6 +392,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
     const res = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
       .expect(422);
 
     expect(res.body.findings.map((f: { rule: string }) => f.rule)).toEqual(
@@ -418,9 +421,15 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .send(fullValidDraft(legId, got.body))
       .expect(200);
 
+    // The deadline mutation above changed the leg's version (it's part of the fingerprint, S5.9
+    // D10) — a fresh GET so the submit below exercises Q_DEADLINE specifically, not an incidental
+    // stale-version 409 from `got`'s now-superseded version.
+    const current = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+
     // POST submit → should fail with Q_DEADLINE (deadline passed)
     const res = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: current.body.legs[0].version })
       .expect(422);
 
     expect(res.body.findings.map((f: { rule: string }) => f.rule)).toEqual(
@@ -441,11 +450,16 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     // First submit → 201 QUOTED
     await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
       .expect(201);
 
-    // Second submit → 409 (already submitted)
+    // Second submit → 409 (already submitted). Fresh GET so this exercises the STATUS guard (the
+    // point of this test) rather than the version guard — the first submit changed the leg's
+    // status, which changed its version too (S5.9 D10).
+    const after = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
     await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: after.body.legs[0].version })
       .expect(409);
   });
 
@@ -485,6 +499,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
     await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
       .expect(201);
 
     const ack = await prisma.messageLog.count({
@@ -539,6 +554,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
 
     const res = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
       .expect(422);
 
     // Must contain a SCOPE finding referencing the foreign point
@@ -676,6 +692,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     // no effect at all.
     const res = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
       .expect(201);
 
     expect(res.body.status).toBe("QUOTED");
@@ -819,6 +836,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     // variants filled is enough to submit).
     const submitRes = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .send({ version: legDto.version })
       .expect(201);
     expect(submitRes.body.status).toBe("QUOTED");
 
@@ -974,6 +992,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .expect(200);
     const submitRes = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .send({ version: legDto.version })
       .expect(201);
     expect(submitRes.body.status).toBe("QUOTED");
     const quoteId = submitRes.body.quoteId as string;
@@ -1116,6 +1135,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     // priced common charge alone can no longer carry the leg to submission.
     const roadRejected = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${roadToken}/quotes/${roadLeg.id}/submit`)
+      .send({ version: roadLegDto.version })
       .expect(422);
     expect(roadRejected.body.findings.map((f: { rule: string }) => f.rule)).toContain("Q_RATE");
     expect((await prisma.quote.findFirst({ where: { legId: roadLeg.id } }))?.status).toBe(
@@ -1137,6 +1157,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .expect(200);
     const roadSubmit = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${roadToken}/quotes/${roadLeg.id}/submit`)
+      .send({ version: roadLegDto.version })
       .expect(201);
     expect(roadSubmit.body.status).toBe("QUOTED");
 
@@ -1230,6 +1251,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .expect(200);
     const seaSubmit = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${seaToken}/quotes/${seaLeg.id}/submit`)
+      .send({ version: seaLegDto.version })
       .expect(422);
     expect(seaSubmit.body.findings.map((f: { rule: string }) => f.rule)).toContain("Q_RATE");
     expect((await prisma.quote.findFirst({ where: { legId: seaLeg.id } }))?.status).toBe(

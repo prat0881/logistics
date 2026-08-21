@@ -34,6 +34,7 @@ function leg(over: {
     seededCharges: [],
     warehouseIncluded: true,
     draft: null,
+    version: "v1",
   };
 }
 

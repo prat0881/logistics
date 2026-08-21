@@ -23,7 +23,14 @@ export function useSaveDraft(token: string, legId: string) {
 export function useSubmit(token: string, legId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => portalPost<{ quoteId: string; status: string }>(`/api/ff/rfq/${token}/quotes/${legId}/submit`, {}),
+    // `version` must come from the FfPortalLegDto the form is currently rendering (never cached
+    // elsewhere) — it's the stale-page guard's whole point (S5.9 D10): echo back exactly what
+    // this open page believes the basis is.
+    mutationFn: (version: string) =>
+      portalPost<{ quoteId: string; status: string }>(
+        `/api/ff/rfq/${token}/quotes/${legId}/submit`,
+        { version },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ff-rfq", token] }),
   });
 }

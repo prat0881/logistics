@@ -72,6 +72,7 @@ function airLeg(): FfPortalLegDto {
     ],
     warehouseIncluded: true,
     draft: null,
+    version: "v1",
   };
 }
 

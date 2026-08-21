@@ -137,6 +137,7 @@ const rfqWithLeg: FfPortalRfqDto = {
       seededCharges: [],
       warehouseIncluded: true,
       draft: null,
+      version: "v1",
     } satisfies FfPortalLegDto,
   ],
 };

@@ -242,6 +242,9 @@ function LegSectionForm({
   // Findings state
   const [attempted, setAttempted] = useState(false);
   const [serverFindings, setServerFindings] = useState<Finding[] | null>(null);
+  // Stale-page guard (S5.9 D10): the server's own message ("please refresh…") for a 409 whose
+  // basis moved out from under this open page — surfaced inline rather than swallowed.
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const clientFindings = attempted
     ? validateQuote(draft, rfq.submissionDeadline, new Date().toISOString(), activeLines)
@@ -273,6 +276,7 @@ function LegSectionForm({
   // Submit handler
   const onSubmit = async () => {
     setServerFindings(null);
+    setSubmitError(null);
     setAttempted(true);
     const d = buildDraft();
     const f = validateQuote(d, rfq.submissionDeadline, new Date().toISOString(), activeLines);
@@ -280,13 +284,21 @@ function LegSectionForm({
 
     try {
       await saved.mutateAsync(d); // save first
-      await submit.mutateAsync(); // then submit (server reads stored draft)
+      // `leg.version` — echoed verbatim from the same DTO this form is rendering, never a value
+      // cached elsewhere (S5.9 D10): the guard is only meaningful if it checks THIS page's basis.
+      await submit.mutateAsync(leg.version); // then submit (server reads stored draft)
       // on success: query invalidation in hooks triggers refetch → leg becomes QUOTED
     } catch (e) {
       if (e instanceof PortalError && e.status === 422) {
         setServerFindings(e.findings ?? []);
+      } else if (e instanceof PortalError && e.status === 409) {
+        // Stale-page guard (or the pre-existing already-submitted guard) — show the server's own
+        // message inline (design D10) instead of failing silently; the forwarder is told to
+        // refresh, which re-fetches the leg DTO and its current `version`.
+        setSubmitError(
+          e.serverMessage ?? "This RFQ has been updated — please refresh the page before submitting.",
+        );
       }
-      // 409 already-submitted: invalidation/refetch will surface QUOTED state
     }
   };
 
@@ -381,6 +393,16 @@ function LegSectionForm({
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Terms
           </h3>
+          {/* Stale-page / already-submitted 409 (design D10) — the server's own message, shown
+              inline right above the Submit button rather than as a silent/generic failure. */}
+          {submitError && (
+            <p
+              role="alert"
+              className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            >
+              {submitError}
+            </p>
+          )}
           <SubmissionBar
             showDgNote={showDgNote}
             currency={currency}

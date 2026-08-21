@@ -261,9 +261,11 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(gotAgain.body.legs[0].draft.chargedWeightKg).toBe(125);
 
     // THE FIX under test: submit from REQUOTED must now be accepted (pre-fix: 409 "already
-    // submitted or is not open").
+    // submitted or is not open"). S5.9 Task 7 (D10): submit now also carries the stale-page
+    // guard's `version`, echoed verbatim from the REQUOTED-reflecting GET above.
     const res = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: gotAgain.body.legs[0].version })
       .expect(201);
     expect(res.body.status).toBe("QUOTED");
     expect(res.body.quoteId).toBe(quoteBefore.id);
@@ -275,8 +277,12 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(chargeLineCount).toBeGreaterThan(0); // materialize actually ran
 
     // Guard still closed for a non-open status — the fix didn't over-open past RFQ_SENT/REQUOTED.
+    // A fresh GET (reflecting the now-QUOTED status) so this exercises the STATUS guard, not the
+    // version guard (a stale version here would also 409, but for the wrong reason).
+    const gotFinal = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
     await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: gotFinal.body.legs[0].version })
       .expect(409);
   });
 
