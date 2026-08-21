@@ -71,21 +71,28 @@ interface Candidate {
  * actually has — `NegotiateDialog.test.tsx`'s "posts one request per selected forwarder" catches
  * exactly that regression (asserts 2 calls off a 4-offer/1-pending fixture, not 4 or 5).
  *
- * A forwarder is eligible when it has AT LEAST ONE offer with `quoteStatus` `QUOTED`,
- * `PENDING_APPROVAL`, or `APPROVED` — REQUOTED forwarders (an offer exists, but a revised one is
- * already pending) and `pendingForwarders` (sent the RFQ, never comparably quoted) are both
- * included, disabled, with their own reason text — never hidden. PENDING_APPROVAL (S5.9 §4.4) is
- * a QUOTED offer currently under review, not a different commitment — the maker can still ask
- * that forwarder to revise (award.module.ts's PENDING_APPROVAL --request_requote--> REQUOTED
- * edge); without it here, the forwarder currently under review would wrongly become ineligible.
+ * A forwarder is eligible when it has AT LEAST ONE offer with `quoteStatus` `QUOTED` or
+ * `APPROVED` — REQUOTED forwarders (an offer exists, but a revised one is already pending) and
+ * `pendingForwarders` (sent the RFQ, never comparably quoted) are both included, disabled, with
+ * their own reason text — never hidden.
+ *
+ * PENDING_APPROVAL is ALSO ineligible, with its own reason text (design decision D5, S5.9 code
+ * review round 2): negotiate stays REFUSED while a leg is under review — the maker must reject
+ * the leg back to QUOTED first, matching the server's own gate
+ * (`negotiation.service.ts`'s `REQUOTABLE_STATUSES = [QUOTED, APPROVED]`, unchanged). An earlier
+ * version of this function admitted PENDING_APPROVAL as eligible on the theory that it's "just a
+ * QUOTED offer under review, not a different commitment" — that was wrong: the product owner
+ * ruled negotiate stays refused, and admitting it client-side while the server refuses it would
+ * have let the maker select an ineligible forwarder and get a 409 back.
  */
 function buildCandidates(leg: LegComparisonDto): Candidate[] {
   const byForwarder = new Map<string, Candidate>();
   for (const offer of leg.offers) {
-    const quotable =
-      offer.quoteStatus === "QUOTED" ||
-      offer.quoteStatus === "PENDING_APPROVAL" ||
-      offer.quoteStatus === "APPROVED";
+    const quotable = offer.quoteStatus === "QUOTED" || offer.quoteStatus === "APPROVED";
+    const ineligibleReason =
+      offer.quoteStatus === "PENDING_APPROVAL"
+        ? "This leg is pending approval — reject it first."
+        : "Already awaiting a revised quote.";
     const existing = byForwarder.get(offer.freightForwarderId);
     if (!existing) {
       byForwarder.set(offer.freightForwarderId, {
@@ -93,7 +100,7 @@ function buildCandidates(leg: LegComparisonDto): Candidate[] {
         freightForwarderName: offer.freightForwarderName,
         quoteId: offer.quoteId,
         eligible: quotable,
-        reason: quotable ? undefined : "Already awaiting a revised quote.",
+        reason: quotable ? undefined : ineligibleReason,
         quoteStatus: offer.quoteStatus,
         prices: [],
       });

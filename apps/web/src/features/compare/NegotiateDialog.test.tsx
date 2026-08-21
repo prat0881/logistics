@@ -98,6 +98,34 @@ const LEG: LegComparisonDto = {
   timeline: [],
 };
 
+// Separate fixture (not folded into LEG) so its extra forwarder can't shift the "select all" /
+// dedup counts every other test in this file asserts against. Harbor Freight is PENDING_APPROVAL —
+// D5 (S5.9 code review round 2): negotiate stays refused while a leg is under review, so this
+// forwarder must render ineligible with its OWN reason text, distinct from REQUOTED's.
+const LEG_WITH_PENDING_APPROVAL: LegComparisonDto = {
+  ...LEG,
+  offers: [
+    ...LEG.offers,
+    {
+      quoteId: "q-harbor",
+      freightForwarderId: "ff-harbor",
+      freightForwarderName: "Harbor Freight",
+      variant: "DEDICATED",
+      variantLabel: "Dedicated",
+      priced: true,
+      nativeTotal: 44000,
+      currency: "INR",
+      unitsPerUsd: 83,
+      usdTotal: 530.12,
+      transitDays: 3,
+      chargeableWeightKg: 500,
+      validUntil: "2026-08-25T12:00:00.000Z",
+      quoteStatus: "PENDING_APPROVAL",
+      charges: [],
+    },
+  ],
+};
+
 type FetchCall = { url: string; quoteId: string; body: unknown };
 
 /** A fetch stub that records every `request-requote` call (so a test can assert exactly which
@@ -206,6 +234,19 @@ describe("NegotiateDialog", () => {
     expect(screen.getByRole("checkbox", { name: /orion/i })).toBeDisabled();
     expect(screen.getByText(/already awaiting a revised quote/i)).toBeInTheDocument();
     expect(screen.getByText(/hasn't quoted yet/i)).toBeInTheDocument();
+  });
+
+  // D5 (S5.9 code review round 2): negotiate stays REFUSED while a leg is under review — a
+  // PENDING_APPROVAL offer must be disabled with its OWN reason, never conflated with REQUOTED's
+  // "already awaiting a revised quote" text, and never silently hidden.
+  it("a PENDING_APPROVAL offer is ineligible with its own reason — negotiate stays refused while a leg is under review (D5)", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderDialog(qc, { onOpenChange: vi.fn(), leg: LEG_WITH_PENDING_APPROVAL });
+
+    expect(await screen.findByRole("checkbox", { name: /harbor/i })).toBeDisabled();
+    expect(screen.getByText(/this leg is pending approval — reject it first\./i)).toBeInTheDocument();
+    // Distinct from REQUOTED's reason — proves the two ineligible states aren't conflated.
+    expect(screen.getByText(/already awaiting a revised quote/i)).toBeInTheDocument();
   });
 
   // ── final review IMPORTANT #4 — design item 6 (§89): "a checkbox per forwarder, showing each
