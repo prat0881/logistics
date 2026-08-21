@@ -35,11 +35,6 @@ export interface ComparisonGridProps {
    *  through, from the ONE `useViewMode()` owned by `CompareQuotesPage` (final review IMPORTANT
    *  #1 — it used to call the hook per leg panel, which made the "global" preference per-leg). */
   viewMode?: ViewMode;
-  /** Opens the maker's `ShortlistDialog` for one offer (S5.7 T4). Omit it — or set `locked` — and
-   *  the Shortlist row/column is not rendered at all. Deliberately NOT folded into `onSelectOffer`
-   *  above: that one only opens the read-only charge breakdown, and the S5.6 Critical was precisely
-   *  a *reading* gesture silently moving what a submit would act on. */
-  onShortlistOffer?: (cell: OfferCell) => void;
 }
 
 /**
@@ -49,6 +44,11 @@ export interface ComparisonGridProps {
  * `viewMode` selects — `ComparisonGridColumns` or `ComparisonGridRows` — plus the leg-level
  * "awaiting response" / "awaiting re-quote" notices that sit outside the table and are identical
  * either way.
+ *
+ * Purely read-only (S5.9 T9) — the maker's per-offer `Select` affordance (S5.7 T4) that used to
+ * live in a Shortlist row/column here is gone. `CompareLegPanel` now opens one
+ * `SendForApprovalDialog` from a "Send for approval…" button below the whole grid, which lists
+ * every priced offer itself rather than acting on a single cell a grid click identified.
  */
 export function ComparisonGrid({
   leg,
@@ -56,14 +56,8 @@ export function ComparisonGrid({
   onSelectOffer,
   locked = false,
   viewMode = "columns",
-  onShortlistOffer,
 }: ComparisonGridProps) {
   const model = buildComparisonRowModel(leg, locked);
-
-  // ONE place decides that a locked award has no maker affordance, so neither orientation can be
-  // the one that forgets (the panel above ALSO withholds the handler for a decision past DRAFT —
-  // these are different conditions, and both must unmount rather than disable).
-  const shortlistHandler = locked ? undefined : onShortlistOffer;
 
   // Code-review fix (round 2) — `model.recommendedKey` is a non-null string whenever
   // `leg.recommendation` exists, EVEN when that recommendation names an offer absent from this
@@ -90,7 +84,6 @@ export function ComparisonGrid({
           leg={leg}
           onOpenBreakdown={handleOpenBreakdown}
           selectedOfferKey={selectedOfferKey}
-          onShortlistOffer={shortlistHandler}
         />
       ) : (
         <ComparisonGridColumns
@@ -98,7 +91,6 @@ export function ComparisonGrid({
           leg={leg}
           onOpenBreakdown={handleOpenBreakdown}
           selectedOfferKey={selectedOfferKey}
-          onShortlistOffer={shortlistHandler}
         />
       )}
 

@@ -22,7 +22,6 @@ import {
   type ComparisonRowModel,
   type OfferCell,
 } from "./comparisonRowModel";
-import { ShortlistSelectCell } from "./ShortlistSelectCell";
 
 /** The rows-view equivalent of `ComparisonGridColumns`'s `GROUP_SEPARATOR` (design §39 — forwarder
  *  rows are "grouped and banded"; S5.7 shipped the columns rule but no rows counterpart, so
@@ -41,9 +40,6 @@ export interface ComparisonGridRowsProps {
   /** Which offer's charge breakdown is currently expanded below the grid — same meaning as
    *  `ComparisonGridColumns`'s prop of the same name; used only for `aria-expanded`. */
   selectedOfferKey?: string;
-  /** Opens the maker's `ShortlistDialog` for one offer — same meaning (and same unmount-when-absent
-   *  rule) as `ComparisonGridColumns`'s prop of the same name (S5.7 T4). */
-  onShortlistOffer?: (cell: OfferCell) => void;
 }
 
 /**
@@ -54,14 +50,14 @@ export interface ComparisonGridRowsProps {
  * order; the forwarder's name is printed once, on its own full-width band row above the group
  * (product item 3 — the Forwarder column is gone, so two rows both reading "Dedicated" from
  * different forwarders would otherwise be indistinguishable), and every variant row underneath it
- * carries just the variant.
+ * carries just the variant. Purely read-only (S5.9 T9) — see `ComparisonGridColumns`'s doc comment
+ * for why the Shortlist column this table used to carry is gone.
  */
 export function ComparisonGridRows({
   model,
   leg,
   onOpenBreakdown,
   selectedOfferKey,
-  onShortlistOffer,
 }: ComparisonGridRowsProps) {
   const { groups } = model;
   // The band row spans every column the table actually has: the metrics, plus Variant and Status.
@@ -80,7 +76,6 @@ export function ComparisonGridRows({
               </TableHead>
             ))}
             <TableHead className="text-center">Status</TableHead>
-            {onShortlistOffer && <TableHead className="text-center">Shortlist</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -184,11 +179,6 @@ export function ComparisonGridRows({
                         )}
                       </div>
                     </TableCell>
-                    {onShortlistOffer && (
-                      <TableCell className={cn("text-center", cell.recommended && RECOMMENDED_TINT)}>
-                        <ShortlistSelectCell cell={cell} onSelect={onShortlistOffer} />
-                      </TableCell>
-                    )}
                   </TableRow>
                 );
               })}

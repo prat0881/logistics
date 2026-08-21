@@ -9,14 +9,17 @@ export interface MakerPanelProps {
  *
  * S5.6 shipped this as three stacked sections: a shortlist `RadioGroup`, a separate
  * `Send for approval` box, and per-forwarder Negotiate buttons. The first two are gone — shortlist
- * and send now happen together in `ShortlistDialog`, opened from a `Select` button on the offer
- * itself in either grid orientation. That is not a cosmetic merge: the radio held a *candidate*
- * pick that a grid header click could move, while `POST /send-for-approval` carries no offer
- * identity and re-reads the PERSISTED shortlist server-side, so Send could silently submit a
- * different offer than the one on screen (the S5.6 whole-sub-build review's Critical, patched in
- * `354236e` by the `unsavedPick` guard this task deletes). One dialog acting on one offer removes
- * the second piece of state, so the guard has nothing left to guard; its regression coverage is
- * ported (see `ShortlistDialog.tsx`'s doc comment for exactly where).
+ * and send now happen together in one dialog opened below the whole grid (`ShortlistDialog`,
+ * S5.7 T4, opened from a per-offer `Select` button that lived IN the grid; retired and replaced by
+ * `SendForApprovalDialog` at S5.9 T9, which lists every priced offer itself rather than acting on
+ * a single grid-clicked cell — the in-grid `Select` affordance is gone too). That original merge was
+ * not cosmetic: the old shortlist radio held a *candidate* pick that a grid header click could move,
+ * while `POST /send-for-approval` carries no offer identity and re-reads the PERSISTED shortlist
+ * server-side, so Send could silently submit a different offer than the one on screen (the S5.6
+ * whole-sub-build review's Critical, patched in `354236e` by the `unsavedPick` guard that merge
+ * deleted). Naming the offer directly in the one call removes the second piece of state, so the
+ * guard has nothing left to guard; its regression coverage is ported (see
+ * `SendForApprovalDialog.test.tsx`'s "submits the offer that is selected in the dialog" block).
  *
  * What deliberately stayed:
  *   - the `DRAFT` + `rejectionReason` alert — a rejected leg comes back as DRAFT carrying the

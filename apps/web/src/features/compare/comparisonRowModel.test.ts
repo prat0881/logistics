@@ -44,6 +44,57 @@ describe("buildComparisonRowModel", () => {
     expect(m.cells[0].recommended).toBe(false);
   });
 
+  // ── S5.9 T9 — buildRecommendation (comparison.service.ts) ranks only QUOTED offers, so sending
+  // an offer for approval drops IT OUT of the ranking and `leg.recommendation` can shift to a
+  // different forwarder on the very next fetch: the `★` would then point at an offer the leg did
+  // not actually select, exactly while a checker is reviewing. Suppress the same way `locked`
+  // already does post-generate, one lifecycle stage earlier — once the decision leaves DRAFT.
+  describe("suppresses the recommendation once the leg's decision has left DRAFT", () => {
+    const rec = { quoteId: "q1", variant: "DEDICATED" as const, reason: "fastest" };
+    const decision = (
+      status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED",
+    ): NonNullable<LegComparisonDto["decision"]> => ({
+      legId: "l1",
+      status,
+      shortlistedQuoteId: "q1",
+      shortlistedVariant: "DEDICATED",
+      recommendedQuoteId: "q1",
+      recommendedVariant: "DEDICATED",
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: null,
+      sentForApprovalAt: null,
+      decidedByUserId: null,
+      decidedAt: null,
+    });
+
+    it("keeps the recommendation while the decision is still DRAFT", () => {
+      const m = buildComparisonRowModel({ ...leg([offer({})], rec), decision: decision("DRAFT") }, false);
+      expect(m.recommendedKey).toBe(offerKey("q1", "DEDICATED"));
+      expect(m.cells[0].recommended).toBe(true);
+    });
+
+    it("keeps the recommendation when nothing has been shortlisted yet (decision is null)", () => {
+      const m = buildComparisonRowModel({ ...leg([offer({})], rec), decision: null }, false);
+      expect(m.recommendedKey).toBe(offerKey("q1", "DEDICATED"));
+    });
+
+    it("suppresses it once PENDING_APPROVAL", () => {
+      const m = buildComparisonRowModel(
+        { ...leg([offer({})], rec), decision: decision("PENDING_APPROVAL") },
+        false,
+      );
+      expect(m.recommendedKey).toBeNull();
+      expect(m.cells[0].recommended).toBe(false);
+    });
+
+    it("suppresses it once APPROVED", () => {
+      const m = buildComparisonRowModel({ ...leg([offer({})], rec), decision: decision("APPROVED") }, false);
+      expect(m.recommendedKey).toBeNull();
+      expect(m.cells[0].recommended).toBe(false);
+    });
+  });
+
   it("renders the conversion rate metric, and an em-dash when absent", () => {
     const rate = METRICS.find((x) => x.id === "rate")!;
     const m = buildComparisonRowModel(leg([offer({}), offer({ quoteId: "q2", unitsPerUsd: null, variant: "GROUPAGE" })]), false);

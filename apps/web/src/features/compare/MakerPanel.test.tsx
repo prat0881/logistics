@@ -145,16 +145,16 @@ function renderMakerAfterAuthSettles(leg: LegComparisonDto) {
 }
 
 describe("MakerPanel", () => {
-  // S5.7 T4 — the shortlist RadioGroup and the Send-for-approval box moved into `ShortlistDialog`,
-  // opened from a per-offer `Select` button in the grid. Their tests moved with them:
-  //   - override-required / body-shape / A9 / inline-409 → `ShortlistDialog.test.tsx`;
-  //   - the three `unsavedPick` regression tests that guarded the S5.6 Critical → two into
-  //     `ShortlistDialog.test.tsx`'s "the offer submitted is the offer whose Select was clicked"
-  //     block, the grid-seam one into `ComparisonGrid.test.tsx` ("opening a rival offer's charge
-  //     breakdown does not change which offer Select submits");
-  //   - "the shortlist radio is disabled once the decision is past DRAFT" → `ComparisonGrid.test.tsx`
-  //     ("withholds the Select affordance once the leg's decision has left DRAFT"), which asserts the
-  //     affordance is UNMOUNTED rather than merely disabled.
+  // S5.7 T4 moved the shortlist RadioGroup and the Send-for-approval box into `ShortlistDialog`,
+  // opened from a per-offer `Select` button in the grid; S5.9 T9 retired both in favour of
+  // `SendForApprovalDialog`, opened from a plain button below the whole grid. Their tests moved
+  // (twice, now):
+  //   - offer list / override-required / body-shape / A9 / inline-error → `SendForApprovalDialog.test.tsx`;
+  //   - the S5.6 Critical's regression coverage → `SendForApprovalDialog.test.tsx`'s "submits the
+  //     offer that is selected in the dialog, not one merely read elsewhere" (the grid no longer has
+  //     a `Select` seam at all, so there is no separate grid-side test left to carry);
+  //   - Select/Shortlist affordance presence — now "never rendered, full stop" rather than
+  //     status-conditional — → `ComparisonGrid.test.tsx`'s "no longer renders a Shortlist affordance".
   // What is asserted here is only what MakerPanel still renders.
 
   it("renders no shortlist, send-for-approval or negotiate controls of its own any more", () => {

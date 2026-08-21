@@ -16,10 +16,11 @@ export function offerKey(quoteId: string, variant: string | null): string {
 
 /** The stale-price marker for a REQUOTED offer (design §14). One constant, because it labels the
  *  same offer in three places — `ComparisonGridColumns`'s Status row, `ComparisonGridRows`'s Status
- *  cell, and `ShortlistDialog`'s stale warning (which is where the S5.6 shortlist radio's inline
- *  version of this warning went when T4 deleted the radio). Lives here (not `ComparisonGrid.tsx`)
- *  so `ComparisonGridColumns` can import it without a cycle back through `ComparisonGrid.tsx`;
- *  still re-exported from `ComparisonGrid.tsx`, which is how `ComparisonGrid.test.tsx` imports it. */
+ *  cell, and `SendForApprovalDialog`'s per-option warning (S5.9 T9 — where the S5.6 shortlist
+ *  radio's inline version of this warning ended up, via `ShortlistDialog`, which T9 retired).
+ *  Lives here (not `ComparisonGrid.tsx`) so `ComparisonGridColumns` can import it without a cycle
+ *  back through `ComparisonGrid.tsx`; still re-exported from `ComparisonGrid.tsx`, which is how
+ *  `ComparisonGrid.test.tsx` imports it. */
 export const STALE_OFFER_LABEL = "Re-quote requested";
 
 export interface OfferCell {
@@ -43,14 +44,28 @@ export interface ComparisonRowModel {
 
 /**
  * Builds the leg's (FF × variant) row model, grouped by forwarder in first-seen order (design
- * §12 — Dedicated/Groupage or FCL/LCL of the same FF read as a pair). `locked` suppresses the
- * recommendation entirely — once the client quote is generated the winning quote is `APPROVED`
- * and excluded from `offers`, so the live recommendation would re-rank the losers (S5.6 final
- * review M1). This must stay a hard `null`/`false`, not merely hidden downstream.
+ * §12 — Dedicated/Groupage or FCL/LCL of the same FF read as a pair). Two independent conditions
+ * suppress the recommendation entirely (both must stay a hard `null`/`false`, not merely hidden
+ * downstream):
+ *
+ * - `locked` — once the client quote is generated the winning quote is `APPROVED` and excluded
+ *   from `offers`, so the live recommendation would re-rank the losers (S5.6 final review M1).
+ * - `leg.decision.status !== "DRAFT"` (S5.9 T9) — `buildRecommendation` (comparison.service.ts)
+ *   ranks only `QUOTED` offers. Sending an offer for approval flips ITS OWN quote to
+ *   `PENDING_APPROVAL`, which drops it out of that ranking on the very next fetch — so once a
+ *   leg's decision leaves DRAFT, `leg.recommendation` can start naming a DIFFERENT forwarder than
+ *   the one actually under review, exactly while a checker is looking at this same grid (S5.9 T8
+ *   carried this finding to T9). Suppressing here — the one place both grid orientations and
+ *   `SendForApprovalDialog` read "is this the recommendation?" — means the `★` mark, its emerald
+ *   tint, AND the footnote (gated in `ComparisonGrid.tsx` on `model.cells.some(c => c.recommended)`,
+ *   itself downstream of this) all go quiet together, with no second place to remember. A `null`
+ *   `decision` (nothing shortlisted yet) is NOT suppressed — the recommendation is exactly what a
+ *   maker who hasn't acted yet should see.
  */
 export function buildComparisonRowModel(leg: LegComparisonDto, locked: boolean): ComparisonRowModel {
+  const decisionLeftDraft = leg.decision != null && leg.decision.status !== "DRAFT";
   const recKey =
-    !locked && leg.recommendation
+    !locked && !decisionLeftDraft && leg.recommendation
       ? offerKey(leg.recommendation.quoteId, leg.recommendation.variant)
       : null;
 

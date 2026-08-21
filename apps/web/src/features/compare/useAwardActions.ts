@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { AwardDecisionDto, RejectInput, SendForApprovalInput } from "@svyft/shared";
-import { postJson, putJson } from "@/lib/api";
+import { postJson } from "@/lib/api";
 import { errorMessage } from "./errorMessage";
 
 /**
@@ -11,20 +11,12 @@ import { errorMessage } from "./errorMessage";
  * for its next render, matching the T2/T3 hooks' own invalidate-only convention in
  * `useComparison.ts`/`useRfq.ts`).
  */
-// S5.9 Task 3 retired the standalone `ShortlistInput` type (and its `PUT .../shortlist` route —
-// shortlist + send-for-approval are now one call, `SendForApprovalInput`, which is a superset of
-// what this hook ever sent). Typed against it here only so this file keeps compiling; the route
-// this hook calls no longer exists server-side. S5.9 Task 9 owns replacing this hook (and
-// `ShortlistDialog`'s two-call sequence that calls it) with the single merged call.
-export function useShortlist(queryId: string, legId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: SendForApprovalInput) =>
-      putJson<AwardDecisionDto>(`/api/queries/${queryId}/legs/${legId}/shortlist`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["comparison", queryId] }),
-  });
-}
-
+// S5.9 Task 3 retired the standalone `ShortlistInput` type and its `PUT .../shortlist` route —
+// shortlist + send-for-approval are now ONE call, `SendForApprovalInput`, naming the offer it acts
+// on directly. `useShortlist` (which targeted the retired route) is gone as of S5.9 Task 9, along
+// with `ShortlistDialog`'s two-call sequence that called it; `SendForApprovalDialog` drives this
+// hook alone.
+//
 // sendForApproval also invalidates `["query", queryId]`: moving a leg's decision to
 // PENDING_APPROVAL is a query-level workflow milestone (the checker step gating QUOTING_CLIENT),
 // so anything reading `useQueryDetail` (StageRail, the header) should re-derive alongside the
@@ -127,7 +119,7 @@ export function useRequestRequoteBatch(queryId: string, legId: string) {
 // ── Checker-half mutations (S5.6 Task 5, design §9 steps 2+4) ──────────────────────────────────
 // approve/reject/generate all move query-level workflow state (a leg's decision leaving
 // PENDING_APPROVAL, or the query rolling to QUOTING_CLIENT) — same both-keys invalidation as
-// `useSendForApproval` above, not just `useShortlist`'s comparison-only invalidate.
+// `useSendForApproval` above.
 
 export function useApprove(queryId: string, legId: string) {
   const qc = useQueryClient();

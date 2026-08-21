@@ -21,7 +21,6 @@ import {
   type ComparisonRowModel,
   type OfferCell,
 } from "./comparisonRowModel";
-import { ShortlistSelectCell } from "./ShortlistSelectCell";
 
 /** Right-of-column border that groups a forwarder's variant columns visually (S5.7 item 1 — S5.6
  *  Task 3 deliberately shipped without one, recorded as a judgment call, which read as ambiguous
@@ -37,26 +36,21 @@ export interface ComparisonGridColumnsProps {
   /** Which offer's charge breakdown is currently expanded below the grid — used only for the
    *  header button's `aria-expanded`; the toggle itself is owned by `CompareLegPanel`. */
   selectedOfferKey?: string;
-  /** Opens the maker's `ShortlistDialog` for one offer (S5.7 T4). `undefined` ⇒ the whole Shortlist
-   *  row is UNMOUNTED — that's how a locked award (and a decision already past DRAFT) drops the
-   *  maker affordance entirely rather than merely disabling it. Deliberately separate from
-   *  `onOpenBreakdown`: reading an offer's charges must never move what a submit would act on,
-   *  which is exactly how the S5.6 Critical happened. */
-  onShortlistOffer?: (cell: OfferCell) => void;
 }
 
 /**
  * ComparisonGridColumns — the read-only per-leg `(FF × variant)` comparison table (S5.6 §12,
  * reshaped by S5.7 T1), driven entirely by a pre-built `ComparisonRowModel` rather than deriving
  * grouping/recommendation state itself. `ComparisonGrid` builds the model and stays the public
- * entry point; this component is pure rendering.
+ * entry point; this component is pure rendering. Purely read-only (S5.9 T9) — the per-offer
+ * `Select`/Shortlist row this table used to render is gone; `SendForApprovalDialog` (opened below
+ * the whole grid) is now the only place that acts on an offer.
  */
 export function ComparisonGridColumns({
   model,
   leg,
   onOpenBreakdown,
   selectedOfferKey,
-  onShortlistOffer,
 }: ComparisonGridColumnsProps) {
   const { groups, cells } = model;
   const lastInGroup = new Set(groups.map((g) => g.cells[g.cells.length - 1]!.key));
@@ -184,23 +178,6 @@ export function ComparisonGridColumns({
               </TableCell>
             ))}
           </TableRow>
-          {onShortlistOffer && (
-            <TableRow>
-              <TableCell className="font-medium text-muted-foreground">Shortlist</TableCell>
-              {cells.map((cell) => (
-                <TableCell
-                  key={cell.key}
-                  className={cn(
-                    "text-center",
-                    cell.recommended && RECOMMENDED_TINT,
-                    lastInGroup.has(cell.key) && GROUP_SEPARATOR,
-                  )}
-                >
-                  <ShortlistSelectCell cell={cell} onSelect={onShortlistOffer} />
-                </TableCell>
-              ))}
-            </TableRow>
-          )}
         </TableBody>
       </Table>
     </div>

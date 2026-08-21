@@ -302,18 +302,19 @@ describe("CompareQuotesPage", () => {
     expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/recommended/i)).not.toBeInTheDocument();
 
-    // Select is NOT safe to prove on LEG-2: its decision is already PENDING_APPROVAL, which
-    // withholds Select on its own regardless of `locked` (`CompareLegPanel`'s `canShortlist`), so
-    // asserting Select's absence there would pass even with the `locked` gate itself deleted.
-    // LEG-1 has `decision: null` — nothing else would hide Select on it — so switching to it
-    // isolates the `locked` condition specifically.
+    // "Send for approval…" (S5.9 T9 — the in-grid Select affordance this used to check is retired
+    // entirely, so its absence would no longer isolate anything) is NOT safe to prove on LEG-2:
+    // its decision is already PENDING_APPROVAL, which withholds Send on its own regardless of
+    // `locked` (`CompareLegPanel`'s `canSend`), so asserting its absence there would pass even
+    // with the `locked` gate itself deleted. LEG-1 has `decision: null` — nothing else would hide
+    // Send on it — so switching to it isolates the `locked` condition specifically.
     await userEvent.click(await screen.findByRole("button", { name: /LEG-1/i }));
     await screen.findByTestId("leg-body");
-    expect(screen.queryByRole("button", { name: /select/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /send for approval/i })).not.toBeInTheDocument();
   });
 
   describe.each(["EXECUTIVE", "MANAGER"] as const)("compare screen as %s", (role) => {
-    it("shows the grid, the Select affordance and Negotiate", async () => {
+    it("shows the grid, the Send for approval action and Negotiate", async () => {
       renderPage({ role });
       await screen.findByText(role);
 
@@ -322,7 +323,8 @@ describe("CompareQuotesPage", () => {
       await screen.findByTestId("leg-body");
 
       expect(screen.getByTestId("comparison-grid")).toBeInTheDocument();
-      expect(screen.getAllByRole("button", { name: /select/i }).length).toBeGreaterThan(0);
+      // S5.9 T9 — the action bar below the grid, not a per-offer Select button inside it.
+      expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /negotiate/i })).toBeInTheDocument();
     });
   });
