@@ -258,18 +258,18 @@ describe("CompareQuotesPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: /LEG-1/i }));
     await screen.findByTestId("leg-body");
     // Positive control: the default orientation really is columns, whose first header cell is
-    // "Offer" (the rows view's is "Forwarder / variant"), so the switch below is observable.
+    // "Offer" (the rows view's is "Variant" — S5.9 T8 dropped the rows view's own "Forwarder /
+    // variant" header column in favour of a full-width band row per forwarder group), so the
+    // switch below is observable.
     expect(screen.getByRole("columnheader", { name: /^offer$/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByTestId("view-mode-rows"));
-    expect(
-      await screen.findByRole("columnheader", { name: /forwarder \/ variant/i }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("columnheader", { name: /^variant$/i })).toBeInTheDocument();
 
     // LEG-2's panel has been mounted since the page loaded — i.e. since BEFORE the toggle.
     await userEvent.click(screen.getByRole("button", { name: /LEG-2/i }));
     await waitFor(() => expect(screen.getByTestId("leg-body")).toHaveTextContent("2 offers"));
-    expect(screen.getByRole("columnheader", { name: /forwarder \/ variant/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /^variant$/i })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /^offer$/i })).not.toBeInTheDocument();
   });
 
@@ -294,8 +294,9 @@ describe("CompareQuotesPage", () => {
     expect(await screen.findByTestId("quoting-client-panel")).toBeInTheDocument();
 
     // S5.7 T6, re-pinning S5.6 final-review M1. LEG-2 carries a `recommendation` (see COMPARISON
-    // above), so — like the checker-panel assertion above — "no ★ Recommended" here is exercising
-    // `locked`, not "nothing to recommend". Negotiate is unconfounded by `decision.status` (it only
+    // above), so — like the checker-panel assertion above — "no recommendation" here (the `★`
+    // mark and its footnote both go quiet, S5.9 T8) is exercising `locked`, not "nothing to
+    // recommend". Negotiate is unconfounded by `decision.status` (it only
     // gets DISABLED-with-reason at PENDING_APPROVAL, never removed for that reason alone — see
     // `CompareLegPanel`'s `negotiateDisabledReason`), so its absence here is genuine too.
     expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();

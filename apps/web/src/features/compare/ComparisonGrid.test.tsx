@@ -7,7 +7,7 @@ import { AuthProvider } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { ComparisonGrid, STALE_OFFER_LABEL } from "./ComparisonGrid";
-import type { OfferCell } from "./comparisonRowModel";
+import { METRICS, RECOMMENDATION_FOOTNOTE, type OfferCell } from "./comparisonRowModel";
 import type { ViewMode } from "./useViewMode";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -276,10 +276,14 @@ const PARITY_LEG: LegComparisonDto = {
   offers: [PARITY_PRICED_OFFER, PARITY_UNPRICED_OFFER, PARITY_STALE_OFFER],
   pendingForwarders: [],
   awaitingReQuote: false,
-  recommendation: { quoteId: "q1", variant: "DEDICATED", reason: "fastest transit" },
+  recommendation: { quoteId: "q1", variant: "DEDICATED", reason: "cheapest landed cost" },
   decision: null,
   timeline: [],
 };
+
+// PARITY_LEG's recommended cell — `offerKey(quoteId, variant)` of its `recommendation` above.
+// Used by the star-marker tests (S5.9 T8), which run through both orientations off this one fixture.
+const PARITY_RECOMMENDED_KEY = "q1::DEDICATED";
 
 function renderGrid({
   viewMode,
@@ -317,23 +321,39 @@ describe.each(["columns", "rows"] as const)("ComparisonGrid — %s view", (mode)
     expect(screen.getByText("3 d")).toBeInTheDocument();
   });
 
-  it("flags the recommended offer and never prints $0 for an unpriced one", async () => {
+  it("never prints $0 for an unpriced offer", async () => {
     renderGrid({ viewMode: mode });
-    expect(await screen.findByText(/recommended/i)).toBeInTheDocument();
-    expect(screen.getByTestId("comparison-grid")).not.toHaveTextContent("$0.00");
+    expect(await screen.findByTestId("comparison-grid")).not.toHaveTextContent("$0.00");
+  });
+
+  // ── S5.9 T8, product item 2 — the `★` replaces the old status-cell "★ Recommended" badge: a
+  // mark beside the variant costs no column width. The reason moves onto its accessible name (not
+  // just a `title`, which the badge alone carried) so the information isn't lost, and the footnote
+  // below the table explains the mark once per leg. Both orientations, off the same PARITY_LEG
+  // fixture, so a view that forgot the mark (or the footnote) fails here — fix round 1 (T2 review)
+  // established this "run it through both orientations off one fixture" convention on purpose. ──
+  it("marks the recommendation with a star carrying its reason", async () => {
+    renderGrid({ viewMode: mode });
+    const mark = await screen.findByTestId(`offer-recommended-${PARITY_RECOMMENDED_KEY}`);
+    expect(mark).toHaveTextContent("★");
+    expect(mark).toHaveAccessibleName(/cheapest landed cost/i);
+    expect(screen.getByText(RECOMMENDATION_FOOTNOTE)).toBeInTheDocument();
+  });
+
+  it("keeps the recommended offer visually tinted", async () => {
+    renderGrid({ viewMode: mode });
+    expect(await screen.findByTestId(`offer-usd-${PARITY_RECOMMENDED_KEY}`)).toHaveClass(
+      "bg-emerald-500/10",
+    );
   });
 
   it("suppresses the recommendation once locked, without hiding the grid's own figures", async () => {
     renderGrid({ viewMode: mode, locked: true });
     expect(await screen.findByText("$1,824.37")).toBeInTheDocument();
-    expect(screen.queryByText(/★ Recommended/)).not.toBeInTheDocument();
-  });
-
-  // ── fix round 1 (T2 review) — reviewer-proved gaps, added to the PARITY block on purpose: a
-  // rows-only test would leave the same hole open in the columns direction next time. ──────────
-  it("carries the recommendation reason as the badge's title", async () => {
-    renderGrid({ viewMode: mode });
-    expect(await screen.findByText("★ Recommended")).toHaveAttribute("title", "fastest transit");
+    expect(
+      screen.queryByTestId(`offer-recommended-${PARITY_RECOMMENDED_KEY}`),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(RECOMMENDATION_FOOTNOTE)).not.toBeInTheDocument();
   });
 
   it("badges a REQUOTED offer as stale re-quote-requested", async () => {
@@ -446,6 +466,51 @@ describe("ComparisonGridRows — forwarder grouping is banded", () => {
   });
 });
 
+// ── S5.9 T8, product item 3 — the Forwarder column is gone; its name moves to a full-width band
+// row above that forwarder's variants, so two rows both reading "Dedicated" from different
+// forwarders are never indistinguishable. Columns view needs no equivalent — its forwarder name
+// already sits in its own `colSpan` header (S5.7 item 1), so it isn't touched by this task. ─────
+describe("ComparisonGridRows — forwarder band row", () => {
+  it("prints each forwarder's name once, on its own full-width band row", () => {
+    render(<ComparisonGrid leg={PARITY_LEG} viewMode="rows" />);
+
+    const band = screen.getByTestId("forwarder-band-ff1");
+    expect(band).toHaveTextContent("Bridge");
+    expect(band.querySelector("td")).toHaveAttribute("colspan");
+
+    // The name is no longer repeated in a per-row column — no "Forwarder" column header exists.
+    expect(screen.queryByRole("columnheader", { name: /forwarder/i })).not.toBeInTheDocument();
+  });
+
+  // Mutation-proof for the brief's "colSpan must be derived, never hard-coded" requirement: this
+  // reads the ACTUAL value off `METRICS.length`, not just "some colspan attribute exists" — a
+  // hard-coded `7` would keep the test above green but would go stale (and silently short the
+  // band) the moment a metric is added or removed. This one only stays green if the two stay equal.
+  it("derives the band's colSpan from METRICS.length + 2, not a hard-coded number", () => {
+    render(<ComparisonGrid leg={PARITY_LEG} viewMode="rows" />);
+    const band = screen.getByTestId("forwarder-band-ff1");
+    expect(band.querySelector("td")).toHaveAttribute("colspan", String(METRICS.length + 2));
+  });
+});
+
+// ── S5.9 T8, product item 2 — the status-cell "★ Recommended" badge is gone; the `★` beside the
+// variant/header (plus the footnote) replace it. Only the Recommended badge is removed — the
+// stale (REQUOTED) badge stays, pinned separately by the parity block's "badges a REQUOTED offer"
+// test above. Both orientations: the badge used to be duplicated in both Status cells/rows. ─────
+describe("ComparisonGrid — no Recommended badge in the status cell", () => {
+  it.each(["columns", "rows"] as const)(
+    "no longer renders a Recommended badge in the status cell (%s)",
+    (mode) => {
+      render(<ComparisonGrid leg={PARITY_LEG} viewMode={mode} />);
+      const status = screen.getByTestId(`offer-status-${PARITY_RECOMMENDED_KEY}`);
+      expect(within(status).queryByText(/^★ Recommended$/)).not.toBeInTheDocument();
+      // The status cell still renders its ordinary status badge — proves the cell itself is
+      // present and populated, so the absence above isn't vacuously true because nothing rendered.
+      expect(within(status).getByText(/quoted/i)).toBeInTheDocument();
+    },
+  );
+});
+
 describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
   it("renders one column per offer, grouped under its forwarder, with USD total + transit", () => {
     renderPanel();
@@ -466,7 +531,7 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
     expect(screen.getByTestId("offer-rate-quote-1::DEDICATED")).toHaveTextContent("3.67250");
   });
 
-  it("tints every cell of the recommended column and stars its Status badge with the reason, without touching sibling columns", () => {
+  it("tints every cell of the recommended column and stars its header with the reason, without touching sibling columns", () => {
     renderPanel();
 
     // Every row of the recommended (quote-1::DEDICATED) column carries the tint — not just its
@@ -482,12 +547,16 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
     // by (quoteId, variant), not by forwarder.
     expect(screen.getByTestId("offer-usd-quote-1::GROUPAGE")).not.toHaveClass("bg-emerald-500/10");
 
+    // S5.9 T8, product item 2 — the reason now rides the `★` mark beside the header's variant text
+    // (both as its `title` and, more importantly, its accessible name), not a Status-cell badge.
+    const mark = screen.getByTestId("offer-recommended-quote-1::DEDICATED");
+    expect(mark).toHaveTextContent("★");
+    const reason = "High priority → fastest transit (3 days); price broke the tie.";
+    expect(mark).toHaveAttribute("title", reason);
+    expect(mark).toHaveAccessibleName(`Recommended — ${reason}`);
+    // ...and the Status cell itself no longer carries a "★ Recommended" badge.
     const status = screen.getByTestId("offer-status-quote-1::DEDICATED");
-    const badge = within(status).getByText("★ Recommended");
-    expect(badge).toHaveAttribute(
-      "title",
-      "High priority → fastest transit (3 days); price broke the tie.",
-    );
+    expect(within(status).queryByText(/^★ Recommended$/)).not.toBeInTheDocument();
   });
 
   it("draws the forwarder separator on the last variant column of each group, not between a forwarder's own variants", () => {
@@ -676,7 +745,8 @@ describe("ComparisonGrid edge cases", () => {
     expect(screen.getByTestId("offer-header-quote-1::DEDICATED").closest("th")).not.toHaveClass(
       "bg-emerald-500/10",
     );
-    expect(screen.queryByText("★ Recommended")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("offer-recommended-quote-1::DEDICATED")).not.toBeInTheDocument();
+    expect(screen.queryByText(RECOMMENDATION_FOOTNOTE)).not.toBeInTheDocument();
   });
 
   it("degrades gracefully when the recommendation references an offer absent from the leg", () => {
@@ -690,8 +760,8 @@ describe("ComparisonGrid edge cases", () => {
     });
 
     // No column key in the model matches a nonexistent quoteId, so no cell picks up the tint or
-    // badge — no crash, nothing flagged, rather than naming a nonexistent offer.
-    expect(screen.queryByText("★ Recommended")).not.toBeInTheDocument();
+    // mark — no crash, nothing flagged, rather than naming a nonexistent offer.
+    expect(document.querySelector('[data-testid^="offer-recommended-"]')).toBeNull();
     expect(document.querySelectorAll(".bg-emerald-500\\/10")).toHaveLength(0);
   });
 
@@ -719,7 +789,7 @@ describe("ComparisonGrid edge cases", () => {
   });
 
   // ── final review M1 ───────────────────────────────────────────────────────────────────────
-  it("suppresses the recommendation tint and the Recommended badge once the award is locked", () => {
+  it("suppresses the recommendation tint and the star mark once the award is locked", () => {
     // Post-generate, the WINNING quote is APPROVED — a status COMPARABLE_STATUSES excludes from
     // `offers` — so whatever `recommendation` still points at is ranked among the losers only.
     renderPanel(LEG, { locked: true });
@@ -728,7 +798,8 @@ describe("ComparisonGrid edge cases", () => {
       "bg-emerald-500/10",
     );
     expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).not.toHaveClass("bg-emerald-500/10");
-    expect(screen.queryByText("★ Recommended")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("offer-recommended-quote-1::DEDICATED")).not.toBeInTheDocument();
+    expect(screen.queryByText(RECOMMENDATION_FOOTNOTE)).not.toBeInTheDocument();
 
     // …while the grid itself stays fully readable.
     expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).toHaveTextContent("$542.17");

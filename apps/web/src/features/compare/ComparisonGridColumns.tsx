@@ -16,6 +16,7 @@ import {
   METRIC_TESTID,
   METRIC_CELL_CLASS,
   RECOMMENDED_TINT,
+  RECOMMENDED_MARK,
   STALE_OFFER_LABEL,
   type ComparisonRowModel,
   type OfferCell,
@@ -101,12 +102,34 @@ export function ComparisonGridColumns({
                       onClick={() => onOpenBreakdown(cell)}
                       className="w-full rounded px-1 py-0.5 text-center hover:bg-muted/50"
                     >
-                      <span className="block text-xs font-medium">{variantText}</span>
+                      <span className="block text-xs font-medium">
+                        {variantText}
+                        {cell.recommended && leg.recommendation && (
+                          <span
+                            data-testid={`offer-recommended-${cell.key}`}
+                            aria-label={`Recommended — ${leg.recommendation.reason}`}
+                            title={leg.recommendation.reason}
+                            className="ml-1 text-emerald-600"
+                          >
+                            {RECOMMENDED_MARK}
+                          </span>
+                        )}
+                      </span>
                     </button>
                   ) : (
                     <div data-testid={`offer-header-${cell.key}`} className="w-full px-1 py-0.5">
                       <span className="block text-xs font-medium text-muted-foreground">
                         {variantText}
+                        {cell.recommended && leg.recommendation && (
+                          <span
+                            data-testid={`offer-recommended-${cell.key}`}
+                            aria-label={`Recommended — ${leg.recommendation.reason}`}
+                            title={leg.recommendation.reason}
+                            className="ml-1 text-emerald-600"
+                          >
+                            {RECOMMENDED_MARK}
+                          </span>
+                        )}
                       </span>
                     </div>
                   )}
@@ -148,15 +171,6 @@ export function ComparisonGridColumns({
               >
                 <div className="flex flex-col items-center gap-1">
                   <ForwarderStatusBadge status={cell.offer.quoteStatus} />
-                  {cell.recommended && leg.recommendation && (
-                    <Badge
-                      variant="accent"
-                      title={leg.recommendation.reason}
-                      className="whitespace-nowrap"
-                    >
-                      ★ Recommended
-                    </Badge>
-                  )}
                   {cell.stale && (
                     <Badge
                       variant="warning"

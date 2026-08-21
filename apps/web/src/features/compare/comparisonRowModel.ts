@@ -92,11 +92,6 @@ export interface MetricDef {
  */
 export const METRICS = [
   {
-    id: "usdTotal",
-    label: "Total (USD)",
-    render: (c: OfferCell) => (c.offer.priced ? fmtUsd(c.offer.usdTotal) : "—"),
-  },
-  {
     id: "nativeTotal",
     label: "Total (native)",
     render: (c: OfferCell) =>
@@ -106,6 +101,11 @@ export const METRICS = [
     id: "rate",
     label: "Rate (per USD)",
     render: (c: OfferCell) => (c.offer.unitsPerUsd == null ? "—" : c.offer.unitsPerUsd.toFixed(5)),
+  },
+  {
+    id: "usdTotal",
+    label: "Total (USD)",
+    render: (c: OfferCell) => (c.offer.priced ? fmtUsd(c.offer.usdTotal) : "—"),
   },
   {
     id: "transit",
@@ -149,3 +149,9 @@ export const METRIC_CELL_CLASS: Record<MetricId, string> = {
 /** The recommended row/column's tint (S5.7 item 2 — every cell, not just the header/label). Shared
  *  by both orientations for the same drift-proofing reason as the maps above. */
 export const RECOMMENDED_TINT = "bg-emerald-500/10";
+
+/** The recommendation marker (product item 2). Replaces the status-cell badge: a `★` beside the
+ *  variant costs no column width, and the reason rides on its accessible name so the information
+ *  is not lost with the badge. The footnote below the table explains it once per leg. */
+export const RECOMMENDED_MARK = "★";
+export const RECOMMENDATION_FOOTNOTE = "★ Recommended by the comparison engine.";

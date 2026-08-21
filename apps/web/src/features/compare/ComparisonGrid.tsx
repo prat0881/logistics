@@ -1,6 +1,12 @@
 import type { LegComparisonDto } from "@svyft/shared";
 import { ForwarderStatusBadge } from "@/features/rfq-workspace/statusBadges";
-import { buildComparisonRowModel, offerKey, STALE_OFFER_LABEL, type OfferCell } from "./comparisonRowModel";
+import {
+  buildComparisonRowModel,
+  offerKey,
+  RECOMMENDATION_FOOTNOTE,
+  STALE_OFFER_LABEL,
+  type OfferCell,
+} from "./comparisonRowModel";
 import { ComparisonGridColumns } from "./ComparisonGridColumns";
 import { ComparisonGridRows } from "./ComparisonGridRows";
 import type { ViewMode } from "./useViewMode";
@@ -83,6 +89,13 @@ export function ComparisonGrid({
           selectedOfferKey={selectedOfferKey}
           onShortlistOffer={shortlistHandler}
         />
+      )}
+
+      {/* Explains the `★` mark (product item 2) once per leg — only when there's a live
+          recommendation for it to refer to; `recommendedKey` is already `null` whenever `locked`
+          suppresses the recommendation, so this and the mark disappear together. */}
+      {model.recommendedKey && (
+        <p className="text-xs text-muted-foreground">{RECOMMENDATION_FOOTNOTE}</p>
       )}
 
       {(leg.pendingForwarders.length > 0 || leg.awaitingReQuote) && (

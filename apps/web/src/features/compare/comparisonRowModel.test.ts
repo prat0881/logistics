@@ -57,4 +57,17 @@ describe("buildComparisonRowModel", () => {
     expect(usd.render(m.cells[0])).toBe("—");
     expect(usd.render(m.cells[0])).not.toContain("$0");
   });
+
+  // ── S5.9 T8, product item 1 — the product owner's exact column order. Both grid orientations
+  // read this one array (columns view's row labels, rows view's column headers), so pinning the
+  // order here is what keeps them from drifting apart.
+  it("orders the metrics as the product owner specified", () => {
+    expect(METRICS.map((m) => m.label)).toEqual([
+      "Total (native)",
+      "Rate (per USD)",
+      "Total (USD)",
+      "Transit",
+      "Valid until",
+    ]);
+  });
 });
