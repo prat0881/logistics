@@ -97,17 +97,24 @@ export class NegotiationService {
 
     // 2) Leg: only reopen if the negotiated quote had actually carried an approval — a leg
     // whose shortlist was merely QUOTED (never sent/approved) stays exactly where it was.
-    // CORRECTED (S5.9 Task 5 review) — this used to claim LegQuoteProjector's own listener on
-    // quote.status.changed is a no-op here because REQUOTED isn't one of the "resolved" statuses
-    // `rollupLegTarget` (status.ts) treats as settled, so it "computes no forward target off this
-    // event". That is only true for a single-quote leg. On a multi-forwarder leg with a sibling
-    // still QUOTED, `rollupLegTarget` DOES compute a real target (PARTIALLY_QUOTED —
-    // `distributed.some(s => s === QUOTED)` is true). What actually keeps the leg from walking
-    // backwards in that case is `LegQuoteProjector.recomputeLeg`'s own never-walk-backwards
-    // backstop (leg-quote.projector.ts): it only fires QUOTE_PARTIAL when `leg.status ===
-    // RFQ_SENT`, and a leg that just carried an APPROVED decision was FULLY_QUOTED (never
-    // RFQ_SENT) beforehand, so the projector returns without firing regardless of what
-    // `rollupLegTarget` computed. Fired
+    //
+    // Why step 1's quote fire alone never moves the leg while `wasApproved` is true (i.e. inside
+    // THIS `if`): `StatusService.fire` does `await this.events.emitAsync(...)` AFTER its own
+    // commit (status.service.ts), so `fire()` itself does not resolve until every listener —
+    // here, `LegQuoteProjector.onQuoteStatusChanged` — has finished running SYNCHRONOUSLY inside
+    // step 1's `await` above, before this `if` is even reached, let alone before REOPEN_AWARD
+    // below has fired. At that moment `leg.status` is still `APPROVED` (nothing has changed it
+    // yet), so `recomputeLeg` returns immediately at its own `ROLLUP_FROZEN.includes(leg.status)`
+    // guard (leg-quote.projector.ts) — it never reaches `rollupLegTarget` at all on this branch.
+    //
+    // CORRECTED TWICE (S5.9 Task 5 review round 2) — the previous version of this comment named
+    // the WRONG guard here: LegQuoteProjector's never-walk-backwards RFQ_SENT backstop (it only
+    // fires QUOTE_PARTIAL when `leg.status === RFQ_SENT`), with `rollupLegTarget` computing a
+    // real PARTIALLY_QUOTED target that the backstop then suppresses. That mechanism is real, but
+    // it answers the OTHER branch — `!wasApproved`, e.g. a multi-forwarder FULLY_QUOTED leg with
+    // a sibling quote still QUOTED — where the leg is NOT in ROLLUP_FROZEN and `recomputeLeg`
+    // genuinely reaches `rollupLegTarget`. On THIS branch ROLLUP_FROZEN intercepts first, so the
+    // RFQ_SENT backstop is never reached at all. Fired
     // BEFORE step 3's transaction, deliberately: fire() commits its own tx and only emits its
     // event after that commit (status.service.ts), so by the time this call resolves the leg
     // row is durably FULLY_QUOTED — which step 3's own QueryStatusProjector.recompute needs to

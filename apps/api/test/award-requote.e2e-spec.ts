@@ -635,6 +635,13 @@ describe(`${PREFIX} (e2e)`, () => {
       orderBy: { createdAt: "desc" },
     });
     expect(msg?.bodyRendered).toContain(rawToken);
+    // S5.9 Task 5 review round 2, IMPORTANT 2 — MessageTemplate's seed upsert is create-only
+    // (message-templates.seed.ts), so an already-seeded row does NOT pick up a source copy
+    // change on its own; a dedicated data migration
+    // (20260821162750_s59_requote_email_copy) backfills it. This asserts the copy the RUNNING
+    // app actually renders (not just what the seed source says) reflects D7 — reassuring the
+    // forwarder their link is unchanged, not implying a fresh one.
+    expect(msg?.bodyRendered).toContain("it has not changed");
   });
 
   // S5.9 Task 5 (D8) — a legacy Rfq row from before this migration never had its raw token
