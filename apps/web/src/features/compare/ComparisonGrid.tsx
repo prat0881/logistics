@@ -65,6 +65,17 @@ export function ComparisonGrid({
   // these are different conditions, and both must unmount rather than disable).
   const shortlistHandler = locked ? undefined : onShortlistOffer;
 
+  // Code-review fix (round 2) — `model.recommendedKey` is a non-null string whenever
+  // `leg.recommendation` exists, EVEN when that recommendation names an offer absent from this
+  // leg's `offers` (the dangling-reference edge case `comparisonRowModel.ts`'s own doc comment
+  // and `ComparisonGrid.test.tsx`'s "degrades gracefully..." test both cover): no cell then has
+  // `recommended: true`, so zero `★` marks render anywhere, and gating the footnote on the raw key
+  // alone let it print regardless — "★ Recommended by the comparison engine." with nothing on the
+  // page for the `★` to refer to. Gating on whether some cell actually carries the flag keeps the
+  // footnote and the mark(s) it explains appearing/disappearing together, which is the whole point
+  // of "explain the mark, only when the mark exists" (Step 6's own doc comment below).
+  const hasRecommendedCell = model.cells.some((c) => c.recommended);
+
   function handleOpenBreakdown(cell: OfferCell) {
     onSelectOffer?.(cell.offer.quoteId, cell.offer.variant);
   }
@@ -92,9 +103,13 @@ export function ComparisonGrid({
       )}
 
       {/* Explains the `★` mark (product item 2) once per leg — only when there's a live
-          recommendation for it to refer to; `recommendedKey` is already `null` whenever `locked`
-          suppresses the recommendation, so this and the mark disappear together. */}
-      {model.recommendedKey && (
+          recommendation for it to refer to. Gated on an ACTUAL flagged cell, not just a non-null
+          `recommendedKey`: `locked` suppressing the recommendation makes `recommendedKey` `null`
+          (so this and the mark disappear together there too), but a dangling `leg.recommendation`
+          (naming an offer absent from `offers`) leaves `recommendedKey` a non-null string with no
+          cell ever picking it up — this guard is what keeps the footnote from printing in that
+          case with no `★` anywhere on the page for it to explain (code-review fix, round 2). */}
+      {hasRecommendedCell && (
         <p className="text-xs text-muted-foreground">{RECOMMENDATION_FOOTNOTE}</p>
       )}
 

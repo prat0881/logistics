@@ -763,6 +763,11 @@ describe("ComparisonGrid edge cases", () => {
     // mark — no crash, nothing flagged, rather than naming a nonexistent offer.
     expect(document.querySelector('[data-testid^="offer-recommended-"]')).toBeNull();
     expect(document.querySelectorAll(".bg-emerald-500\\/10")).toHaveLength(0);
+    // Code-review fix (round 2) — `model.recommendedKey` is still a non-null string here (it's
+    // derived straight from `leg.recommendation`, which exists), so gating the footnote on the raw
+    // key alone would print "★ Recommended by the comparison engine." with zero `★` marks anywhere
+    // on the page. It must go quiet along with the mark it explains.
+    expect(screen.queryByText(RECOMMENDATION_FOOTNOTE)).not.toBeInTheDocument();
   });
 
   it("shows the empty-grid message and the pending list for a leg with zero offers", () => {
