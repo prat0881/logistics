@@ -65,6 +65,37 @@ const quotedLeg = {
   status: "QUOTED",
 } as unknown as FfPortalLegDto;
 
+const requotedLeg = {
+  ...leg,
+  status: "REQUOTED",
+} as unknown as FfPortalLegDto;
+
+// A retained draft (ff-portal.service.ts's requote path keeps the FF's prior submission, so the
+// portal must show it back rather than a blank form — QuoteDraft-shaped, chargedWeightKg is the
+// simplest unconditionally-rendered numeric field (CargoWeightTable) to assert on).
+const draftWithPrices = {
+  legId: "L1",
+  mode: "AIR",
+  currency: null,
+  quoteValidityUntil: null,
+  chargedWeightKg: 1250,
+  notes: null,
+  cargo: [{ packageId: "pk1", grossWtKg: 1000, cbm: 1 }],
+  charges: [],
+  trucking: [],
+  seaRates: [],
+  warehouse: [],
+  transit: null,
+  dgSurchargeNote: null,
+  termsConditions: null,
+} as unknown as FfPortalLegDto["draft"];
+
+const requotedLegWithDraft = {
+  ...leg,
+  status: "REQUOTED",
+  draft: draftWithPrices,
+} as unknown as FfPortalLegDto;
+
 // Same leg, but with a warehouse endpoint + the frozen warehouseIncluded decision (design §9) —
 // seedQuoteDraftWarehouse (draftFromDto's fresh-draft path) only produces a non-empty
 // draft.warehouse for this fixture, not the base `leg` above (LegSection §6C finding #7).
@@ -125,6 +156,70 @@ describe("LegSection QUOTED branch", () => {
     );
     expect(screen.getByText(/quote submitted/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /submit quote/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("LegSection REQUOTED branch (the negotiate feature's dead end, S5.9 §1)", () => {
+  it("lets the forwarder revise a price on a REQUOTED leg", () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={requotedLeg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={true}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    expect(screen.queryByText(/not open for quoting/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /submit quote/i })).toBeEnabled();
+  });
+
+  it("shows the forwarder their retained draft rather than a blank form", () => {
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={requotedLegWithDraft}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={true}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    expect(screen.getByDisplayValue("1250")).toBeInTheDocument();
+  });
+});
+
+describe("LegSection outcome-status neutrality (design D9)", () => {
+  it("never tells the forwarder a commercial outcome", () => {
+    for (const status of ["PENDING_APPROVAL", "APPROVED"] as const) {
+      const statusLeg = { ...leg, status } as unknown as FfPortalLegDto;
+      const { unmount } = render(
+        wrap(
+          <LegSection
+            token="tok"
+            rfq={rfq}
+            leg={statusLeg}
+            currency="USD"
+            quoteValidityUntil={rfq.quoteValidityUntil}
+            readOnly={false}
+            open={true}
+            onOpen={() => {}}
+          />,
+        ),
+      );
+      expect(screen.getByText("Under review")).toBeInTheDocument();
+      expect(screen.queryByText(/approved/i)).not.toBeInTheDocument();
+      unmount();
+    }
   });
 });
 

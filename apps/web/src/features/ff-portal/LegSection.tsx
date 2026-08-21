@@ -125,7 +125,12 @@ const LEG_STATUS_BADGE: Record<string, { label: string; variant: BadgeProps["var
   INVALID: { label: "Invalid", variant: "destructive" },
   REQUOTED: { label: "Requote requested", variant: "warning" },
   CLOSED: { label: "Closed", variant: "pending" },
-  APPROVED: { label: "Approved", variant: "success" },
+  // D9 — the forwarder must never learn a commercial outcome from this screen. Approval selects
+  // a forwarder with NO forwarder notification and stays reversible until the client accepts
+  // (design D5), and a leading forwarder who knows they are leading has no reason to sharpen.
+  // Both internal states therefore read as one neutral label.
+  PENDING_APPROVAL: { label: "Under review", variant: "secondary" },
+  APPROVED: { label: "Under review", variant: "secondary" },
 };
 function legStatusBadge(status: string): { label: string; variant: BadgeProps["variant"] } {
   return LEG_STATUS_BADGE[status] ?? { label: status, variant: "outline" };
@@ -167,8 +172,11 @@ function LegSectionBody({
     return <AlreadySubmittedSummary leg={leg} rfq={rfq} />;
   }
 
-  // ── Status branch: not RFQ_SENT (e.g. CANCELLED, DRAFT, etc.) ─────────
-  if (leg.status !== "RFQ_SENT") {
+  // ── Status branch: not open ────────────────────────────────────────────
+  // REQUOTED belongs with RFQ_SENT, not here: ff-portal.service.ts's submit guard accepts both,
+  // and a re-quote request exists precisely so the forwarder can revise. Omitting it dead-ended
+  // the whole negotiate flow — the forwarder was told the leg was closed (S5.9 §1).
+  if (leg.status !== "RFQ_SENT" && leg.status !== "REQUOTED") {
     return (
       <div className="space-y-4">
         <CargoManifestTable cargo={leg.manifest.cargo} />
@@ -177,7 +185,7 @@ function LegSectionBody({
     );
   }
 
-  // ── Editable form (RFQ_SENT) ───────────────────────────────────────────
+  // ── Editable form (RFQ_SENT | REQUOTED) ────────────────────────────────
   return (
     <LegSectionForm
       token={token}
