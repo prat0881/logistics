@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "LegStatus" ADD VALUE 'PENDING_APPROVAL';
+
+-- AlterEnum
+ALTER TYPE "QuoteStatus" ADD VALUE 'PENDING_APPROVAL';

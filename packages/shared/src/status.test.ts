@@ -140,6 +140,7 @@ describe("status vocabularies", () => {
       "RFQ_SENT",
       "PARTIALLY_QUOTED",
       "FULLY_QUOTED",
+      "PENDING_APPROVAL",
       "APPROVED",
       "AWARDED",
       "IN_TRANSIT",
@@ -152,7 +153,10 @@ describe("status vocabularies", () => {
       "rfq.send",
       "quote.partial",
       "quote.full",
+      "send_for_approval",
       "approve",
+      "return.full",
+      "return.partial",
       "reopen_award",
     ]);
     expect(QUERY_STATUSES).toEqual([
@@ -202,7 +206,14 @@ describe("deriveQueryStatus — zero-leg query-level milestones (Plan 4)", () =>
   });
 });
 
-import { QuoteStatus, QUOTE_STATUSES, QuoteEvent, QUOTE_EVENTS, LegEvent } from "./status";
+import {
+  QuoteStatus,
+  QUOTE_STATUSES,
+  QuoteEvent,
+  QUOTE_EVENTS,
+  LegEvent,
+  rollupLegTarget,
+} from "./status";
 
 describe("quote status vocabulary", () => {
   it("declares the Stage-4 quote states", () => {
@@ -234,5 +245,46 @@ describe("Stage 5 award events", () => {
   it("declares the leg award events", () => {
     expect(LegEvent.APPROVE).toBe("approve");
     expect(LegEvent.REOPEN_AWARD).toBe("reopen_award");
+  });
+});
+
+describe("S5.9 — pending-approval rollup", () => {
+  it("rolls a pending-approval leg up to QUOTED at query level", () => {
+    expect(deriveQueryStatus([LegStatus.PENDING_APPROVAL])).toBe(QueryStatus.QUOTED);
+  });
+
+  it("still lets the least-advanced leg win", () => {
+    expect(deriveQueryStatus([LegStatus.PENDING_APPROVAL, LegStatus.RFQ_SENT])).toBe(
+      QueryStatus.RFQ_SENT,
+    );
+  });
+
+  it("counts a PENDING_APPROVAL quote as resolved, so the leg reads fully quoted", () => {
+    expect(rollupLegTarget([QuoteStatus.PENDING_APPROVAL, QuoteStatus.EXPIRED])).toBe(
+      LegStatus.FULLY_QUOTED,
+    );
+  });
+
+  it("reads partially quoted while one forwarder is still outstanding", () => {
+    expect(rollupLegTarget([QuoteStatus.QUOTED, QuoteStatus.RFQ_SENT])).toBe(
+      LegStatus.PARTIALLY_QUOTED,
+    );
+  });
+
+  it("ignores undistributed SELECT quotes entirely", () => {
+    expect(rollupLegTarget([QuoteStatus.SELECT])).toBeNull();
+    expect(rollupLegTarget([QuoteStatus.QUOTED, QuoteStatus.SELECT])).toBe(
+      LegStatus.FULLY_QUOTED,
+    );
+  });
+
+  it("says nothing when every distributed quote is still outstanding", () => {
+    expect(rollupLegTarget([QuoteStatus.RFQ_SENT])).toBeNull();
+  });
+
+  it("does NOT count an in-flight re-quote as resolved", () => {
+    expect(rollupLegTarget([QuoteStatus.QUOTED, QuoteStatus.REQUOTED])).toBe(
+      LegStatus.PARTIALLY_QUOTED,
+    );
   });
 });

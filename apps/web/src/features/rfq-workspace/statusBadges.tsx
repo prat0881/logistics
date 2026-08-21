@@ -25,6 +25,7 @@ const LEG_LABEL: Record<LegStatus, string> = {
   RFQ_SENT: "RFQ Sent",
   PARTIALLY_QUOTED: "Partially Quoted",
   FULLY_QUOTED: "Fully Quoted",
+  PENDING_APPROVAL: "Pending Approval",
   APPROVED: "Approved",
   AWARDED: "Awarded",
   IN_TRANSIT: "In Transit",
@@ -44,6 +45,7 @@ const FORWARDER_LABEL: Record<QuoteStatus, string> = {
   EXPIRED: "Expired",
   INVALID: "Invalid",
   REQUOTED: "Requoted",
+  PENDING_APPROVAL: "Pending Approval",
   CLOSED: "Closed",
   APPROVED: "Approved",
 };

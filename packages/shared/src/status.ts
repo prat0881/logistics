@@ -41,6 +41,7 @@ export const LegStatus = {
   RFQ_SENT: "RFQ_SENT",
   PARTIALLY_QUOTED: "PARTIALLY_QUOTED",
   FULLY_QUOTED: "FULLY_QUOTED",
+  PENDING_APPROVAL: "PENDING_APPROVAL",
   APPROVED: "APPROVED",
   AWARDED: "AWARDED",
   IN_TRANSIT: "IN_TRANSIT",
@@ -57,7 +58,10 @@ export const LegEvent = {
   SEND_RFQ: "rfq.send",
   QUOTE_PARTIAL: "quote.partial",
   QUOTE_FULL: "quote.full",
+  SEND_FOR_APPROVAL: "send_for_approval",
   APPROVE: "approve",
+  RETURN_FULL: "return.full",
+  RETURN_PARTIAL: "return.partial",
   REOPEN_AWARD: "reopen_award",
 } as const;
 export type LegEvent = (typeof LegEvent)[keyof typeof LegEvent];
@@ -71,6 +75,7 @@ export const QuoteStatus = {
   EXPIRED: "EXPIRED",
   INVALID: "INVALID",
   REQUOTED: "REQUOTED",
+  PENDING_APPROVAL: "PENDING_APPROVAL",
   CLOSED: "CLOSED",
   APPROVED: "APPROVED",
 } as const;
@@ -82,7 +87,9 @@ export const QuoteEvent = {
   SUBMIT: "submit",   // RFQ_SENT → QUOTED
   EXPIRE: "expire",   // RFQ_SENT → EXPIRED
   INVALIDATE: "invalidate", // QUOTED → INVALID (change-order, sub-build 6)
-  APPROVE: "approve",             // QUOTED → APPROVED
+  SEND_FOR_APPROVAL: "send_for_approval", // QUOTED → PENDING_APPROVAL
+  APPROVE: "approve",             // PENDING_APPROVAL → APPROVED
+  RETURN: "return",               // PENDING_APPROVAL → QUOTED (reject)
   UNAPPROVE: "unapprove",         // APPROVED → QUOTED
   REQUEST_REQUOTE: "request_requote", // QUOTED/APPROVED → REQUOTED
 } as const;
@@ -125,11 +132,12 @@ const LEG_RANK: Record<LegStatus, number> = {
   RFQ_SENT: 2,
   PARTIALLY_QUOTED: 3,
   FULLY_QUOTED: 4,
-  APPROVED: 5,
-  AWARDED: 6,
-  IN_TRANSIT: 7,
-  DELIVERED: 8,
-  CLOSED: 9,
+  PENDING_APPROVAL: 5,
+  APPROVED: 6,
+  AWARDED: 7,
+  IN_TRANSIT: 8,
+  DELIVERED: 9,
+  CLOSED: 10,
 };
 
 function leastAdvanced(legStatuses: LegStatus[]): LegStatus {
@@ -169,6 +177,7 @@ export function deriveQueryStatus(
       return QueryStatus.RFQ_SENT;
     case LegStatus.FULLY_QUOTED:
       return milestones.noResponse ? QueryStatus.NO_RESPONSE : QueryStatus.QUOTED;
+    case LegStatus.PENDING_APPROVAL:
     case LegStatus.APPROVED:
       return QueryStatus.QUOTED;
     case LegStatus.DELIVERED:
@@ -181,4 +190,32 @@ export function deriveQueryStatus(
       // Stage 3 (no edges reach those states).
       return QueryStatus.QUOTED;
   }
+}
+
+/**
+ * Quote states that count as "settled" for the leg rollup (§9.2). `PENDING_APPROVAL` and
+ * `APPROVED` count — a quote under review or already approved is not something we are still
+ * waiting on. `REQUOTED` deliberately does NOT: a re-quote in flight is genuinely unresolved.
+ */
+const LEG_ROLLUP_RESOLVED: readonly QuoteStatus[] = [
+  QuoteStatus.QUOTED,
+  QuoteStatus.EXPIRED,
+  QuoteStatus.CLOSED,
+  QuoteStatus.PENDING_APPROVAL,
+  QuoteStatus.APPROVED,
+];
+
+/**
+ * What a leg's status SHOULD be, given its quotes. `null` means "nothing to say" — either
+ * nothing was ever distributed, or every distributed quote is still outstanding, in which case
+ * the leg keeps whatever status it already has.
+ *
+ * Undistributed (`SELECT`) quotes are excluded: they were never sent, so they can never resolve.
+ */
+export function rollupLegTarget(quoteStatuses: QuoteStatus[]): LegStatus | null {
+  const distributed = quoteStatuses.filter((s) => s !== QuoteStatus.SELECT);
+  if (distributed.length === 0) return null;
+  if (distributed.every((s) => LEG_ROLLUP_RESOLVED.includes(s))) return LegStatus.FULLY_QUOTED;
+  if (distributed.some((s) => s === QuoteStatus.QUOTED)) return LegStatus.PARTIALLY_QUOTED;
+  return null;
 }
