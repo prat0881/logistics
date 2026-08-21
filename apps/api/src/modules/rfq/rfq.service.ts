@@ -154,7 +154,10 @@ export class RfqService {
    * Rotate an RFQ's access token (identity = query × FF) and record an audit row.
    * Recovery path: if the distribute response that carried the raw token was lost,
    * the token is unrecoverable (the hash is one-way) — this mints a fresh one.
-   * Touches only accessTokenHash; deadline / status / quotes / manifest are intact.
+   * Touches only accessTokenHash/accessToken; deadline / status / quotes / manifest are intact.
+   * S5.9 D7 — this is now the ONLY place a live RFQ's token rotates. Negotiation
+   * (negotiation.service.ts's requestRequote) deliberately does NOT call this any more — the
+   * Stage-4 Regenerate button (RegeneratePortalLink.tsx) is the sole caller.
    */
   async reissueToken(
     queryId: string,
@@ -169,7 +172,11 @@ export class RfqService {
       if (!rfq)
         throw new NotFoundException("No RFQ found for this freight forwarder on this query");
       const { token, hash } = this.token.mint();
-      await tx.rfq.update({ where: { id: rfq.id }, data: { accessTokenHash: hash } });
+      // S5.9 D8 — persist the raw token alongside its hash. `accessTokenHash` stays the lookup
+      // index (resolveByToken hashes the incoming raw token and looks that up); `accessToken` is
+      // what a re-quote email (negotiation.service.ts) reads back to render the CURRENT link
+      // without minting a new one, now that re-quote no longer rotates it (D7).
+      await tx.rfq.update({ where: { id: rfq.id }, data: { accessTokenHash: hash, accessToken: token } });
       await tx.rfqTokenReissue.create({
         data: { rfqId: rfq.id, actorId: user.userId, tenantId: user.tenantId },
       });
@@ -429,6 +436,9 @@ export class RfqService {
               freightForwarderId: ffId,
               rfqNumber,
               accessTokenHash: t.hash,
+              // S5.9 D8 — see reissueToken's identical note: persist the raw token too, so a
+              // later re-quote can render this same link (D7) without minting a new one.
+              accessToken: t.token,
               submissionDeadline: deadline,
               incoterms: query.incoterms,
               tenantId: user.tenantId,

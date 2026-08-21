@@ -1,6 +1,6 @@
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? "test-access-secret";
 
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
@@ -94,7 +94,10 @@ describe(`${PREFIX} (e2e)`, () => {
     label: string,
     legStatus: string,
     quoteStatus: string,
-    opts: { withDraft?: boolean; decisionStatus?: "DRAFT" | "APPROVED" } = {},
+    opts: {
+      withDraft?: boolean;
+      decisionStatus?: "DRAFT" | "PENDING_APPROVAL" | "APPROVED";
+    } = {},
   ) {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-${label}`, priority: "HIGH", incoterms: "FOB" },
@@ -155,6 +158,9 @@ describe(`${PREFIX} (e2e)`, () => {
           shortlistedVariant: "DEDICATED",
           status: opts.decisionStatus,
           sentByUserId: randomUUID(),
+          ...(opts.decisionStatus === "PENDING_APPROVAL" || opts.decisionStatus === "APPROVED"
+            ? { sentForApprovalAt: new Date() }
+            : {}),
           ...(opts.decisionStatus === "APPROVED"
             ? { decidedByUserId: randomUUID(), decidedAt: new Date() }
             : {}),
@@ -327,14 +333,17 @@ describe(`${PREFIX} (e2e)`, () => {
     const legAfter = await prisma.leg.findUniqueOrThrow({ where: { id: leg.id } });
     expect(legAfter.status).toBe("FULLY_QUOTED");
 
-    // RFQ: token rotated, deadline moved forward
+    // RFQ: deadline moved forward. S5.9 D7 — the token is deliberately NOT rotated any more
+    // (rotation protected nothing: the same token already survives the whole first round, and
+    // resolveByToken has no expiry) — the forwarder's bookmarked link must keep working across a
+    // re-quote. Only the Stage-4 Regenerate button (RfqService.reissueToken) rotates it now.
     const rfqAfter = await prisma.rfq.findUniqueOrThrow({ where: { id: rfq.id } });
-    expect(rfqAfter.accessTokenHash).not.toBe(seededHash);
+    expect(rfqAfter.accessTokenHash).toBe(seededHash);
     expect(rfqAfter.submissionDeadline.getTime()).toBeGreaterThan(Date.now());
 
-    // an audit row for the token rotation
+    // no reissue audit row — nothing was rotated
     const reissues = await prisma.rfqTokenReissue.findMany({ where: { rfqId: rfq.id } });
-    expect(reissues).toHaveLength(1);
+    expect(reissues).toHaveLength(0);
 
     // fresh reminder/expiry ScheduledEvents re-armed off the NEW deadline
     const expiry = await prisma.scheduledEvent.findFirst({
@@ -508,5 +517,149 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(decision2After?.status).toBe("APPROVED");
     const leg2After = await prisma.leg.findUniqueOrThrow({ where: { id: legs[1].id } });
     expect(leg2After.status).toBe("APPROVED");
+  });
+
+  // S5.9 Task 5, register B1 (D5) — the compare screen has disabled Negotiate at
+  // PENDING_APPROVAL since S5.7, but this endpoint itself still accepted a call while a leg's
+  // decision was under checker review. REQUOTABLE_STATUSES alone does NOT close this: it only
+  // gates the quote NAMED in the call, and a leg under review can carry a still-QUOTED SIBLING
+  // quote (a second forwarder on the same leg who was never the shortlisted offer) — negotiating
+  // THAT one would pass REQUOTABLE_STATUSES cleanly and silently wipe the decision a checker is
+  // mid-review of on the OTHER, shortlisted quote. Reproduced directly here: two quotes on one
+  // leg, one shortlisted+sent (PENDING_APPROVAL), the other still QUOTED; request-requote on the
+  // sibling must 409, leaving the decision and the sibling itself untouched.
+  it("B1 — refuses a re-quote while the leg's decision is pending approval, even against a still-QUOTED sibling quote on the same leg", async () => {
+    const { query, leg, origin, quote: shortlisted } = await seedLeg(
+      "b1",
+      "PENDING_APPROVAL",
+      "PENDING_APPROVAL",
+      { withDraft: true, decisionStatus: "PENDING_APPROVAL" },
+    );
+
+    const siblingFf = await mkFf(`FF-${PREFIX}-b1-sib`);
+    const siblingRfq = await prisma.rfq.create({
+      data: {
+        queryId: query.id,
+        freightForwarderId: siblingFf.id,
+        rfqNumber: `${CODE}-RFQ-b1-sib`,
+        accessTokenHash: `hash-${PREFIX}-b1-sib`,
+        submissionDeadline: new Date(Date.now() + 3600_000),
+        incoterms: "FOB",
+        currency: "INR",
+        quoteValidityUntil: new Date("2099-01-01T00:00:00.000Z"),
+      },
+    });
+    const sibling = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: siblingFf.id,
+        rfqId: siblingRfq.id,
+        status: "QUOTED",
+        submittedAt: new Date(),
+        draftJson: roadDraft(leg.id, origin.id, 50000, 4) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/quotes/${sibling.id}/request-requote`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment: "Can you do better?" })
+      .expect(409);
+
+    // Nothing moved — the decision survives intact for the checker, the sibling is untouched.
+    const decisionAfter = await prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: leg.id } });
+    expect(decisionAfter.status).toBe("PENDING_APPROVAL");
+    expect(decisionAfter.shortlistedQuoteId).toBe(shortlisted.id);
+    const siblingAfter = await prisma.quote.findUniqueOrThrow({ where: { id: sibling.id } });
+    expect(siblingAfter.status).toBe("QUOTED");
+  });
+
+  // S5.9 Task 5 (D7) — rotation on re-quote protected nothing (the same token already survives
+  // the whole first round, and resolveByToken has no expiry at all), and cost a forwarder
+  // holding several legs on one query their bookmarked link every round. seedLeg's own fixture
+  // seeds a fake, non-derived accessTokenHash (fine for tests that never resolve it), so this
+  // test mints a REAL token/hash pair the same way RfqTokenService.mint() does and stores both,
+  // mirroring what distribution/reissue now persist post-D8.
+  it("D7 — does not rotate the RFQ's access token on a re-quote; the forwarder's existing portal link keeps resolving", async () => {
+    const { query, leg, rfq, quote } = await seedLeg("d7", "FULLY_QUOTED", "QUOTED", {
+      withDraft: true,
+      decisionStatus: "DRAFT",
+    });
+    const rawToken = randomBytes(32).toString("hex");
+    const hash = createHash("sha256").update(rawToken).digest("hex");
+    await prisma.rfq.update({
+      where: { id: rfq.id },
+      data: { accessTokenHash: hash, accessToken: rawToken },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/quotes/${quote.id}/request-requote`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment: "Please revise" })
+      .expect(200);
+
+    const rfqAfter = await prisma.rfq.findUniqueOrThrow({ where: { id: rfq.id } });
+    expect(rfqAfter.accessTokenHash).toBe(hash);
+    expect(rfqAfter.accessToken).toBe(rawToken);
+    const reissues = await prisma.rfqTokenReissue.findMany({ where: { rfqId: rfq.id } });
+    expect(reissues).toHaveLength(0);
+
+    // the forwarder's OLD/bookmarked link still resolves through the portal
+    await request(app.getHttpServer()).get(`/api/ff/rfq/${rawToken}`).expect(200);
+  });
+
+  // S5.9 Task 5 (D8) — the raw token has to be persisted for this: only its hash was stored
+  // before, and the raw value existed solely inside the originally emailed link. Confirms the
+  // re-quote email actually renders the SAME link the forwarder already has.
+  it("D8 — the re-quote email links to the forwarder's SAME (unrotated) portal token", async () => {
+    const { query, leg, rfq, quote } = await seedLeg("d8", "FULLY_QUOTED", "QUOTED", {
+      withDraft: true,
+      decisionStatus: "DRAFT",
+    });
+    const rawToken = randomBytes(32).toString("hex");
+    const hash = createHash("sha256").update(rawToken).digest("hex");
+    await prisma.rfq.update({
+      where: { id: rfq.id },
+      data: { accessTokenHash: hash, accessToken: rawToken },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/quotes/${quote.id}/request-requote`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment: "Please revise" })
+      .expect(200);
+
+    const msg = await prisma.messageLog.findFirst({
+      where: { entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.requote_requested" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(msg?.bodyRendered).toContain(rawToken);
+  });
+
+  // S5.9 Task 5 (D8) — a legacy Rfq row from before this migration never had its raw token
+  // persisted (only the hash was ever stored). A backfill from MessageLog.tokens is possible but
+  // deliberately out of scope; the re-quote email must degrade to the brief's fallback string
+  // rather than emailing a broken/empty link. seedLeg's own fixture never sets `accessToken` — it
+  // stays null exactly like a real pre-S5.9 row would.
+  it("D8 fallback — a legacy RFQ with no stored accessToken gets the fallback copy in its re-quote email, not a broken link", async () => {
+    const { query, leg, rfq, quote } = await seedLeg("d8legacy", "FULLY_QUOTED", "QUOTED", {
+      withDraft: true,
+      decisionStatus: "DRAFT",
+    });
+    const rfqBefore = await prisma.rfq.findUniqueOrThrow({ where: { id: rfq.id } });
+    expect(rfqBefore.accessToken).toBeNull();
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/quotes/${quote.id}/request-requote`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment: "Please revise" })
+      .expect(200);
+
+    const msg = await prisma.messageLog.findFirst({
+      where: { entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.requote_requested" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(msg?.bodyRendered).toContain("the portal link in your original RFQ email");
   });
 });

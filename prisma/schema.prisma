@@ -151,6 +151,10 @@ model Rfq {
   freightForwarder   FreightForwarder @relation(fields: [freightForwarderId], references: [id], onDelete: Restrict)
   rfqNumber          String           @unique
   accessTokenHash    String           @unique
+  /// The raw portal token. Persisted (S5.9 D8) so a re-quote email can render the CURRENT link
+  /// without minting a new one — rotation would break the forwarder's bookmark (D7). Nullable
+  /// for rows created before S5.9. `accessTokenHash` remains the lookup index.
+  accessToken        String?
   submissionDeadline DateTime
   incoterms          Incoterms?
   currency           String?
