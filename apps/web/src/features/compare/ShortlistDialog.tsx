@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { LegComparisonDto } from "@svyft/shared";
-import { shortlistSchema } from "@svyft/shared";
+import { sendForApprovalSchema } from "@svyft/shared";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -81,13 +81,18 @@ export function ShortlistDialog({ open, onOpenChange, queryId, leg, cell }: Shor
   const savedReason = savedKey === cell.key ? (leg.decision?.overrideReason ?? undefined) : undefined;
 
   const form = useForm<{ overrideReason?: string }>({
-    // `shortlistSchema`'s `overrideReason` is `.trim().min(1).max(2000).optional()` — `.optional()`
-    // accepts `undefined`, NOT "". A `""` default therefore makes zodResolver reject every submit of
-    // the RECOMMENDED offer (the common path, and the one case that never renders the textarea at
-    // all, so nothing on screen explains the dead button). This exact bug shipped in S5.6 Task 4;
-    // `ShortlistDialog.test.tsx`'s "posts the recommended offer with the override box never touched"
-    // is mutation-proved against re-introducing it.
-    resolver: zodResolver(shortlistSchema.pick({ overrideReason: true })),
+    // `sendForApprovalSchema`'s `overrideReason` is `.trim().min(1).max(2000).optional()` —
+    // `.optional()` accepts `undefined`, NOT "". A `""` default therefore makes zodResolver reject
+    // every submit of the RECOMMENDED offer (the common path, and the one case that never renders
+    // the textarea at all, so nothing on screen explains the dead button). This exact bug shipped
+    // in S5.6 Task 4; `ShortlistDialog.test.tsx`'s "posts the recommended offer with the override
+    // box never touched" is mutation-proved against re-introducing it. S5.9 Task 3 retired the
+    // standalone `shortlistSchema` (shortlist + send-for-approval are now one call/one schema) —
+    // `overrideReason`'s validation is byte-for-byte identical on `sendForApprovalSchema`, so this
+    // `.pick` keeps working unchanged. This dialog still drives the OLD two-call sequence
+    // (PUT .../shortlist, then POST .../send-for-approval) against a route that no longer exists;
+    // S5.9 Task 9 owns replacing it with the single named-offer call.
+    resolver: zodResolver(sendForApprovalSchema.pick({ overrideReason: true })),
     defaultValues: { overrideReason: savedReason },
   });
 
@@ -143,10 +148,20 @@ export function ShortlistDialog({ open, onOpenChange, queryId, leg, cell }: Shor
             onOpenChange(false);
             return;
           }
+          // S5.9 Task 3 changed `sendForApprovalSchema` to require the offer it acts on
+          // (`quoteId`/`variant`, no longer implicit via the shortlist PUT this dialog just
+          // issued) — added here only to keep this call type-correct against the new schema.
+          // This dialog's two-call sequence itself is unchanged and still targets the retired
+          // `PUT .../shortlist` route; S5.9 Task 9 owns replacing it with the single call.
           sendForApproval.mutate(
             leg.awaitingReQuote
-              ? { proceedWithoutWaiting: true, proceedReason: proceedReason.trim() }
-              : {},
+              ? {
+                  quoteId: cell.offer.quoteId,
+                  variant: cell.offer.variant,
+                  proceedWithoutWaiting: true,
+                  proceedReason: proceedReason.trim(),
+                }
+              : { quoteId: cell.offer.quoteId, variant: cell.offer.variant },
             { onSuccess: () => onOpenChange(false) },
           );
         },

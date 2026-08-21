@@ -19,9 +19,9 @@ import {
   type QueryAwardSnapshot,
   type QueryAwardSnapshotLeg,
   type QuoteDraft,
+  type RecommendationDto,
   type RejectInput,
   type SendForApprovalInput,
-  type ShortlistInput,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { RequestUser } from "../auth/types";
@@ -40,11 +40,19 @@ const OUTSTANDING_QUOTE_STATUSES: readonly QuoteStatus[] = [
   QuoteStatus.INVALID,
 ];
 
-// S5.4 — the maker-checker award workflow (design §9). shortlist/sendForApproval (Task 2,
-// steps 1+3; validation catalogue §13 A1/A2/A3/A9) are only ever a write to LegAwardDecision +
-// an audit event. approve/reject (Task 3, steps 2+4, Manager+ + four-eyes) are the checker
-// half — unlike the maker methods, they actually fire quote/leg status transitions via
-// StatusService.
+// S5.4 — the maker-checker award workflow (design §9). sendForApproval (validation catalogue
+// §13 A1/A2/A3/A9) is only ever a write to LegAwardDecision + an audit event. approve/reject
+// (Task 3, steps 2+4, Manager+ + four-eyes) are the checker half — unlike the maker method, they
+// actually fire quote/leg status transitions via StatusService.
+//
+// S5.9 Task 3 (register B2/B3) — selecting an offer and sending it for approval used to be two
+// separate calls (PUT .../shortlist then POST .../send-for-approval): the second call re-read
+// whatever `legAwardDecision.shortlistedQuoteId` the first had last persisted, so a concurrent
+// change between the two could submit a forwarder nobody on screen chose — 200 OK, no error
+// anywhere. They are now ONE call, `sendForApproval`, that NAMES the offer it acts on and does
+// the selection + guard checks + status write in a single transaction. `PUT .../shortlist` and
+// the public `shortlist` method are retired; `persistSelection` below is what remains of it, now
+// private and reachable only from inside this one transaction.
 @Injectable()
 export class AwardService {
   constructor(
@@ -55,139 +63,149 @@ export class AwardService {
     private readonly fxRates: FxRatesService,
   ) {}
 
-  async shortlist(
+  // S5.9 Task 3 (register B3) — the ONE remaining write for a leg's shortlisted offer. Only
+  // caller is sendForApproval's own transaction below, hence private + a `tx` parameter instead
+  // of `this.prisma`. The A1 offer-validity check and the D3 recommendation snapshot are NOT
+  // done here any more: they're reads through ComparisonService.getComparison, which talks to
+  // `this.prisma` directly and has no way to see inside an open `tx` (Prisma transaction clients
+  // are not composable that way), so sendForApproval computes them itself BEFORE opening the
+  // transaction and hands the validated `input` plus the snapshotted `rec` in here. This method's
+  // job is only the upsert — no audit event (sendForApproval writes the single SEND_FOR_APPROVAL
+  // event that now covers what used to be two events, SHORTLIST + SEND_FOR_APPROVAL).
+  private async persistSelection(
+    tx: Prisma.TransactionClient,
     queryId: string,
     legId: string,
-    input: ShortlistInput,
-    user: RequestUser,
+    input: SendForApprovalInput,
+    rec: RecommendationDto | null,
   ): Promise<LegAwardDecision> {
-    // Guard (opus whole-branch review, task-4 Round 3 FIX #1) — a decision that has already
-    // moved past DRAFT (sent for approval, or approved) must not be silently reset by a fresh
-    // shortlist. Without this: shortlist the winner -> send -> a different Manager approves
-    // (leg=APPROVED, quote=APPROVED, decision={APPROVED, shortlist=winner}) -> shortlist AGAIN
-    // with the LOSING (still-QUOTED) offer resets the decision to DRAFT while the leg/quote stay
-    // APPROVED — an orphaned approval with no way forward: send-for-approval 400s (the leg isn't
-    // FULLY_QUOTED), generate 409s (A6 wants every decision APPROVED, this one is DRAFT), reopen
-    // 409s (nothing was ever generated). No leg-level reopen exists until S5.5. Checked first,
-    // before the comparatively expensive getComparison call below.
-    const existing = await this.prisma.legAwardDecision.findUnique({ where: { legId } });
-    if (existing && existing.status !== AwardDecisionStatus.DRAFT) {
-      throw new ConflictException(
-        "This leg's decision has already been sent for approval or approved; reject or reopen it before re-shortlisting",
-      );
-    }
-
-    // Reused for two things: (a) A1 — prove `input.quoteId`/`variant` is a real, PRICED offer
-    // on this leg (comparison offers are already QUOTED/REQUOTED-only, so finding one here also
-    // proves the status requirement); (b) the live recommendation to snapshot onto the decision
-    // (D3). `getComparison` emits one OfferDto per `variantsForMode` slot unconditionally, so an
-    // FF that only priced e.g. DEDICATED still has a GROUPAGE placeholder (`priced: false`,
-    // ~$0) — `&& o.priced` keeps that placeholder from passing A1 and pinning the award to a
-    // never-quoted, zero-freight variant.
-    const comparison = await this.comparison.getComparison(queryId);
-    const leg = comparison.legs.find((l) => l.legId === legId);
-    if (!leg) throw new NotFoundException("Leg not found");
-
-    const offer = leg.offers.find(
-      (o) => o.quoteId === input.quoteId && o.variant === input.variant && o.priced,
-    );
-    if (!offer) {
-      throw new BadRequestException("Selected quote/variant is not an offer on this leg");
-    }
-
-    const rec = leg.recommendation;
-    return this.prisma.$transaction(async (tx) => {
-      const decision = await tx.legAwardDecision.upsert({
-        where: { legId },
-        create: {
-          legId,
-          queryId,
-          shortlistedQuoteId: input.quoteId,
-          shortlistedVariant: input.variant,
-          recommendedQuoteId: rec?.quoteId ?? null,
-          recommendedVariant: rec?.variant ?? null,
-          overrideReason: input.overrideReason ?? null,
-          status: AwardDecisionStatus.DRAFT,
-        },
-        update: {
-          shortlistedQuoteId: input.quoteId,
-          shortlistedVariant: input.variant,
-          recommendedQuoteId: rec?.quoteId ?? null,
-          recommendedVariant: rec?.variant ?? null,
-          overrideReason: input.overrideReason ?? null,
-          status: AwardDecisionStatus.DRAFT,
-        },
-      });
-      await tx.awardDecisionEvent.create({
-        data: {
-          legId,
-          queryId,
-          type: "SHORTLIST",
-          quoteId: input.quoteId,
-          variant: input.variant,
-          actorId: user.userId,
-        },
-      });
-      return decision;
+    return tx.legAwardDecision.upsert({
+      where: { legId },
+      create: {
+        legId,
+        queryId,
+        shortlistedQuoteId: input.quoteId,
+        shortlistedVariant: input.variant,
+        recommendedQuoteId: rec?.quoteId ?? null,
+        recommendedVariant: rec?.variant ?? null,
+        overrideReason: input.overrideReason ?? null,
+        status: AwardDecisionStatus.DRAFT,
+      },
+      update: {
+        shortlistedQuoteId: input.quoteId,
+        shortlistedVariant: input.variant,
+        recommendedQuoteId: rec?.quoteId ?? null,
+        recommendedVariant: rec?.variant ?? null,
+        overrideReason: input.overrideReason ?? null,
+        status: AwardDecisionStatus.DRAFT,
+      },
     });
   }
 
+  // S5.9 Task 3 (register B2/B3) — selecting an offer and sending it for approval are now ONE
+  // call that NAMES the offer it acts on, in ONE transaction. The old two-call shape (PUT
+  // .../shortlist, then POST .../send-for-approval) let a concurrent shortlist change the
+  // persisted `shortlistedQuoteId` between the two calls; this call never re-reads a
+  // separately-persisted selection, so that window doesn't exist any more.
+  //
+  // Read/transaction boundary: A1 (offer validity) and D3 (recommendation snapshot) are reads
+  // through ComparisonService.getComparison, which queries `this.prisma` directly — it cannot
+  // run inside `$transaction` and see `tx`. They run first, before the transaction opens. Every
+  // other step — the leg load, the B2/A3/A2/A9 guards, persistSelection's write, the decision's
+  // update to PENDING_APPROVAL, and the AwardDecisionEvent — runs inside the ONE transaction
+  // below, in the order the guard catalogue (§13) numbers them, so the B2/A3 checks that gate
+  // the write and the A2 check that reads the freshly-written decision are all atomic with the
+  // write itself: a guard failure anywhere in there rolls the whole selection back too.
   async sendForApproval(
     queryId: string,
     legId: string,
     input: SendForApprovalInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
-    const leg = await this.prisma.leg.findFirst({
-      where: { id: legId, queryId },
-      select: {
-        status: true,
-        quotes: {
-          where: { status: { not: QuoteStatus.SELECT } },
-          select: { status: true, rfq: { select: { submissionDeadline: true } } },
+    // A1 (offer validity) + D3 (recommendation snapshot) — see the boundary note above. `&&
+    // o.priced` keeps a never-quoted, zero-freight variant placeholder (comparison.service.ts
+    // emits one per `variantsForMode` slot unconditionally) from passing A1.
+    const comparison = await this.comparison.getComparison(queryId);
+    const compLeg = comparison.legs.find((l) => l.legId === legId);
+    if (!compLeg) throw new NotFoundException("Leg not found");
+    const offer = compLeg.offers.find(
+      (o) => o.quoteId === input.quoteId && o.variant === input.variant && o.priced,
+    );
+    if (!offer) {
+      throw new BadRequestException("Selected quote/variant is not an offer on this leg");
+    }
+    const rec = compLeg.recommendation;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // 1. Load the leg (scoped to queryId) with its non-SELECT quotes.
+      const leg = await tx.leg.findFirst({
+        where: { id: legId, queryId },
+        select: {
+          status: true,
+          quotes: {
+            where: { status: { not: QuoteStatus.SELECT } },
+            select: { status: true, rfq: { select: { submissionDeadline: true } } },
+          },
         },
-      },
-    });
-    if (!leg) throw new NotFoundException("Leg not found");
+      });
+      if (!leg) throw new NotFoundException("Leg not found");
 
-    const decision = await this.prisma.legAwardDecision.findUnique({ where: { legId } });
-    if (!decision || !decision.shortlistedQuoteId) {
-      throw new BadRequestException("Shortlist an offer on this leg before sending for approval");
-    }
+      // 2. B2 guard — a decision that has already moved past DRAFT (sent for approval, or
+      // approved) must not be silently reset by a fresh send. Without this: send the winner ->
+      // a different Manager approves (leg=APPROVED, quote=APPROVED, decision={APPROVED,
+      // shortlist=winner}) -> send AGAIN with the LOSING (still-QUOTED) offer resets the
+      // decision to PENDING_APPROVAL while the leg/quote stay APPROVED — an orphaned approval
+      // with no way forward.
+      const existing = await tx.legAwardDecision.findUnique({ where: { legId } });
+      if (
+        existing &&
+        (existing.status === AwardDecisionStatus.PENDING_APPROVAL ||
+          existing.status === AwardDecisionStatus.APPROVED)
+      ) {
+        throw new ConflictException("This leg has already been sent for approval");
+      }
 
-    // A3 (D10) — either the rollup already reached FULLY_QUOTED, or every still-outstanding
-    // FF's RFQ window has closed (so waiting longer cannot produce a better offer).
-    const fullyQuoted = leg.status === LegStatus.FULLY_QUOTED;
-    const outstanding = leg.quotes.filter((q) => OUTSTANDING_QUOTE_STATUSES.includes(q.status));
-    const deadlinePassed =
-      outstanding.length > 0 &&
-      outstanding.every((q) => q.rfq != null && q.rfq.submissionDeadline.getTime() <= Date.now());
-    if (!fullyQuoted && !deadlinePassed) {
-      throw new BadRequestException(
-        "This leg is not fully quoted yet and its RFQ deadline has not passed",
-      );
-    }
+      // 3. A3 (D10) — either the rollup already reached FULLY_QUOTED, or every still-outstanding
+      // FF's RFQ window has closed (so waiting longer cannot produce a better offer).
+      const fullyQuoted = leg.status === LegStatus.FULLY_QUOTED;
+      const outstanding = leg.quotes.filter((q) => OUTSTANDING_QUOTE_STATUSES.includes(q.status));
+      const deadlinePassed =
+        outstanding.length > 0 &&
+        outstanding.every(
+          (q) => q.rfq != null && q.rfq.submissionDeadline.getTime() <= Date.now(),
+        );
+      if (!fullyQuoted && !deadlinePassed) {
+        throw new BadRequestException(
+          "This leg is not fully quoted yet and its RFQ deadline has not passed",
+        );
+      }
 
-    // A2 — an override reason is required whenever the shortlist deviates from the
-    // recommendation snapshotted at shortlist time (including "there was no recommendation").
-    const matchesRecommendation =
-      decision.shortlistedQuoteId === decision.recommendedQuoteId &&
-      decision.shortlistedVariant === decision.recommendedVariant;
-    if (!matchesRecommendation && !decision.overrideReason) {
-      throw new BadRequestException(
-        "An override reason is required when the shortlist differs from the recommendation",
-      );
-    }
+      // 4. Write the selection — the named offer + the recommendation snapshotted above.
+      const decision = await this.persistSelection(tx, queryId, legId, input, rec);
 
-    // A9 — a re-quote in flight on this leg must be explicitly proceeded past.
-    const hasInFlightRequote = leg.quotes.some((q) => q.status === QuoteStatus.REQUOTED);
-    if (hasInFlightRequote && !(input.proceedWithoutWaiting === true && input.proceedReason)) {
-      throw new BadRequestException(
-        "This leg has an in-flight re-quote; confirm proceeding without waiting for it",
-      );
-    }
+      // 5. A2 — an override reason is required whenever the named offer deviates from the
+      // recommendation snapshotted just now (including "there was no recommendation"). Computed
+      // from the freshly-written decision, not a stale read — and because this runs inside the
+      // transaction, throwing here rolls persistSelection's write back too.
+      const matchesRecommendation =
+        decision.shortlistedQuoteId === decision.recommendedQuoteId &&
+        decision.shortlistedVariant === decision.recommendedVariant;
+      if (!matchesRecommendation && !decision.overrideReason) {
+        throw new BadRequestException(
+          "An override reason is required when the shortlist differs from the recommendation",
+        );
+      }
 
-    return this.prisma.$transaction(async (tx) => {
+      // 6. A9 — a re-quote in flight on this leg must be explicitly proceeded past.
+      const hasInFlightRequote = leg.quotes.some((q) => q.status === QuoteStatus.REQUOTED);
+      if (hasInFlightRequote && !(input.proceedWithoutWaiting === true && input.proceedReason)) {
+        throw new BadRequestException(
+          "This leg has an in-flight re-quote; confirm proceeding without waiting for it",
+        );
+      }
+
+      // 7. Every guard passed — advance the decision and append the single audit event covering
+      // this whole call (selection + send, formerly two events: SHORTLIST + SEND_FOR_APPROVAL).
       const updated = await tx.legAwardDecision.update({
         where: { legId },
         data: {
@@ -201,12 +219,35 @@ export class AwardService {
           legId,
           queryId,
           type: "SEND_FOR_APPROVAL",
+          quoteId: input.quoteId,
+          variant: input.variant,
           reason: input.proceedReason ?? decision.overrideReason ?? null,
           actorId: user.userId,
         },
       });
       return updated;
     });
+
+    // After commit: fire the two transitions — quote first, then leg. `StatusService.fire` owns
+    // its own transaction (it cannot participate in the one above), so this can only happen
+    // once the decision write has actually landed. Quote first, leg second: LegQuoteProjector
+    // (Task 2) skips legs already in PENDING_APPROVAL/APPROVED, and the leg is still
+    // FULLY_QUOTED/PARTIALLY_QUOTED for the whole duration of the quote fire, so the rollup it
+    // triggers sees a consistent picture regardless of order — unlike approve() below, ordering
+    // here is not load-bearing, just kept consistent with it. Each fire owns its own
+    // transaction, so a partial failure between the two (quote moves, leg fire then throws) is
+    // an accepted risk, same as approve()/reject().
+    await this.status.fire("quote", input.quoteId, QuoteEvent.SEND_FOR_APPROVAL, {
+      queryId,
+      actorId: user.userId,
+      reason: null,
+    });
+    await this.status.fire("leg", legId, LegEvent.SEND_FOR_APPROVAL, {
+      queryId,
+      actorId: user.userId,
+    });
+
+    return updated;
   }
 
   // Shared preconditions for both checker actions, in order: (0) the leg must actually belong

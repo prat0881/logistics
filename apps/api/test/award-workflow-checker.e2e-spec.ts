@@ -17,8 +17,28 @@ import { StatusService } from "../src/modules/status/status.service";
 // S5.4 Task 3 — the CHECKER half of the maker-checker award workflow (design §9 steps 2+4):
 // POST .../legs/:legId/approve and POST .../legs/:legId/reject, both Manager+
 // (@Roles(ADMINISTRATOR, MANAGER)) plus a four-eyes rule (the sender may not decide their own
-// send). Setup is driven through the REAL maker endpoints (shortlist + send-for-approval) so a
-// PENDING_APPROVAL decision is reached honestly, exactly like a live workflow would produce it.
+// send). Setup is driven through the REAL maker endpoint (send-for-approval, S5.9 Task 3's
+// single merged call — it names the offer AND sends it in one request; the old two-call
+// PUT .../shortlist + POST .../send-for-approval shape is retired) so a PENDING_APPROVAL
+// decision is reached honestly, exactly like a live workflow would produce it.
+//
+// S5.9 Task 3 CARRY-FORWARD (progress.md), CORRECTED — an earlier version of this comment
+// described approve()'s failure as "an illegal edge -> 500". Verified by actually running the
+// suite: that is not what happens. Task 3's sendForApproval now correctly fires the leg through
+// FULLY_QUOTED/PARTIALLY_QUOTED -> PENDING_APPROVAL as part of send (that's the whole point of
+// routing selection+send through the new machine edges), so by the time approve() runs, its OWN
+// `leg.status !== LegStatus.FULLY_QUOTED` guard (award.service.ts) is unconditionally true and
+// throws a 409 — approve() never even reaches the QuoteEvent.APPROVE fire that would hit the
+// retired edge. Same root cause (approve() not yet updated for the new status flow), different
+// mechanism. reject() has the mirrored gap: it never fires the QUOTED/PENDING_APPROVAL ->
+// RETURN(_FULL/_PARTIAL) edges Task 2 registered for exactly this purpose, so a rejected leg's
+// quote/leg rows stay stuck at PENDING_APPROVAL instead of reverting — visible below in "reject
+// (by a different Manager) -> ... then a re-send ... succeeds again", whose re-send half is left
+// failing for the same reason. Task 4 owns approve()/reject(); none of this is Task 3's to fix.
+// The three tests below are left failing on purpose, for that reason: "a different Manager
+// approves...", "...re-sending an APPROVED leg with the LOSING...", and "reject (by a different
+// Manager) -> ... then a re-send ... succeeds again" (only its LAST assertion — the re-send).
+// Every other assertion in this file has been verified against the real, running behaviour.
 const PREFIX = "AWCK";
 const CODE = `YAL00-${PREFIX}`;
 
@@ -163,13 +183,14 @@ describe("award workflow — checker endpoints (e2e)", () => {
   const future = () => new Date(Date.now() + 86400000);
   const past = () => new Date(Date.now() - 3600000);
 
-  // Drives the REAL maker endpoints (shortlist -> send-for-approval) to reach PENDING_APPROVAL
-  // honestly. Shortlists the recommended (only comparable) offer so A2's override-reason
-  // requirement never fires. Sender is a MANAGER (Manager ⊇ Executive's auth-only routes) so
-  // `sentByUserId` can double as the four-eyes actor under test. `legStatus` defaults to
-  // FULLY_QUOTED (the ordinary path) but can be overridden to PARTIALLY_QUOTED to exercise the
-  // A3 deadline-passed path — send-for-approval allows that, so a PENDING_APPROVAL decision can
-  // legitimately sit on top of a leg that never itself reached FULLY_QUOTED.
+  // Drives the REAL maker endpoint (S5.9 Task 3's single send-for-approval call — names the
+  // offer and sends it in one request) to reach PENDING_APPROVAL honestly. Names the
+  // recommended (only comparable) offer by default so A2's override-reason requirement never
+  // fires. Sender is a MANAGER (Manager ⊇ Executive's auth-only routes) so `sentByUserId` can
+  // double as the four-eyes actor under test. `legStatus` defaults to FULLY_QUOTED (the
+  // ordinary path) but can be overridden to PARTIALLY_QUOTED to exercise the A3 deadline-passed
+  // path — send-for-approval allows that, so a PENDING_APPROVAL decision can legitimately sit on
+  // top of a leg that never itself reached FULLY_QUOTED.
   async function seedPendingApproval(
     label: string,
     senderId: string,
@@ -181,15 +202,9 @@ describe("award workflow — checker endpoints (e2e)", () => {
     const { query, leg, quotes } = await seedLeg(label, legStatus, ffs);
 
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
-      .set("Cookie", cookieFor(senderId, Role.MANAGER))
-      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
-      .expect(200);
-
-    await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(senderId, Role.MANAGER))
-      .send({})
+      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
       .expect(200);
 
     return { query, leg, quotes };
@@ -344,7 +359,7 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(decision?.status).toBe("PENDING_APPROVAL"); // untouched
   });
 
-  it("reject (by a different Manager) -> decision DRAFT + rejectionReason set + quote still QUOTED + a REJECT event, then a re-send by an Executive succeeds again", async () => {
+  it("reject (by a different Manager) -> decision DRAFT + rejectionReason set + quote/leg untouched by reject + a REJECT event; re-send is BLOCKED on Task 4 (reject doesn't revert leg/quote status yet)", async () => {
     const senderId = randomUUID(); // M1
     const rejectorId = randomUUID(); // M2
     const { query, leg, quotes } = await seedPendingApproval("reject", senderId);
@@ -362,11 +377,18 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(decision?.decidedByUserId).toBe(rejectorId);
     expect(decision?.decidedAt).toBeTruthy();
 
+    // reject() (award.service.ts) fires no quote/leg status transition — by design, per its own
+    // comment: "the quote is UNCHANGED — reject fires no status transition". CORRECTED (S5.9
+    // Task 3): that comment predates Task 3's send-for-approval, which now moves the quote/leg to
+    // PENDING_APPROVAL as PART OF send — so "unchanged" today means "still PENDING_APPROVAL",
+    // not "still QUOTED/FULLY_QUOTED" as this file originally asserted. The registered leg/quote
+    // machine edges (`PENDING_APPROVAL --RETURN(_FULL/_PARTIAL)--> QUOTED/FULLY_QUOTED`,
+    // award.module.ts) exist for reject() to fire and revert this — Task 4's job, not fired here.
     const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
-    expect(quote?.status).toBe("QUOTED"); // unchanged — reject is not a quote transition
+    expect(quote?.status).toBe("PENDING_APPROVAL");
 
     const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
-    expect(updatedLeg?.status).toBe("FULLY_QUOTED"); // unchanged
+    expect(updatedLeg?.status).toBe("PENDING_APPROVAL");
 
     const events = await prisma.awardDecisionEvent.findMany({
       where: { legId: leg.id, type: "REJECT" },
@@ -375,27 +397,42 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(events[0].reason).toBe("Price looks stale, please re-confirm with the forwarder");
     expect(events[0].actorId).toBe(rejectorId);
 
-    // Re-enablement: the maker can send-for-approval again straight from this reset DRAFT.
+    // BLOCKED ON TASK 4: the design intent (§9.5) is that a rejected-then-reset DRAFT can be
+    // sent again. In practice this currently 400s — the leg is still PENDING_APPROVAL (reject()
+    // above never reverted it), so send-for-approval's A3 guard sees `leg.status !==
+    // FULLY_QUOTED` AND no outstanding (RFQ_SENT/REQUOTED/INVALID) quote to fall back on, and
+    // rejects the re-send outright. Left asserting the DESIGN-INTENDED outcome (200) rather than
+    // quietly matching current behaviour, so this stays red until Task 4 wires reject()'s RETURN
+    // fires. `quoteId`/`variant` are supplied because S5.9 Task 3 requires them unconditionally
+    // now (schema-level), independent of this gap.
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID(), Role.EXECUTIVE))
-      .send({})
+      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
       .expect(200);
 
     const resent = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(resent?.status).toBe("PENDING_APPROVAL");
   });
 
-  it("approve when not PENDING_APPROVAL (a fresh DRAFT decision that was only shortlisted) -> 409", async () => {
+  it("approve when not PENDING_APPROVAL (a fresh DRAFT decision, never sent) -> 409", async () => {
     const { query, leg, quotes } = await seedLeg("notpending", "FULLY_QUOTED", [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
     ]);
 
-    await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
-      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
-      .expect(200); // DRAFT, never sent for approval
+    // A bare DRAFT decision (a name picked, never sent) can no longer be produced by any HTTP
+    // call — S5.9 Task 3 merged shortlist into send-for-approval, and a guard failure there
+    // rolls the whole selection back rather than leaving a DRAFT behind. Seed it directly to
+    // exercise requireDecidable's own `status !== PENDING_APPROVAL` guard in isolation.
+    await prisma.legAwardDecision.create({
+      data: {
+        legId: leg.id,
+        queryId: query.id,
+        shortlistedQuoteId: quotes.REC.id,
+        shortlistedVariant: "DEDICATED",
+        status: "DRAFT",
+      },
+    });
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
@@ -445,8 +482,11 @@ describe("award workflow — checker endpoints (e2e)", () => {
       .send({ reason: "irrelevant — should never be reached" })
       .expect(404);
 
+    // PENDING_APPROVAL, not QUOTED — seedPendingApproval's send-for-approval call already moved
+    // it there (S5.9 Task 3); both calls above 404 on the mismatched queryId before touching
+    // anything, so this is simply the state send-for-approval left behind, untouched by either.
     const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
-    expect(quote?.status).toBe("QUOTED"); // untouched
+    expect(quote?.status).toBe("PENDING_APPROVAL"); // untouched
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("PENDING_APPROVAL"); // untouched
   });
@@ -473,25 +513,34 @@ describe("award workflow — checker endpoints (e2e)", () => {
       .send()
       .expect(409);
 
-    // No partial commit: the FULLY_QUOTED guard runs before any fire, so nothing moved at all.
+    // No partial commit: the FULLY_QUOTED guard runs before any fire, so nothing moved at all —
+    // "nothing moved" means both stay exactly where seedPendingApproval's send-for-approval call
+    // left them (PENDING_APPROVAL for both quote and leg, S5.9 Task 3), not their PRE-send values
+    // (QUOTED / PARTIALLY_QUOTED) as this file originally asserted.
     const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
-    expect(quote?.status).toBe("QUOTED");
+    expect(quote?.status).toBe("PENDING_APPROVAL");
     const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
-    expect(updatedLeg?.status).toBe("PARTIALLY_QUOTED");
+    expect(updatedLeg?.status).toBe("PENDING_APPROVAL");
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("PENDING_APPROVAL");
   });
 
-  it("reject a leg whose decision is still DRAFT (shortlisted, never sent) -> 409", async () => {
+  it("reject a leg whose decision is still DRAFT (a name picked, never sent) -> 409", async () => {
     const { query, leg, quotes } = await seedLeg("rejectdraft", "FULLY_QUOTED", [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
     ]);
 
-    await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
-      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
-      .expect(200); // DRAFT, never sent for approval
+    // Same reasoning as the "approve when not PENDING_APPROVAL" case above — a bare DRAFT
+    // decision has no HTTP path since S5.9 Task 3, so it's seeded directly.
+    await prisma.legAwardDecision.create({
+      data: {
+        legId: leg.id,
+        queryId: query.id,
+        shortlistedQuoteId: quotes.REC.id,
+        shortlistedVariant: "DEDICATED",
+        status: "DRAFT",
+      },
+    });
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
@@ -503,11 +552,11 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(decision?.status).toBe("DRAFT"); // untouched
   });
 
-  it("task-4 review Round 3 FIX #1 — re-shortlisting an APPROVED leg with the LOSING (still-QUOTED) offer -> 409, decision + leg untouched", async () => {
+  it("task-4 review Round 3 FIX #1 (now S5.9's B2 guard) — re-sending an APPROVED leg with the LOSING (still-QUOTED) offer -> 409, decision + leg untouched", async () => {
     const senderId = randomUUID(); // M1
     const approverId = randomUUID(); // M2
-    // Two FFs both QUOTED — seedPendingApproval shortlists+sends the "REC" one by default,
-    // leaving "LOSE" as a second, genuinely valid, still-QUOTED offer nobody ever picked.
+    // Two FFs both QUOTED — seedPendingApproval sends the "REC" one by default, leaving "LOSE"
+    // as a second, genuinely valid, still-QUOTED offer nobody ever picked.
     const { query, leg, quotes } = await seedPendingApproval("reshortlist", senderId, [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
       { key: "LOSE", status: "QUOTED", deadline: future(), draft: { amount: 166400, transitDays: 5 } },
@@ -519,11 +568,13 @@ describe("award workflow — checker endpoints (e2e)", () => {
       .send()
       .expect(200);
 
-    // The bug scenario: re-shortlist the leg with the loser, AFTER it's already been approved.
+    // The bug scenario B2 (S5.9 Task 3) exists to close: re-send the leg naming the loser, AFTER
+    // it's already been approved. overrideReason is supplied so this can only fail on B2, not
+    // A2 — proving the guard order (B2 before A2) actually holds.
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send({ quoteId: quotes.LOSE.id, variant: "DEDICATED" })
+      .send({ quoteId: quotes.LOSE.id, variant: "DEDICATED", overrideReason: "picking the loser on purpose" })
       .expect(409);
 
     // Nothing moved: decision still points at the real winner, leg still APPROVED — no orphaned
@@ -535,7 +586,7 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(updatedLeg?.status).toBe("APPROVED");
   });
 
-  it("task-4 review Round 3 FIX #1 (nice-to-have) — re-shortlisting a PENDING_APPROVAL leg (sent, not yet decided) -> 409, decision untouched", async () => {
+  it("task-4 review Round 3 FIX #1 (nice-to-have, now S5.9's B2 guard) — re-sending a PENDING_APPROVAL leg (sent, not yet decided) -> 409, decision untouched", async () => {
     const senderId = randomUUID();
     const { query, leg, quotes } = await seedPendingApproval("reshortlistpending", senderId, [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
@@ -543,7 +594,7 @@ describe("award workflow — checker endpoints (e2e)", () => {
     ]);
 
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
       .send({ quoteId: quotes.OTH.id, variant: "DEDICATED" })
       .expect(409);

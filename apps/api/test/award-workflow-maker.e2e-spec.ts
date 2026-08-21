@@ -14,8 +14,18 @@ import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 
 // S5.4 Task 2 — the MAKER half of the maker-checker award workflow (design §9 steps 1+3):
-// PUT .../legs/:legId/shortlist and POST .../legs/:legId/send-for-approval, both Executive+
-// (no @Roles). The checker half (approve/reject, Manager+ + four-eyes) is Task 3.
+// POST .../legs/:legId/send-for-approval, Executive+ (no @Roles). The checker half
+// (approve/reject, Manager+ + four-eyes) is award-workflow-checker.e2e-spec.ts.
+//
+// S5.9 Task 3 (register B2/B3) — selecting an offer and sending it for approval used to be two
+// calls (PUT .../legs/:legId/shortlist, then this POST). They are now ONE call: the offer is
+// named directly in the send-for-approval request body (`quoteId`/`variant`), and the whole
+// thing (selection + guard checks + the PENDING_APPROVAL write) runs in a single transaction —
+// a guard failure anywhere rolls the selection back too, so a rejected call now leaves NO
+// LegAwardDecision behind (not even a DRAFT one), unlike the old two-call shape where a
+// shortlist could persist independently of whether the following send ever succeeded. Every
+// test below was rewritten off the retired two-call shape onto the single call; see
+// award.service.ts's sendForApproval for the guard order.
 const PREFIX = "AWMK";
 const CODE = `YAL00-${PREFIX}`;
 
@@ -199,7 +209,7 @@ describe("award workflow — maker endpoints (e2e)", () => {
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
-  it("shortlists the recommended offer -> 200 + a DRAFT LegAwardDecision with the recommendation snapshotted", async () => {
+  it("sends the recommended offer for approval -> 200 + a PENDING_APPROVAL LegAwardDecision with the recommendation snapshotted", async () => {
     const { query, leg, quotes } = await seedLeg("happy", "FULLY_QUOTED", [
       // HIGH priority ranks by transit first: REC (3d) beats OTH (5d) outright — no tie-break.
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
@@ -208,22 +218,26 @@ describe("award workflow — maker endpoints (e2e)", () => {
     const actorId = randomUUID();
 
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(actorId))
       .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
       .expect(200);
 
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision).toBeTruthy();
-    expect(decision?.status).toBe("DRAFT");
+    expect(decision?.status).toBe("PENDING_APPROVAL");
     expect(decision?.shortlistedQuoteId).toBe(quotes.REC.id);
     expect(decision?.shortlistedVariant).toBe("DEDICATED");
     expect(decision?.recommendedQuoteId).toBe(quotes.REC.id);
     expect(decision?.recommendedVariant).toBe("DEDICATED");
     expect(decision?.overrideReason).toBeNull();
+    expect(decision?.sentByUserId).toBe(actorId);
+    expect(decision?.sentForApprovalAt).toBeTruthy();
 
+    // A single event now covers what used to be two (SHORTLIST + SEND_FOR_APPROVAL) — one call,
+    // one audit entry, carrying the named offer.
     const events = await prisma.awardDecisionEvent.findMany({
-      where: { legId: leg.id, type: "SHORTLIST" },
+      where: { legId: leg.id, type: "SEND_FOR_APPROVAL" },
     });
     expect(events).toHaveLength(1);
     expect(events[0].quoteId).toBe(quotes.REC.id);
@@ -231,13 +245,74 @@ describe("award workflow — maker endpoints (e2e)", () => {
     expect(events[0].actorId).toBe(actorId);
   });
 
-  it("A1 — shortlisting a quoteId that is not an offer on this leg -> 400", async () => {
+  it("B3 — sends the offer named in THIS request, not whatever a stale decision row already has persisted", async () => {
+    // Simulates the exact bug register B3 retires: a decision row already exists (as the old
+    // separate PUT .../shortlist call used to leave behind) pointing at a DIFFERENT offer. The
+    // merged call must act on the offer named in ITS OWN request body, never re-reading the
+    // stale row it's about to overwrite.
+    const { query, leg, quotes } = await seedLeg("b3", "FULLY_QUOTED", [
+      { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
+      { key: "OTH", status: "QUOTED", deadline: future(), draft: { amount: 166400, transitDays: 5 } },
+    ]);
+    await prisma.legAwardDecision.create({
+      data: {
+        legId: leg.id,
+        queryId: query.id,
+        shortlistedQuoteId: quotes.OTH.id,
+        shortlistedVariant: "DEDICATED",
+        status: "DRAFT",
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
+      .expect(200);
+
+    expect(res.body.status).toBe("PENDING_APPROVAL");
+    expect(res.body.shortlistedQuoteId).toBe(quotes.REC.id);
+
+    const [updatedLeg, quote] = await Promise.all([
+      prisma.leg.findUniqueOrThrow({ where: { id: leg.id } }),
+      prisma.quote.findUniqueOrThrow({ where: { id: quotes.REC.id } }),
+    ]);
+    expect(updatedLeg.status).toBe("PENDING_APPROVAL");
+    expect(quote.status).toBe("PENDING_APPROVAL");
+  });
+
+  it("B2 — refuses a second send while the leg is already pending approval", async () => {
+    const { query, leg, quotes } = await seedLeg("b2", "FULLY_QUOTED", [
+      { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
+      { key: "OTH", status: "QUOTED", deadline: future(), draft: { amount: 166400, transitDays: 5 } },
+    ]);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
+      .expect(200);
+
+    // B2 fires before A2 is ever evaluated — no overrideReason supplied, and it still 409s
+    // rather than 400ing on the (also-true) override requirement.
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ quoteId: quotes.OTH.id, variant: "DEDICATED" })
+      .expect(409);
+
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("PENDING_APPROVAL");
+    expect(decision?.shortlistedQuoteId).toBe(quotes.REC.id); // unchanged
+  });
+
+  it("A1 — sending a quoteId that is not an offer on this leg -> 400", async () => {
     const { query, leg } = await seedLeg("a1", "FULLY_QUOTED", [
       { key: "ONLY", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
     ]);
 
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID()))
       .send({ quoteId: randomUUID(), variant: "DEDICATED" })
       .expect(400);
@@ -245,63 +320,61 @@ describe("award workflow — maker endpoints (e2e)", () => {
     expect(await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } })).toBeNull();
   });
 
-  it("A1 — shortlisting an unpriced variant placeholder (GROUPAGE, when the FF only priced DEDICATED) -> 400; the priced variant still works", async () => {
+  it("A1 — sending an unpriced variant placeholder (GROUPAGE, when the FF only priced DEDICATED) -> 400; the priced variant still works", async () => {
     // roadDraft() (above) only ever supplies a DEDICATED trucking rate — comparison.service.ts's
     // `variantsForMode("ROAD")` still unconditionally emits a GROUPAGE OfferDto for this quote,
-    // just with `priced: false` (~$0 nativeTotal). A1 must reject shortlisting that placeholder.
+    // just with `priced: false` (~$0 nativeTotal). A1 must reject sending that placeholder.
     const { query, leg, quotes } = await seedLeg("a1-unpriced", "FULLY_QUOTED", [
       { key: "ONLY", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
     ]);
 
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID()))
       .send({ quoteId: quotes.ONLY.id, variant: "GROUPAGE", overrideReason: "x" })
       .expect(400);
     expect(await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } })).toBeNull();
 
-    // The SAME quote's actually-priced DEDICATED variant is still a valid, shortlistable offer.
+    // The SAME quote's actually-priced DEDICATED variant is still a valid, sendable offer.
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID()))
       .send({ quoteId: quotes.ONLY.id, variant: "DEDICATED" })
       .expect(200);
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("PENDING_APPROVAL");
     expect(decision?.shortlistedQuoteId).toBe(quotes.ONLY.id);
     expect(decision?.shortlistedVariant).toBe("DEDICATED");
   });
 
-  it("A2 — send-for-approval of a shortlist that overrides the recommendation with no overrideReason -> 400", async () => {
+  it("A2 — sending an offer that overrides the recommendation with no overrideReason -> 400, and nothing is persisted (single-transaction rollback)", async () => {
     const { query, leg, quotes } = await seedLeg("a2", "FULLY_QUOTED", [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
       { key: "OTH", status: "QUOTED", deadline: future(), draft: { amount: 166400, transitDays: 5 } },
     ]);
 
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
-      .set("Cookie", cookieFor(randomUUID()))
-      .send({ quoteId: quotes.OTH.id, variant: "DEDICATED" }) // NOT the recommendation; no overrideReason
-      .expect(200);
-
-    await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID()))
-      .send({})
+      .send({ quoteId: quotes.OTH.id, variant: "DEDICATED" }) // NOT the recommendation; no overrideReason
       .expect(400);
 
-    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
-    expect(decision?.status).toBe("DRAFT"); // never advanced
+    // Unlike the old two-call shape (where the shortlist half could persist a DRAFT independent
+    // of the send half's outcome), the whole call is one transaction — A2 failing rolls the
+    // selection write back too, so no decision exists at all.
+    expect(await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } })).toBeNull();
   });
 
-  it("shortlist with an overrideReason then send-for-approval -> 200 + PENDING_APPROVAL + sentByUserId", async () => {
+  it("send-for-approval with an overrideReason -> 200 + PENDING_APPROVAL + sentByUserId", async () => {
     const { query, leg, quotes } = await seedLeg("override", "FULLY_QUOTED", [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
       { key: "OTH", status: "QUOTED", deadline: future(), draft: { amount: 166400, transitDays: 5 } },
     ]);
 
+    const senderId = randomUUID();
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
-      .set("Cookie", cookieFor(randomUUID()))
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(senderId))
       .send({
         quoteId: quotes.OTH.id,
         variant: "DEDICATED",
@@ -309,15 +382,9 @@ describe("award workflow — maker endpoints (e2e)", () => {
       })
       .expect(200);
 
-    const senderId = randomUUID();
-    await request(app.getHttpServer())
-      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
-      .set("Cookie", cookieFor(senderId))
-      .send({})
-      .expect(200);
-
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("PENDING_APPROVAL");
+    expect(decision?.overrideReason).toBe("Client asked for this forwarder by name");
     expect(decision?.sentByUserId).toBe(senderId);
     expect(decision?.sentForApprovalAt).toBeTruthy();
 
@@ -335,21 +402,14 @@ describe("award workflow — maker endpoints (e2e)", () => {
       { key: "PENDING", status: "RFQ_SENT", deadline: future() }, // never responded, window still open
     ]);
 
-    // Shortlist the only comparable (and thus recommended) offer, so A2 can't interfere.
-    await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
-      .set("Cookie", cookieFor(randomUUID()))
-      .send({ quoteId: quotes.QUOTED.id, variant: "DEDICATED" })
-      .expect(200);
-
+    // Name the only comparable (and thus recommended) offer, so A2 can't interfere.
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID()))
-      .send({})
+      .send({ quoteId: quotes.QUOTED.id, variant: "DEDICATED" })
       .expect(400);
 
-    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
-    expect(decision?.status).toBe("DRAFT");
+    expect(await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } })).toBeNull();
   });
 
   it("A3 (converse) — a PARTIALLY_QUOTED leg whose only outstanding RFQ deadline HAS passed may send", async () => {
@@ -359,15 +419,9 @@ describe("award workflow — maker endpoints (e2e)", () => {
     ]);
 
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
-      .set("Cookie", cookieFor(randomUUID()))
-      .send({ quoteId: quotes.QUOTED.id, variant: "DEDICATED" })
-      .expect(200);
-
-    await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID()))
-      .send({})
+      .send({ quoteId: quotes.QUOTED.id, variant: "DEDICATED" })
       .expect(200);
 
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
@@ -382,28 +436,26 @@ describe("award workflow — maker endpoints (e2e)", () => {
 
     // REC is the only QUOTED (rankable) offer, so it's also the recommendation — no A2 override needed.
     await request(app.getHttpServer())
-      .put(`/api/queries/${query.id}/legs/${leg.id}/shortlist`)
-      .set("Cookie", cookieFor(randomUUID()))
-      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
-      .expect(200);
-
-    await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID()))
-      .send({})
+      .send({ quoteId: quotes.REC.id, variant: "DEDICATED" })
       .expect(400);
 
-    let decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
-    expect(decision?.status).toBe("DRAFT");
+    expect(await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } })).toBeNull();
 
     const senderId = randomUUID();
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(senderId))
-      .send({ proceedWithoutWaiting: true, proceedReason: "Client needs the number today" })
+      .send({
+        quoteId: quotes.REC.id,
+        variant: "DEDICATED",
+        proceedWithoutWaiting: true,
+        proceedReason: "Client needs the number today",
+      })
       .expect(200);
 
-    decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("PENDING_APPROVAL");
 
     const events = await prisma.awardDecisionEvent.findMany({
@@ -414,7 +466,7 @@ describe("award workflow — maker endpoints (e2e)", () => {
     expect(events[0].actorId).toBe(senderId);
   });
 
-  it("400s send-for-approval when no shortlist exists yet for the leg", async () => {
+  it("400s send-for-approval when the body is missing a quoteId (schema-level: no offer to name)", async () => {
     const { query, leg } = await seedLeg("noshortlist", "FULLY_QUOTED", [
       { key: "ONLY", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
     ]);

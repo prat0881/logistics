@@ -115,17 +115,16 @@ export interface ComparisonDto {
 }
 
 // ── Stage 5 (S5.4) request schemas — maker/checker approval-workflow endpoints ──
-export const shortlistSchema = z.object({
+// S5.9 (D6, register B3) — selection and send are ONE call. The offer is named by the request
+// that acts on it, so the server never has to trust a separately-persisted shortlist.
+export const sendForApprovalSchema = z.object({
   quoteId: z.string().uuid(),
   variant: z.enum(CHARGE_RATE_VARIANTS).nullable(),
-  overrideReason: z.string().trim().min(1).max(2000).optional(), // required at send if shortlist ≠ recommendation (A2)
-});
-export const sendForApprovalSchema = z.object({
-  proceedWithoutWaiting: z.boolean().optional(), // A9 override when the leg has an in-flight re-quote
+  overrideReason: z.string().trim().min(1).max(2000).optional(), // required when ≠ recommendation (A2)
+  proceedWithoutWaiting: z.boolean().optional(),                 // A9 — in-flight re-quote override
   proceedReason: z.string().trim().min(1).max(2000).optional(),
 });
 export const rejectSchema = z.object({ reason: z.string().trim().min(1).max(2000) });
-export type ShortlistInput = z.infer<typeof shortlistSchema>;
 export type SendForApprovalInput = z.infer<typeof sendForApprovalSchema>;
 export type RejectInput = z.infer<typeof rejectSchema>;
 

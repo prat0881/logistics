@@ -1,11 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type {
-  AwardDecisionDto,
-  RejectInput,
-  SendForApprovalInput,
-  ShortlistInput,
-} from "@svyft/shared";
+import type { AwardDecisionDto, RejectInput, SendForApprovalInput } from "@svyft/shared";
 import { postJson, putJson } from "@/lib/api";
 import { errorMessage } from "./errorMessage";
 
@@ -16,10 +11,15 @@ import { errorMessage } from "./errorMessage";
  * for its next render, matching the T2/T3 hooks' own invalidate-only convention in
  * `useComparison.ts`/`useRfq.ts`).
  */
+// S5.9 Task 3 retired the standalone `ShortlistInput` type (and its `PUT .../shortlist` route —
+// shortlist + send-for-approval are now one call, `SendForApprovalInput`, which is a superset of
+// what this hook ever sent). Typed against it here only so this file keeps compiling; the route
+// this hook calls no longer exists server-side. S5.9 Task 9 owns replacing this hook (and
+// `ShortlistDialog`'s two-call sequence that calls it) with the single merged call.
 export function useShortlist(queryId: string, legId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: ShortlistInput) =>
+    mutationFn: (body: SendForApprovalInput) =>
       putJson<AwardDecisionDto>(`/api/queries/${queryId}/legs/${legId}/shortlist`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["comparison", queryId] }),
   });

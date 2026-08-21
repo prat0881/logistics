@@ -188,7 +188,15 @@ describe("ShortlistDialog", () => {
     await user.click(screen.getByRole("button", { name: /save & send for approval/i }));
 
     await waitFor(() => expect(calledPaths()).toHaveLength(2));
+    // S5.9 Task 3 (register B2/B3): `sendForApprovalSchema` now requires the offer it acts on
+    // unconditionally (quoteId/variant), so this dialog's send call carries them alongside the
+    // A9 fields — see ShortlistDialog.tsx's `run()`. The dialog itself still targets the retired
+    // PUT .../shortlist route first (S5.9 Task 9 owns replacing this two-call sequence with the
+    // single merged call); this assertion only reflects the payload shape change forced by the
+    // schema, not a redesign of the flow.
     expect(JSON.parse(lastFetchBody("/send-for-approval"))).toEqual({
+      quoteId: "q-bridge",
+      variant: "DEDICATED",
       proceedWithoutWaiting: true,
       proceedReason: "Deadline is today; cannot wait.",
     });
@@ -377,9 +385,15 @@ describe("ShortlistDialog — the offer submitted is the offer whose Select was 
       quoteId: "q-bridge",
       variant: "DEDICATED",
     });
-    // The send endpoint carries no offer identity at all — that is precisely why the shortlist PUT
-    // above has to be the thing that names the offer (carried over from MakerPanel.test.tsx's
-    // "posts an empty body on Send for approval when nothing is awaiting a re-quote").
-    expect(JSON.parse(lastFetchBody("/send-for-approval"))).toEqual({});
+    // CORRECTED (S5.9 Task 3, register B2/B3): the send endpoint's body used to carry no offer
+    // identity at all — this assertion documented that. `sendForApprovalSchema` now requires
+    // `quoteId`/`variant` unconditionally (the whole point of the merged call this dialog does
+    // NOT yet drive — S5.9 Task 9 owns replacing this two-call sequence), so `run()` now passes
+    // them here too, sourced from the same clicked `cell.offer` the preceding shortlist PUT
+    // above just named.
+    expect(JSON.parse(lastFetchBody("/send-for-approval"))).toEqual({
+      quoteId: "q-bridge",
+      variant: "DEDICATED",
+    });
   });
 });
