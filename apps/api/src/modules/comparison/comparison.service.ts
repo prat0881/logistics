@@ -61,8 +61,14 @@ type AwardDecisionEventRow = AwardDecisionEvent;
 // and carries a priceable draft. QUOTED is the normal, rankable case. REQUOTED is the DURABLE
 // "awaiting a revised quote" state (a change-order re-ask): the FF's EARLIER price stays visible
 // here (so the Executive keeps context) but is excluded from ranking — see buildRecommendation's
-// QUOTED-only filter and `awaitingReQuote` below.
-const COMPARABLE_STATUSES: readonly QuoteStatus[] = [QuoteStatus.QUOTED, QuoteStatus.REQUOTED];
+// QUOTED-only filter and `awaitingReQuote` below. PENDING_APPROVAL (S5.9 §4.4) is a QUOTED offer
+// under review, not a different price — without it here the selected offer would vanish from the
+// grid the instant it's sent for approval, exactly as APPROVED once did before this fix.
+const COMPARABLE_STATUSES: readonly QuoteStatus[] = [
+  QuoteStatus.QUOTED,
+  QuoteStatus.REQUOTED,
+  QuoteStatus.PENDING_APPROVAL,
+];
 // FFs with NO comparable price at all (not even a stale one) — surfaced as "awaiting" in
 // pendingForwarders rather than in `offers`. REQUOTED is deliberately NOT here: a REQUOTED quote
 // always has an `offers` entry (its last submitted price, shown but unranked — flagged instead via

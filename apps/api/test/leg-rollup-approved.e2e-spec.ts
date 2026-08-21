@@ -9,12 +9,17 @@ import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { StatusService } from "../src/modules/status/status.service";
 
-// S5.4 Task 1 (S5.3-surfaced fix): LegQuoteProjector.RESOLVED (leg-quote.projector.ts:9) originally
-// counted only [QUOTED, EXPIRED, CLOSED] as "resolved" for the leg rollup. The award module (S5.3)
-// contributes `quote approve` (QUOTED -> APPROVED) onto the quote machine; once later tasks start
-// firing it, an approved quote didn't count as resolved, so a leg carrying a mix of
-// APPROVED + still-QUOTED quotes could fail to reach/hold FULLY_QUOTED. Fix: add APPROVED to
-// RESOLVED; leave REQUOTED out (a re-quote in flight is genuinely not resolved).
+// S5.4 Task 1 (S5.3-surfaced fix): LegQuoteProjector's resolved set (originally a local RESOLVED
+// array, now @svyft/shared's LEG_ROLLUP_RESOLVED as of S5.9 Task 1) originally counted only
+// [QUOTED, EXPIRED, CLOSED] as "resolved" for the leg rollup. The award module (S5.3) contributes
+// `quote approve` onto the quote machine; once later tasks start firing it, an approved quote
+// didn't count as resolved, so a leg carrying a mix of APPROVED + still-QUOTED quotes could fail
+// to reach/hold FULLY_QUOTED. Fix: add APPROVED (and, S5.9, PENDING_APPROVAL) to the resolved set;
+// leave REQUOTED out (a re-quote in flight is genuinely not resolved).
+//
+// S5.9 Task 2: `QUOTED --approve--> APPROVED` is retired — send-for-approval (QUOTED ->
+// PENDING_APPROVAL) is now the only route to APPROVED. The first test below fires both edges in
+// sequence to reach the same end state this file was written to guard.
 //
 // Headless: no controller/HTTP call anywhere in this file — StatusService.fire is driven directly
 // (mirrors award-machine.e2e-spec.ts / leg-quote-rollup.e2e-spec.ts). No JWT/actor needed since
@@ -125,6 +130,12 @@ describe(`${PREFIX}(e2e)`, () => {
       [QuoteStatus.QUOTED, QuoteStatus.QUOTED],
       "stay-full",
     );
+    // S5.9 Task 2: QUOTED --approve--> APPROVED is retired — send-for-approval is now the only
+    // route to approval. Two fires reach the SAME end state (QUOTED -> PENDING_APPROVAL ->
+    // APPROVED) this test originally exercised in one; ROLLUP_FROZEN (leg-quote.projector.ts)
+    // also means the leg itself never moves off FULLY_QUOTED here (only the quote is sent for
+    // approval, never the leg) — the leg-level freeze is covered by leg-rollup.e2e-spec.ts.
+    await status.fire("quote", quoteIds[0], QuoteEvent.SEND_FOR_APPROVAL, { queryId });
     await status.fire("quote", quoteIds[0], QuoteEvent.APPROVE, { queryId });
     const leg = await prisma.leg.findUnique({ where: { id: legId } });
     expect(leg!.status).toBe(LegStatus.FULLY_QUOTED);

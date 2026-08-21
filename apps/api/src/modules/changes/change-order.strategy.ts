@@ -70,18 +70,35 @@ export class ChangeOrderStrategy {
       where: {
         legId: { in: legIds },
         // Stage 5 S5.5 Task 3 (§10.2 prereq): APPROVED (already-awarded) is live too — see
-        // scope.resolver.ts's downstreamWork, the gate this query mirrors.
-        status: { in: [QuoteStatus.RFQ_SENT, QuoteStatus.QUOTED, QuoteStatus.APPROVED] },
+        // scope.resolver.ts's downstreamWork, the gate this query mirrors. PENDING_APPROVAL
+        // (S5.9 §4.4 — Task 2 addition beyond scope.resolver.ts's own Step 5) is live too: a
+        // quote under review is a commitment in progress, not yet decided either way, and must
+        // be caught by this filter or it silently falls into neither invalidating nor refreshing.
+        status: {
+          in: [
+            QuoteStatus.RFQ_SENT,
+            QuoteStatus.QUOTED,
+            QuoteStatus.PENDING_APPROVAL,
+            QuoteStatus.APPROVED,
+          ],
+        },
       },
       select: { id: true, freightForwarderId: true, legId: true, status: true },
     });
-    // QUOTED and APPROVED are both INVALIDATED (re-quote required); only RFQ_SENT is merely
-    // refreshed in place (still pending, never submitted). An APPROVED quote is a QUOTED one
-    // that already cleared maker-checker — a change-order must undo the award the same way it
-    // undoes an ordinary submission, which is exactly what §10.2's reversal listener (next task)
-    // hooks off of via the leg REOPEN this fires below.
+    // QUOTED, PENDING_APPROVAL, and APPROVED are all INVALIDATED (re-quote required); only
+    // RFQ_SENT is merely refreshed in place (still pending, never submitted). An APPROVED quote
+    // is a QUOTED one that already cleared maker-checker; a PENDING_APPROVAL quote is a QUOTED
+    // one currently mid-review — either way a change-order must undo the in-flight commitment the
+    // same way it undoes an ordinary submission, which is exactly what §10.2's reversal listener
+    // hooks off of via the leg REOPEN this fires below (and, for PENDING_APPROVAL specifically,
+    // the award.module.ts PENDING_APPROVAL --invalidate--> INVALID edge this relies on).
     const invalidating = quotes
-      .filter((q) => q.status === QuoteStatus.QUOTED || q.status === QuoteStatus.APPROVED)
+      .filter(
+        (q) =>
+          q.status === QuoteStatus.QUOTED ||
+          q.status === QuoteStatus.PENDING_APPROVAL ||
+          q.status === QuoteStatus.APPROVED,
+      )
       .map((q) => ({ quoteId: q.id, freightForwarderId: q.freightForwarderId }));
     const refreshing = quotes
       .filter((q) => q.status === QuoteStatus.RFQ_SENT)

@@ -71,15 +71,21 @@ interface Candidate {
  * actually has — `NegotiateDialog.test.tsx`'s "posts one request per selected forwarder" catches
  * exactly that regression (asserts 2 calls off a 4-offer/1-pending fixture, not 4 or 5).
  *
- * A forwarder is eligible when it has AT LEAST ONE offer with `quoteStatus` `QUOTED` or
- * `APPROVED` — REQUOTED forwarders (an offer exists, but a revised one is already pending) and
- * `pendingForwarders` (sent the RFQ, never comparably quoted) are both included, disabled, with
- * their own reason text — never hidden.
+ * A forwarder is eligible when it has AT LEAST ONE offer with `quoteStatus` `QUOTED`,
+ * `PENDING_APPROVAL`, or `APPROVED` — REQUOTED forwarders (an offer exists, but a revised one is
+ * already pending) and `pendingForwarders` (sent the RFQ, never comparably quoted) are both
+ * included, disabled, with their own reason text — never hidden. PENDING_APPROVAL (S5.9 §4.4) is
+ * a QUOTED offer currently under review, not a different commitment — the maker can still ask
+ * that forwarder to revise (award.module.ts's PENDING_APPROVAL --request_requote--> REQUOTED
+ * edge); without it here, the forwarder currently under review would wrongly become ineligible.
  */
 function buildCandidates(leg: LegComparisonDto): Candidate[] {
   const byForwarder = new Map<string, Candidate>();
   for (const offer of leg.offers) {
-    const quotable = offer.quoteStatus === "QUOTED" || offer.quoteStatus === "APPROVED";
+    const quotable =
+      offer.quoteStatus === "QUOTED" ||
+      offer.quoteStatus === "PENDING_APPROVAL" ||
+      offer.quoteStatus === "APPROVED";
     const existing = byForwarder.get(offer.freightForwarderId);
     if (!existing) {
       byForwarder.set(offer.freightForwarderId, {

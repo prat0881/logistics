@@ -9,12 +9,18 @@ import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { StatusService } from "../src/modules/status/status.service";
 
-// Task 3 (S5.3): the Stage-5 award/negotiation edges are CONTRIBUTED onto the existing
-// "quote"/"leg" machines by a new `award` module's onModuleInit (mirrors how rfq.module.ts
-// contributes the SB6 cascade edges in rfq.module.ts:34-47) — leg.machine.ts / quote.machine.ts
-// are never edited. Headless: no controller/HTTP call anywhere in this file — StatusService.fire
-// is driven directly, proving each newly-contributed edge is legal (findTransition matches on
-// (from, event)) and that `ctx.reason` now persists onto the StatusTransition row.
+// Task 3 (S5.3), rewired by S5.9 Task 2 (§4.4): the Stage-5 award/negotiation edges are
+// CONTRIBUTED onto the existing "quote"/"leg" machines by the `award` module's onModuleInit
+// (mirrors how rfq.module.ts contributes the SB6 cascade edges in rfq.module.ts:34-47) —
+// leg.machine.ts / quote.machine.ts are never edited. Headless: no controller/HTTP call anywhere
+// in this file — StatusService.fire is driven directly, proving each newly-contributed edge is
+// legal (findTransition matches on (from, event)) and that `ctx.reason` now persists onto the
+// StatusTransition row.
+//
+// S5.9 Task 2 rewrite: PENDING_APPROVAL sits between QUOTED/FULLY_QUOTED and APPROVED now —
+// send-for-approval is the ONLY route to approval. `QUOTED --approve--> APPROVED` and
+// `FULLY_QUOTED --approve--> APPROVED` are RETIRED (award.module.ts's Step-3 replacement); the
+// two regression-guard tests below prove they no longer resolve rather than silently vanishing.
 const PREFIX = "s53-award-";
 
 describe(`${PREFIX}(e2e)`, () => {
@@ -119,23 +125,53 @@ describe(`${PREFIX}(e2e)`, () => {
   });
 
   describe("quote edges", () => {
-    it("QUOTED --approve--> APPROVED, and persists ctx.reason on the StatusTransition row", async () => {
-      const { query, quote } = await makeQuote(QuoteStatus.QUOTED, "approve");
-      const res = await status.fire("quote", quote.id, QuoteEvent.APPROVE, {
+    it("QUOTED --send_for_approval--> PENDING_APPROVAL, and persists ctx.reason on the StatusTransition row", async () => {
+      const { query, quote } = await makeQuote(QuoteStatus.QUOTED, "send-for-approval");
+      const res = await status.fire("quote", quote.id, QuoteEvent.SEND_FOR_APPROVAL, {
         queryId: query.id,
         reason: "picked as winner",
       });
       expect(res.from).toBe(QuoteStatus.QUOTED);
-      expect(res.to).toBe(QuoteStatus.APPROVED);
+      expect(res.to).toBe(QuoteStatus.PENDING_APPROVAL);
       expect((await prisma.quote.findUnique({ where: { id: quote.id } }))?.status).toBe(
-        QuoteStatus.APPROVED,
+        QuoteStatus.PENDING_APPROVAL,
       );
 
       const t = await prisma.statusTransition.findFirst({
-        where: { entity: "quote", entityId: quote.id, event: QuoteEvent.APPROVE },
+        where: { entity: "quote", entityId: quote.id, event: QuoteEvent.SEND_FOR_APPROVAL },
       });
-      expect(t?.to).toBe("APPROVED");
+      expect(t?.to).toBe("PENDING_APPROVAL");
       expect(t?.reason).toBe("picked as winner");
+    });
+
+    it("PENDING_APPROVAL --approve--> APPROVED (forward)", async () => {
+      const { query, quote } = await makeQuote(QuoteStatus.PENDING_APPROVAL, "approve");
+      const res = await status.fire("quote", quote.id, QuoteEvent.APPROVE, {
+        queryId: query.id,
+      });
+      expect(res.from).toBe(QuoteStatus.PENDING_APPROVAL);
+      expect(res.to).toBe(QuoteStatus.APPROVED);
+    });
+
+    it("PENDING_APPROVAL --return--> QUOTED (reopen; reject)", async () => {
+      const { query, quote } = await makeQuote(QuoteStatus.PENDING_APPROVAL, "return");
+      const res = await status.fire("quote", quote.id, QuoteEvent.RETURN, {
+        queryId: query.id,
+      });
+      expect(res.from).toBe(QuoteStatus.PENDING_APPROVAL);
+      expect(res.to).toBe(QuoteStatus.QUOTED);
+    });
+
+    // Regression guard (S5.9 Task 2): the direct QUOTED -> APPROVED edge is RETIRED. Approving a
+    // quote that was never sent for approval must no longer resolve — do not re-add this edge.
+    it("QUOTED --approve--> is no longer a legal edge (retired by S5.9 Task 2)", async () => {
+      const { query, quote } = await makeQuote(QuoteStatus.QUOTED, "retired-approve");
+      await expect(
+        status.fire("quote", quote.id, QuoteEvent.APPROVE, { queryId: query.id }),
+      ).rejects.toBeDefined();
+      expect((await prisma.quote.findUnique({ where: { id: quote.id } }))?.status).toBe(
+        QuoteStatus.QUOTED,
+      );
     });
 
     it("APPROVED --unapprove--> QUOTED (reopen)", async () => {
@@ -154,6 +190,15 @@ describe(`${PREFIX}(e2e)`, () => {
         reason: "negotiate",
       });
       expect(res.from).toBe(QuoteStatus.QUOTED);
+      expect(res.to).toBe(QuoteStatus.REQUOTED);
+    });
+
+    it("PENDING_APPROVAL --request_requote--> REQUOTED (reopen; declared but currently unreachable — a later task's guard blocks it)", async () => {
+      const { query, quote } = await makeQuote(QuoteStatus.PENDING_APPROVAL, "requote-from-pending");
+      const res = await status.fire("quote", quote.id, QuoteEvent.REQUEST_REQUOTE, {
+        queryId: query.id,
+      });
+      expect(res.from).toBe(QuoteStatus.PENDING_APPROVAL);
       expect(res.to).toBe(QuoteStatus.REQUOTED);
     });
 
@@ -180,6 +225,18 @@ describe(`${PREFIX}(e2e)`, () => {
       expect(res.to).toBe(QuoteStatus.EXPIRED);
     });
 
+    // S5.9 Task 2 addition (beyond the brief's Step 3 — see change-order.strategy.ts's
+    // "invalidating" group): a PENDING_APPROVAL quote is a live commitment mid-review, exactly
+    // like an APPROVED one, so a change-order must be able to invalidate it too.
+    it("PENDING_APPROVAL --invalidate--> INVALID (reopen; change-order source)", async () => {
+      const { query, quote } = await makeQuote(QuoteStatus.PENDING_APPROVAL, "invalidate-pending");
+      const res = await status.fire("quote", quote.id, QuoteEvent.INVALIDATE, {
+        queryId: query.id,
+      });
+      expect(res.from).toBe(QuoteStatus.PENDING_APPROVAL);
+      expect(res.to).toBe(QuoteStatus.INVALID);
+    });
+
     it("APPROVED --invalidate--> INVALID (reopen; change-order source)", async () => {
       const { query, quote } = await makeQuote(QuoteStatus.APPROVED, "invalidate");
       const res = await status.fire("quote", quote.id, QuoteEvent.INVALIDATE, {
@@ -204,19 +261,58 @@ describe(`${PREFIX}(e2e)`, () => {
   });
 
   describe("leg edges", () => {
-    it("FULLY_QUOTED --approve--> APPROVED (forward); reason defaults to null when omitted", async () => {
-      const { query, leg } = await makeLeg(LegStatus.FULLY_QUOTED, "leg-approve");
-      const res = await status.fire("leg", leg.id, LegEvent.APPROVE, { queryId: query.id });
+    it("FULLY_QUOTED --send_for_approval--> PENDING_APPROVAL (forward); reason defaults to null when omitted", async () => {
+      const { query, leg } = await makeLeg(LegStatus.FULLY_QUOTED, "leg-send-for-approval-full");
+      const res = await status.fire("leg", leg.id, LegEvent.SEND_FOR_APPROVAL, { queryId: query.id });
       expect(res.from).toBe(LegStatus.FULLY_QUOTED);
-      expect(res.to).toBe(LegStatus.APPROVED);
+      expect(res.to).toBe(LegStatus.PENDING_APPROVAL);
       expect((await prisma.leg.findUnique({ where: { id: leg.id } }))?.status).toBe(
-        LegStatus.APPROVED,
+        LegStatus.PENDING_APPROVAL,
       );
 
       const t = await prisma.statusTransition.findFirst({
-        where: { entity: "leg", entityId: leg.id, event: LegEvent.APPROVE },
+        where: { entity: "leg", entityId: leg.id, event: LegEvent.SEND_FOR_APPROVAL },
       });
       expect(t?.reason).toBeNull();
+    });
+
+    it("PARTIALLY_QUOTED --send_for_approval--> PENDING_APPROVAL (forward; A3 deadline-passed path)", async () => {
+      const { query, leg } = await makeLeg(LegStatus.PARTIALLY_QUOTED, "leg-send-for-approval-partial");
+      const res = await status.fire("leg", leg.id, LegEvent.SEND_FOR_APPROVAL, { queryId: query.id });
+      expect(res.from).toBe(LegStatus.PARTIALLY_QUOTED);
+      expect(res.to).toBe(LegStatus.PENDING_APPROVAL);
+    });
+
+    it("PENDING_APPROVAL --approve--> APPROVED (forward)", async () => {
+      const { query, leg } = await makeLeg(LegStatus.PENDING_APPROVAL, "leg-approve");
+      const res = await status.fire("leg", leg.id, LegEvent.APPROVE, { queryId: query.id });
+      expect(res.from).toBe(LegStatus.PENDING_APPROVAL);
+      expect(res.to).toBe(LegStatus.APPROVED);
+    });
+
+    it("PENDING_APPROVAL --return.full--> FULLY_QUOTED (reopen)", async () => {
+      const { query, leg } = await makeLeg(LegStatus.PENDING_APPROVAL, "leg-return-full");
+      const res = await status.fire("leg", leg.id, LegEvent.RETURN_FULL, { queryId: query.id });
+      expect(res.from).toBe(LegStatus.PENDING_APPROVAL);
+      expect(res.to).toBe(LegStatus.FULLY_QUOTED);
+    });
+
+    it("PENDING_APPROVAL --return.partial--> PARTIALLY_QUOTED (reopen)", async () => {
+      const { query, leg } = await makeLeg(LegStatus.PENDING_APPROVAL, "leg-return-partial");
+      const res = await status.fire("leg", leg.id, LegEvent.RETURN_PARTIAL, { queryId: query.id });
+      expect(res.from).toBe(LegStatus.PENDING_APPROVAL);
+      expect(res.to).toBe(LegStatus.PARTIALLY_QUOTED);
+    });
+
+    // Regression guard (S5.9 Task 2): the direct FULLY_QUOTED -> APPROVED edge is RETIRED.
+    it("FULLY_QUOTED --approve--> is no longer a legal edge (retired by S5.9 Task 2)", async () => {
+      const { query, leg } = await makeLeg(LegStatus.FULLY_QUOTED, "retired-leg-approve");
+      await expect(
+        status.fire("leg", leg.id, LegEvent.APPROVE, { queryId: query.id }),
+      ).rejects.toBeDefined();
+      expect((await prisma.leg.findUnique({ where: { id: leg.id } }))?.status).toBe(
+        LegStatus.FULLY_QUOTED,
+      );
     });
 
     it("APPROVED --reopen_award--> FULLY_QUOTED (reopen)", async () => {
@@ -230,6 +326,13 @@ describe(`${PREFIX}(e2e)`, () => {
       const { query, leg } = await makeLeg(LegStatus.APPROVED, "leg-reopen");
       const res = await status.fire("leg", leg.id, LegEvent.REOPEN, { queryId: query.id });
       expect(res.from).toBe(LegStatus.APPROVED);
+      expect(res.to).toBe(LegStatus.READY_FOR_RFQ);
+    });
+
+    it("PENDING_APPROVAL --reopen--> READY_FOR_RFQ (reopen; change-order source)", async () => {
+      const { query, leg } = await makeLeg(LegStatus.PENDING_APPROVAL, "leg-reopen-pending");
+      const res = await status.fire("leg", leg.id, LegEvent.REOPEN, { queryId: query.id });
+      expect(res.from).toBe(LegStatus.PENDING_APPROVAL);
       expect(res.to).toBe(LegStatus.READY_FOR_RFQ);
     });
   });
