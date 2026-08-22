@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LegComparisonDto, OfferDto } from "@svyft/shared";
@@ -899,4 +899,95 @@ describe("ComparisonGrid edge cases", () => {
   // "withholds the Select affordance once the decision has left DRAFT" test is superseded by that
   // stronger claim (never rendered, full stop) plus `CompareLegPanel.tsx`'s `canSend` gating the
   // new action-bar button, exercised end-to-end in `CompareQuotesPage.test.tsx`.
+});
+
+// ── Review round IMPORTANT 3 — restored. This is the SAME guarantee final review IMPORTANT #2 /
+// deferred minor T4 F3 fixed for `ShortlistDialog` (a background refetch that ends the maker's
+// sendable window must not leave an already-open dialog live, and must not let it silently come
+// back once the window reopens) — its regression test was deleted along with `ShortlistDialog`
+// itself and the reviewer reproduced the exact same class of bug against `SendForApprovalDialog`:
+// `CompareLegPanel`'s `{canSend && (...)}` guard unmounts the dialog correctly, but the `sendOpen`
+// boolean that drives its `open` prop lives in the PARENT and survived the round trip, so a leg
+// that goes DRAFT → PENDING_APPROVAL → DRAFT (rejected) remounted the dialog already open. Fixed
+// with a `useEffect` in `CompareLegPanel.tsx` that clears `sendOpen` when `canSend` goes false —
+// restoring this test alongside it, not just the fix, per the review.
+//
+// Both tests re-render the panel with a new `leg` — exactly what TanStack Query does when
+// `["comparison", queryId]` refetches underneath it.
+describe("SendForApprovalDialog is gated by the same rule as the button that opens it", () => {
+  const DRAFT_DECISION = {
+    legId: "leg-1",
+    status: "DRAFT" as const,
+    shortlistedQuoteId: null,
+    shortlistedVariant: null,
+    recommendedQuoteId: "quote-1",
+    recommendedVariant: "DEDICATED" as const,
+    overrideReason: null,
+    rejectionReason: null,
+    sentByUserId: null,
+    sentForApprovalAt: null,
+    decidedByUserId: null,
+    decidedAt: null,
+  };
+
+  /** Renders the panel in a form that can be re-rendered with a different `leg`, so a test can
+   *  simulate the read model changing under an open dialog. */
+  function renderRefetchablePanel(leg: LegComparisonDto) {
+    vi.stubGlobal("fetch", mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (l: LegComparisonDto) => (
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <CompareLegPanel
+            queryId="q1"
+            leg={l}
+            open
+            onToggle={() => {}}
+            locked={false}
+            fxAsOf="2026-08-14T00:00:00.000Z"
+            viewMode="columns"
+            onViewModeChange={() => {}}
+          />
+        </AuthProvider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree(leg));
+    return { refetchAs: (l: LegComparisonDto) => rerender(tree(l)) };
+  }
+
+  it("unmounts an already-open SendForApprovalDialog once the leg stops being sendable", async () => {
+    const draftLeg = { ...LEG, decision: DRAFT_DECISION };
+    const { refetchAs } = renderRefetchablePanel(draftLeg);
+
+    await userEvent.click(await screen.findByRole("button", { name: /send for approval/i }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    // A second maker sends this leg for approval; the refetch brings back PENDING_APPROVAL.
+    refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, status: "PENDING_APPROVAL" } });
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // ...and the button is gone too, i.e. the action bar and the dialog agree.
+    expect(screen.queryByRole("button", { name: /send for approval/i })).not.toBeInTheDocument();
+  });
+
+  it("does not silently re-open the dialog when the leg becomes sendable again", async () => {
+    const draftLeg = { ...LEG, decision: DRAFT_DECISION };
+    const { refetchAs } = renderRefetchablePanel(draftLeg);
+
+    await userEvent.click(await screen.findByRole("button", { name: /send for approval/i }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, status: "PENDING_APPROVAL" } });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // A checker rejects the leg — `reject()` writes DRAFT + a reason, so sending reopens. The
+    // maker's dismissed dialog must NOT come back as an open modal on its own.
+    refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, rejectionReason: "Too expensive" } });
+
+    // Positive control — sending really is available again, so "no dialog" isn't vacuous.
+    expect(
+      await screen.findByRole("button", { name: /send for approval/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
 });

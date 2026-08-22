@@ -35,6 +35,12 @@ const recommendedQuoteId = "quote-bridge";
 const oceanicQuoteId = "quote-oceanic";
 const staleQuoteId = "quote-falcon";
 
+// Review round IMPORTANT 2 — nothing in this file previously asserted the request URL at all
+// (`postJson.mock.calls[0][1]` only inspects the BODY), so a `useSendForApproval` repointed at the
+// retired `PUT .../shortlist` route (a guaranteed 404 in production) would leave the whole suite
+// green. Every test below that asserts a request body now also asserts this.
+const SEND_URL = "/api/queries/q1/legs/leg-1/send-for-approval";
+
 const BRIDGE_DEDICATED: OfferDto = {
   quoteId: recommendedQuoteId,
   freightForwarderId: "ff-bridge",
@@ -198,15 +204,43 @@ describe("SendForApprovalDialog", () => {
     expect(postJson).not.toHaveBeenCalled();
   });
 
-  it("sends the recommended offer with the reason box never touched", async () => {
+  // ── PO ruling (review round) — the reason field is ALWAYS visible, for every selection, not
+  // conditionally mounted on `overrideRequired`. It stays optional on the recommended path; only
+  // its requiredness (and the label/help text explaining which state it's in) changes with the
+  // pick. This replaces the pre-ruling "reason box never touched" test, which asserted the box's
+  // ABSENCE — the opposite of current, correct behaviour.
+  it("shows the reason field labelled optional for the recommended offer, and leaves it out of the wire when left blank", async () => {
     renderDialog();
-    expect(screen.queryByLabelText(/override reason/i)).not.toBeInTheDocument();
+    const reasonBox = screen.getByLabelText(/reason \(optional\)/i);
+    expect(reasonBox).toBeInTheDocument();
+
     await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/)); // recommended
+    // Still labelled optional after picking the recommendation — never touched.
+    expect(screen.getByLabelText(/reason \(optional\)/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
     await waitFor(() => expect(postJson).toHaveBeenCalledTimes(1));
+    expect(postJsonMock.mock.calls[0][0]).toBe(SEND_URL);
     expect(postJsonMock.mock.calls[0][1]).toEqual({
       quoteId: recommendedQuoteId,
       variant: "DEDICATED",
+    });
+  });
+
+  // ── PO ruling — "else user can voluntarily fill." A reason typed on the RECOMMENDED path must
+  // still reach the wire; the field is optional, not inert. The pre-ruling body-build
+  // (`...(overrideRequired ? { overrideReason: reason } : {})`) silently dropped this — this test
+  // is mutation-proved against exactly that regression.
+  it("sends a voluntary reason typed on the recommended path", async () => {
+    renderDialog();
+    await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/)); // recommended
+    await userEvent.type(screen.getByLabelText(/reason \(optional\)/i), "Prefer this forwarder's SLA.");
+    await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
+    await waitFor(() => expect(postJson).toHaveBeenCalledTimes(1));
+    expect(postJsonMock.mock.calls[0][0]).toBe(SEND_URL);
+    expect(postJsonMock.mock.calls[0][1]).toEqual({
+      quoteId: recommendedQuoteId,
+      variant: "DEDICATED",
+      overrideReason: "Prefer this forwarder's SLA.",
     });
   });
 
@@ -256,6 +290,7 @@ describe("SendForApprovalDialog", () => {
     await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
 
     await waitFor(() => expect(postJson).toHaveBeenCalledTimes(1));
+    expect(postJsonMock.mock.calls[0][0]).toBe(SEND_URL);
     expect(postJsonMock.mock.calls[0][1]).toEqual({
       quoteId: recommendedQuoteId,
       variant: "DEDICATED",
@@ -271,16 +306,25 @@ describe("SendForApprovalDialog", () => {
   // (`LEG.decision.shortlistedQuoteId`, pinned to Bridge above) rather than a rival grid click —
   // the fixture deliberately leaves that persisted value pointed at a DIFFERENT offer than the one
   // selected below, so a regression that reads the decision instead of the checked radio would be
-  // caught here. ──────────────────────────────────────────────────────────────────────────────
+  // caught here.
+  //
+  // Review round IMPORTANT 1 — the original `ShortlistDialog.test.tsx` block this was ported from
+  // used `toEqual` here specifically (review fix F1) because `toMatchObject` lets a dropped
+  // `overrideReason` pass silently — the port used `toMatchObject` and lost that coverage (the
+  // reviewer proved it: deleting the `overrideReason` spread from `handleSend` left the whole
+  // 131-test compare suite green). Restored to `toEqual`, asserting the FULL body, plus the
+  // request URL (IMPORTANT 2 — nothing in this file asserted it before). ─────────────────────────
   it("submits the offer that is selected in the dialog, not one merely read elsewhere", async () => {
     renderDialog();
     await userEvent.click(screen.getByLabelText(/Oceanic — Groupage/));
-    await userEvent.type(screen.getByLabelText(/reason/i), "Better transit time");
+    await userEvent.type(screen.getByLabelText(/override reason/i), "Better transit time");
     await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
     await waitFor(() => expect(postJson).toHaveBeenCalledTimes(1));
-    expect(postJsonMock.mock.calls[0][1]).toMatchObject({
+    expect(postJsonMock.mock.calls[0][0]).toBe(SEND_URL);
+    expect(postJsonMock.mock.calls[0][1]).toEqual({
       quoteId: oceanicQuoteId,
       variant: "GROUPAGE",
+      overrideReason: "Better transit time",
     });
   });
 });

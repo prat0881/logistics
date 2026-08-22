@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { LegComparisonDto, LegStatus } from "@svyft/shared";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -151,6 +151,26 @@ export function CompareLegPanel({
   // is an editable DRAFT and keeps Send available (final review I2).
   const decisionStatus = leg.decision?.status;
   const canSend = !locked && decisionStatus !== "PENDING_APPROVAL" && decisionStatus !== "APPROVED";
+
+  // Review round IMPORTANT 3 — `{canSend && (<SendForApprovalDialog open={sendOpen} …>)}` below
+  // unmounts the dialog the instant `canSend` goes false, but does NOT clear `sendOpen` itself:
+  // that boolean lives here, not inside the dialog, so a later refetch that makes the leg sendable
+  // AGAIN (e.g. a checker's Reject, which returns the decision to DRAFT) remounts a FRESH
+  // `SendForApprovalDialog` instance whose `open` prop is still the stale `true` from before —
+  // a silent reopen the maker never asked for. Reproduced: DRAFT (open the dialog) → PENDING_APPROVAL
+  // (unmounts) → DRAFT + a rejection reason (remounts, open again).
+  //
+  // This is deliberately NOT the deleted `shortlistKey`-clearing effect restored verbatim — that
+  // one resolved an `OfferCell` through `buildComparisonRowModel` on every `leg` change because the
+  // in-grid `Select` button fed it a piece of drift-prone identity state. `sendOpen` is a plain
+  // boolean with no identity to resolve; the dialog itself now owns `selectedKey` internally and
+  // rebuilds it from scratch on every mount, so a stray remount can at worst reopen with nothing
+  // selected (Send stays disabled — no wrong offer is reachable), never resubmit a stale pick. The
+  // fix is still a one-line effect, just on different state for a different reason than the one the
+  // brief told this task to delete.
+  useEffect(() => {
+    if (!canSend) setSendOpen(false);
+  }, [canSend]);
 
   // S5.7 T5 — this is a UI-only restriction (design consequence C1): the server still accepts a
   // re-quote on a PENDING_APPROVAL leg and resets its decision to DRAFT, it just isn't the flow the

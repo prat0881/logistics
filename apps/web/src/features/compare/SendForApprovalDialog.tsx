@@ -52,6 +52,15 @@ export interface SendForApprovalDialogProps {
  * it anyway. A stale (`REQUOTED`) offer stays selectable, carrying the same
  * `STALE_OFFER_LABEL` warning the grid badges it with. The A9 in-flight-re-quote block is
  * unchanged from `ShortlistDialog`.
+ *
+ * **The reason field (PO ruling, review round).** Always rendered, for every selection — not only
+ * when `overrideRequired`. It stays REQUIRED only off the recommendation; on the recommended path
+ * it's a voluntary note the maker can choose to leave. The label/help text below it says which
+ * state it's in, so the difference is visible before submit, not only enforced by it. A voluntary
+ * reason reaches the wire the same as a mandatory one — `handleSend` sends `overrideReason`
+ * whenever the (trimmed) field is non-empty, not only when `overrideRequired`; the server already
+ * persists `input.overrideReason ?? null` unconditionally (`award.service.ts`) and only the A2
+ * guard is conditional, so there is nothing here for the backend to reject either way.
  */
 export function SendForApprovalDialog({
   open,
@@ -119,12 +128,15 @@ export function SendForApprovalDialog({
     setProceedError(null);
 
     // One mutation call — Task 3 merged selection and send into a single endpoint, so this is the
-    // only request this dialog ever issues.
+    // only request this dialog ever issues. `overrideReason` is sent whenever the maker actually
+    // TYPED one — mandatory (off-recommendation) or voluntary (on-recommendation) alike (PO
+    // ruling) — not only when `overrideRequired`; gating the send on `overrideRequired` instead
+    // silently dropped a voluntary reason typed on the recommended path.
     sendForApproval.mutate(
       {
         quoteId: selectedCell.offer.quoteId,
         variant: selectedCell.offer.variant,
-        ...(overrideRequired ? { overrideReason: reason } : {}),
+        ...(reason ? { overrideReason: reason } : {}),
         ...(leg.awaitingReQuote
           ? { proceedWithoutWaiting: true as const, proceedReason: proceedReason.trim() }
           : {}),
@@ -202,28 +214,33 @@ export function SendForApprovalDialog({
             ))}
           </RadioGroup>
 
-          {overrideRequired && (
-            <div className="space-y-1">
-              <Label htmlFor={overrideId}>Override reason</Label>
-              <Textarea
-                id={overrideId}
-                {...form.register("overrideReason", {
-                  // A cleared textarea reads back "" from the DOM, which the same `.optional()`
-                  // mismatch above would reject — coerce back to `undefined` (mirrors
-                  // `FxRatesPage.tsx`'s `note` field).
-                  setValueAs: (v: string) => (v === "" ? undefined : v),
-                })}
-              />
-              <p className="text-xs text-muted-foreground">
-                Required — this offer differs from the recommended one.
+          {/* PO ruling — always visible, for every selection, not conditionally mounted on
+              `overrideRequired`. Only the REQUIREDNESS (enforced in `handleSend` above) and the
+              label/help text below it change with the pick; the field itself never disappears. */}
+          <div className="space-y-1">
+            <Label htmlFor={overrideId}>{overrideRequired ? "Override reason" : "Reason (optional)"}</Label>
+            <Textarea
+              id={overrideId}
+              {...form.register("overrideReason", {
+                // A cleared (or never-touched) textarea reads back "" from the DOM, which the same
+                // `.optional()` mismatch above would reject — coerce back to `undefined` (mirrors
+                // `FxRatesPage.tsx`'s `note` field). This still applies now that the field is
+                // ALWAYS mounted: the untouched, common case on the recommended path is exactly the
+                // one this coercion protects.
+                setValueAs: (v: string) => (v === "" ? undefined : v),
+              })}
+            />
+            <p className="text-xs text-muted-foreground">
+              {overrideRequired
+                ? "Required — this offer differs from the recommended one."
+                : "Optional — you may record a reason even for the recommended offer."}
+            </p>
+            {form.formState.errors.overrideReason && (
+              <p role="alert" className="text-sm text-destructive">
+                {form.formState.errors.overrideReason.message}
               </p>
-              {form.formState.errors.overrideReason && (
-                <p role="alert" className="text-sm text-destructive">
-                  {form.formState.errors.overrideReason.message}
-                </p>
-              )}
-            </div>
-          )}
+            )}
+          </div>
 
           {leg.awaitingReQuote && (
             <div className="space-y-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm">
