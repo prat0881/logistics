@@ -12,6 +12,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { seedMessageTemplates } from "../src/seed/message-templates.seed";
 import { StatusService } from "../src/modules/status/status.service";
 
 // S5.4 Task 3 — the CHECKER half of the maker-checker award workflow (design §9 steps 2+4):
@@ -230,7 +231,22 @@ describe("award workflow — checker endpoints (e2e)", () => {
       where: { freightForwarderCode: { startsWith: `FF-${PREFIX}` } },
     });
     await prisma.fxRate.deleteMany({ where: { note: { startsWith: PREFIX } } });
+    // S5.9.1 Task 4 — Executive users this file creates itself (mkExec below) for the
+    // award.rejected notification tests, mirroring ff-portal.e2e-spec.ts's own pattern rather
+    // than relying on the shared dev DB's seeded exec@svyft.local (absent in a fresh CI Postgres,
+    // which never runs `prisma db seed`).
+    await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX.toLowerCase()}-exec-` } } });
   };
+
+  const mkExec = () =>
+    prisma.user.create({
+      data: {
+        name: "AWCK Exec",
+        email: `${PREFIX.toLowerCase()}-exec-${randomUUID()}@e2e.test`,
+        passwordHash: "x",
+        role: "EXECUTIVE",
+      },
+    });
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -248,6 +264,12 @@ describe("award workflow — checker endpoints (e2e)", () => {
 
   afterAll(async () => {
     await cleanup();
+    // S5.9.1 Task 4 — the "comms failure never fails reject" test deletes the
+    // award.rejected.inapp template row to force NotificationDispatcher's lookup to return null;
+    // reseed it here (create-only upsert, so idempotent against every other file's state) so the
+    // suite stays order-independent regardless of which spec file runs next in the same
+    // --runInBand jest process.
+    await seedMessageTemplates(prisma);
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
@@ -830,5 +852,49 @@ describe("award workflow — checker endpoints (e2e)", () => {
       expect(quote.status).toBe("QUOTED");
       expect(updatedLeg.status).toBe("FULLY_QUOTED");
     }
+  });
+
+  // S5.9.1 Task 4 (R7) — a rejected leg genuinely returns to the general maker pool already
+  // (sentByUserId cleared, decision back to DRAFT — no assignment concept exists in the schema),
+  // but nothing announced it. These two tests guard the new comms block: an Executive gets told,
+  // and a comms problem can never turn a successful reject into a failure.
+  it("notifies executives in-app when a leg is rejected", async () => {
+    const senderId = randomUUID();
+    const rejectorId = randomUUID();
+    const exec = await mkExec();
+    const { query, leg } = await seedPendingApproval("notify", senderId);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(rejectorId, Role.MANAGER))
+      .send({ reason: "Transit too long" })
+      .expect(200);
+
+    const notes = await prisma.notification.findMany({
+      where: { type: "award.rejected", entityId: query.id },
+    });
+    expect(notes.length).toBeGreaterThan(0);
+    expect(notes.every((n) => n.recipientUserId != null)).toBe(true);
+    // Stronger than "someone was notified" — THIS Executive, the one the test actually seeded,
+    // was among the recipients (not just an artifact of other tests' leftover exec users).
+    expect(notes.some((n) => n.recipientUserId === exec.id)).toBe(true);
+  });
+
+  it("still rejects successfully when the notification dispatch fails", async () => {
+    const senderId = randomUUID();
+    const rejectorId = randomUUID();
+    // Prove the comms block cannot fail the reject: delete the template so lookup returns null.
+    // Reseeded in this file's afterAll (create-only upsert) so the suite stays order-independent.
+    await prisma.messageTemplate.deleteMany({ where: { key: "award.rejected.inapp" } });
+    const { query, leg } = await seedPendingApproval("notifyfail", senderId);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(rejectorId, Role.MANAGER))
+      .send({ reason: "Price too high" })
+      .expect(200);
+
+    const decision = await prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: leg.id } });
+    expect(decision.status).toBe("DRAFT");
   });
 });

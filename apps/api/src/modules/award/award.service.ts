@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { AwardDecisionStatus, Prisma, type LegAwardDecision, type Query } from "@prisma/client";
@@ -14,6 +15,7 @@ import {
   LegStatus,
   QuoteEvent,
   QuoteStatus,
+  Role,
   computeQuoteTotals,
   latestRateByCurrency,
   rollupLegTarget,
@@ -29,6 +31,7 @@ import {
 import { PrismaService } from "../../prisma/prisma.service";
 import type { RequestUser } from "../auth/types";
 import { ComparisonService } from "../comparison/comparison.service";
+import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
 import { FxRatesService } from "../fx-rates/fx-rates.service";
 import { QueryStatusProjector } from "../status/query-status.projector";
 import { StatusService } from "../status/status.service";
@@ -73,12 +76,15 @@ const UUID_SCHEMA = z.string().uuid();
 // private and reachable only from inside this one transaction.
 @Injectable()
 export class AwardService {
+  private readonly logger = new Logger(AwardService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly comparison: ComparisonService,
     private readonly status: StatusService,
     private readonly projector: QueryStatusProjector,
     private readonly fxRates: FxRatesService,
+    private readonly dispatcher: NotificationDispatcher,
   ) {}
 
   // S5.9 Task 3 (register B3) — the ONE remaining write for a leg's shortlisted offer. Only
@@ -680,6 +686,39 @@ export class AwardService {
       returnToFullyQuoted ? LegEvent.RETURN_FULL : LegEvent.RETURN_PARTIAL,
       { queryId, actorId: user.userId, reason: input.reason },
     );
+
+    // S5.9.1 (R7) — there is no assignment concept in this schema, and the write above already
+    // cleared sentByUserId + returned the decision to DRAFT, so a rejected leg genuinely lands
+    // back in the general maker pool. What was missing is that nothing announced it. Mirrors
+    // ff-portal.service.ts's post-submit comms block exactly: resolve active Executives, dispatch
+    // IN_APP only (no forwarder-facing side to a reject), and swallow any failure so a comms
+    // problem can never turn an already-committed, already-fired reject into a 500. Must stay the
+    // LAST thing this method does, after every write and every status fire above.
+    try {
+      const [rejectedLeg, query] = await Promise.all([
+        this.prisma.leg.findUnique({ where: { id: legId }, select: { legCode: true } }),
+        this.prisma.query.findUnique({
+          where: { id: queryId },
+          select: { queryCode: true, tenantId: true },
+        }),
+      ]);
+      const execs = await this.prisma.user.findMany({
+        where: { role: Role.EXECUTIVE, isActive: true },
+        select: { id: true },
+      });
+      await this.dispatcher.dispatch("award.rejected", {
+        scope: { entityType: "QUERY", entityId: queryId },
+        tokens: {
+          Leg_Code: rejectedLeg?.legCode ?? "",
+          Query_Code: query?.queryCode ?? "",
+          Reason: input.reason,
+        },
+        recipients: { IN_APP: execs.map((u) => u.id) },
+        tenantId: query?.tenantId ?? null,
+      });
+    } catch (err) {
+      this.logger.error(`post-reject comms failed for leg ${legId}`, err as Error);
+    }
 
     return decision;
   }
