@@ -196,6 +196,53 @@ describe("SendForApprovalDialog", () => {
     expect(screen.getByRole("button", { name: /send for approval/i })).toBeDisabled();
   });
 
+  // ── Review round — the reason block used to unmount whenever `overrideRequired` went false,
+  // which destroyed a manually-set "reason required" error along with it for free. The PO ruling
+  // keeps it permanently mounted, so nothing cleared that error on switching selections any more:
+  // trip it on a non-recommended pick, then switch to the recommendation, and the label/help text
+  // correctly flipped to "optional" while the red alert underneath still insisted a reason was
+  // required. ─────────────────────────────────────────────────────────────────────────────────
+  it("clears a stale required-reason error when the selection changes to the recommended offer", async () => {
+    renderDialog();
+    await userEvent.click(screen.getByLabelText(/Oceanic — Groupage/)); // not recommended
+    await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/reason is required/i);
+
+    await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/)); // recommended
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // Positive control — the field itself is still there, correctly relabelled, not just
+    // coincidentally absent because something else unmounted.
+    expect(screen.getByLabelText(/reason \(optional\)/i)).toBeInTheDocument();
+  });
+
+  // ── Ride-along question (review round) — the SAME field never unmounting between selections
+  // means a reason TYPED for one offer could just as easily survive a switch to a different offer
+  // and get silently attached to that offer's submit instead — the same class of staleness as the
+  // error above, just on the value rather than the error. `resetField` (the fix for both) clears
+  // the typed text too; this pins that half of the fix so it can't regress independently of the
+  // error-clearing half. ──────────────────────────────────────────────────────────────────────
+  it("does not carry a reason typed for one offer over to a newly selected offer", async () => {
+    renderDialog();
+    await userEvent.click(screen.getByLabelText(/Oceanic — Groupage/)); // not recommended
+    await userEvent.type(
+      screen.getByLabelText(/override reason/i),
+      "Oceanic specifically is cheaper here.",
+    );
+
+    await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/)); // recommended
+    expect(screen.getByLabelText(/reason \(optional\)/i)).toHaveValue("");
+
+    // Belt and suspenders — send the recommended offer now and confirm the stale Oceanic-specific
+    // text never reaches the wire at all (not even as an unwanted voluntary reason).
+    await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
+    await waitFor(() => expect(postJson).toHaveBeenCalledTimes(1));
+    expect(postJsonMock.mock.calls[0][1]).toEqual({
+      quoteId: recommendedQuoteId,
+      variant: "DEDICATED",
+    });
+  });
+
   it("requires a reason only when the pick is not the recommendation", async () => {
     renderDialog();
     await userEvent.click(screen.getByLabelText(/Oceanic — Groupage/)); // not recommended

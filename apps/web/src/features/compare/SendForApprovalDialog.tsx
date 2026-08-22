@@ -60,7 +60,10 @@ export interface SendForApprovalDialogProps {
  * reason reaches the wire the same as a mandatory one — `handleSend` sends `overrideReason`
  * whenever the (trimmed) field is non-empty, not only when `overrideRequired`; the server already
  * persists `input.overrideReason ?? null` unconditionally (`award.service.ts`) and only the A2
- * guard is conditional, so there is nothing here for the backend to reject either way.
+ * guard is conditional, so there is nothing here for the backend to reject either way. Because the
+ * field never unmounts any more, `handleSelectOffer` resets it (value AND any manually-set error)
+ * on every selection change — see that function's own doc comment for the two staleness bugs this
+ * closes.
  */
 export function SendForApprovalDialog({
   open,
@@ -103,6 +106,20 @@ export function SendForApprovalDialog({
   const pending = sendForApproval.isPending;
   const overrideId = `send-override-reason-${leg.legId}`;
   const proceedId = `send-proceed-reason-${leg.legId}`;
+
+  // Review round — the reason block used to unmount whenever `overrideRequired` went false, which
+  // destroyed a manually-set error (`handleSend`'s "A reason is required…") along with it for free.
+  // The PO ruling keeps the block permanently mounted, so nothing clears that error on its own any
+  // more: pick a non-recommended offer, trip the error with an empty Send, then switch to the
+  // recommendation — the label/help text correctly flip to "optional," but the red alert
+  // underneath still insists a reason is required. `resetField` clears both the error AND the
+  // typed value in one call. The value half closes the SAME class of bug from the other side: a
+  // reason typed while one offer was selected must not silently ride along and get attached to a
+  // DIFFERENT offer's submit now that the field no longer unmounts between selections.
+  function handleSelectOffer(key: string) {
+    setSelectedKey(key);
+    form.resetField("overrideReason");
+  }
 
   function handleSend(values: { overrideReason?: string }) {
     if (pending || !selectedCell) return;
@@ -166,7 +183,7 @@ export function SendForApprovalDialog({
           <RadioGroup
             name={`send-for-approval-${leg.legId}`}
             value={selectedKey}
-            onValueChange={setSelectedKey}
+            onValueChange={handleSelectOffer}
             className="max-h-72 space-y-3 overflow-y-auto"
           >
             {groups.map((g) => (
