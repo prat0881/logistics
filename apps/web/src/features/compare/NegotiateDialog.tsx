@@ -78,12 +78,16 @@ interface Candidate {
  *
  * PENDING_APPROVAL is ALSO ineligible, with its own reason text (design decision D5, S5.9 code
  * review round 2): negotiate stays REFUSED while a leg is under review — the maker must reject
- * the leg back to QUOTED first, matching the server's own gate
- * (`negotiation.service.ts`'s `REQUOTABLE_STATUSES = [QUOTED, APPROVED]`, unchanged). An earlier
- * version of this function admitted PENDING_APPROVAL as eligible on the theory that it's "just a
- * QUOTED offer under review, not a different commitment" — that was wrong: the product owner
- * ruled negotiate stays refused, and admitting it client-side while the server refuses it would
- * have let the maker select an ineligible forwarder and get a 409 back.
+ * the leg back to QUOTED first, matching the server's own gate: the LEG-level decision guard at
+ * `negotiation.service.ts:69-74`, which loads the leg's `LegAwardDecision` and 409s when it is
+ * `PENDING_APPROVAL`, BEFORE `REQUOTABLE_STATUSES` (`:76`) is ever consulted. That guard is NOT
+ * redundant with `REQUOTABLE_STATUSES` — the latter only gates the quote NAMED in a given call,
+ * so a still-QUOTED sibling quote on the same leg would sail straight past it and let a maker
+ * reset a decision a checker is mid-review of on a different, already-shortlisted quote. An
+ * earlier version of this function admitted PENDING_APPROVAL as eligible on the theory that it's
+ * "just a QUOTED offer under review, not a different commitment" — that was wrong: the product
+ * owner ruled negotiate stays refused, and admitting it client-side while the server refuses it
+ * would have let the maker select an ineligible forwarder and get a 409 back.
  */
 function buildCandidates(leg: LegComparisonDto): Candidate[] {
   const byForwarder = new Map<string, Candidate>();
