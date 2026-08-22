@@ -16,9 +16,13 @@ import { AwardChangeOrderListener } from "./award-change-order.listener";
 // the Stage-3/4 "quote"/"leg" machines. Mirrors rfq.module.ts's onModuleInit — CONTRIBUTES
 // transitions onto the already-registered machines, never edits leg.machine.ts/quote.machine.ts
 // and never calls `register()` (that already happened in legs.module.ts / rfq.module.ts).
-// S5.4 Task 2: AwardController/AwardService (shortlist + send-for-approval, the maker half —
-// see award.service.ts) now wired in. ComparisonModule is imported for ComparisonService
-// (getComparison, reused to validate a shortlist and to snapshot the recommendation).
+// S5.4 Task 2: AwardController/AwardService (send-for-approval, the maker half — see
+// award.service.ts) now wired in. ComparisonModule is imported for ComparisonService
+// (getComparison, reused to validate the named offer and to snapshot the recommendation).
+// CORRECTED (S5.9 final whole-branch review) — this used to read "shortlist +
+// send-for-approval", the retired two-call shape. S5.9 Task 3 merged them: `PUT .../shortlist`
+// and the public `shortlist` method are gone, and one transactional `send-for-approval` call
+// names the offer it acts on.
 // S5.4 Task 4: FxRatesModule added for FxRatesService (generateClientQuote prices each leg's
 // winner directly off its own draftJson + the FX table — getComparison can't be reused there,
 // see award.service.ts). QueryStatusProjector needs no new import — StatusModule already
@@ -37,10 +41,12 @@ import { AwardChangeOrderListener } from "./award-change-order.listener";
 // S5.9 Task 2 (§4.4): PENDING_APPROVAL edges inserted between QUOTED/FULLY_QUOTED and APPROVED —
 // send-for-approval is now the ONLY route to approval. `QUOTED --approve--> APPROVED` and
 // `FULLY_QUOTED --approve--> APPROVED` are RETIRED (removed, not left in place alongside the new
-// edges) so an approval can no longer bypass review. AwardService's own sendForApproval/approve
-// (award.service.ts) still drive the OLD direct edges as of this task — Task 3/4 update them to
-// route through PENDING_APPROVAL for real; until then those two service methods are broken by
-// this contribution (see award-workflow-checker.e2e-spec.ts, sequenced to Task 3/4).
+// edges) so an approval can no longer bypass review. CORRECTED (S5.9 final whole-branch review)
+// — this used to end with a mid-build note saying AwardService's sendForApproval/approve "still
+// drive the OLD direct edges as of this task" and were "broken by this contribution until Task
+// 3/4". That state is long gone: Tasks 3 and 4 rewrote both methods onto the edges below, and
+// award-workflow-maker/checker.e2e-spec.ts run green against them. Left as a warning on the file
+// that DEFINES the state machine, it described a machine that no longer exists.
 @Module({
   imports: [StatusModule, ComparisonModule, FxRatesModule, PrismaModule, RfqModule, CommsModule],
   controllers: [AwardController],

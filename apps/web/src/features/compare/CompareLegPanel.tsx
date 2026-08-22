@@ -237,9 +237,13 @@ export function CompareLegPanel({
     if (!canSend) setSendOpen(false);
   }, [canSend]);
 
-  // S5.7 T5 — this is a UI-only restriction (design consequence C1): the server still accepts a
-  // re-quote on a PENDING_APPROVAL leg and resets its decision to DRAFT, it just isn't the flow the
-  // maker should be steered through while a checker is already reviewing the current shortlist.
+  // CORRECTED (S5.9 final whole-branch review) — this used to say the restriction was "UI-only"
+  // and that "the server still accepts a re-quote on a PENDING_APPROVAL leg and resets its
+  // decision to DRAFT" (design consequence C1, true when S5.7 T5 wrote it). D5 removed exactly
+  // that: `negotiation.service.ts` now refuses a re-quote on any leg whose decision is
+  // PENDING_APPROVAL, with a 409 and this same "reject it first" reasoning — checked at the LEG
+  // level, so a still-QUOTED sibling quote cannot slip past it either. This copy therefore states
+  // the server's actual rule rather than softening a rule the server does not have.
   const negotiateDisabledReason =
     decisionStatus === "PENDING_APPROVAL"
       ? "A checker must reject this leg before it can be re-negotiated."
