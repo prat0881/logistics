@@ -196,13 +196,22 @@ export const METRIC_TESTID: Record<MetricId, string> = {
   validUntil: "offer-valid",
 };
 
+/** Type treatment every orientation shares — font, numerals, muting. Alignment is deliberately
+ *  NOT here: a metric is a COLUMN in the rows view (right-aligned under a right-aligned header)
+ *  and a ROW in the columns view (centred under a centred offer header), so forcing one alignment
+ *  on both is exactly what made values read as detached from their heading (S5.9.1 R6). Each grid
+ *  component applies `METRIC_ALIGN` below alongside this map. */
 export const METRIC_CELL_CLASS: Record<MetricId, string> = {
-  usdTotal: "text-right font-mono tabular-nums",
-  nativeTotal: "text-right font-mono tabular-nums",
-  rate: "text-right font-mono tabular-nums text-muted-foreground",
-  transit: "text-right text-muted-foreground",
-  validUntil: "text-right text-muted-foreground",
+  usdTotal: "font-mono tabular-nums",
+  nativeTotal: "font-mono tabular-nums",
+  rate: "font-mono tabular-nums text-muted-foreground",
+  transit: "text-muted-foreground",
+  validUntil: "text-muted-foreground",
 };
+
+/** Alignment by orientation (S5.9.1 R6) — applied alongside `METRIC_CELL_CLASS` by each grid
+ *  component, never folded into that shared map (see its doc comment for why). */
+export const METRIC_ALIGN = { columns: "text-center", rows: "text-right" } as const;
 
 /** The recommended row/column's tint (S5.7 item 2 — every cell, not just the header/label). Shared
  *  by both orientations for the same drift-proofing reason as the maps above. */

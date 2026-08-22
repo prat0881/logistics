@@ -14,6 +14,7 @@ import {
   METRICS,
   METRIC_TESTID,
   METRIC_CELL_CLASS,
+  METRIC_ALIGN,
   RECOMMENDED_TINT,
   RECOMMENDED_MARK,
   STALE_OFFER_LABEL,
@@ -54,29 +55,37 @@ export function ComparisonGridColumns({
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
-      <Table>
+      {/* `w-auto` overrides the shared `Table`'s own `w-full` (table.tsx is off-limits — this is a
+       *  className override from the consumer, the sanctioned seam). With few offers, a `w-full`
+       *  table stretches its columns to fill the panel and the numbers end up stranded far from
+       *  their (narrow, centred) headers — the product owner's complaint. Sized-to-content still
+       *  scrolls correctly for a wide leg: the wrapping div above keeps `overflow-x-auto`. */}
+      <Table className="w-auto">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-32" />
+            <TableHead className="h-9 w-32 px-3" />
             {groups.map((g) => (
               <TableHead
                 key={g.freightForwarderId}
                 colSpan={g.cells.length}
-                className={cn("text-center font-semibold text-foreground", GROUP_SEPARATOR)}
+                className={cn(
+                  "h-9 px-3 text-center font-semibold text-foreground",
+                  GROUP_SEPARATOR,
+                )}
               >
                 {g.freightForwarderName}
               </TableHead>
             ))}
           </TableRow>
           <TableRow>
-            <TableHead className="w-32">Offer</TableHead>
+            <TableHead className="h-auto w-32 px-3 py-1.5">Offer</TableHead>
             {cells.map((cell) => {
               const variantText = cell.offer.variant ? rateVariantLabel(cell.offer.variant) : "—";
               return (
                 <TableHead
                   key={cell.key}
                   className={cn(
-                    "text-center align-bottom",
+                    "h-auto px-2 py-1.5 text-center align-bottom",
                     cell.recommended && RECOMMENDED_TINT,
                     lastInGroup.has(cell.key) && GROUP_SEPARATOR,
                   )}
@@ -146,13 +155,17 @@ export function ComparisonGridColumns({
         <TableBody>
           {METRICS.map((metric) => (
             <TableRow key={metric.id}>
-              <TableCell className="font-medium text-muted-foreground">{metric.label}</TableCell>
+              <TableCell className="px-3 py-2 font-medium text-muted-foreground">
+                {metric.label}
+              </TableCell>
               {cells.map((cell) => (
                 <TableCell
                   key={cell.key}
                   data-testid={`${METRIC_TESTID[metric.id]}-${cell.key}`}
                   className={cn(
+                    "px-2 py-2",
                     METRIC_CELL_CLASS[metric.id],
+                    METRIC_ALIGN.columns,
                     cell.recommended && RECOMMENDED_TINT,
                     lastInGroup.has(cell.key) && GROUP_SEPARATOR,
                   )}
@@ -163,13 +176,13 @@ export function ComparisonGridColumns({
             </TableRow>
           ))}
           <TableRow>
-            <TableCell className="font-medium text-muted-foreground">Status</TableCell>
+            <TableCell className="px-3 py-2 font-medium text-muted-foreground">Status</TableCell>
             {cells.map((cell) => (
               <TableCell
                 key={cell.key}
                 data-testid={`offer-status-${cell.key}`}
                 className={cn(
-                  "text-center",
+                  "px-2 py-2 text-center",
                   cell.recommended && RECOMMENDED_TINT,
                   lastInGroup.has(cell.key) && GROUP_SEPARATOR,
                 )}

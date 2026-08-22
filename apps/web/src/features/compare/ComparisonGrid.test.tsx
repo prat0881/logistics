@@ -574,6 +574,37 @@ describe("ComparisonGrid — no Recommended badge in the status cell", () => {
   );
 });
 
+// ── S5.9.1 R6 — `METRIC_CELL_CLASS` used to be `text-right` unconditionally, which is correct in
+// the rows view (a metric is a column, right-aligned under a right-aligned header) but wrong in
+// the columns view (a metric is a row under a CENTRED offer header, so the number hugs the right
+// edge of a centred column and reads as detached from its heading — the product owner's "lot of
+// white space" complaint). `METRIC_ALIGN` now supplies the alignment per orientation instead of
+// folding it into the shared map, which stays the one source of truth for the type treatment
+// (font, tabular numerals, muting) both orientations still agree on. Uses `PARITY_RECOMMENDED_KEY`
+// ("q1::DEDICATED") as `cellKey` — the same fixture and offer the star/tint parity tests above key
+// off, so this needs no new fixture.
+describe("ComparisonGrid — orientation-aware metric alignment (S5.9.1 R6)", () => {
+  const cellKey = PARITY_RECOMMENDED_KEY;
+
+  it("aligns metric values under their offer header in the columns view", () => {
+    renderGrid({ viewMode: "columns" });
+    expect(screen.getByTestId(`offer-usd-${cellKey}`).className).toContain("text-center");
+  });
+
+  it("keeps metric values right-aligned in the rows view, under right-aligned headers", () => {
+    renderGrid({ viewMode: "rows" });
+    expect(screen.getByTestId(`offer-usd-${cellKey}`).className).toContain("text-right");
+  });
+
+  it("keeps the numeric font in both orientations", () => {
+    for (const viewMode of ["columns", "rows"] as const) {
+      const { unmount } = renderGrid({ viewMode });
+      expect(screen.getByTestId(`offer-usd-${cellKey}`).className).toContain("tabular-nums");
+      unmount();
+    }
+  });
+});
+
 describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
   it("renders one column per offer, grouped under its forwarder, with USD total + transit", () => {
     renderPanel();

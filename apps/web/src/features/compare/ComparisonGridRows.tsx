@@ -15,6 +15,7 @@ import {
   METRICS,
   METRIC_TESTID,
   METRIC_CELL_CLASS,
+  METRIC_ALIGN,
   RECOMMENDED_TINT,
   RECOMMENDED_MARK,
   STALE_OFFER_LABEL,
@@ -66,13 +67,13 @@ export function ComparisonGridRows({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-48">Variant</TableHead>
+            <TableHead className="h-9 w-48 px-3">Variant</TableHead>
             {METRICS.map((metric) => (
-              <TableHead key={metric.id} className="text-right">
+              <TableHead key={metric.id} className={cn("h-9 px-3", METRIC_ALIGN.rows)}>
                 {metric.label}
               </TableHead>
             ))}
-            <TableHead className="text-center">Status</TableHead>
+            <TableHead className="h-9 px-3 text-center">Status</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -105,7 +106,7 @@ export function ComparisonGridRows({
                       cell.recommended && RECOMMENDED_TINT,
                     )}
                   >
-                    <TableCell className={cn(cell.recommended && RECOMMENDED_TINT)}>
+                    <TableCell className={cn("px-3 py-2", cell.recommended && RECOMMENDED_TINT)}>
                       {/* Same guard as the columns header: an unpriced offer has nothing to expand
                           (see ComparisonGridColumns's doc comment) — no click affordance at all. */}
                       {cell.offer.priced ? (
@@ -160,7 +161,9 @@ export function ComparisonGridRows({
                         key={metric.id}
                         data-testid={`${METRIC_TESTID[metric.id]}-${cell.key}`}
                         className={cn(
+                          "px-3 py-2",
                           METRIC_CELL_CLASS[metric.id],
+                          METRIC_ALIGN.rows,
                           cell.recommended && RECOMMENDED_TINT,
                         )}
                       >
@@ -169,7 +172,7 @@ export function ComparisonGridRows({
                     ))}
                     <TableCell
                       data-testid={`offer-status-${cell.key}`}
-                      className={cn("text-center", cell.recommended && RECOMMENDED_TINT)}
+                      className={cn("px-3 py-2 text-center", cell.recommended && RECOMMENDED_TINT)}
                     >
                       <div className="flex flex-wrap items-center justify-center gap-1">
                         <ForwarderStatusBadge status={cell.offer.quoteStatus} />
