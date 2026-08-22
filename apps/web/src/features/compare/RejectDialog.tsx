@@ -72,9 +72,16 @@ export function RejectDialog({ open, onOpenChange, queryId, leg }: RejectDialogP
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Reject {leg.legCode}</DialogTitle>
+          {/* No raw enum in user-visible copy (final whole-branch review): this used to read
+              "returns the leg to the maker as DRAFT". Every other status in the app renders
+              through a human label (`statusBadges.tsx`'s `LEG_LABEL`/`FORWARDER_LABEL`), and
+              "DRAFT" here named the DECISION's status anyway — not the leg's, which reject()
+              returns to Fully/Partially Quoted — so the enum was both raw and pointing at the
+              wrong entity. What the checker actually needs to know is the consequence: the maker
+              gets it back to revise. */}
           <DialogDescription>
-            {leg.origin} → {leg.destination}. This returns the leg to the maker as DRAFT — the
-            reason below is their only on-screen cue for what to revise.
+            {leg.origin} → {leg.destination}. This sends the leg back to the maker to revise — the
+            reason below is their only on-screen cue for what to change.
           </DialogDescription>
         </DialogHeader>
 

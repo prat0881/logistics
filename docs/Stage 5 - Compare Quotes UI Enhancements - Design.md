@@ -99,7 +99,7 @@ Legs remain stacked cards with one open at a time. The scroll reduction comes en
 
 ### 8 — Both roles
 
-One screen serves both. The Executive sees the maker half; Manager/Administrator additionally see `CheckerPanel` and `GenerateGate`. Every item above lands for both roles. Because item 4 removes the sections the Executive uses most, **both roles are tested explicitly** — an Executive-viewer test and a Manager-viewer test per changed component, awaiting a positive auth control before asserting (see Testing).
+One screen serves both. The Executive sees the maker half; Manager/Administrator additionally see the checker controls and `GenerateGate`. (**Superseded in S5.9.1:** `CheckerPanel` — the component this line originally named — was deleted; Approve/Reject now live in `CompareLegPanel`'s one shared action bar, gated on `canCheck`, each behind `ApproveDialog`/`RejectDialog`. `GenerateGate` is unchanged.) Every item above lands for both roles. Because item 4 removes the sections the Executive uses most, **both roles are tested explicitly** — an Executive-viewer test and a Manager-viewer test per changed component, awaiting a positive auth control before asserting (see Testing).
 
 ### 9 — Conversion rate
 
@@ -127,7 +127,7 @@ C1–C4 are all API-shape changes on the same feature. If they are addressed, do
 ## Testing
 
 - **Vitest + @testing-library**, colocated, matching the existing `features/compare` suite (56 tests today).
-- **Both roles per changed component** (item 8). `renderWithProviders`' `/api/auth/me` stub resolves asynchronously — any assertion made synchronously after `render()` fires while `user` is `null` and proves nothing. Await a positive control first, using the `AuthProbe` pattern already in `CheckerPanel.test.tsx`. **Three vacuous tests were shipped and fixed during S5.6 from exactly this cause.**
+- **Both roles per changed component** (item 8). `renderWithProviders`' `/api/auth/me` stub resolves asynchronously — any assertion made synchronously after `render()` fires while `user` is `null` and proves nothing. Await a positive control first, using the `AuthProbe` pattern — since S5.9.1 deleted `CheckerPanel.test.tsx` (its Generate-gate half became `GenerateGate.test.tsx`), copy it from `CompareQuotesPage.test.tsx`, `ComparisonGrid.test.tsx` or `MakerPanel.test.tsx`, which all carry it. **Three vacuous tests were shipped and fixed during S5.6 from exactly this cause.**
 - **Any absence assertion must be mutation-proven**: break the production condition, confirm red, revert, confirm green.
 - **Parity tests for the two grid orientations** — the same fixture asserted through both `viewMode`s, so a feature added to one and forgotten in the other fails.
 - **Regressions that must not break** (each pinned by an existing test): unpriced offers never render `$0` and are non-interactive; `OfferDetail`'s total is `usdTotal`, not the sum of lines; `locked` unmounts maker/checker controls and suppresses the recommendation; four-eyes disables Approve/Reject for the sender; Generate is Manager+ with no four-eyes.

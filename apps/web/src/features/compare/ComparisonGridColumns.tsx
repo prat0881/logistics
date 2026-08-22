@@ -83,11 +83,19 @@ export function ComparisonGridColumns({
             <TableHead className="h-auto w-32 px-3 py-1.5">Offer</TableHead>
             {cells.map((cell) => {
               const variantText = cell.offer.variant ? rateVariantLabel(cell.offer.variant) : "—";
+              // The header (and the button inside it) take `METRIC_ALIGN.columns`, NOT a
+              // `text-center` literal (final whole-branch review): the metric cells below derive
+              // their alignment from that same constant, so a literal here would be a second source
+              // for the one thing R6 exists to keep in step — editing it to `text-left` would put
+              // the data back out from under its header (the product owner's original complaint)
+              // with the whole suite still green, since the tests only reached the cell. Both ends
+              // now move together by construction.
               return (
                 <TableHead
                   key={cell.key}
                   className={cn(
-                    "h-auto px-2 py-1.5 text-center align-bottom",
+                    "h-auto px-2 py-1.5 align-bottom",
+                    METRIC_ALIGN.columns,
                     cell.recommended && RECOMMENDED_TINT,
                     lastInGroup.has(cell.key) && GROUP_SEPARATOR,
                   )}
@@ -102,7 +110,10 @@ export function ComparisonGridColumns({
                       data-testid={`offer-header-${cell.key}`}
                       aria-expanded={selectedOfferKey === cell.key}
                       onClick={() => onOpenBreakdown(cell)}
-                      className="w-full rounded px-1 py-0.5 text-center hover:bg-muted/50"
+                      className={cn(
+                        "w-full rounded px-1 py-0.5 hover:bg-muted/50",
+                        METRIC_ALIGN.columns,
+                      )}
                     >
                       <span className="block text-xs font-medium">
                         {variantText}

@@ -7,7 +7,12 @@ import { AuthProvider, useAuth } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { ComparisonGrid, STALE_OFFER_LABEL } from "./ComparisonGrid";
-import { METRICS, RECOMMENDATION_FOOTNOTE, SENT_FOR_APPROVAL_FOOTNOTE } from "./comparisonRowModel";
+import {
+  METRICS,
+  METRIC_ALIGN,
+  RECOMMENDATION_FOOTNOTE,
+  SENT_FOR_APPROVAL_FOOTNOTE,
+} from "./comparisonRowModel";
 import type { ViewMode } from "./useViewMode";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -686,6 +691,63 @@ describe.each(["columns", "rows"] as const)(
       expect(document.querySelector('[data-testid^="offer-sent-for-approval-"]')).toBeNull();
     });
 
+    // ── Final whole-branch review, C1 — the post-REJECTION state, the one combination neither
+    // Task 1's nor Task 5's fixtures reached (Task 5's all default `PENDING_APPROVAL`; Task 1's
+    // DRAFT case leaves `shortlistedQuoteId` null). `reject()` (award.service.ts) writes the
+    // decision back to DRAFT and clears `sentByUserId` but KEEPS the shortlist, so `MakerPanel`
+    // can tell the maker which one to revise — which meant this grid rendered `⚑` + "the offer
+    // currently under checker review" a few rows above MakerPanel's own "Returned by the checker"
+    // alert, on the same screen, in both orientations. ──────────────────────────────────────────
+    const REJECTED_LEG: LegComparisonDto = {
+      ...SENT_LEG,
+      decision: {
+        ...SENT_LEG.decision!,
+        status: "DRAFT",
+        sentByUserId: null, // reject() clears this...
+        rejectionReason: "Transit too long", // ...and writes this
+        decidedByUserId: "u2",
+        decidedAt: "2026-08-15T09:00:00.000Z",
+      },
+    };
+
+    it("renders no flag once the checker has rejected it — a DRAFT decision still carrying its shortlist is not a live review", async () => {
+      render(<ComparisonGrid leg={REJECTED_LEG} viewMode={mode} />);
+
+      // Positive control — the grid rendered for real, and the `★` (whose copy is timeless) is
+      // still there, so the flag's absence below is this gate and not an empty render.
+      expect(
+        await screen.findByTestId(`offer-recommended-${PARITY_RECOMMENDED_KEY}`),
+      ).toBeInTheDocument();
+      expect(document.querySelector('[data-testid^="offer-sent-for-approval-"]')).toBeNull();
+      // The footnote loses exactly its own half — the present-tense sentence goes, the timeless
+      // one stays, so the page never explains a mark that isn't on it.
+      const footnote = screen.getByTestId("comparison-footnote");
+      expect(footnote).toHaveTextContent(RECOMMENDATION_FOOTNOTE);
+      expect(footnote).not.toHaveTextContent(SENT_FOR_APPROVAL_FOOTNOTE);
+    });
+
+    it("renders no flag once the decision is APPROVED — decided is not 'under review', and `locked` hasn't engaged for one approved leg", async () => {
+      render(
+        <ComparisonGrid
+          leg={{
+            ...SENT_LEG,
+            decision: {
+              ...SENT_LEG.decision!,
+              status: "APPROVED",
+              decidedByUserId: "u2",
+              decidedAt: "2026-08-15T09:00:00.000Z",
+            },
+          }}
+          viewMode={mode}
+        />,
+      );
+
+      expect(
+        await screen.findByTestId(`offer-recommended-${PARITY_RECOMMENDED_KEY}`),
+      ).toBeInTheDocument();
+      expect(document.querySelector('[data-testid^="offer-sent-for-approval-"]')).toBeNull();
+    });
+
     it("suppresses the mark once locked, consistently with the recommendation", async () => {
       render(<ComparisonGrid leg={SENT_LEG} viewMode={mode} locked />);
 
@@ -719,6 +781,20 @@ describe("ComparisonGrid — orientation-aware metric alignment (S5.9.1 R6)", ()
   it("keeps metric values right-aligned in the rows view, under right-aligned headers", () => {
     renderGrid({ viewMode: "rows" });
     expect(screen.getByTestId(`offer-usd-${cellKey}`).className).toContain("text-right");
+  });
+
+  // ── Final whole-branch review — R6's whole point is that a metric value sits UNDER its header,
+  // so the two must not be two independent literals. `ComparisonGridColumns` hard-coded
+  // `text-center` on the offer header while the cell read `METRIC_ALIGN.columns`; the tests above
+  // only ever reached the cell, so editing that literal to `text-left` reintroduced the product
+  // owner's "data not under the header" complaint with the whole suite green. Both ends now derive
+  // from `METRIC_ALIGN`, and this asserts the header end so a re-divergence reddens here.
+  it("aligns the offer HEADER exactly as the metric cells beneath it, from the one shared source", () => {
+    renderGrid({ viewMode: "columns" });
+    const header = screen.getByTestId(`offer-header-${cellKey}`).closest("th");
+    expect(header).not.toBeNull();
+    expect(header!.className).toContain(METRIC_ALIGN.columns);
+    expect(screen.getByTestId(`offer-usd-${cellKey}`).className).toContain(METRIC_ALIGN.columns);
   });
 
   it("keeps the numeric font in both orientations", () => {

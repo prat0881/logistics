@@ -12,8 +12,8 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
-import { seedMessageTemplates } from "../src/seed/message-templates.seed";
 import { StatusService } from "../src/modules/status/status.service";
+import { NotificationDispatcher } from "../src/modules/comms/notification-dispatcher.service";
 
 // S5.4 Task 3 — the CHECKER half of the maker-checker award workflow (design §9 steps 2+4):
 // POST .../legs/:legId/approve and POST .../legs/:legId/reject, both Manager+
@@ -131,9 +131,18 @@ describe("award workflow — checker endpoints (e2e)", () => {
 
   // One Query + one Leg (seeded directly at `legStatus`) + one FF/Rfq/Quote per `ffs` entry.
   // A fresh leg per call is required anyway — LegAwardDecision.legId is @unique.
-  async function seedLeg(label: string, legStatus: string, ffs: FfSpec[]) {
+  // `assignedUserId` (S5.9.1 final review, I1) is optional and defaults to NULL — every test that
+  // predates the reject-notification work wants the unassigned shape, which is also the fallback
+  // branch. The live `POST /api/queries` always populates it (`queries.service.ts`:
+  // `input.assignedUserId ?? user.userId`), which is why the notification tests set it explicitly.
+  async function seedLeg(
+    label: string,
+    legStatus: string,
+    ffs: FfSpec[],
+    assignedUserId: string | null = null,
+  ) {
     const query = await prisma.query.create({
-      data: { queryCode: `${CODE}-${label}`, priority: "HIGH", incoterms: "FOB" },
+      data: { queryCode: `${CODE}-${label}`, priority: "HIGH", incoterms: "FOB", assignedUserId },
     });
     const origin = await prisma.point.create({
       data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
@@ -200,8 +209,9 @@ describe("award workflow — checker endpoints (e2e)", () => {
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
     ],
     legStatus: string = "FULLY_QUOTED",
+    assignedUserId: string | null = null,
   ) {
-    const { query, leg, quotes } = await seedLeg(label, legStatus, ffs);
+    const { query, leg, quotes } = await seedLeg(label, legStatus, ffs, assignedUserId);
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
@@ -238,15 +248,22 @@ describe("award workflow — checker endpoints (e2e)", () => {
     await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX.toLowerCase()}-exec-` } } });
   };
 
-  const mkExec = () =>
+  // Every user this file creates shares the `awck-exec-` email prefix `cleanup` deletes on, whatever
+  // its role or active flag — the non-Executive and inactive rows exist only to prove the
+  // broadcast's `role`/`isActive` filters are load-bearing (S5.9.1 final review, I2: dropping
+  // either filter passed before these were added).
+  const mkUser = (opts: { role?: "EXECUTIVE" | "MANAGER"; isActive?: boolean } = {}) =>
     prisma.user.create({
       data: {
         name: "AWCK Exec",
         email: `${PREFIX.toLowerCase()}-exec-${randomUUID()}@e2e.test`,
         passwordHash: "x",
-        role: "EXECUTIVE",
+        role: opts.role ?? "EXECUTIVE",
+        isActive: opts.isActive ?? true,
       },
     });
+
+  const mkExec = () => mkUser();
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -264,12 +281,10 @@ describe("award workflow — checker endpoints (e2e)", () => {
 
   afterAll(async () => {
     await cleanup();
-    // S5.9.1 Task 4 — the "comms failure never fails reject" test deletes the
-    // award.rejected.inapp template row to force NotificationDispatcher's lookup to return null;
-    // reseed it here (create-only upsert, so idempotent against every other file's state) so the
-    // suite stays order-independent regardless of which spec file runs next in the same
-    // --runInBand jest process.
-    await seedMessageTemplates(prisma);
+    // No template reseed here any more (S5.9.1 final review, I2): the "comms failure never fails
+    // reject" test no longer deletes `award.rejected.inapp` — it mocks the dispatch to throw, which
+    // is the only version of that test that actually enters reject()'s catch — so this file leaves
+    // the shared MessageTemplate rows untouched and needs no repair step.
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
@@ -854,15 +869,27 @@ describe("award workflow — checker endpoints (e2e)", () => {
     }
   });
 
-  // S5.9.1 Task 4 (R7) — a rejected leg genuinely returns to the general maker pool already
-  // (sentByUserId cleared, decision back to DRAFT — no assignment concept exists in the schema),
-  // but nothing announced it. These two tests guard the new comms block: an Executive gets told,
-  // and a comms problem can never turn a successful reject into a failure.
-  it("notifies executives in-app when a leg is rejected", async () => {
+  // S5.9.1 Task 4 (R7), CORRECTED by the final whole-branch review (I1) — a rejected leg is
+  // workable again (sentByUserId cleared, decision back to DRAFT) but nothing announced it. The
+  // announcement goes to the query's ASSIGNED user (`Query.assignedUserId`, written on every query
+  // create), exactly as ff-portal.service.ts / rfq-schedule.listener.ts / rfq-notifications.service
+  // resolve the same question; the all-active-Executives broadcast is only the fallback for a query
+  // with no assignee. Task 4 shipped the fallback half alone, on the false premise that this schema
+  // has no assignment concept, so every rejection notified every Executive across every tenant.
+  it("notifies the query's ASSIGNED executive — and only them, never the whole Executive pool", async () => {
     const senderId = randomUUID();
     const rejectorId = randomUUID();
-    const exec = await mkExec();
-    const { query, leg } = await seedPendingApproval("notify", senderId);
+    const assignee = await mkExec();
+    // An active Executive who is NOT the assignee — the recipient the broadcast would have added,
+    // and the one this test exists to prove is left alone.
+    const otherExec = await mkExec();
+    const { query, leg } = await seedPendingApproval(
+      "assigned",
+      senderId,
+      undefined,
+      "FULLY_QUOTED",
+      assignee.id,
+    );
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
@@ -873,28 +900,89 @@ describe("award workflow — checker endpoints (e2e)", () => {
     const notes = await prisma.notification.findMany({
       where: { type: "award.rejected", entityId: query.id },
     });
-    expect(notes.length).toBeGreaterThan(0);
-    expect(notes.every((n) => n.recipientUserId != null)).toBe(true);
-    // Stronger than "someone was notified" — THIS Executive, the one the test actually seeded,
-    // was among the recipients (not just an artifact of other tests' leftover exec users).
-    expect(notes.some((n) => n.recipientUserId === exec.id)).toBe(true);
+    // EXACTLY one recipient, and it is the assignee — not "the assignee is among them", which the
+    // broadcast would also satisfy.
+    expect(notes.map((n) => n.recipientUserId)).toEqual([assignee.id]);
+    expect(notes.map((n) => n.recipientUserId)).not.toContain(otherExec.id);
   });
 
-  it("still rejects successfully when the notification dispatch fails", async () => {
+  it("falls back to every active Executive only when the query has no assigned user", async () => {
     const senderId = randomUUID();
     const rejectorId = randomUUID();
-    // Prove the comms block cannot fail the reject: delete the template so lookup returns null.
-    // Reseeded in this file's afterAll (create-only upsert) so the suite stays order-independent.
-    await prisma.messageTemplate.deleteMany({ where: { key: "award.rejected.inapp" } });
-    const { query, leg } = await seedPendingApproval("notifyfail", senderId);
+    const exec = await mkExec();
+    // The two rows that make the `role`/`isActive` filters load-bearing: before these, dropping
+    // either from the `user.findMany` in reject() left the suite green (I2).
+    const inactiveExec = await mkUser({ isActive: false });
+    const manager = await mkUser({ role: "MANAGER" });
+    const { query, leg } = await seedPendingApproval("notify", senderId); // assignedUserId = null
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
       .set("Cookie", cookieFor(rejectorId, Role.MANAGER))
-      .send({ reason: "Price too high" })
+      .send({ reason: "Transit too long" })
       .expect(200);
 
+    const notes = await prisma.notification.findMany({
+      where: { type: "award.rejected", entityId: query.id },
+    });
+    const recipients = notes.map((n) => n.recipientUserId);
+    expect(recipients).toContain(exec.id); // THIS Executive, seeded by this test
+    expect(recipients).not.toContain(inactiveExec.id); // `isActive: true`
+    expect(recipients).not.toContain(manager.id); // `role: EXECUTIVE`
+    // Replaces a schema tautology (`every(n => n.recipientUserId != null)` — the column is NOT
+    // NULL, so it could never fail). This one is load-bearing: it fails if the tokens block stops
+    // supplying Leg_Code/Query_Code/Reason, because renderTemplate leaves the raw `{{…}}` behind.
+    const note = notes.find((n) => n.recipientUserId === exec.id)!;
+    expect(note.message).toContain(query.queryCode);
+    expect(note.message).toContain("L1");
+    expect(note.message).toContain("Transit too long");
+    expect(note.message).not.toContain("{{");
+  });
+
+  it("still rejects successfully when the notification dispatch THROWS", async () => {
+    const senderId = randomUUID();
+    const rejectorId = randomUUID();
+    const { query, leg } = await seedPendingApproval("notifyfail", senderId);
+
+    // A GENUINE throw (S5.9.1 final review, I2). This test used to delete the
+    // `award.rejected.inapp` template row instead — but `NotificationDispatcher.dispatch` treats a
+    // null template lookup as "nothing to send" and returns normally
+    // (notification-dispatcher.service.ts), so the `catch` was never entered and deleting the whole
+    // comms block (or just its try/catch) left the test green. Mocking the dispatch to reject is
+    // what actually exercises the guarantee this test claims — and it needs no template deletion,
+    // so the afterAll reseed that deletion required is gone too.
+    const dispatchSpy = jest
+      .spyOn(app.get(NotificationDispatcher), "dispatch")
+      .mockRejectedValueOnce(new Error("boom"));
+
+    // Read the call count BEFORE restoring: `mockRestore()` resets the mock's recorded calls as
+    // well as putting the real method back, so asserting on the spy afterwards reads zero.
+    let dispatchCalls = -1;
+    try {
+      await request(app.getHttpServer())
+        .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+        .set("Cookie", cookieFor(rejectorId, Role.MANAGER))
+        .send({ reason: "Price too high" })
+        .expect(200);
+      dispatchCalls = dispatchSpy.mock.calls.length;
+    } finally {
+      dispatchSpy.mockRestore();
+    }
+
+    // The throw really happened where this test thinks it did — otherwise the 200 above proves
+    // nothing (the old version's exact failure mode).
+    expect(dispatchCalls).toBe(1);
+    const notes = await prisma.notification.findMany({
+      where: { type: "award.rejected", entityId: query.id },
+    });
+    expect(notes).toHaveLength(0);
+
+    // ...and the reject itself is fully committed, not half-done: the decision AND both post-commit
+    // status fires (which run BEFORE the comms block) all stand.
     const decision = await prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: leg.id } });
     expect(decision.status).toBe("DRAFT");
+    expect(decision.rejectionReason).toBe("Price too high");
+    const rejectedLeg = await prisma.leg.findUniqueOrThrow({ where: { id: leg.id } });
+    expect(rejectedLeg.status).toBe("FULLY_QUOTED");
   });
 });

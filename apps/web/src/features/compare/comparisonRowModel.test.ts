@@ -314,6 +314,100 @@ describe("buildComparisonRowModel", () => {
       );
       expect(m.cells[0].sentForApproval).toBe(false);
     });
+
+    // ── Final whole-branch review, C1 — the one cell of the matrix neither Task 1's nor Task 5's
+    // fixtures reached, and the reason the bug shipped: every Task-5 fixture defaults
+    // `status: "PENDING_APPROVAL"`, and Task 1's DRAFT case leaves `shortlistedQuoteId` null, so
+    // `DRAFT + shortlisted` — precisely what `reject()` writes — was never built. `reject()`
+    // (award.service.ts) returns the decision to DRAFT and clears `sentByUserId` but deliberately
+    // KEEPS `shortlistedQuoteId`/`shortlistedVariant` so `MakerPanel` can tell the maker which
+    // shortlist to revise; the two sibling reset paths (`award-change-order.listener.ts`,
+    // `negotiation.service.ts`) DO null those fields, so reject is the unique producer of this
+    // state. Reading the shortlist regardless of status therefore made a rejected leg claim its
+    // offer was "currently under checker review" a few rows above MakerPanel's "Returned by the
+    // checker" alert on the same screen. ────────────────────────────────────────────────────────
+    it("marks nothing once the checker has REJECTED it — a DRAFT decision still carrying its shortlist is the post-rejection state, not a live review", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([offer({})]),
+          decision: decision({
+            status: "DRAFT",
+            shortlistedQuoteId: "q1",
+            shortlistedVariant: "DEDICATED",
+            sentByUserId: null, // reject() clears this...
+            rejectionReason: "Transit too long", // ...and writes this
+          }),
+        },
+        false,
+      );
+      expect(m.cells[0].sentForApproval).toBe(false);
+    });
+
+    // The other half of the same fix: the `★` and the `⚑` are NOT interchangeable. `★`'s copy is
+    // timeless ("recommended by the comparison engine"), so a returned leg keeps the mark it was
+    // judged against (Task 1's deliberate behaviour); `⚑`'s copy is a present-tense claim, so it
+    // must go. Pinning both on ONE post-rejection fixture is what stops a future "consistency"
+    // refactor from collapsing them back into a single rule in either direction.
+    it("keeps the RECOMMENDATION of record on that same rejected leg — only the live-status mark goes quiet", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([offer({})]),
+          decision: decision({
+            status: "DRAFT",
+            shortlistedQuoteId: "q1",
+            shortlistedVariant: "DEDICATED",
+            recommendedQuoteId: "q1",
+            recommendedVariant: "DEDICATED",
+            sentByUserId: null,
+            rejectionReason: "Transit too long",
+          }),
+        },
+        false,
+      );
+      expect(m.cells[0].recommended).toBe(true);
+      expect(m.cells[0].sentForApproval).toBe(false);
+    });
+
+    // APPROVED is the other status that survives with a shortlist still on the row (approve()
+    // never clears it — `generateClientQuote` reads it as the winner). A decided leg is not
+    // "currently under checker review" either, and `locked` does not cover this: it only engages
+    // once the WHOLE query reaches QUOTING_CLIENT, so one approved leg beside still-pending
+    // siblings renders unlocked.
+    it("marks nothing once the decision is APPROVED — decided is not 'under review', and `locked` hasn't engaged for a single approved leg", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([offer({})]),
+          decision: decision({
+            status: "APPROVED",
+            shortlistedQuoteId: "q1",
+            shortlistedVariant: "DEDICATED",
+            decidedByUserId: "u2",
+            decidedAt: "2026-08-15T09:00:00.000Z",
+          }),
+        },
+        false,
+      );
+      expect(m.cells[0].sentForApproval).toBe(false);
+    });
+
+    // `AwardDecisionDto.status`'s union allows REJECTED even though `reject()` writes straight to
+    // DRAFT and never persists it (design §9.5). Covered so the mark is gated on "is it under
+    // review", not on "is it not DRAFT" — an implementation that excluded DRAFT alone would pass
+    // every test above and still mark a REJECTED row.
+    it("marks nothing on the REJECTED status the DTO allows but the server never persists", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([offer({})]),
+          decision: decision({
+            status: "REJECTED",
+            shortlistedQuoteId: "q1",
+            shortlistedVariant: "DEDICATED",
+          }),
+        },
+        false,
+      );
+      expect(m.cells[0].sentForApproval).toBe(false);
+    });
   });
 
   // ── S5.9.1 R1, Step 4 — the `★` mark's accessible name. `leg.recommendation.reason` is the LIVE

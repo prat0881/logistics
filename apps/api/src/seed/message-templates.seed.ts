@@ -99,9 +99,12 @@ export const MESSAGE_TEMPLATES: {
     subject: "Quotation {{Quotation_Ref}} · Ref {{Query_ID}}",
     body: "Dear {{Client_Name}},\n\nThank you for your enquiry. We are pleased to quote for the shipment below.\n\nOur reference: {{Query_ID}}\nYour reference: {{Reference_Tags}}\nShipment: {{Shipment_Description}}\nVessel: {{Vessel}}\nPort of call: {{Port_Of_Call}}\nCargo: {{Cargo_Summary}}\nCargo ready: {{Ready_Date}}\nQuotation valid until: {{Valid_Until}}\n\nTotal — all inclusive: USD {{Grand_Total}}\n\nCovers all charges for the scope described above, subject to space and equipment availability at the time of booking and to the validity date shown.\n\nTo proceed, simply reply to this email and we will confirm the booking.\n\nRegards,\nYankalfa Logistics",
   },
-  // S5.9.1 (R7) — a rejected leg returns to the general maker pool (reject clears sentByUserId
-  // and writes the decision back to DRAFT), but nothing announced it. IN_APP only: the executive
-  // is inside the app, and there is no forwarder-facing side to this event.
+  // S5.9.1 (R7) — a rejected leg is workable again (reject clears sentByUserId and writes the
+  // decision back to DRAFT), but nothing announced it. Recipient is the query's assigned user,
+  // with an all-active-Executives broadcast only as the fallback (award.service.ts's reject();
+  // an earlier version broadcast unconditionally on the false premise that this schema has no
+  // assignment concept). IN_APP only: the executive is inside the app, and there is no
+  // forwarder-facing side to this event.
   {
     key: "award.rejected.inapp", eventKey: "award.rejected", channel: "IN_APP",
     subject: null,

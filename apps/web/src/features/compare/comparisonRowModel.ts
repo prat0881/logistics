@@ -28,15 +28,32 @@ export interface OfferCell {
   offer: OfferDto;
   recommended: boolean; // this is the recommendation OF RECORD (S5.9.1 R1) — true both before and
   // after a send, false only once suppressed (`locked`) or when it names some other cell
-  /** This is the offer `decision.shortlistedQuoteId`/`shortlistedVariant` names — the offer that
-   *  actually went for approval (S5.9.1 Task 5). Deliberately NOT derived from `offer.quoteStatus`:
-   *  sending for approval is supposed to flip the named offer's OWN quote to `PENDING_APPROVAL`
-   *  (S5.9 T3), but that is a second-hand signal that can drift from the decision record (observed
-   *  live on `S56VIS-0001` — `decision.status = PENDING_APPROVAL` naming a quote whose
-   *  `quoteStatus` was still `QUOTED`, stale seed data rather than a code bug, but proof that a
-   *  derived signal is the wrong source for this). Reads the decision directly, the same way
-   *  `recommended` reads it for the snapshot above — one source, so the two marks can't drift
-   *  apart from each other either. `locked` suppresses it, consistently with `recommended`. */
+  /** This is the offer `decision.shortlistedQuoteId`/`shortlistedVariant` names, and ONLY while
+   *  that decision is still `PENDING_APPROVAL` — i.e. the offer a checker is looking at right now
+   *  (S5.9.1 Task 5, corrected by the final whole-branch review's C1). Deliberately NOT derived
+   *  from `offer.quoteStatus`: sending for approval is supposed to flip the named offer's OWN
+   *  quote to `PENDING_APPROVAL` (S5.9 T3), but that is a second-hand signal that can drift from
+   *  the decision record (observed live on `S56VIS-0001` — `decision.status = PENDING_APPROVAL`
+   *  naming a quote whose `quoteStatus` was still `QUOTED`, stale seed data rather than a code
+   *  bug, but proof that a derived signal is the wrong source for this). Reads the decision
+   *  directly, the same way `recommended` reads it for the snapshot above.
+   *
+   *  **Where this deliberately parts company with `recommended` (C1).** Both marks read the same
+   *  decision row, but only ONE of them makes a claim about the present tense. `★` says
+   *  "recommended by the comparison engine" — a timeless fact about a snapshot, true forever after
+   *  it was taken, which is exactly why `recommended` reads the snapshot on a DRAFT decision too
+   *  (a returned leg keeps the mark it was judged against). `⚑`'s copy is a LIVE status assertion
+   *  ("the offer currently under checker review", `SENT_FOR_APPROVAL_FOOTNOTE`), and `reject()`
+   *  (award.service.ts) writes the decision back to `DRAFT` — clearing `sentByUserId`, storing
+   *  `rejectionReason` — WITHOUT clearing `shortlistedQuoteId`/`shortlistedVariant`, on purpose:
+   *  `MakerPanel`'s "Returned by the checker — revise this shortlist" alert needs that shortlist
+   *  to still be there. Reusing `recommended`'s "read it regardless of status" rule therefore made
+   *  a rejected leg render `⚑` + "currently under checker review" a few rows above that very
+   *  alert. Gating on `PENDING_APPROVAL` is the fix, and it belongs HERE rather than in `reject()`:
+   *  clearing the field server-side would fix the display by breaking `MakerPanel`'s premise. The
+   *  same gate also covers `APPROVED` (decided, no longer under review) and the `REJECTED` status
+   *  the DTO's union allows but `reject()` never persists. `locked` still suppresses it too,
+   *  consistently with `recommended`. */
   sentForApproval: boolean;
   stale: boolean; // quoteStatus === "REQUOTED"
 }
@@ -113,14 +130,20 @@ export function buildComparisonRowModel(
     : null;
   const recKey = locked ? null : leg.decision != null ? snapshotKey : liveKey;
 
-  // S5.9.1 Task 5 — the offer that went for approval, read straight from the decision (never from
-  // `offer.quoteStatus`; see `OfferCell.sentForApproval`'s doc comment for the drift this avoids).
+  // S5.9.1 Task 5 (+ final-review C1) — the offer that went for approval, read straight from the
+  // decision (never from `offer.quoteStatus`; see `OfferCell.sentForApproval`'s doc comment for
+  // the drift this avoids) and only while that decision is STILL under review. The `status` term
+  // is the C1 fix and is NOT a copy-paste slip against `recKey` above, which deliberately has no
+  // such term: `★`'s copy is timeless, `⚑`'s ("currently under checker review") is a present-tense
+  // claim, and `reject()` leaves `shortlistedQuoteId` in place on a DRAFT decision so `MakerPanel`
+  // can still show the maker which shortlist to revise. Without this term that same DRAFT row
+  // rendered `⚑` directly above MakerPanel's "Returned by the checker" alert.
   // No "no decision yet" live fallback here (unlike `recKey` above): there is no live equivalent of
   // "sent for approval" to fall back to — before a decision exists, nothing has been sent, full
   // stop. `locked` suppresses it for the same reason it suppresses `recKey`: post-generate, the
   // award panel below is the authority on what happened.
   const sentForApprovalKey =
-    !locked && leg.decision?.shortlistedQuoteId
+    !locked && leg.decision?.status === "PENDING_APPROVAL" && leg.decision.shortlistedQuoteId
       ? offerKey(leg.decision.shortlistedQuoteId, leg.decision.shortlistedVariant)
       : null;
 

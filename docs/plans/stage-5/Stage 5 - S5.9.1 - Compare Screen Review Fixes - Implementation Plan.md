@@ -35,7 +35,7 @@
 | **R4** | **The decision chip is removed entirely** from the leg header; `LegStatusBadge` is the single status. | Product owner's call — the two badges duplicated each other once leg status began carrying the approval flow. Accepted consequence: a rejected leg's row looks identical to one never sent; the reason stays inside the leg body and R7's notification is what surfaces it. |
 | **R5** | Approve confirms in a dialog naming the forwarder; Reject collects its reason in a dialog. Both live in the action bar below the table. | Product owner's call. Approve is currently a single irreversible click with no confirmation. |
 | **R6** | The columnar view's numeric cells align to match their header. | Alignment is shared between orientations, so values render right-aligned under centred offer headers — the "data not under the header" complaint. |
-| **R7** | A new `award.rejected` **in-app** notification to all active Executives. | There is no assignment concept, so a rejected leg already returns to the general maker pool — but nothing announces it. Every other significant event has a notification; this one did not. |
+| **R7** | A new `award.rejected` **in-app** notification to the query's **assigned** user, falling back to all active Executives only when the query has none. | Nothing announced a rejection; every other significant event has a notification and this one did not. **CORRECTED after the final whole-branch review (I1):** this row originally read "to all active Executives" and justified it with "there is no assignment concept" — that premise was **false**. `Query.assignedUserId` exists (`prisma/schema.prisma`, indexed) and is populated on every query create (`queries.service.ts`: `input.assignedUserId ?? user.userId`); three sibling comms sites (`ff-portal.service.ts`, `rfq-schedule.listener.ts`, `rfq-notifications.service.ts`) already resolve it before broadcasting. A broadcast meant every Executive got every rejection, across tenants. |
 
 ## File Structure
 
@@ -431,9 +431,11 @@ git commit -m "fix(s5.9.1): comparison table aligns under its headers and reads 
 - Test: `apps/api/test/award-workflow-checker.e2e-spec.ts`
 - Modify: `docs/Stage 5 - Session Handoff.md`
 
-**Why (R7).** There is no assignment concept in the schema, and `reject` already clears `sentByUserId` and returns the decision to `DRAFT` — so a rejected leg genuinely returns to the general maker pool rather than sitting with whoever sent it. That is the routing the product owner asked for and it already works. What is missing is that **nothing announces it**: every other significant event has a notification (`quote.received.inapp`, `rfq.expiry.inapp`, `rfq.requote_requested.inapp`) and a rejected leg goes silent.
+**Why (R7).** `reject` already clears `sentByUserId` and returns the decision to `DRAFT`, so a rejected leg is workable again. What is missing is that **nothing announces it**: every other significant event has a notification (`quote.received.inapp`, `rfq.expiry.inapp`, `rfq.requote_requested.inapp`) and a rejected leg goes silent.
 
-**The precedent to follow exactly** is `ff-portal.service.ts`'s post-submit comms block: resolve `user.findMany({ where: { role: Role.EXECUTIVE, isActive: true }, select: { id: true } })`, dispatch with `recipients: { IN_APP: execIds }`, and wrap the whole comms section in `try/catch` + `logger.error` so a comms failure can never fail the reject itself.
+**CORRECTED (final whole-branch review, I1).** This section originally asserted "there is no assignment concept in the schema" and concluded a rejected leg "returns to the general maker pool", which justified notifying every active Executive. **That premise was wrong.** `Query.assignedUserId` exists (`prisma/schema.prisma`, `String? @db.Uuid`, indexed) and `queries.service.ts` populates it on **every** create (`input.assignedUserId ?? user.userId`). Shipping only the broadcast half meant ten Executives received ten notifications for a leg nine of them do not work, fanned out across tenants. The rule the rest of the codebase already follows — resolve the assigned user first, broadcast only when it is null — is also closer to the product owner's actual ask ("it should go directly to executive queue": *the* executive, not all of them).
+
+**The precedent to follow exactly** is `ff-portal.service.ts`'s post-submit comms block (lines ~613-624): read `Query.assignedUserId`, use it as the sole recipient when set, and only when it is null fall back to `user.findMany({ where: { role: Role.EXECUTIVE, isActive: true }, select: { id: true } })`; dispatch with `recipients: { IN_APP: execIds }`, and wrap the whole comms section in `try/catch` + `logger.error` so a comms failure can never fail the reject itself.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -452,12 +454,18 @@ it("notifies executives in-app when a leg is rejected", async () => {
     where: { type: "award.rejected", entityId: queryId },
   });
   expect(notes.length).toBeGreaterThan(0);
-  expect(notes.every((n) => n.recipientUserId != null)).toBe(true);
+  // NOT `notes.every(n => n.recipientUserId != null)` — that column is NOT NULL, so the assertion
+  // is a schema tautology that cannot fail (final whole-branch review, I2). Assert the actual
+  // recipients, and that the rendered message carries the tokens.
+  expect(notes.map((n) => n.recipientUserId)).toEqual([assignedExecId]);
 });
 
 it("still rejects successfully when the notification dispatch fails", async () => {
-  // Prove the comms block cannot fail the reject: delete the template so lookup returns null.
-  await prisma.messageTemplate.deleteMany({ where: { key: "award.rejected.inapp" } });
+  // CORRECTED (final whole-branch review, I2): deleting the template does NOT exercise the
+  // try/catch — `NotificationDispatcher.dispatch` treats a null template lookup as nothing-to-send
+  // and returns normally, so the shipped test forces a genuine throw instead:
+  //   jest.spyOn(app.get(NotificationDispatcher), "dispatch").mockRejectedValueOnce(new Error("boom"))
+  // (restored afterwards), which removes the need for the deletion and its afterAll reseed.
   await sendForApproval(legId2, quoteId2);
   await request(app.getHttpServer())
     .post(`/api/queries/${queryId}/legs/${legId2}/reject`)
@@ -482,9 +490,9 @@ set -a; . apps/api/.env; set +a; pnpm --filter @svyft/api test -- award-workflow
 In `message-templates.seed.ts`:
 
 ```ts
-  // S5.9.1 (R7) — a rejected leg returns to the general maker pool (reject clears sentByUserId
-  // and writes the decision back to DRAFT), but nothing announced it. IN_APP only: the executive
-  // is inside the app, and there is no forwarder-facing side to this event.
+  // S5.9.1 (R7) — a rejected leg is workable again (reject clears sentByUserId and writes the
+  // decision back to DRAFT), but nothing announced it. IN_APP only: the executive is inside the
+  // app, and there is no forwarder-facing side to this event.
   {
     key: "award.rejected.inapp", eventKey: "award.rejected", channel: "IN_APP",
     subject: null,
@@ -519,7 +527,7 @@ Expected green. Known flakes (register C5): `award-generate.e2e-spec.ts`'s float
 
 - [ ] **Step 8: Update the handoff**
 
-In `docs/Stage 5 - Session Handoff.md`, add an S5.9.1 entry recording: the nine review points and which are now closed; **R1's correction** — that S5.9 suppressed the recommendation marker rather than reading the snapshot the decision already carried, so a checker saw no recommendation at all; **R4's accepted consequence** — a rejected leg's header row is now indistinguishable from one never sent, with the reason inside the body and the new notification as the surfacing mechanism; and **R7** — that rejection routing already returned a leg to the general maker pool and what was missing was only the announcement.
+In `docs/Stage 5 - Session Handoff.md`, add an S5.9.1 entry recording: the nine review points and which are now closed; **R1's correction** — that S5.9 suppressed the recommendation marker rather than reading the snapshot the decision already carried, so a checker saw no recommendation at all; **R4's accepted consequence** — a rejected leg's header row is now indistinguishable from one never sent, with the reason inside the body and the new notification as the surfacing mechanism; and **R7** — that `reject` already clears `sentByUserId` and returns the decision to `DRAFT`, so what was missing was only the announcement, which goes to the query's **assigned** user (`Query.assignedUserId`) and broadcasts to active Executives only as a fallback (final-review I1 corrected an earlier "there is no assignment concept" claim).
 
 - [ ] **Step 9: Commit**
 

@@ -30,8 +30,13 @@ interface CompareLegPanelProps {
   open: boolean;
   onToggle: () => void;
   /** S5.6 Task 6, ambiguity resolution #2 — `true` once `comparison.awardSnapshot != null` (the
-   *  query is QUOTING_CLIENT). `MakerPanel` and the whole checker action bar (Approve/Reject) are
-   *  NOT MOUNTED at all while locked (not merely disabled) — `CompareQuotesPage` computes this ONE
+   *  query is QUOTING_CLIENT). `MakerPanel`, the whole checker action bar (Approve/Reject) AND the
+   *  dialogs those buttons open are NOT MOUNTED at all while locked (not merely disabled) — the
+   *  final whole-branch review found this sentence true of the BAR but not of `ApproveDialog`/
+   *  `RejectDialog`, which were gated on `canCheck` alone while their maker counterparts also
+   *  carried `!locked`; `canCheck` now carries the `!locked` term itself (see its definition
+   *  below), so the claim holds for every checker surface rather than describing a guard the code
+   *  lacked. `CompareQuotesPage` computes this ONE
    *  boolean and threads it straight
    *  through, so no child re-derives the condition. `ChargeBreakdownDialog`/`DecisionTimeline` stay
    *  mounted and read-only either way. The grid stays too, but not untouched: Task 6 originally
@@ -156,7 +161,16 @@ export function CompareLegPanel({
   // already uses — one predicate, computed identically wherever "is this viewer a checker?" comes
   // up, so the three call sites can't quietly drift apart on who counts.
   const isChecker = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
-  const canCheck = isChecker && decisionStatus === "PENDING_APPROVAL";
+  // The `!locked` term is the final whole-branch review's fix: this component's `locked` contract
+  // says the checker surfaces are NOT MOUNTED while locked, and the action BAR honoured that
+  // (`!locked && hasActionBarControls`) — but `ApproveDialog`/`RejectDialog` below were gated on
+  // `canCheck` alone, unlike the maker's own `NegotiateDialog`/`MakerPanel`, which carry `!locked`
+  // explicitly. Unreachable today (a locked query's decisions are all APPROVED, so `canCheck` is
+  // already false), which is exactly why it had to be fixed as a stated guard rather than left to
+  // an incidental one. Folded into `canCheck` itself rather than repeated at each mount so there is
+  // ONE definition of "this viewer may check this leg now" — which also makes the reset effect
+  // below cover a `locked` transition without a second dependency.
+  const canCheck = isChecker && !locked && decisionStatus === "PENDING_APPROVAL";
   // Four-eyes (S5.6) — disables Approve/Reject WITHOUT hiding them when this viewer is the same
   // one who sent the leg for approval. `leg.decision` is guaranteed non-null whenever `canCheck` is
   // true (PENDING_APPROVAL only exists once a decision row does), but this reads directly off
@@ -372,7 +386,12 @@ export function CompareLegPanel({
               fxAsOf={fxAsOf}
             />
           )}
-          {!locked && (
+          {/* `!isChecker` alongside `!locked` (final whole-branch review): the "Negotiate…" button
+              is hidden for Manager/Admin (R3 — their path to a revised price is Reject-with-reason),
+              so mounting the dialog for them was a dead mount with no way to open it. Mirrors the
+              button's own gate exactly, the same way `canCheck` now gates both the Approve/Reject
+              buttons and their dialogs. */}
+          {!locked && !isChecker && (
             <NegotiateDialog
               open={negotiateOpen}
               onOpenChange={setNegotiateOpen}

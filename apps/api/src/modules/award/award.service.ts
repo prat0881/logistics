@@ -687,25 +687,38 @@ export class AwardService {
       { queryId, actorId: user.userId, reason: input.reason },
     );
 
-    // S5.9.1 (R7) — there is no assignment concept in this schema, and the write above already
-    // cleared sentByUserId + returned the decision to DRAFT, so a rejected leg genuinely lands
-    // back in the general maker pool. What was missing is that nothing announced it. Mirrors
-    // ff-portal.service.ts's post-submit comms block exactly: resolve active Executives, dispatch
-    // IN_APP only (no forwarder-facing side to a reject), and swallow any failure so a comms
-    // problem can never turn an already-committed, already-fired reject into a 500. Must stay the
-    // LAST thing this method does, after every write and every status fire above.
+    // S5.9.1 (R7) — the product owner asked that a rejected leg "go directly to the executive
+    // queue", and the write above already cleared sentByUserId + returned the decision to DRAFT,
+    // so it is workable again by whoever picks it up. What was missing is that nothing announced
+    // it. CORRECTED (final whole-branch review, I1): an earlier version of this comment claimed
+    // "there is no assignment concept in this schema" and broadcast to EVERY active Executive on
+    // the strength of it. There IS one — `Query.assignedUserId` (schema.prisma, indexed), written
+    // on every query create (`queries.service.ts`: `input.assignedUserId ?? user.userId`) — so a
+    // broadcast meant ten Executives got a notification about a leg nine of them don't work,
+    // across tenants. This now follows the codebase's own established rule for exactly this
+    // question, mirroring ff-portal.service.ts's post-submit comms block (and
+    // rfq-schedule.listener.ts / rfq-notifications.service.ts, which resolve it the same way):
+    // the assigned user IS the recipient, and the all-Executives broadcast is only the fallback
+    // for a query that has none. IN_APP only (no forwarder-facing side to a reject), and the whole
+    // block swallows any failure so a comms problem can never turn an already-committed,
+    // already-fired reject into a 500. Must stay the LAST thing this method does, after every
+    // write and every status fire above.
     try {
       const [rejectedLeg, query] = await Promise.all([
         this.prisma.leg.findUnique({ where: { id: legId }, select: { legCode: true } }),
         this.prisma.query.findUnique({
           where: { id: queryId },
-          select: { queryCode: true, tenantId: true },
+          select: { queryCode: true, tenantId: true, assignedUserId: true },
         }),
       ]);
-      const execs = await this.prisma.user.findMany({
-        where: { role: Role.EXECUTIVE, isActive: true },
-        select: { id: true },
-      });
+      let execIds: string[] = query?.assignedUserId ? [query.assignedUserId] : [];
+      if (execIds.length === 0) {
+        const execs = await this.prisma.user.findMany({
+          where: { role: Role.EXECUTIVE, isActive: true },
+          select: { id: true },
+        });
+        execIds = execs.map((u) => u.id);
+      }
       await this.dispatcher.dispatch("award.rejected", {
         scope: { entityType: "QUERY", entityId: queryId },
         tokens: {
@@ -713,7 +726,7 @@ export class AwardService {
           Query_Code: query?.queryCode ?? "",
           Reason: input.reason,
         },
-        recipients: { IN_APP: execs.map((u) => u.id) },
+        recipients: { IN_APP: execIds },
         tenantId: query?.tenantId ?? null,
       });
     } catch (err) {
