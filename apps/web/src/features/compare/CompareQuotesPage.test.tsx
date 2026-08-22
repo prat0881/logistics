@@ -16,10 +16,11 @@ afterEach(() => {
 
 /** `AuthProvider`'s `/api/auth/me` round trip is async, so `useAuth()`'s `user` is `null` for one
  *  or more microtask hops after `render()`. Any absence assertion taken before it settles proves
- *  nothing about a role-aware gate — `CheckerPanel` self-hides and `GenerateGate` is parent-gated
- *  on `canCheck`, both of which are false for an anonymous viewer regardless of `locked`. Awaiting
- *  this probe's resolved role forces the assertions to run post-settle (same mechanism as
- *  `CheckerPanel.test.tsx`; final review M3). */
+ *  nothing about a role-aware gate — the action bar's checker controls (Approve/Reject, S5.9.1
+ *  Task 2, absorbing what used to be a standalone `CheckerPanel`) self-hide and `GenerateGate` is
+ *  parent-gated on `canCheck`, both of which are false for an anonymous viewer regardless of
+ *  `locked`. Awaiting this probe's resolved role forces the assertions to run post-settle (same
+ *  mechanism as `ComparisonGrid.test.tsx`'s "Checker action bar" block; final review M3). */
 function AuthProbe() {
   const { user, loading } = useAuth();
   return <span data-testid="auth-probe">{loading ? "loading" : (user?.role ?? "anonymous")}</span>;
@@ -190,7 +191,9 @@ const SNAPSHOT = {
 function renderPage(opts: { role?: string; awardSnapshot?: typeof SNAPSHOT | null } = {}) {
   const role = opts.role ?? "EXECUTIVE";
   const comparison =
-    opts.awardSnapshot !== undefined ? { ...COMPARISON, awardSnapshot: opts.awardSnapshot } : COMPARISON;
+    opts.awardSnapshot !== undefined
+      ? { ...COMPARISON, awardSnapshot: opts.awardSnapshot }
+      : COMPARISON;
   const detail = opts.awardSnapshot ? { ...QUERY_DETAIL, status: "QUOTING_CLIENT" } : QUERY_DETAIL;
   vi.stubGlobal(
     "fetch",
@@ -275,21 +278,22 @@ describe("CompareQuotesPage", () => {
 
   it("locks maker/checker/generate controls and shows QuotingClientPanel once the award snapshot is present (S5.6 Task 6)", async () => {
     // LEG-2's decision is already PENDING_APPROVAL (see COMPARISON above) — for a MANAGER viewer
-    // that would normally mount CheckerPanel's Approve/Reject (CheckerPanel.test.tsx pins exactly
-    // this). Proving it's absent here — under an award snapshot — is therefore exercising the
-    // `locked` gate itself, not just "nothing to check" or "wrong role".
+    // that would normally mount the action bar's Approve/Reject (S5.9.1 Task 2 — the standalone
+    // `CheckerPanel` this used to name is deleted; `ComparisonGrid.test.tsx`'s "Checker action bar"
+    // block pins exactly this). Proving the whole bar is absent here — under an award snapshot — is
+    // therefore exercising the `locked` gate itself, not just "nothing to check" or "wrong role".
     renderPage({ role: "MANAGER", awardSnapshot: SNAPSHOT });
 
     const leg2 = await screen.findByRole("button", { name: /LEG-2/i });
     await userEvent.click(leg2);
     await screen.findByTestId("leg-body");
-    // Without this, `checker-panel`/`generate-gate`/the S5.7 assertions below would be absent for
+    // Without this, `leg-action-bar`/`generate-gate`/the S5.7 assertions below would be absent for
     // the WRONG reason (no viewer yet ⇒ `canCheck` false) and would pass even with `locked`
     // inverted — final review M3.
     await screen.findByText("MANAGER");
 
     expect(screen.queryByTestId("maker-panel")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("checker-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
     expect(screen.queryByTestId("generate-gate")).not.toBeInTheDocument();
     expect(await screen.findByTestId("quoting-client-panel")).toBeInTheDocument();
 
@@ -314,7 +318,7 @@ describe("CompareQuotesPage", () => {
   });
 
   describe.each(["EXECUTIVE", "MANAGER"] as const)("compare screen as %s", (role) => {
-    it("shows the grid, the Send for approval action and Negotiate", async () => {
+    it("shows the grid and the Send for approval action", async () => {
       renderPage({ role });
       await screen.findByText(role);
 
@@ -323,10 +327,40 @@ describe("CompareQuotesPage", () => {
       await screen.findByTestId("leg-body");
 
       expect(screen.getByTestId("comparison-grid")).toBeInTheDocument();
-      // S5.9 T9 — the action bar below the grid, not a per-offer Select button inside it.
+      // S5.9 T9 — the action bar below the grid, not a per-offer Select button inside it. Send
+      // stays on for BOTH roles (S5.9.1 Task 2, R3) — the four-eyes flow needs a Manager able to
+      // send a leg for a different Manager to check, so Send is never checker-exclusive.
       expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /negotiate/i })).toBeInTheDocument();
     });
+  });
+
+  // ── S5.9.1 Task 2 (product item 1) — split out of the describe.each above, which used to assert
+  // Negotiate for BOTH roles: Manager/Admin no longer get it ("if they want to negotiate then they
+  // should reject and put the reason in the notes"). LEG-1 carries no decision (see COMPARISON
+  // above), so this is a plain role check, unconfounded by `decision.status` or four-eyes. ────────
+  it("offers Negotiate to an EXECUTIVE", async () => {
+    renderPage({ role: "EXECUTIVE" });
+    await screen.findByText("EXECUTIVE");
+
+    const leg1 = await screen.findByRole("button", { name: /LEG-1/i });
+    await userEvent.click(leg1);
+    await screen.findByTestId("leg-body");
+
+    expect(screen.getByRole("button", { name: /negotiate/i })).toBeInTheDocument();
+  });
+
+  it("does not offer Negotiate to a MANAGER", async () => {
+    renderPage({ role: "MANAGER" });
+    await screen.findByText("MANAGER");
+
+    const leg1 = await screen.findByRole("button", { name: /LEG-1/i });
+    await userEvent.click(leg1);
+    // Positive control before the absence assertion — Send for approval renders for a Manager on
+    // this decision-less leg, proving the tree has settled as a real MANAGER (not a still-null
+    // viewer, which would also show no Negotiate for the wrong reason).
+    await screen.findByRole("button", { name: /send for approval/i });
+
+    expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
   });
 
   // 🔴 Final review CRITICAL #2 — the S5.8 Client Quotation builder had NO entry point anywhere in
@@ -358,16 +392,20 @@ describe("CompareQuotesPage", () => {
     renderPage({ role: "EXECUTIVE" });
     await screen.findByText("EXECUTIVE");
 
-    // `checker-panel` only mounts inside an OPEN leg body (`CompareLegPanel`'s `open && (...)`),
-    // so without opening a leg its absence would be vacuous — true for any role simply because no
+    // Approve/Reject only mount inside an OPEN leg body (`CompareLegPanel`'s `open && (...)`), so
+    // without opening a leg their absence would be vacuous — true for any role simply because no
     // leg is expanded. LEG-2 carries a PENDING_APPROVAL decision (see COMPARISON above), the exact
-    // shape `CheckerPanel.test.tsx` proves DOES mount Approve/Reject for a MANAGER — opening it
-    // here means this assertion is exercising the role gate, not "nothing to check".
+    // shape `ComparisonGrid.test.tsx`'s "Checker action bar" block proves DOES offer Approve/Reject
+    // for a MANAGER — opening it here means this assertion is exercising the role gate, not
+    // "nothing to check". The action bar itself still renders for this EXECUTIVE (Negotiate/Send
+    // are on), so this checks the two checker buttons specifically rather than the whole bar's
+    // absence (which would also — wrongly — pass for an unrelated reason like `locked`).
     const leg2 = await screen.findByRole("button", { name: /LEG-2/i });
     await userEvent.click(leg2);
     await screen.findByTestId("leg-body");
 
-    expect(screen.queryByTestId("checker-panel")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^approve$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("generate-gate")).not.toBeInTheDocument();
   });
 });

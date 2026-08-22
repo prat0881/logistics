@@ -16,7 +16,7 @@ afterEach(() => vi.unstubAllGlobals());
 // whether `QuotationPage`'s Manager+ gate is correct or completely inverted. `AuthProbe` renders a
 // value that only exists once `AuthProvider` has actually resolved, so `await
 // screen.findByText(role)` forces every assertion after it to run post-settle (same mechanism as
-// `CheckerPanel.test.tsx`/`CompareQuotesPage.test.tsx`).
+// `ComparisonGrid.test.tsx`'s "Checker action bar" block / `CompareQuotesPage.test.tsx`).
 function AuthProbe() {
   const { user, loading } = useAuth();
   return <span data-testid="auth-probe">{loading ? "loading" : (user?.role ?? "anonymous")}</span>;

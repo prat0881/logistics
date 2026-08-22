@@ -35,8 +35,9 @@ export interface MakerPanelProps {
  *     standing, visible alert, never a tooltip;
  *   - the per-forwarder Negotiate buttons are GONE — S5.7 T5 moved negotiation to one leg-level
  *     "Negotiate…" button + multi-forwarder dialog, wired in `CompareLegPanel` itself (it already
- *     owns the leg's decision status the button disables on, and it sits above both MakerPanel and
- *     CheckerPanel rather than belonging to either).
+ *     owns the leg's decision status the button disables on, and — since S5.9.1 Task 2 — the same
+ *     action bar also owns the checker's Approve/Reject, so the button belongs to the shared bar
+ *     rather than to either role's own panel).
  *
  * So this panel now renders only the rejection alert, or `null`.
  */

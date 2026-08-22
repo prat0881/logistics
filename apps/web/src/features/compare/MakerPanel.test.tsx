@@ -121,7 +121,8 @@ function renderMaker(leg: LegComparisonDto) {
 
 // `AuthProvider`'s `/api/auth/me` round trip is async, so `user`/`loading` from `useAuth()` are
 // still settling for one or more microtask hops after `render()` returns (see
-// `CheckerPanel.test.tsx`'s `AuthProbe` for the fuller rationale). MakerPanel itself doesn't read
+// `ComparisonGrid.test.tsx`'s "Checker action bar" block for the fuller rationale). MakerPanel
+// itself doesn't read
 // auth state — its output is fully determined by the `leg` prop — but an absence assertion taken
 // synchronously right after `render()` would still prove nothing about whether the tree has
 // actually settled. `AuthProbe` renders a value that only exists once `AuthProvider` has resolved,

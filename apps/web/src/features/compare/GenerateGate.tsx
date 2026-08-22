@@ -12,7 +12,8 @@ export interface GenerateGateProps {
  * GenerateGate — the query-level "Generate quotation for client" action (S5.6 Task 5, design
  * §16 O4). Query-scoped, not per-leg, so it lives at `CompareQuotesPage` level (ambiguity
  * resolution #2) rather than inside `CompareLegPanel` — mounted only when the viewer is
- * Manager+ (`canCheck`, computed by the page the same way `CheckerPanel` computes it). Enabled
+ * Manager+ (`canCheck`, computed by the page the same way `CompareLegPanel`'s action bar computes
+ * its own `isChecker`). Enabled
  * only once EVERY leg's `decision.status === "APPROVED"` (and there's at least one leg); when
  * disabled, shows an "N of M approved" progress note so it's clear why. Deliberately has NO
  * four-eyes check — per-leg four-eyes is already enforced at each leg's approve(), and this is

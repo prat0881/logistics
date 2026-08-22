@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LegComparisonDto, LegStatus, OfferDto } from "@svyft/shared";
-import { AuthProvider } from "@/features/auth/AuthProvider";
+import { AuthProvider, useAuth } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { ComparisonGrid, STALE_OFFER_LABEL } from "./ComparisonGrid";
@@ -139,7 +139,11 @@ const LEG: LegComparisonDto = {
     },
   ],
   pendingForwarders: [
-    { freightForwarderId: "ff4", freightForwarderName: "Pending Forwarder", quoteStatus: "RFQ_SENT" },
+    {
+      freightForwarderId: "ff4",
+      freightForwarderName: "Pending Forwarder",
+      quoteStatus: "RFQ_SENT",
+    },
   ],
   awaitingReQuote: true,
   recommendation: {
@@ -151,13 +155,15 @@ const LEG: LegComparisonDto = {
   timeline: [],
 };
 
-// CompareLegPanel now also renders Task 4's MakerPanel and Task 5's CheckerPanel in its open body
-// (below the grid), which need a QueryClientProvider ancestor for their useMutation hooks and an
-// AuthProvider ancestor for CheckerPanel's `useAuth()` role check — this file's own tests never
-// touch either panel's mutations or role-gating (a 401 fetch stub keeps AuthProvider's own
-// `/api/auth/me` probe from hitting the network; CheckerPanel then just self-hides as
-// unauthenticated), they only exercise the grid/detail through the SAME shell it now happens to
-// sit alongside.
+// CompareLegPanel now also renders Task 4's MakerPanel and its own action bar's Approve/Reject
+// (S5.9.1 Task 2, absorbing what used to be a standalone `CheckerPanel`) in its open body (below
+// the grid), which need a QueryClientProvider ancestor for their useMutation hooks and an
+// AuthProvider ancestor for the action bar's `useAuth()` role check — this file's own
+// grid/detail tests never touch either panel's mutations or role-gating (a 401 fetch stub keeps
+// AuthProvider's own `/api/auth/me` probe from hitting the network; the checker controls then just
+// self-hide as unauthenticated), they only exercise the grid/detail through the SAME shell it now
+// happens to sit alongside. The "Checker action bar" describe block further down DOES need a real
+// role, hence the `role`/`userId` options below.
 function renderPanel(
   leg: LegComparisonDto = LEG,
   {
@@ -166,11 +172,16 @@ function renderPanel(
     viewMode = "columns",
     onViewModeChange = () => {},
     legStatus,
+    role,
+    userId = "manager-1",
+    withAuthProbe = false,
   }: {
     locked?: boolean;
-    /** Optional handler for the few tests that drive a real maker mutation through the panel;
-     *  everything else keeps the blanket 401 (AuthProvider then self-reports unauthenticated and
-     *  `CheckerPanel` hides, exactly as before). */
+    /** Optional handler for the few tests that drive a real maker/checker mutation through the
+     *  panel; everything else keeps the blanket 401 (AuthProvider then self-reports unauthenticated
+     *  and the checker controls hide, exactly as before). Checked AFTER the `role`-driven
+     *  `/api/auth/me` stub below, so a caller supplying both gets an authenticated viewer AND a
+     *  real handler for the mutation endpoints. */
     fetch?: (url: string, init?: RequestInit) => { status: number; body?: unknown };
     /** The orientation pair is owned by `CompareQuotesPage` now (final review IMPORTANT #1), so
      *  the panel takes it as required props. Defaulted here to the pre-lift behaviour — the hook's
@@ -182,16 +193,43 @@ function renderPanel(
      *  without it and is unaffected). Threaded through only by the S5.9.1 test that needs
      *  `LegStatusBadge` to actually render — `CompareQuotesPage` is normally what supplies this. */
     legStatus?: LegStatus;
+    /** S5.9.1 Task 2 — when set, installs an authenticated `/api/auth/me` stub for this role so the
+     *  action bar's own `useAuth()` gate (Negotiate hidden / Approve+Reject offered for
+     *  Manager/Admin, four-eyes) can be exercised through the SAME `renderPanel` shell every other
+     *  action-bar test in this file already renders through, rather than a second bespoke render
+     *  helper (the way `CheckerPanel.test.tsx` used to hand-roll its own). Undefined (the default)
+     *  preserves every pre-existing test's unauthenticated-viewer behaviour exactly. */
+    role?: string;
+    /** The authenticated viewer's id — only meaningful alongside `role`. Defaults to an id distinct
+     *  from every fixture's `sentByUserId` below so a four-eyes test has to override it explicitly
+     *  to collide, rather than colliding by accident. */
+    userId?: string;
+    /** S5.9.1 Task 2 — mounts an `AuthProbe` sibling (same pattern as `CheckerPanel.test.tsx`'s own
+     *  used to be, and `CompareQuotesPage.test.tsx`'s still is) so a test can `await
+     *  screen.findByText(role)` as a positive control BEFORE taking an absence assertion — without
+     *  it, `queryByRole(...).not.toBeInTheDocument()` would pass just as well while `useAuth()`'s
+     *  `user` is still `null` mid-settle as it would once the real (correct-or-inverted) role gate
+     *  has actually run. `false` by default so every pre-existing test's rendered tree — and its
+     *  exact `getByText`/`getByRole` matches — is completely unaffected. */
+    withAuthProbe?: boolean;
   } = {},
 ) {
   vi.stubGlobal(
     "fetch",
-    mockFetch(fetch ?? (() => ({ status: 401, body: { message: "Unauthorized" } }))),
+    mockFetch((url, init) => {
+      if (url.endsWith("/api/auth/me")) {
+        return role
+          ? { status: 200, body: { user: { id: userId, name: "Viewer", email: "v@x.com", role } } }
+          : { status: 401, body: { message: "Unauthorized" } };
+      }
+      return (fetch ?? (() => ({ status: 401, body: { message: "Unauthorized" } })))(url, init);
+    }),
   );
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <AuthProvider>
+        {withAuthProbe && <AuthProbe />}
         <CompareLegPanel
           queryId="q1"
           leg={leg}
@@ -206,6 +244,14 @@ function renderPanel(
       </AuthProvider>
     </QueryClientProvider>,
   );
+}
+
+/** See `renderPanel`'s `withAuthProbe` doc comment. Renders a value that only exists once
+ *  `AuthProvider` has actually resolved (`"loading"` until then, the role or `"anonymous"` after),
+ *  so `await screen.findByText(...)` on it forces every assertion after it to run post-settle. */
+function AuthProbe() {
+  const { user, loading } = useAuth();
+  return <span data-testid="auth-probe">{loading ? "loading" : (user?.role ?? "anonymous")}</span>;
 }
 
 // ── S5.7 T2 — orientation parity fixture ──────────────────────────────────────────────────────
@@ -537,7 +583,9 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
 
     expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).toHaveTextContent("$542.17");
     expect(screen.getByTestId("offer-transit-quote-1::DEDICATED")).toHaveTextContent("3 d");
-    expect(screen.getByTestId("offer-native-quote-1::DEDICATED")).toHaveTextContent("45,000.00 INR");
+    expect(screen.getByTestId("offer-native-quote-1::DEDICATED")).toHaveTextContent(
+      "45,000.00 INR",
+    );
 
     expect(screen.getByTestId("offer-usd-quote-1::GROUPAGE")).toHaveTextContent("$361.45");
     expect(screen.getByTestId("offer-usd-quote-2::DEDICATED")).toHaveTextContent("$506.02");
@@ -737,7 +785,12 @@ describe("ComparisonGrid edge cases", () => {
           validUntil: "2026-08-25T12:00:00.000Z",
           quoteStatus: "QUOTED",
           charges: [
-            { label: "Additional Charges", group: "additional", nativeAmount: 5000, usdAmount: 5000 },
+            {
+              label: "Additional Charges",
+              group: "additional",
+              nativeAmount: 5000,
+              usdAmount: 5000,
+            },
           ],
         },
       ],
@@ -796,7 +849,11 @@ describe("ComparisonGrid edge cases", () => {
       destination: "Delhi",
       offers: [],
       pendingForwarders: [
-        { freightForwarderId: "ffX", freightForwarderName: "Only Pending Forwarder", quoteStatus: "RFQ_SENT" },
+        {
+          freightForwarderId: "ffX",
+          freightForwarderName: "Only Pending Forwarder",
+          quoteStatus: "RFQ_SENT",
+        },
       ],
       awaitingReQuote: false,
       recommendation: null,
@@ -878,13 +935,17 @@ describe("ComparisonGrid edge cases", () => {
     // carry a real, sensible accessible name rather than rendering with none.
     const liveReason = "High priority → fastest transit (3 days); price broke the tie.";
     expect(mark).toHaveAccessibleName(/recommended/i);
-    expect(mark).not.toHaveAccessibleName(new RegExp(liveReason.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    expect(mark).not.toHaveAccessibleName(
+      new RegExp(liveReason.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
     expect(screen.getByText(RECOMMENDATION_FOOTNOTE)).toBeInTheDocument();
 
     // …while the grid itself stays fully readable, and the Status cell independently says what's
     // actually happening — the two signals coexist (product item 1 vs. product item 4).
     expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).toHaveTextContent("$542.17");
-    expect(screen.getByTestId("offer-status-quote-1::DEDICATED")).toHaveTextContent(/pending approval/i);
+    expect(screen.getByTestId("offer-status-quote-1::DEDICATED")).toHaveTextContent(
+      /pending approval/i,
+    );
   });
 
   // ── S5.9.1 (product item 4) — `DecisionChip` and its `decisionBadge` helper are deleted:
@@ -948,6 +1009,301 @@ describe("ComparisonGrid edge cases", () => {
   // new action-bar button, exercised end-to-end in `CompareQuotesPage.test.tsx`.
 });
 
+// ── S5.9.1 Task 2 — the checker's Approve/Reject move into the SAME action bar Negotiate/Send for
+// approval already occupy (product items 2-4: no Negotiate for Manager/Admin, Approve/Reject sit
+// beside Send, Approve confirms the forwarder by name, Reject collects a reason in a dialog).
+// Absorbs `CheckerPanel.test.tsx`'s four-eyes and role-gating coverage — that component is deleted
+// (see `CompareLegPanel.tsx`'s doc comment for the judgement call and why) — ported one test for
+// one test, through this file's own `renderPanel` shell rather than a bespoke helper, so the
+// checker controls are exercised the exact same way Negotiate and Send for approval already are
+// above.
+describe("Checker action bar — Approve/Reject (S5.9.1 Task 2)", () => {
+  // Bridge Logistics — Dedicated is the ONLY offer, and the leg's shortlist, so the confirmation
+  // dialog has exactly one candidate name to resolve and get right. Sent by "sender-1" — distinct
+  // from `renderPanel`'s default `userId` ("manager-1"), so a plain `renderPanel(PENDING_LEG, {
+  // role: "MANAGER" })` call is NOT the sender (the common "another manager decides" case); the
+  // four-eyes test below overrides `userId` to collide on purpose.
+  const BRIDGE_OFFER: OfferDto = {
+    quoteId: "quote-bridge",
+    freightForwarderId: "ff-bridge",
+    freightForwarderName: "Bridge Logistics",
+    variant: "DEDICATED",
+    variantLabel: "Dedicated",
+    priced: true,
+    nativeTotal: 45000,
+    currency: "INR",
+    unitsPerUsd: 83,
+    usdTotal: 542.17,
+    transitDays: 3,
+    chargeableWeightKg: 500,
+    validUntil: "2026-08-25T12:00:00.000Z",
+    quoteStatus: "PENDING_APPROVAL",
+    charges: [],
+  };
+
+  const PENDING_LEG: LegComparisonDto = {
+    legId: "leg-checker",
+    legCode: "LEG-2",
+    mode: "ROAD",
+    origin: "Chennai",
+    destination: "Mumbai",
+    offers: [BRIDGE_OFFER],
+    pendingForwarders: [],
+    awaitingReQuote: false,
+    recommendation: { quoteId: "quote-bridge", variant: "DEDICATED", reason: "Fastest transit." },
+    decision: {
+      legId: "leg-checker",
+      status: "PENDING_APPROVAL",
+      shortlistedQuoteId: "quote-bridge",
+      shortlistedVariant: "DEDICATED",
+      recommendedQuoteId: "quote-bridge",
+      recommendedVariant: "DEDICATED",
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: "sender-1",
+      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+      decidedByUserId: null,
+      decidedAt: null,
+    },
+    timeline: [],
+  };
+
+  const APPROVE_URL = "/api/queries/q1/legs/leg-checker/approve";
+  const REJECT_URL = "/api/queries/q1/legs/leg-checker/reject";
+
+  it("offers Approve and Reject in the action bar for a manager, on a leg pending approval", async () => {
+    renderPanel(PENDING_LEG, { role: "MANAGER" });
+    const bar = await screen.findByTestId("leg-action-bar");
+    expect(within(bar).getByRole("button", { name: /^approve$/i })).toBeEnabled();
+    expect(within(bar).getByRole("button", { name: /^reject$/i })).toBeEnabled();
+  });
+
+  it("offers Approve and Reject to an ADMINISTRATOR too", async () => {
+    renderPanel(PENDING_LEG, { role: "ADMINISTRATOR" });
+    const bar = await screen.findByTestId("leg-action-bar");
+    expect(within(bar).getByRole("button", { name: /^approve$/i })).toBeEnabled();
+    expect(within(bar).getByRole("button", { name: /^reject$/i })).toBeEnabled();
+  });
+
+  // ── The hardest-to-trust absence assertion in this task, per the brief — mutation-proved by hand
+  // while writing this fix (flipping `CompareLegPanel.tsx`'s `!isChecker` guard on the Negotiate
+  // button to `isChecker` turns this RED — Negotiate then renders for the manager — and reverting
+  // turns it back GREEN; logged in task-2-report.md). The positive control below — awaiting the
+  // Approve button, which only renders once `isChecker` has resolved `true` for a REAL,
+  // settled MANAGER — rules out the "user is still null mid-settle" shape a bare
+  // `queryByRole(...).not.toBeInTheDocument()` taken right after `render()` would be exposed to:
+  // that shape passes identically whether the role gate is correct or completely inverted. ───────
+  it("does not offer Negotiate to a manager", async () => {
+    renderPanel(PENDING_LEG, { role: "MANAGER" });
+    await screen.findByRole("button", { name: /^approve$/i }); // positive control
+    expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
+  });
+
+  it("does not offer Negotiate to an administrator either", async () => {
+    renderPanel(PENDING_LEG, { role: "ADMINISTRATOR" });
+    await screen.findByRole("button", { name: /^approve$/i }); // positive control
+    expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
+  });
+
+  it("still offers Negotiate to an executive", async () => {
+    renderPanel(LEG, { role: "EXECUTIVE", withAuthProbe: true });
+    await screen.findByText("EXECUTIVE");
+    expect(screen.getByRole("button", { name: /negotiate/i })).toBeInTheDocument();
+  });
+
+  // ── Ported from `CheckerPanel.test.tsx`'s "hides checker controls for an EXECUTIVE viewer" ─────
+  it("does not offer Approve or Reject to an executive, even on a leg pending approval", async () => {
+    renderPanel(PENDING_LEG, { role: "EXECUTIVE", withAuthProbe: true });
+    // Positive control — an Executive still gets a real action bar (Negotiate's gate is unrelated
+    // to role), so its presence proves auth has settled without also proving the very thing under
+    // test (unlike awaiting the role name alone, which says nothing about which controls rendered).
+    await screen.findByTestId("leg-action-bar");
+    expect(screen.queryByRole("button", { name: /^approve$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
+  });
+
+  // ── Ported from `CheckerPanel.test.tsx`'s "renders nothing when the leg has no pending decision
+  // to check" ───────────────────────────────────────────────────────────────────────────────────
+  it("does not offer Approve or Reject to a manager when the leg has no pending decision", async () => {
+    renderPanel({ ...LEG, decision: null }, { role: "MANAGER", withAuthProbe: true });
+    // Positive control — Send for approval is on (a fresh, decision-less leg is always sendable),
+    // proving the tree has actually settled as a real MANAGER rather than an unauthenticated one.
+    await screen.findByRole("button", { name: /send for approval/i });
+    expect(screen.queryByRole("button", { name: /^approve$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
+  });
+
+  // ── Ported from `CheckerPanel.test.tsx`'s four-eyes test ───────────────────────────────────────
+  it("disables both controls with a hint when the checker is the sender (four-eyes)", async () => {
+    renderPanel(PENDING_LEG, { role: "MANAGER", userId: "sender-1" });
+    expect(await screen.findByRole("button", { name: /^approve$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^reject$/i })).toBeDisabled();
+    expect(screen.getByText(/another manager must decide/i)).toBeInTheDocument();
+  });
+
+  it("confirms the forwarder by name before approving, and does not fire the mutation on open", async () => {
+    const approveCalls: unknown[] = [];
+    renderPanel(PENDING_LEG, {
+      role: "MANAGER",
+      fetch: (url, init) => {
+        if (url.endsWith(APPROVE_URL) && init?.method === "POST") {
+          approveCalls.push(init.body ? JSON.parse(init.body as string) : undefined);
+          return { status: 200, body: { legId: PENDING_LEG.legId, status: "APPROVED" } };
+        }
+        return { status: 404 };
+      },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: /^approve$/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/Bridge Logistics/);
+    expect(approveCalls).toHaveLength(0); // opening never fires it
+
+    await userEvent.click(within(dialog).getByRole("button", { name: /^ok$/i }));
+    await waitFor(() => expect(approveCalls).toHaveLength(1));
+  });
+
+  it("cancelling the confirmation approves nothing", async () => {
+    const approveCalls: unknown[] = [];
+    renderPanel(PENDING_LEG, {
+      role: "MANAGER",
+      fetch: (url, init) => {
+        if (url.endsWith(APPROVE_URL) && init?.method === "POST") {
+          approveCalls.push(true);
+          return { status: 200, body: { legId: PENDING_LEG.legId, status: "APPROVED" } };
+        }
+        return { status: 404 };
+      },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: /^approve$/i }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+
+    // Radix has an open/close animation delay — asserting the dialog's absence immediately after
+    // the click would race it. `waitFor` retries until it actually closes (same pattern this
+    // file's "unmounts an already-open SendForApprovalDialog…" test below already uses).
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(approveCalls).toHaveLength(0);
+  });
+
+  it("collects a reason in a dialog before rejecting, and requires it", async () => {
+    const rejectCalls: unknown[] = [];
+    renderPanel(PENDING_LEG, {
+      role: "MANAGER",
+      fetch: (url, init) => {
+        if (url.endsWith(REJECT_URL) && init?.method === "POST") {
+          rejectCalls.push(JSON.parse((init.body as string) ?? "{}"));
+          return { status: 200, body: { legId: PENDING_LEG.legId, status: "REJECTED" } };
+        }
+        return { status: 404 };
+      },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: /^reject$/i }));
+    const dialog = await screen.findByRole("dialog");
+
+    await userEvent.click(within(dialog).getByRole("button", { name: /^reject$/i }));
+    expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+    expect(rejectCalls).toHaveLength(0);
+
+    await userEvent.type(within(dialog).getByRole("textbox"), "Transit too long");
+    await userEvent.click(within(dialog).getByRole("button", { name: /^reject$/i }));
+    await waitFor(() => expect(rejectCalls).toHaveLength(1));
+    expect(rejectCalls[0]).toEqual({ reason: "Transit too long" });
+  });
+
+  it("surfaces a 403 SELF_APPROVAL from Approve inline, and keeps the dialog open to retry", async () => {
+    renderPanel(PENDING_LEG, {
+      role: "MANAGER",
+      fetch: (url, init) => {
+        if (url.endsWith(APPROVE_URL) && init?.method === "POST") {
+          return { status: 403, body: { message: "SELF_APPROVAL" } };
+        }
+        return { status: 404 };
+      },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: /^approve$/i }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: /^ok$/i }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/SELF_APPROVAL/i);
+    // Still open to retry — a failed mutation must not silently close the confirmation.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("says the shortlisted offer can't be identified and disables OK when it's missing from the read model", async () => {
+    const unresolvableLeg: LegComparisonDto = { ...PENDING_LEG, offers: [] };
+    renderPanel(unresolvableLeg, { role: "MANAGER" });
+
+    await userEvent.click(await screen.findByRole("button", { name: /^approve$/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/could not be identified/i);
+    expect(within(dialog).getByRole("button", { name: /^ok$/i })).toBeDisabled();
+  });
+
+  // ── Same class of bug the `canSend`/`sendOpen` effect (and its own two regression tests) guards
+  // against below, on the two NEW booleans this task adds — a checker who opens Approve, then has
+  // the read model refetch out from under them (another checker decides first), must not silently
+  // reopen the same dialog once `canCheck` later becomes true again on a fresh pending decision. ──
+  it("does not silently reopen Approve once a DIFFERENT decision becomes checkable again", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) =>
+        url.endsWith("/api/auth/me")
+          ? {
+              status: 200,
+              body: {
+                user: { id: "manager-1", name: "Viewer", email: "v@x.com", role: "MANAGER" },
+              },
+            }
+          : { status: 404 },
+      ),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (l: LegComparisonDto) => (
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <CompareLegPanel
+            queryId="q1"
+            leg={l}
+            open
+            onToggle={() => {}}
+            locked={false}
+            fxAsOf={null}
+            viewMode="columns"
+            onViewModeChange={() => {}}
+          />
+        </AuthProvider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree(PENDING_LEG));
+
+    await userEvent.click(await screen.findByRole("button", { name: /^approve$/i }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    // A second manager approves it first — the refetch brings back APPROVED.
+    rerender(tree({ ...PENDING_LEG, decision: { ...PENDING_LEG.decision!, status: "APPROVED" } }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // A DIFFERENT pending decision on the same leg becomes checkable — the dismissed dialog must
+    // not silently come back open on its own.
+    rerender(
+      tree({
+        ...PENDING_LEG,
+        decision: {
+          ...PENDING_LEG.decision!,
+          status: "PENDING_APPROVAL",
+          sentByUserId: "someone-else",
+        },
+      }),
+    );
+    expect(await screen.findByRole("button", { name: /^approve$/i })).toBeEnabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
 // ── Review round IMPORTANT 3 — restored. This is the SAME guarantee final review IMPORTANT #2 /
 // deferred minor T4 F3 fixed for `ShortlistDialog` (a background refetch that ends the maker's
 // sendable window must not leave an already-open dialog live, and must not let it silently come
@@ -980,7 +1336,10 @@ describe("SendForApprovalDialog is gated by the same rule as the button that ope
   /** Renders the panel in a form that can be re-rendered with a different `leg`, so a test can
    *  simulate the read model changing under an open dialog. */
   function renderRefetchablePanel(leg: LegComparisonDto) {
-    vi.stubGlobal("fetch", mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })));
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })),
+    );
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const tree = (l: LegComparisonDto) => (
       <QueryClientProvider client={qc}>
@@ -1032,9 +1391,7 @@ describe("SendForApprovalDialog is gated by the same rule as the button that ope
     refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, rejectionReason: "Too expensive" } });
 
     // Positive control — sending really is available again, so "no dialog" isn't vacuous.
-    expect(
-      await screen.findByRole("button", { name: /send for approval/i }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /send for approval/i })).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
