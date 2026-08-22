@@ -282,13 +282,20 @@ function LegSectionForm({
     const f = validateQuote(d, rfq.submissionDeadline, new Date().toISOString(), activeLines);
     if (f.length > 0) return; // client-invalid: show findings, do NOT hit network
 
+    // Whether the save half actually landed, so the failure copy below can only PROMISE a saved
+    // draft when there genuinely is one. The two calls fail together for a revoked token (the
+    // save 401s first), so assuming it would have been a plain lie in exactly the case the
+    // reassurance matters most.
+    let draftSaved = false;
     try {
       await saved.mutateAsync(d); // save first
+      draftSaved = true;
       // `leg.version` — echoed verbatim from the same DTO this form is rendering, never a value
       // cached elsewhere (S5.9 D10): the guard is only meaningful if it checks THIS page's basis.
       await submit.mutateAsync(leg.version); // then submit (server reads stored draft)
       // on success: query invalidation in hooks triggers refetch → leg becomes QUOTED
     } catch (e) {
+      const draftNote = draftSaved ? " Your pricing has been saved as a draft." : "";
       if (e instanceof PortalError && e.status === 422) {
         setServerFindings(e.findings ?? []);
       } else if (e instanceof PortalError && e.status === 409) {
@@ -297,6 +304,27 @@ function LegSectionForm({
         // refresh, which re-fetches the leg DTO and its current `version`.
         setSubmitError(
           e.serverMessage ?? "This RFQ has been updated — please refresh the page before submitting.",
+        );
+      } else if (e instanceof PortalError && (e.status === 401 || e.status === 403)) {
+        // S5.9 final whole-branch review, IMPORTANT 3. Reachable TODAY, with no deploy skew: a
+        // staff member clicking "Regenerate" on the portal link while a forwarder has this page
+        // open invalidates the token this page holds, and `RfqTokenGuard` then 401/403s the very
+        // next submit. Fixed copy rather than the server's own `.message`, which for an auth
+        // refusal is a guard-internal string with nothing actionable in it — and which D9 keeps
+        // out of forwarder-facing surfaces on principle.
+        setSubmitError(
+          `This quote link is no longer valid — it may have been reissued. Please use the most recent link emailed to you, or ask your Svyft contact for a new one.${draftNote}`,
+        );
+      } else {
+        // S5.9 final whole-branch review, IMPORTANT 3 — the CATCH-ALL that had to exist. Without
+        // it, ANY other outcome (a 500, a 400 from a future contract change, a dropped
+        // connection) ended here silently: the spinner simply stopped, nothing appeared on
+        // screen, and the leg stayed RFQ_SENT with the forwarder given no reason to suspect
+        // anything went wrong. That exact shape is what made S5.9 Task 7's Critical invisible, so
+        // this branch is deliberately unconditional — it must keep catching cases nobody has
+        // enumerated yet, which is why it does not test `e` any further.
+        setSubmitError(
+          `Something went wrong submitting this quote. Please try again, and contact your Svyft contact if it keeps failing.${draftNote}`,
         );
       }
     }
@@ -393,8 +421,10 @@ function LegSectionForm({
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Terms
           </h3>
-          {/* Stale-page / already-submitted 409 (design D10) — the server's own message, shown
-              inline right above the Submit button rather than as a silent/generic failure. */}
+          {/* Every submit failure lands here, inline right above the Submit button: the
+              stale-page / already-submitted 409's own server message (design D10), a revoked-link
+              401/403, and — since the final whole-branch review's IMPORTANT 3 — the catch-all for
+              everything else, which previously produced no visible outcome at all. */}
           {submitError && (
             <p
               role="alert"

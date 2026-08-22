@@ -49,9 +49,20 @@ export interface SendForApprovalDialogProps {
  * grid keys its cells by (via `buildComparisonRowModel`), so "is this the recommendation?" can't
  * disagree with the tint/star the maker just looked at. Only offers past the model's own priced
  * filter are listed — an unpriced offer has nothing to award and the server's guards would refuse
- * it anyway. A stale (`REQUOTED`) offer stays selectable, carrying the same
- * `STALE_OFFER_LABEL` warning the grid badges it with. The A9 in-flight-re-quote block is
- * unchanged from `ShortlistDialog`.
+ * it anyway. The A9 in-flight-re-quote block is unchanged from `ShortlistDialog`.
+ *
+ * **Stale (`REQUOTED`) offers are listed, DISABLED, with their reason on screen** — never hidden,
+ * and never selectable (S5.9 final whole-branch review, IMPORTANT 1). This dialog originally
+ * ported `ShortlistDialog`'s pre-Task-3 "stays selectable" behaviour, which the server has refused
+ * unconditionally since Task 3: `award.service.ts`'s in-transaction A1 refresh requires the NAMED
+ * quote to be `QUOTED` right now, so picking a stale offer cost the maker a written override
+ * reason, a ticked proceed-without-waiting box and a Send press to earn *"The named offer is no
+ * longer QUOTED — refresh the comparison and pick again"* — advice that cannot help, because
+ * refreshing leaves it `REQUOTED`. Note this is a DIFFERENT rule from A9, which is about some
+ * OTHER quote on the leg being re-quoted: A9 is proceedable-past with a reason, this is not
+ * proceedable at all. Same shape `NegotiateDialog` uses for an ineligible forwarder in this
+ * folder — disabled control, reason text beside it — so an unavailable option is always visible
+ * and always explained rather than silently missing.
  *
  * **The reason field (PO ruling, review round).** Always rendered, for every selection — not only
  * when `overrideRequired`. It stays REQUIRED only off the recommendation; on the recommended path
@@ -198,28 +209,39 @@ export function SendForApprovalDialog({
                       className="flex items-center justify-between gap-3 rounded-md border border-border p-2"
                     >
                       <div className="flex items-center gap-2">
-                        <RadioGroupItem id={optionId} value={cell.key} />
-                        <Label
-                          htmlFor={optionId}
-                          className="flex flex-wrap items-center gap-1.5 font-normal"
-                        >
-                          <span>
-                            {cell.offer.freightForwarderName} — {cell.offer.variantLabel}
-                          </span>
-                          {cell.recommended && (
-                            <span
-                              className="text-emerald-600"
-                              title="Recommended by the comparison engine"
-                            >
-                              ★
+                        {/* Disabled, never omitted (review IMPORTANT 1) — the server refuses a
+                            non-QUOTED named offer unconditionally, so letting this be picked only
+                            buys the maker a 409 whose "refresh and pick again" advice can't help. */}
+                        <RadioGroupItem id={optionId} value={cell.key} disabled={cell.stale} />
+                        <div className="space-y-0.5">
+                          <Label
+                            htmlFor={optionId}
+                            className="flex flex-wrap items-center gap-1.5 font-normal"
+                          >
+                            <span>
+                              {cell.offer.freightForwarderName} — {cell.offer.variantLabel}
                             </span>
-                          )}
+                            {cell.recommended && (
+                              <span
+                                className="text-emerald-600"
+                                title="Recommended by the comparison engine"
+                              >
+                                ★
+                              </span>
+                            )}
+                            {cell.stale && (
+                              <Badge variant="warning" className="whitespace-nowrap">
+                                {STALE_OFFER_LABEL}
+                              </Badge>
+                            )}
+                          </Label>
                           {cell.stale && (
-                            <Badge variant="warning" className="whitespace-nowrap">
-                              {STALE_OFFER_LABEL}
-                            </Badge>
+                            <p className="text-xs text-muted-foreground">
+                              This price isn’t live while a re-quote is outstanding — it can’t be
+                              sent for approval. Wait for the new quote, or pick another offer.
+                            </p>
                           )}
-                        </Label>
+                        </div>
                       </div>
                       <span className="font-mono text-sm tabular-nums">
                         {fmtUsd(cell.offer.usdTotal)}

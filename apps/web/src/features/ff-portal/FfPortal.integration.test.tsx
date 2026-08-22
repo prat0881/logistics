@@ -530,6 +530,77 @@ describe("FfPortal integration — stale-page 409 surfacing", () => {
   });
 });
 
+// ── Test: every OTHER submit failure is surfaced too (final whole-branch review, IMPORTANT 3) ──
+// Before this, `LegSection`'s catch handled only 422 and 409 and had no `else`: anything else —
+// most concretely a 401/403 after a staff member clicks "Regenerate" on the portal link while a
+// forwarder has this page open, but equally any 500 — stopped the spinner and put NOTHING on
+// screen. The forwarder had no reason to suspect the submit hadn't landed. That silent shape is
+// exactly what made S5.9 Task 7's Critical invisible, so it is now pinned from both sides: the
+// specific revoked-link case, and the unenumerated catch-all.
+describe("FfPortal integration — non-422/409 submit failures are surfaced, never silent", () => {
+  // Same driving sequence the 409 test above uses; parametrized only by what the PATCH (save
+  // draft) and POST (submit) calls return, so each case below differs by nothing else.
+  async function submitWith(patchStatus: number, submitStatus: number, submitBody: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        const ok = (status: number, b: unknown) =>
+          Promise.resolve({
+            ok: status < 300,
+            status,
+            json: () => Promise.resolve(b),
+            text: () => Promise.resolve(JSON.stringify(b)),
+          } as Response);
+
+        if (url.endsWith("/api/ff/rfq/tok") && method === "GET") return ok(200, sentRfq);
+        if (url.includes("/quotes/L1") && !url.includes("/submit") && method === "PATCH") {
+          return ok(patchStatus, {});
+        }
+        if (url.includes("/quotes/L1/submit") && method === "POST") {
+          return ok(submitStatus, submitBody);
+        }
+        return ok(401, {});
+      }),
+    );
+
+    renderAt("tok");
+    await screen.findByText(/Acme/i);
+
+    const amountInput = screen.getByLabelText(/^air freight$/i);
+    await userEvent.clear(amountInput);
+    await userEvent.type(amountInput, "2000");
+    fireEvent.change(screen.getByLabelText(/departure/i), { target: { value: FUTURE_DEPARTURE } });
+    fireEvent.change(screen.getByLabelText(/arrival/i), { target: { value: FUTURE_ARRIVAL } });
+    await userEvent.click(screen.getByRole("checkbox"));
+    await userEvent.click(screen.getByRole("button", { name: /submit quote/i }));
+  }
+
+  it("explains a revoked link when the submit 403s (staff regenerated it mid-session)", async () => {
+    // The token is dead for BOTH calls — the save 403s first, which is why the copy must not
+    // promise a saved draft here.
+    await submitWith(403, 403, { statusCode: 403, message: "Forbidden resource", error: "Forbidden" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/no longer valid/i);
+    expect(alert.textContent).toMatch(/most recent link/i);
+    expect(alert.textContent).not.toMatch(/saved as a draft/i);
+    // D9 — the guard's own internal string is never relayed to a forwarder's screen.
+    expect(alert.textContent).not.toMatch(/forbidden resource/i);
+  });
+
+  it("surfaces an unenumerated failure (500) instead of stopping the spinner silently", async () => {
+    // The save landed (200) before the submit blew up, so the draft reassurance is TRUE here and
+    // is shown — the same message must not claim it in the 403 case above.
+    await submitWith(200, 500, { statusCode: 500, message: "Internal server error" });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/something went wrong/i);
+    expect(alert.textContent).toMatch(/saved as a draft/i);
+    expect(alert.textContent).not.toMatch(/internal server error/i);
+  });
+});
+
 // ── Test 3: Invalid submit makes ZERO network calls ──────────────────────────
 // sentDraft/sentLeg are set up so every rule passes EXCEPT Q_PRICED on "Air Freight" (the one
 // line in sentLeg.seededCharges, unpriced in sentDraft.charges) — this is the rule the

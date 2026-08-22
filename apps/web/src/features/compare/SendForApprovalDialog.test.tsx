@@ -298,14 +298,35 @@ describe("SendForApprovalDialog", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
-  it("keeps a stale (REQUOTED) offer selectable, carrying its warning", async () => {
+  // S5.9 final whole-branch review, IMPORTANT 1 — this test used to assert the OPPOSITE ("keeps a
+  // stale (REQUOTED) offer selectable"), pinning the wrong side of the contract: it was ported
+  // from `ShortlistDialog`'s pre-Task-3 behaviour, but since Task 3 the server's in-transaction A1
+  // refresh (`award.service.ts`) refuses ANY named quote that isn't `QUOTED` right now — the
+  // refusal `award-workflow-maker.e2e-spec.ts`'s "CRITICAL 2" test asserts. Selecting one could
+  // therefore only ever end in a 409 telling the maker to "refresh the comparison and pick again",
+  // which cannot help: it is still REQUOTED after a refresh. Listed + disabled + explained, per
+  // `NegotiateDialog`'s ineligible-forwarder pattern.
+  it("lists a stale (REQUOTED) offer but disables it, with its warning and a reason", async () => {
     renderDialog();
     const staleRadio = screen.getByLabelText(/Falcon Freight — Dedicated/);
-    expect(staleRadio).not.toBeDisabled();
+    expect(staleRadio).toBeInTheDocument(); // never hidden
+    expect(staleRadio).toBeDisabled();
     expect(screen.getByText(STALE_OFFER_LABEL)).toBeInTheDocument();
+    expect(screen.getByText(/isn’t live while a re-quote is outstanding/i)).toBeInTheDocument();
 
     await userEvent.click(staleRadio);
-    expect(staleRadio).toBeChecked();
+    expect(staleRadio).not.toBeChecked();
+  });
+
+  // The converse, so "disabled" can't quietly widen into "everything is disabled": a live QUOTED
+  // offer stays pickable and carries neither the badge nor the reason.
+  it("leaves a live (QUOTED) offer selectable, with no stale badge or reason on it", async () => {
+    renderDialog();
+    const liveRadio = screen.getByLabelText(/Bridge Logistics — Dedicated/);
+    expect(liveRadio).not.toBeDisabled();
+    await userEvent.click(liveRadio);
+    expect(liveRadio).toBeChecked();
+    expect(screen.getAllByText(STALE_OFFER_LABEL)).toHaveLength(1); // Falcon's only
   });
 
   it("surfaces a send failure inline and keeps the dialog open to retry", async () => {
