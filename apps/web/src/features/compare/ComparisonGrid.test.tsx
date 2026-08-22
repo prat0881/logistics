@@ -1112,25 +1112,52 @@ describe("Checker action bar — Approve/Reject (S5.9.1 Task 2)", () => {
   });
 
   // ── Ported from `CheckerPanel.test.tsx`'s "hides checker controls for an EXECUTIVE viewer" ─────
+  // Review round (Minor) — the old positive control here (`await screen.findByTestId("leg-action-
+  // bar")`) proved nothing about auth: the bar renders off `!locked`, a plain prop with no auth
+  // term, so it's already in the DOM before `useAuth()`'s async `/api/auth/me` round trip resolves,
+  // for any role or none at all. The comment claimed otherwise; it only "worked" because `findBy`'s
+  // await incidentally flushed the same microtasks auth was also settling on. Awaiting the probe's
+  // resolved role text directly is the actual control. ───────────────────────────────────────────
   it("does not offer Approve or Reject to an executive, even on a leg pending approval", async () => {
     renderPanel(PENDING_LEG, { role: "EXECUTIVE", withAuthProbe: true });
-    // Positive control — an Executive still gets a real action bar (Negotiate's gate is unrelated
-    // to role), so its presence proves auth has settled without also proving the very thing under
-    // test (unlike awaiting the role name alone, which says nothing about which controls rendered).
-    await screen.findByTestId("leg-action-bar");
+    await screen.findByText("EXECUTIVE");
+    // An Executive still gets a real (non-degenerate) action bar — Negotiate's gate is unrelated to
+    // role — checked here as a sanity check that the panel actually rendered something, not as the
+    // auth-settlement control (the probe above is that).
+    expect(screen.getByTestId("leg-action-bar")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^approve$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
   });
 
   // ── Ported from `CheckerPanel.test.tsx`'s "renders nothing when the leg has no pending decision
-  // to check" ───────────────────────────────────────────────────────────────────────────────────
+  // to check" — same fix as above: `canSend` carries no auth/role term at all, so "Send for
+  // approval" renders identically for an anonymous viewer and proves nothing about settlement. ────
   it("does not offer Approve or Reject to a manager when the leg has no pending decision", async () => {
     renderPanel({ ...LEG, decision: null }, { role: "MANAGER", withAuthProbe: true });
-    // Positive control — Send for approval is on (a fresh, decision-less leg is always sendable),
-    // proving the tree has actually settled as a real MANAGER rather than an unauthenticated one.
-    await screen.findByRole("button", { name: /send for approval/i });
+    await screen.findByText("MANAGER");
+    // A fresh, decision-less leg is always sendable — checked as a sanity check that the panel
+    // rendered something real, not as the auth-settlement control (the probe above is that).
+    expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^approve$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
+  });
+
+  // ── Review round (Minor) — the bar itself must not render when it would have zero controls
+  // (`hasActionBarControls`, `CompareLegPanel.tsx`), not merely each button individually. A checker
+  // viewing an already-APPROVED leg (one leg approved while its siblings are still pending, so
+  // `locked` hasn't engaged yet) has none of the three: no Negotiate (`isChecker`), no Approve/
+  // Reject (`canCheck` needs PENDING_APPROVAL), no Send (`canSend` excludes APPROVED) — the exact
+  // shape that used to leave a bare, control-less `border-t`/`pt-3` rule in the DOM. The positive
+  // control here can't be the bar itself (that's the thing under test), so it awaits the settled
+  // role text directly instead. ───────────────────────────────────────────────────────────────────
+  it("renders no action bar at all for a manager viewing an already-approved leg", async () => {
+    const approvedLeg: LegComparisonDto = {
+      ...PENDING_LEG,
+      decision: { ...PENDING_LEG.decision!, status: "APPROVED" },
+    };
+    renderPanel(approvedLeg, { role: "MANAGER", withAuthProbe: true });
+    await screen.findByText("MANAGER");
+    expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
   });
 
   // ── Ported from `CheckerPanel.test.tsx`'s four-eyes test ───────────────────────────────────────

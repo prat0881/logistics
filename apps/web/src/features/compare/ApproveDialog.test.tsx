@@ -97,6 +97,27 @@ function renderDialog({
   return { onOpenChange };
 }
 
+// Review round (Important) — every fixture above this point has `shortlistedQuoteId ===
+// recommendedQuoteId`, so "names the shortlisted forwarder" and "names the recommended forwarder"
+// were indistinguishable claims: swapping `ApproveDialog.tsx`'s source from the shortlisted pair to
+// the recommended pair left every test in this file green. The two only actually diverge on the
+// maker's OVERRIDE path — `overrideReason` exists precisely because the maker picked something
+// other than the recommendation — which is exactly the production case a wrong read here would
+// mis-name. `OVERRIDE_LEG` keeps the recommendation on Bridge Logistics but shortlists Other
+// Forwarder instead, so a test asserting "the dialog names Other Forwarder, not Bridge Logistics"
+// actually exercises which of the two fields the dialog reads.
+const OVERRIDE_LEG: LegComparisonDto = {
+  ...LEG,
+  decision: {
+    ...LEG.decision!,
+    shortlistedQuoteId: "quote-other",
+    shortlistedVariant: "DEDICATED",
+    // recommendedQuoteId/recommendedVariant deliberately left on quote-bridge — the maker
+    // overrode the recommendation, which is why overrideReason is populated below.
+    overrideReason: "Bridge missed the RFQ deadline; Other Forwarder can still meet it.",
+  },
+};
+
 describe("ApproveDialog", () => {
   it("names the shortlisted forwarder and variant in the confirmation", () => {
     renderDialog();
@@ -104,6 +125,13 @@ describe("ApproveDialog", () => {
     expect(dialog).toHaveTextContent(/Bridge Logistics/);
     expect(dialog).toHaveTextContent(/Dedicated/);
     expect(dialog).toHaveTextContent("LEG-2");
+  });
+
+  it("names the SHORTLISTED forwarder, not the recommended one, once the maker has overridden the recommendation", () => {
+    renderDialog({ leg: OVERRIDE_LEG });
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent(/Other Forwarder/);
+    expect(dialog).not.toHaveTextContent(/Bridge Logistics/);
   });
 
   it("does not call the mutation just by rendering open", () => {
@@ -151,9 +179,15 @@ describe("ApproveDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
-  it("blocks Escape/overlay-close while the approval is in flight", async () => {
+  // Review round (Minor) — this used to be titled "blocks Escape/overlay-close" but only asserted
+  // the footer buttons were disabled, never actually pressed Escape — so `ApproveDialog.tsx`'s
+  // `handleOpenChange` early-return (`if (!next && pending) return;`), which is what Escape/overlay/
+  // corner-X all funnel through via Radix's `onOpenChange`, was never exercised. Fires Escape for
+  // real and asserts on `onOpenChange` directly, the same signal `SendForApprovalDialog.test.tsx`'s
+  // equivalent guard is proven with elsewhere in this codebase.
+  it("blocks Escape from closing the dialog while the approval is in flight", async () => {
     let resolveApprove: (v: unknown) => void = () => {};
-    renderDialog({
+    const { onOpenChange } = renderDialog({
       impl: () =>
         new Promise((resolve) => {
           resolveApprove = resolve;
@@ -165,6 +199,12 @@ describe("ApproveDialog", () => {
     // them either.
     expect(screen.getByRole("button", { name: /cancel/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /approving/i })).toBeDisabled();
+
+    // The actual guard under test — Escape funnels through the SAME `onOpenChange` the footer
+    // Cancel button does, so it must be blocked too, not just the button itself.
+    await userEvent.keyboard("{Escape}");
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
 
     resolveApprove({ legId: LEG.legId, status: "APPROVED" });
     await waitFor(() => expect(postJson).toHaveBeenCalledTimes(1));

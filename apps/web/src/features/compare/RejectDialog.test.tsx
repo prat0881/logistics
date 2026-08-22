@@ -111,9 +111,12 @@ describe("RejectDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
-  it("blocks the form while the rejection is in flight", async () => {
+  // Review round (Minor) — same fix as `ApproveDialog.test.tsx`'s equivalent: this used to only
+  // check the form's disabled state without ever pressing Escape, so `RejectDialog.tsx`'s
+  // `handleOpenChange` early-return was never exercised. Fires Escape for real.
+  it("blocks Escape from closing the dialog, and blocks the form, while the rejection is in flight", async () => {
     let resolveReject: (v: unknown) => void = () => {};
-    renderDialog({
+    const { onOpenChange } = renderDialog({
       impl: () =>
         new Promise((resolve) => {
           resolveReject = resolve;
@@ -126,6 +129,12 @@ describe("RejectDialog", () => {
     expect(screen.getByRole("button", { name: /cancel/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /rejecting/i })).toBeDisabled();
     expect(screen.getByLabelText(/rejection reason/i)).toBeDisabled();
+
+    // The actual guard under test — Escape funnels through the SAME `onOpenChange` the footer
+    // Cancel button does, so it must be blocked too, not just the button itself.
+    await userEvent.keyboard("{Escape}");
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
 
     resolveReject({ legId: LEG.legId, status: "REJECTED" });
     await waitFor(() => expect(postJson).toHaveBeenCalledTimes(1));

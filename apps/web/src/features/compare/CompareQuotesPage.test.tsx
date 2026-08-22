@@ -212,7 +212,12 @@ function renderPage(opts: { role?: string; awardSnapshot?: typeof SNAPSHOT | nul
     </>,
     {
       route: "/queries/q1/compare",
-      user: { id: "u1", name: "Viewer", email: "v@x.com", role },
+      // Review round (Minor) — was "u1", which collides with LEG-2's decision.sentByUserId ("u1",
+      // see COMPARISON above): every MANAGER-role test rendered through this helper was, by fixture
+      // accident, the sender of LEG-2's pending decision (four-eyes `isSelf`). Nothing currently in
+      // this file exercises an unlocked MANAGER+LEG-2 case where that would matter, but "u2" removes
+      // the latent trap rather than leaving it for whoever adds that test next.
+      user: { id: "u2", name: "Viewer", email: "v@x.com", role },
     },
   );
 }

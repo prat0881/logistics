@@ -87,7 +87,8 @@ interface CompareLegPanelProps {
  * reason before firing `useReject` — never mutating from the bar directly. Four-eyes
  * (`decision.sentByUserId === user.id`) disables both WITHOUT hiding them, with the same visible
  * hint `CheckerPanel` carried since S5.6; `CheckerPanel.tsx` itself is deleted (Task 2's judgement
- * call — see its own removal note in `CheckerPanel.test.tsx`) since every line it rendered (the
+ * call — see its own removal note atop `GenerateGate.test.tsx`, the file `CheckerPanel.test.tsx`
+ * was renamed to once nothing `CheckerPanel`-shaped was left in it) since every line it rendered (the
  * hint, the two buttons, the reason form) now lives directly in this bar or in the two dialogs it
  * opens, leaving nothing for a separate component to own. `MakerPanel` below keeps only the
  * rejection alert (or renders nothing) — the two locked-state explanations `DecisionChip` used to
@@ -208,6 +209,16 @@ export function CompareLegPanel({
       ? "A checker must reject this leg before it can be re-negotiated."
       : null;
 
+  // Review round (Minor) — a checker viewing an already-APPROVED leg (one leg approved while
+  // siblings are still pending, so `locked` hasn't engaged yet) has none of the three controls:
+  // `!isChecker` is false (no Negotiate), `canCheck` is false (status isn't PENDING_APPROVAL any
+  // more), and `canSend` is false (APPROVED is one of the two statuses that turns it off). Without
+  // this check the bar below still rendered — a bare `border-t`/`pt-3` div with nothing in it, a
+  // stray rule-and-padding with no controls. `hasActionBarControls` names the exact same three
+  // conditions the JSX already gates each control on, so it can't drift from what actually renders
+  // inside.
+  const hasActionBarControls = !isChecker || canCheck || canSend;
+
   function handleSelectOffer(quoteId: string, variant: string | null) {
     const key = offerKey(quoteId, variant);
     setSelectedOfferKey((cur) => (cur === key ? undefined : key));
@@ -273,8 +284,10 @@ export function CompareLegPanel({
               (not merely disabled) once locked, per this component's own `locked` contract. Each
               control keeps its own gate — Negotiate to `!isChecker`, Send to `canSend` for every
               role, Approve/Reject to `canCheck` — rather than swapping the whole bar by role: see
-              this component's doc comment for why. */}
-          {!locked && (
+              this component's doc comment for why. `hasActionBarControls` withholds the bar itself
+              (not just each button) once none of the three would render — e.g. a checker viewing an
+              already-APPROVED leg — so it never renders as a bare, control-less rule with padding. */}
+          {!locked && hasActionBarControls && (
             <div
               data-testid="leg-action-bar"
               className="flex items-center justify-end gap-2 border-t border-border pt-3"
