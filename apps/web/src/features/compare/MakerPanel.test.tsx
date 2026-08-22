@@ -178,12 +178,12 @@ describe("MakerPanel", () => {
   });
 
   // ── S5.9 T10 (product item 7) — both locked-state paragraphs moved off this panel and onto
-  // the leg header's decision chip as a hover tooltip (`CompareLegPanel`'s `DecisionChip`); see
-  // "explains an approved/pending-approval leg on hover of its decision chip instead" in
-  // `ComparisonGrid.test.tsx`, which renders `CompareLegPanel` and covers the tooltip itself. What
-  // is asserted here is only that MakerPanel no longer renders either paragraph AS A BLOCK — not
-  // merely that this one regex is absent, but that the whole panel mounts nothing for these
-  // statuses (final review I1's dead-end wording is gone from this component entirely).
+  // the leg header's decision chip as a hover tooltip (`CompareLegPanel`'s `DecisionChip`).
+  // S5.9.1 (product item 4) then deleted that chip entirely — the two hints have no home to move
+  // to any more and are simply gone (`ComparisonGrid.test.tsx` no longer carries their tooltip
+  // tests). What is asserted here is only that MakerPanel no longer renders either paragraph AS A
+  // BLOCK — not merely that this one regex is absent, but that the whole panel mounts nothing for
+  // these statuses (final review I1's dead-end wording is gone from this component entirely).
   it("no longer renders the approved-state paragraph as a block", () => {
     renderMaker({
       ...SAVED_LEG,

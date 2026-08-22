@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { LegComparisonDto, OfferDto } from "@svyft/shared";
+import type { LegComparisonDto, LegStatus, OfferDto } from "@svyft/shared";
 import { AuthProvider } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
@@ -165,6 +165,7 @@ function renderPanel(
     fetch,
     viewMode = "columns",
     onViewModeChange = () => {},
+    legStatus,
   }: {
     locked?: boolean;
     /** Optional handler for the few tests that drive a real maker mutation through the panel;
@@ -176,6 +177,11 @@ function renderPanel(
      *  own default was `"columns"` — so every existing test in this file is unaffected. */
     viewMode?: ViewMode;
     onViewModeChange?: (mode: ViewMode) => void;
+    /** `CompareLegPanelProps.legStatus` — optional and undefined by default (as it already was
+     *  before this parameter existed; every pre-existing test in this file rendered the panel
+     *  without it and is unaffected). Threaded through only by the S5.9.1 test that needs
+     *  `LegStatusBadge` to actually render — `CompareQuotesPage` is normally what supplies this. */
+    legStatus?: LegStatus;
   } = {},
 ) {
   vi.stubGlobal(
@@ -189,6 +195,7 @@ function renderPanel(
         <CompareLegPanel
           queryId="q1"
           leg={leg}
+          legStatus={legStatus}
           open
           onToggle={() => {}}
           locked={locked}
@@ -353,14 +360,23 @@ describe.each(["columns", "rows"] as const)("ComparisonGrid — %s view", (mode)
     expect(screen.queryByText(RECOMMENDATION_FOOTNOTE)).not.toBeInTheDocument();
   });
 
-  // ── S5.9 T9 — same suppression, one lifecycle stage earlier: once the leg's decision has left
-  // DRAFT (sent for approval), `buildRecommendation` may already be ranking a different forwarder
-  // than the one under review (Task 8's carried finding). Both orientations, off the same
-  // PARITY_LEG fixture the star/footnote parity tests above use, so a view that forgot this
-  // suppression fails here exactly as it would for `locked`.
-  it("suppresses the recommendation once the decision leaves DRAFT, without hiding the grid's own figures", async () => {
+  // ── S5.9.1 R1 — the OPPOSITE of what this test used to assert. S5.9 T9 suppressed the `★` the
+  // moment a leg's decision left DRAFT (sent for approval), reasoning that `buildRecommendation`
+  // may already be ranking a different forwarder than the one under review (Task 8's carried
+  // finding) — but that left a checker reviewing a sent leg with no recommendation on screen at
+  // all. The decision snapshots `recommendedQuoteId`/`recommendedVariant` at send time
+  // (award.ts:52-60), so the mark now reads THAT instead of going quiet. Both orientations, off
+  // the same PARITY_LEG fixture the star/footnote parity tests above use.
+  it("shows the recommendation AND the pending-approval status as separate signals, once sent for approval", async () => {
     const pendingLeg: LegComparisonDto = {
       ...PARITY_LEG,
+      // Sending for approval flips the NAMED offer's own quote status too (S5.9 T3) — modelled
+      // here so the fixture matches what the server actually does, not just the decision half.
+      offers: PARITY_LEG.offers.map((o) =>
+        o.quoteId === "q1" && o.variant === "DEDICATED"
+          ? { ...o, quoteStatus: "PENDING_APPROVAL" as const }
+          : o,
+      ),
       decision: {
         legId: PARITY_LEG.legId,
         status: "PENDING_APPROVAL",
@@ -379,10 +395,15 @@ describe.each(["columns", "rows"] as const)("ComparisonGrid — %s view", (mode)
     render(<ComparisonGrid leg={pendingLeg} viewMode={mode} />);
 
     expect(await screen.findByText("$1,824.37")).toBeInTheDocument();
-    expect(
-      screen.queryByTestId(`offer-recommended-${PARITY_RECOMMENDED_KEY}`),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText(RECOMMENDATION_FOOTNOTE)).not.toBeInTheDocument();
+    // Signal 1 — the recommendation of record is still marked.
+    const mark = screen.getByTestId(`offer-recommended-${PARITY_RECOMMENDED_KEY}`);
+    expect(mark).toHaveTextContent("★");
+    expect(screen.getByText(RECOMMENDATION_FOOTNOTE)).toBeInTheDocument();
+    // Signal 2 — the offer's own Status cell independently says what's actually happening. The
+    // two signals coexist; they don't collapse into one (product item 1 vs. product item 4).
+    expect(screen.getByTestId(`offer-status-${PARITY_RECOMMENDED_KEY}`)).toHaveTextContent(
+      /pending approval/i,
+    );
   });
 
   it("badges a REQUOTED offer as stale re-quote-requested", async () => {
@@ -807,16 +828,17 @@ describe("ComparisonGrid edge cases", () => {
     expect(screen.getByText("Acme Forwarding")).toBeInTheDocument();
   });
 
-  // ── S5.9 T9 — carried forward from Task 8's own finding: `buildRecommendation`
-  // (comparison.service.ts) ranks only `QUOTED` offers, so sending an offer for approval flips
-  // ITS OWN quote to `PENDING_APPROVAL` and drops it out of that ranking on the very next fetch —
-  // `leg.recommendation` can then name a DIFFERENT forwarder than the one actually under review,
-  // exactly while a `CheckerPanel` (which only mounts for this same status) is looking at this
-  // grid. Suppress the same way `locked` already does post-generate, one lifecycle stage earlier.
-  // Both the `★`/tint AND the footnote must go quiet together — the footnote is gated (Task 8) on
-  // `model.cells.some(c => c.recommended)`, so this is verifying that gate actually follows the
-  // row-model fix below, not assuming it does.
-  it("suppresses the recommendation tint, the star mark AND the footnote once sent for approval", () => {
+  // ── S5.9.1 R1 — replaces the S5.9 T9 suppression here. `buildRecommendation`
+  // (comparison.service.ts) ranks only `QUOTED` offers, so sending quote-1::DEDICATED for approval
+  // flips ITS OWN quote to `PENDING_APPROVAL` and drops it out of the LIVE ranking on the very next
+  // fetch — `leg.recommendation` can then name a DIFFERENT forwarder than the one actually under
+  // review, exactly the scenario Task 8/T9 caught. But `AwardDecisionDto.recommendedQuoteId`
+  // snapshots the recommendation at send time (award.ts:52-60) — stable, and exactly what the
+  // maker was judged against — so reading THAT instead of suppressing is the fix. The tint, the
+  // `★` mark AND the footnote all stay lit together (still one gate, `model.cells.some(c =>
+  // c.recommended)`, in `ComparisonGrid.tsx`), and the offer's own Status cell independently says
+  // "Pending Approval" alongside it — the two signals coexist rather than collapsing into one.
+  it("keeps the recommendation tint, the star mark AND the footnote once sent for approval — reading the snapshot, not the (now-diverged) live value", () => {
     const pendingLeg: LegComparisonDto = {
       ...LEG,
       // Sending for approval flips the NAMED offer's own quote status too (S5.9 T3) — modelled
@@ -843,183 +865,71 @@ describe("ComparisonGrid edge cases", () => {
     };
     renderPanel(pendingLeg);
 
-    expect(screen.getByTestId("offer-header-quote-1::DEDICATED").closest("th")).not.toHaveClass(
+    expect(screen.getByTestId("offer-header-quote-1::DEDICATED").closest("th")).toHaveClass(
       "bg-emerald-500/10",
     );
-    expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).not.toHaveClass("bg-emerald-500/10");
-    expect(screen.queryByTestId("offer-recommended-quote-1::DEDICATED")).not.toBeInTheDocument();
-    expect(screen.queryByText(RECOMMENDATION_FOOTNOTE)).not.toBeInTheDocument();
+    expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).toHaveClass("bg-emerald-500/10");
+    const mark = screen.getByTestId("offer-recommended-quote-1::DEDICATED");
+    expect(mark).toHaveTextContent("★");
+    // S5.9.1 R1, Step 4's judgement call — the mark's accessible name no longer reuses
+    // `leg.recommendation.reason` here: that live string ("High priority → fastest transit…")
+    // describes whatever `buildRecommendation` ranks NOW, which after this send is q2's offer
+    // (comparison.service.ts ranks QUOTED offers only) — not this snapshotted one. It must still
+    // carry a real, sensible accessible name rather than rendering with none.
+    const liveReason = "High priority → fastest transit (3 days); price broke the tie.";
+    expect(mark).toHaveAccessibleName(/recommended/i);
+    expect(mark).not.toHaveAccessibleName(new RegExp(liveReason.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    expect(screen.getByText(RECOMMENDATION_FOOTNOTE)).toBeInTheDocument();
 
-    // …while the grid itself stays fully readable, and the Status cell says what's actually
-    // happening instead (D2 already mitigated this — this asserts it, doesn't just assume it).
+    // …while the grid itself stays fully readable, and the Status cell independently says what's
+    // actually happening — the two signals coexist (product item 1 vs. product item 4).
     expect(screen.getByTestId("offer-usd-quote-1::DEDICATED")).toHaveTextContent("$542.17");
-    expect(screen.getByTestId("offer-status-quote-1::DEDICATED")).toHaveTextContent(/pending/i);
+    expect(screen.getByTestId("offer-status-quote-1::DEDICATED")).toHaveTextContent(/pending approval/i);
   });
 
-  // ── final review I2 — a rejected leg comes back as DRAFT + a reason ───────────────────────
-  it("labels a returned (rejected) leg's chip 'Rejected — revise' rather than 'Shortlisted'", () => {
-    const draft = {
-      legId: "leg-1",
-      status: "DRAFT" as const,
-      shortlistedQuoteId: "quote-1",
-      shortlistedVariant: "DEDICATED" as const,
-      recommendedQuoteId: "quote-1",
-      recommendedVariant: "DEDICATED" as const,
-      overrideReason: null,
-      rejectionReason: null,
-      sentByUserId: null,
-      sentForApprovalAt: null,
-      decidedByUserId: null,
-      decidedAt: null,
-    };
-
-    const { unmount } = renderPanel({ ...LEG, decision: draft });
-    expect(screen.getByText("Shortlisted")).toBeInTheDocument();
-    unmount();
-
-    renderPanel({
-      ...LEG,
-      decision: { ...draft, rejectionReason: "Transit too slow for this client." },
-    });
-    expect(screen.getByText("Rejected — revise")).toBeInTheDocument();
-    expect(screen.queryByText("Shortlisted")).not.toBeInTheDocument();
-  });
-
-  // ── S5.9 T10 (product item 7) — the two locked-state paragraphs `MakerPanel` used to render as
-  // standing boxes ("This leg is approved — its shortlist is final here…" / "Locked while this leg
-  // is pending approval…") moved onto the decision chip itself, as hover-only copy — see
-  // `MakerPanel.test.tsx`'s "no longer renders the [...] paragraph as a block" for the other half
-  // of this proof (that the panel itself stays silent now). This is the chip side: hovering must
-  // still surface the same wording, just via a tooltip instead of a permanent box.
-  it("explains an approved leg on hover of its decision chip instead of a standing panel paragraph", async () => {
-    const approved = {
-      legId: "leg-1",
-      status: "APPROVED" as const,
-      shortlistedQuoteId: "quote-1",
-      shortlistedVariant: "DEDICATED" as const,
-      recommendedQuoteId: "quote-1",
-      recommendedVariant: "DEDICATED" as const,
-      overrideReason: null,
-      rejectionReason: null,
-      sentByUserId: "u1",
-      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
-      decidedByUserId: "checker-1",
-      decidedAt: "2026-08-15T09:00:00.000Z",
-    };
-
-    renderPanel({ ...LEG, decision: approved });
-
-    await userEvent.hover(screen.getByTestId("decision-chip"));
-    // Radix's default `delayDuration` (700ms) eats most of `findBy`'s default 1000ms budget on its
-    // own — a generous explicit timeout keeps this from flaking under a loaded CI runner rather
-    // than genuinely proving the tooltip never opens.
-    expect(await screen.findByRole("tooltip", {}, { timeout: 3000 })).toHaveTextContent(
-      /shortlist is final/i,
-    );
-  });
-
-  it("explains a pending-approval leg on hover of its decision chip too", async () => {
-    const pending = {
-      legId: "leg-1",
-      status: "PENDING_APPROVAL" as const,
-      shortlistedQuoteId: "quote-1",
-      shortlistedVariant: "DEDICATED" as const,
-      recommendedQuoteId: "quote-1",
-      recommendedVariant: "DEDICATED" as const,
-      overrideReason: null,
-      rejectionReason: null,
-      sentByUserId: "u1",
-      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
-      decidedByUserId: null,
-      decidedAt: null,
-    };
-
-    renderPanel({ ...LEG, decision: pending });
-
-    await userEvent.hover(screen.getByTestId("decision-chip"));
-    expect(await screen.findByRole("tooltip", {}, { timeout: 3000 })).toHaveTextContent(
-      /checker has to reject it/i,
-    );
-  });
-
-  // A DRAFT decision (the recommendation-preserving default) has no locked-state hint at all —
-  // the chip renders bare, no `TooltipProvider`/`TooltipTrigger` wrapper reachable through it.
+  // ── S5.9.1 (product item 4) — `DecisionChip` and its `decisionBadge` helper are deleted:
+  // `LegStatusBadge` is now the leg's single status, and `AwardDecisionDto`'s states
+  // (Shortlisted/Rejected — revise/Pending approval/Approved) have no on-screen representation of
+  // their own any more. This removes five now-orphaned tests that exercised the chip directly —
+  // its label text ("labels a returned (rejected) leg's chip…"), its locked-state tooltip copy on
+  // hover ("explains an approved/pending-approval leg…"), its bare-vs-wrapped render shape
+  // ("renders a bare, attribute-free chip…"), and its keyboard reachability ("makes a hint-bearing
+  // decision chip reachable…") — all asserting behaviour of a component that no longer exists.
+  // `MakerPanel`'s rejection alert is the one on-screen cue for a returned leg that survives this
+  // (unchanged, still covered by `MakerPanel.test.tsx`); the leg header's own tab order is
+  // unaffected since nothing in the trailing badge area is focusable any more either
+  // (`CompareLegPanel.tsx`'s header doc comment).
   //
-  // T10 REVIEW ROUND — the original version of this test asserted `queryByRole("tooltip")` absent
-  // immediately after `userEvent.hover()`. That's VACUOUS: Radix's default 700ms pointer-open
-  // delay means no `role="tooltip"` element exists in the instant after `hover()` resolves EITHER
-  // way, wrapped or not — the reviewer mutation-proved this by making `DecisionChip` wrap every
-  // badge unconditionally and watching all 138 compare tests, this one included, stay green.
-  // Rewritten to a structural signal instead: Radix's `TooltipTrigger` stamps `data-state` (and,
-  // now, this component's own `tabIndex={0}`) on its child THE INSTANT it's wrapped — regardless
-  // of open/closed — so a bare badge carrying neither is a fact about the render tree, not a race
-  // against a timer. Confirmed empirically (not just from reading Radix's source) by rendering
-  // both a bare and a wrapped chip and inspecting `outerHTML` directly before writing this.
-  it("renders a bare, attribute-free chip for a plain shortlisted (DRAFT) decision — no tooltip wrapper reachable through it", () => {
-    const draft = {
-      legId: "leg-1",
-      status: "DRAFT" as const,
-      shortlistedQuoteId: "quote-1",
-      shortlistedVariant: "DEDICATED" as const,
-      recommendedQuoteId: "quote-1",
-      recommendedVariant: "DEDICATED" as const,
-      overrideReason: null,
-      rejectionReason: null,
-      sentByUserId: null,
-      sentForApprovalAt: null,
-      decidedByUserId: null,
-      decidedAt: null,
+  // This is the positive replacement: a leg that carries a full `AwardDecisionDto` (i.e. one that
+  // WOULD have rendered "Pending Approval" on a chip before this fix) shows `LegStatusBadge` as
+  // its only status, with no `decision-chip` testid anywhere. `LegStatusBadge` actually rendering
+  // is the positive control that keeps the absence from being vacuous — reverting
+  // `CompareLegPanel.tsx`'s header to reintroduce a chip alongside it turns this red (verified by
+  // hand while writing this fix; see task-1-report.md's mutation-proof log).
+  it("shows LegStatusBadge as the leg's only status — no decision chip alongside it, even for a leg pending approval", () => {
+    const pendingLeg: LegComparisonDto = {
+      ...LEG,
+      decision: {
+        legId: LEG.legId,
+        status: "PENDING_APPROVAL",
+        shortlistedQuoteId: "quote-1",
+        shortlistedVariant: "DEDICATED",
+        recommendedQuoteId: "quote-1",
+        recommendedVariant: "DEDICATED",
+        overrideReason: null,
+        rejectionReason: null,
+        sentByUserId: "u1",
+        sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+        decidedByUserId: null,
+        decidedAt: null,
+      },
     };
+    renderPanel(pendingLeg, { legStatus: "PENDING_APPROVAL" });
 
-    renderPanel({ ...LEG, decision: draft });
-
-    const chip = screen.getByTestId("decision-chip");
-    expect(chip).not.toHaveAttribute("data-state");
-    expect(chip).not.toHaveAttribute("tabindex");
-  });
-
-  // ── T10 review round, IMPORTANT 2 — keyboard/AT reachability ──────────────────────────────
-  // Before this fix the chip was a plain, non-focusable `<div>` nested inside the header's toggle
-  // `<button>`: `Tab` never landed on it and a direct `.focus()` didn't move `document.activeElement`
-  // (verified live by the reviewer) — the locked-state explanation, previously a permanently
-  // visible paragraph available to everyone, became reachable ONLY by mouse hover. Fixed by
-  // splitting the header into a toggle `<button>` (chevron/code/route/mode) plus a sibling,
-  // non-toggling badge area — see `CompareLegPanel`'s header JSX comment for the trade-off this
-  // requires (clicking the badges themselves no longer toggles the accordion) — and giving the
-  // hint-bearing chip `tabIndex={0}`. Radix's `TooltipTrigger` opens on `focus` immediately (no
-  // hover delay), so a focusable trigger gets full keyboard support for free; this test exercises
-  // the real `Tab` key (not just an imperative `.focus()` call) to prove actual tab order, then
-  // confirms focusing it genuinely opens the tooltip rather than merely being reachable.
-  it("makes a hint-bearing decision chip reachable and operable by keyboard alone, not only by hover", async () => {
-    const approved = {
-      legId: "leg-1",
-      status: "APPROVED" as const,
-      shortlistedQuoteId: "quote-1",
-      shortlistedVariant: "DEDICATED" as const,
-      recommendedQuoteId: "quote-1",
-      recommendedVariant: "DEDICATED" as const,
-      overrideReason: null,
-      rejectionReason: null,
-      sentByUserId: "u1",
-      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
-      decidedByUserId: "checker-1",
-      decidedAt: "2026-08-15T09:00:00.000Z",
-    };
-
-    renderPanel({ ...LEG, decision: approved });
-    const chip = screen.getByTestId("decision-chip");
-
-    // The toggle button is the leg header's first (and, before the fix, ONLY) tab stop; the chip
-    // must be the very next one, not skipped over.
-    await userEvent.tab();
-    expect(screen.getByRole("button", { name: /LEG-1/i })).toHaveFocus();
-    await userEvent.tab();
-    expect(chip).toHaveFocus();
-
-    // …and focus alone (no mouse, no click) opens the same tooltip hovering does.
-    expect(await screen.findByRole("tooltip", {}, { timeout: 3000 })).toHaveTextContent(
-      /shortlist is final/i,
-    );
+    // Positive control — the leg's own status badge really renders.
+    expect(screen.getByText("Pending Approval")).toBeInTheDocument();
+    // The absence this task removed — no second, chip-shaped status anywhere in the header.
+    expect(screen.queryByTestId("decision-chip")).not.toBeInTheDocument();
   });
 
   // ── S5.9 T9 — this in-grid `Select` seam is gone entirely: `SendForApprovalDialog` is opened

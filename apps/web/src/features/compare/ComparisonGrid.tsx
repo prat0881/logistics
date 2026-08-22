@@ -81,14 +81,12 @@ export function ComparisonGrid({
       ) : viewMode === "rows" ? (
         <ComparisonGridRows
           model={model}
-          leg={leg}
           onOpenBreakdown={handleOpenBreakdown}
           selectedOfferKey={selectedOfferKey}
         />
       ) : (
         <ComparisonGridColumns
           model={model}
-          leg={leg}
           onOpenBreakdown={handleOpenBreakdown}
           selectedOfferKey={selectedOfferKey}
         />

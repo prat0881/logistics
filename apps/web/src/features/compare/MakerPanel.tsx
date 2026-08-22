@@ -24,7 +24,9 @@ export interface MakerPanelProps {
  * S5.9 T10 (product item 7) moved BOTH locked-state paragraphs (`PENDING_APPROVAL` vs `APPROVED`)
  * off this panel entirely and onto the leg header's decision chip as a hover tooltip
  * (`CompareLegPanel`'s `decisionBadge`/`DecisionChip`) — the PO didn't want a standing box telling
- * the maker something they can't act on. What stayed here, and why:
+ * the maker something they can't act on. S5.9.1 (product item 4) then removed that chip entirely —
+ * leg status now carries the approval-flow states itself, so the two hints simply have no home to
+ * move to any more and are gone, not relocated again. What stayed here, and why:
  *   - the `DRAFT` + `rejectionReason` alert — a rejected leg comes back as DRAFT carrying the
  *     checker's reason, and without this the maker's only clue is the timeline at the very bottom
  *     of the panel (final review I2). This is the ONE thing left that this panel renders: it is the

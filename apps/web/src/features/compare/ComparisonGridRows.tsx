@@ -1,5 +1,4 @@
 import { Fragment } from "react";
-import type { LegComparisonDto } from "@svyft/shared";
 import { rateVariantLabel } from "@svyft/shared";
 import {
   Table,
@@ -35,7 +34,6 @@ const GROUP_TOP_RULE = "border-t-2 border-border";
 
 export interface ComparisonGridRowsProps {
   model: ComparisonRowModel;
-  leg: LegComparisonDto;
   onOpenBreakdown: (cell: OfferCell) => void;
   /** Which offer's charge breakdown is currently expanded below the grid — same meaning as
    *  `ComparisonGridColumns`'s prop of the same name; used only for `aria-expanded`. */
@@ -55,7 +53,6 @@ export interface ComparisonGridRowsProps {
  */
 export function ComparisonGridRows({
   model,
-  leg,
   onOpenBreakdown,
   selectedOfferKey,
 }: ComparisonGridRowsProps) {
@@ -120,11 +117,15 @@ export function ComparisonGridRows({
                           className="w-fit rounded px-1 py-0.5 text-left text-xs font-medium hover:bg-muted/50"
                         >
                           {variantText}
-                          {cell.recommended && leg.recommendation && (
+                          {/* S5.9.1 R1, Step 4 — reads `model.recommendedReason`, not
+                              `leg.recommendation.reason` directly; see
+                              `ComparisonGridColumns.tsx`'s identical comment and
+                              `buildComparisonRowModel`'s doc comment for why. */}
+                          {cell.recommended && model.recommendedReason && (
                             <span
                               data-testid={`offer-recommended-${cell.key}`}
-                              aria-label={`Recommended — ${leg.recommendation.reason}`}
-                              title={leg.recommendation.reason}
+                              aria-label={`Recommended — ${model.recommendedReason}`}
+                              title={model.recommendedReason}
                               className="ml-1 text-emerald-600"
                             >
                               {RECOMMENDED_MARK}
@@ -137,11 +138,15 @@ export function ComparisonGridRows({
                           className="px-1 py-0.5 text-xs font-medium text-muted-foreground"
                         >
                           {variantText}
-                          {cell.recommended && leg.recommendation && (
+                          {/* S5.9.1 R1, Step 4 — reads `model.recommendedReason`, not
+                              `leg.recommendation.reason` directly; see
+                              `ComparisonGridColumns.tsx`'s identical comment and
+                              `buildComparisonRowModel`'s doc comment for why. */}
+                          {cell.recommended && model.recommendedReason && (
                             <span
                               data-testid={`offer-recommended-${cell.key}`}
-                              aria-label={`Recommended — ${leg.recommendation.reason}`}
-                              title={leg.recommendation.reason}
+                              aria-label={`Recommended — ${model.recommendedReason}`}
+                              title={model.recommendedReason}
                               className="ml-1 text-emerald-600"
                             >
                               {RECOMMENDED_MARK}

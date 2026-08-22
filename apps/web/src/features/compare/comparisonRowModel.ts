@@ -26,7 +26,8 @@ export const STALE_OFFER_LABEL = "Re-quote requested";
 export interface OfferCell {
   key: string; // offerKey(quoteId, variant)
   offer: OfferDto;
-  recommended: boolean; // false whenever locked
+  recommended: boolean; // this is the recommendation OF RECORD (S5.9.1 R1) — true both before and
+  // after a send, false only once suppressed (`locked`) or when it names some other cell
   stale: boolean; // quoteStatus === "REQUOTED"
 }
 
@@ -40,34 +41,71 @@ export interface ComparisonRowModel {
   groups: ForwarderGroup[];
   cells: OfferCell[]; // flat, same order as groups flattened
   recommendedKey: string | null;
+  /** The `★` mark's accessible-name text (S5.9.1 R1, Step 4) — `null` exactly when
+   *  `recommendedKey` is `null`. Resolved here, alongside `recommendedKey`, rather than left for
+   *  each grid orientation to re-derive off `leg.recommendation.reason` directly: that live string
+   *  describes whatever `buildRecommendation` ranks NOW, which is correct only in the same
+   *  "no decision yet" branch that makes `recommendedKey` read `live` below. Once a decision is in
+   *  play `recommendedKey` reads the SNAPSHOT, which carries no stored reason text of its own — a
+   *  generic sentence (`RECOMMENDED_REASON_ON_RECORD`) takes its place so the mark still renders
+   *  with a sensible name instead of silently reusing a reason that may no longer describe it. */
+  recommendedReason: string | null;
 }
+
+/** The `★` mark's accessible-name text once the recommendation of record is a decision SNAPSHOT
+ *  rather than the live `leg.recommendation` — `AwardDecisionDto` has no stored reason text of its
+ *  own (see award.ts:52-60), so this is what fills in for `leg.recommendation.reason` once the two
+ *  can diverge (comparisonRowModel's doc comment on `buildComparisonRowModel`). */
+export const RECOMMENDED_REASON_ON_RECORD =
+  "Recommended by the comparison engine when this leg was sent for approval.";
 
 /**
  * Builds the leg's (FF × variant) row model, grouped by forwarder in first-seen order (design
- * §12 — Dedicated/Groupage or FCL/LCL of the same FF read as a pair). Two independent conditions
- * suppress the recommendation entirely (both must stay a hard `null`/`false`, not merely hidden
- * downstream):
+ * §12 — Dedicated/Groupage or FCL/LCL of the same FF read as a pair).
  *
- * - `locked` — once the client quote is generated the winning quote is `APPROVED` and excluded
- *   from `offers`, so the live recommendation would re-rank the losers (S5.6 final review M1).
- * - `leg.decision.status !== "DRAFT"` (S5.9 T9) — `buildRecommendation` (comparison.service.ts)
- *   ranks only `QUOTED` offers. Sending an offer for approval flips ITS OWN quote to
- *   `PENDING_APPROVAL`, which drops it out of that ranking on the very next fetch — so once a
- *   leg's decision leaves DRAFT, `leg.recommendation` can start naming a DIFFERENT forwarder than
- *   the one actually under review, exactly while a checker is looking at this same grid (S5.9 T8
- *   carried this finding to T9). Suppressing here — the one place both grid orientations and
- *   `SendForApprovalDialog` read "is this the recommendation?" — means the `★` mark, its emerald
- *   tint, AND the footnote (gated in `ComparisonGrid.tsx` on `model.cells.some(c => c.recommended)`,
- *   itself downstream of this) all go quiet together, with no second place to remember. A `null`
- *   `decision` (nothing shortlisted yet) is NOT suppressed — the recommendation is exactly what a
- *   maker who hasn't acted yet should see.
+ * **The recommendation OF RECORD (S5.9.1 R1).** `locked` still suppresses it entirely — once the
+ * client quote is generated the winning quote is `APPROVED` and excluded from `offers`, so the
+ * live recommendation would re-rank the losers (S5.6 final review M1) — but that is now the ONLY
+ * hard suppression. S5.9 T9 additionally suppressed the mark the moment `leg.decision.status` left
+ * `DRAFT`, because `buildRecommendation` (comparison.service.ts) ranks only `QUOTED` offers: the
+ * very act of sending an offer for approval flips ITS OWN quote to `PENDING_APPROVAL`, which drops
+ * it out of that ranking on the next fetch, so the LIVE `leg.recommendation` can start naming a
+ * DIFFERENT forwarder than the one actually under review — exactly while a checker is looking at
+ * this same grid. That suppression traded a wrong answer for no answer, which a product review
+ * caught (a checker reviewing a sent leg saw no recommendation at all). The actual fix: once a
+ * `LegAwardDecision` row exists, it already snapshots `recommendedQuoteId`/`recommendedVariant` at
+ * send time (award.ts:52-60) — stable, and exactly what the maker was judged against — so read
+ * THAT instead of suppressing. Precedence:
+ *
+ * - No decision yet (`leg.decision == null`) → the LIVE `leg.recommendation`. This is the one case
+ *   where "live" is exactly right — nobody has acted, so there is no snapshot to prefer.
+ * - A decision exists → its SNAPSHOT, `recommendedQuoteId`/`recommendedVariant` — even on a DRAFT
+ *   decision (a returned/rejected leg is still DRAFT; it keeps the mark it was judged against, not
+ *   whatever the live ranking has drifted to since) and even when the snapshot itself is `null`
+ *   (the maker shortlisted with NO recommendation on offer — falling back to the live value here
+ *   would invent one after the fact and misrepresent the record, so the answer is a deliberate
+ *   `null`, not a fallback).
+ * - `locked` overrides both branches to `null` unconditionally.
+ *
+ * The `★` mark, its emerald tint, AND the footnote (gated in `ComparisonGrid.tsx` on
+ * `model.cells.some(c => c.recommended)`, itself downstream of this) still all move together —
+ * there is still exactly one place that decides "is this the recommendation?".
  */
 export function buildComparisonRowModel(leg: LegComparisonDto, locked: boolean): ComparisonRowModel {
-  const decisionLeftDraft = leg.decision != null && leg.decision.status !== "DRAFT";
-  const recKey =
-    !locked && !decisionLeftDraft && leg.recommendation
-      ? offerKey(leg.recommendation.quoteId, leg.recommendation.variant)
-      : null;
+  const snapshotKey = leg.decision?.recommendedQuoteId
+    ? offerKey(leg.decision.recommendedQuoteId, leg.decision.recommendedVariant)
+    : null;
+  const liveKey = leg.recommendation
+    ? offerKey(leg.recommendation.quoteId, leg.recommendation.variant)
+    : null;
+  const recKey = locked ? null : leg.decision != null ? snapshotKey : liveKey;
+
+  // The reason text follows the SAME branch recKey just took — live reason only in the live
+  // branch (where it's guaranteed to describe recKey, since recKey IS liveKey there), the generic
+  // on-record sentence for a snapshot (which has no stored reason of its own), null wherever recKey
+  // itself is null (nothing to explain).
+  const recommendedReason =
+    recKey == null ? null : leg.decision == null ? (leg.recommendation?.reason ?? null) : RECOMMENDED_REASON_ON_RECORD;
 
   const groups: ForwarderGroup[] = [];
   for (const offer of leg.offers) {
@@ -87,7 +125,12 @@ export function buildComparisonRowModel(leg: LegComparisonDto, locked: boolean):
         cells: [cell],
       });
   }
-  return { groups, cells: groups.flatMap((g) => g.cells), recommendedKey: recKey };
+  return {
+    groups,
+    cells: groups.flatMap((g) => g.cells),
+    recommendedKey: recKey,
+    recommendedReason,
+  };
 }
 
 export interface MetricDef {

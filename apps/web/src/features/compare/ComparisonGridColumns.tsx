@@ -1,4 +1,3 @@
-import type { LegComparisonDto } from "@svyft/shared";
 import { rateVariantLabel } from "@svyft/shared";
 import {
   Table,
@@ -31,7 +30,6 @@ const GROUP_SEPARATOR = "border-r-2 border-border";
 
 export interface ComparisonGridColumnsProps {
   model: ComparisonRowModel;
-  leg: LegComparisonDto;
   onOpenBreakdown: (cell: OfferCell) => void;
   /** Which offer's charge breakdown is currently expanded below the grid — used only for the
    *  header button's `aria-expanded`; the toggle itself is owned by `CompareLegPanel`. */
@@ -48,7 +46,6 @@ export interface ComparisonGridColumnsProps {
  */
 export function ComparisonGridColumns({
   model,
-  leg,
   onOpenBreakdown,
   selectedOfferKey,
 }: ComparisonGridColumnsProps) {
@@ -98,11 +95,18 @@ export function ComparisonGridColumns({
                     >
                       <span className="block text-xs font-medium">
                         {variantText}
-                        {cell.recommended && leg.recommendation && (
+                        {/* S5.9.1 R1, Step 4 — the reason text comes from `model.recommendedReason`,
+                            not `leg.recommendation.reason` directly: once a decision snapshot is in
+                            play, the live reason may no longer describe the offer this mark is
+                            pointing at (see `buildComparisonRowModel`'s doc comment). Gating on
+                            `cell.recommended` alone would do here (the model guarantees a non-null
+                            reason whenever a cell is flagged), but the extra check keeps this render
+                            from ever asserting an accessible name it can't back with real text. */}
+                        {cell.recommended && model.recommendedReason && (
                           <span
                             data-testid={`offer-recommended-${cell.key}`}
-                            aria-label={`Recommended — ${leg.recommendation.reason}`}
-                            title={leg.recommendation.reason}
+                            aria-label={`Recommended — ${model.recommendedReason}`}
+                            title={model.recommendedReason}
                             className="ml-1 text-emerald-600"
                           >
                             {RECOMMENDED_MARK}
@@ -114,11 +118,18 @@ export function ComparisonGridColumns({
                     <div data-testid={`offer-header-${cell.key}`} className="w-full px-1 py-0.5">
                       <span className="block text-xs font-medium text-muted-foreground">
                         {variantText}
-                        {cell.recommended && leg.recommendation && (
+                        {/* S5.9.1 R1, Step 4 — the reason text comes from `model.recommendedReason`,
+                            not `leg.recommendation.reason` directly: once a decision snapshot is in
+                            play, the live reason may no longer describe the offer this mark is
+                            pointing at (see `buildComparisonRowModel`'s doc comment). Gating on
+                            `cell.recommended` alone would do here (the model guarantees a non-null
+                            reason whenever a cell is flagged), but the extra check keeps this render
+                            from ever asserting an accessible name it can't back with real text. */}
+                        {cell.recommended && model.recommendedReason && (
                           <span
                             data-testid={`offer-recommended-${cell.key}`}
-                            aria-label={`Recommended — ${leg.recommendation.reason}`}
-                            title={leg.recommendation.reason}
+                            aria-label={`Recommended — ${model.recommendedReason}`}
+                            title={model.recommendedReason}
                             className="ml-1 text-emerald-600"
                           >
                             {RECOMMENDED_MARK}

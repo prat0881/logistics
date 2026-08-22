@@ -4,7 +4,6 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { LegStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import { ComparisonGrid } from "./ComparisonGrid";
@@ -18,103 +17,6 @@ import { MakerPanel } from "./MakerPanel";
 import { CheckerPanel } from "./CheckerPanel";
 import { DecisionTimeline } from "./DecisionTimeline";
 import { type ViewMode } from "./useViewMode";
-
-type BadgeVariant =
-  | "default" | "secondary" | "success" | "warning"
-  | "accent" | "destructive" | "outline" | "pending";
-
-type AwardDecision = NonNullable<LegComparisonDto["decision"]>;
-
-interface DecisionBadge {
-  label: string;
-  variant: BadgeVariant;
-  /** S5.9 T10 (product item 7) — the two locked-state explanations that used to render as
-   *  standing paragraphs in `MakerPanel` moved here, onto the chip itself, as hover-only copy. Only
-   *  the two locked statuses carry one; `DecisionChip` below renders a bare, tooltip-free badge for
-   *  everything else. Copy is unchanged from what `MakerPanel` used to render — this is a location
-   *  change, not a rewrite. */
-  hint?: string;
-}
-
-/**
- * The collapsed card's decision chip. `AwardDecisionStatus.REJECTED` exists in the Prisma enum (and
- * so in the DTO union) but is NEVER persisted: `reject()` writes DRAFT + `rejectionReason` in a
- * single update (award.service.ts:319-331, design §9.5 "REJECTED -> back to DRAFT"), keeping the
- * rejection as audit intent on the event log rather than as a decision state. So a rejected leg is
- * a DRAFT that carries a reason — and labelling that "Shortlisted" hid the rework signal entirely
- * (final review I2). The `REJECTED` case is folded in with DRAFT rather than kept as a dead map
- * entry: were the server ever to start persisting it, it would carry the same reason and should
- * read the same way.
- */
-function decisionBadge(decision: AwardDecision): DecisionBadge {
-  switch (decision.status) {
-    // Two genuinely different dead-ends, so two hints (final review I1, carried from MakerPanel).
-    // PENDING_APPROVAL is recoverable: a checker's Reject writes the decision back to DRAFT and
-    // clears `sentByUserId`, restoring the grid's Send affordance. APPROVED is NOT — `reject`
-    // 409s on anything that isn't PENDING_APPROVAL (`requireDecidable`) and Reopen only clears the
-    // query's award snapshot, deliberately leaving every leg APPROVED (`reopenComparison`).
-    case "PENDING_APPROVAL":
-      return {
-        label: "Pending approval",
-        variant: "warning",
-        hint: "Locked while this leg is pending approval — a checker has to reject it (which returns it to draft) before the shortlist can change.",
-      };
-    case "APPROVED":
-      return {
-        label: "Approved",
-        variant: "success",
-        hint: "This leg is approved — its shortlist is final here. Revising the award needs a change request or a fresh negotiation with the forwarder.",
-      };
-    default:
-      return decision.rejectionReason
-        ? { label: "Rejected — revise", variant: "destructive" }
-        : { label: "Shortlisted", variant: "secondary" };
-  }
-}
-
-/**
- * DecisionChip — the badge itself, wrapped in a hover-**and-focus** tooltip when `decisionBadge`
- * gives it a `hint` (S5.9 T10; keyboard/AT reachability fixed in T10's review round).
- *
- * Two accessibility constraints, both load-bearing:
- *   1. `TooltipTrigger` uses `asChild` on the `Badge` rather than rendering its own (default)
- *      `<button>` — `Badge` is a plain `<div>` (`forwardRef` specifically so Radix's `Slot` can
- *      attach the ref it needs to anchor the popper), so `asChild` merges the trigger's
- *      pointer/focus handlers onto it instead of introducing a second element.
- *   2. The hint-bearing chip carries `tabIndex={0}` so it's reachable by `Tab`, not just a mouse —
- *      Radix's `TooltipTrigger` opens on `focus` (immediately, no hover delay) and closes on
- *      `blur`, so a focusable trigger gets full keyboard support for free. This is why the chip
- *      MUST render as a sibling of the leg header's own `onToggle` `<button>`, not a child of it
- *      (see `CompareLegPanel`'s header JSX below): a focusable, non-button element nested inside a
- *      `<button>` is exactly the same "interactive-inside-interactive" problem asChild was already
- *      avoiding, just via `tabIndex` instead of a second `<button>` tag. A leg with no hint (plain
- *      `DRAFT`) renders a bare, non-focusable badge — there's nothing to reveal, so it isn't given
- *      a tab stop.
- */
-function DecisionChip({ decision }: { decision: AwardDecision }) {
-  const { label, variant, hint } = decisionBadge(decision);
-
-  if (!hint) {
-    return (
-      <Badge variant={variant} data-testid="decision-chip">
-        {label}
-      </Badge>
-    );
-  }
-
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Badge variant={variant} data-testid="decision-chip" tabIndex={0}>
-            {label}
-          </Badge>
-        </TooltipTrigger>
-        <TooltipContent>{hint}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
 
 interface CompareLegPanelProps {
   queryId: string;
@@ -152,8 +54,16 @@ interface CompareLegPanelProps {
 
 /**
  * CompareLegPanel — the Compare Quotes leg accordion card (S5.6 §12). Mirrors
- * `rfq-workspace/LegPanel`'s controlled single-open shell (chevron + legCode chip + route + mode
- * badge), plus a decision-status chip derived from `leg.decision?.status` when a shortlist exists.
+ * `rfq-workspace/LegPanel`'s controlled single-open shell exactly (chevron + legCode chip + route +
+ * mode badge in one toggle `<button>`, `LegStatusBadge` pushed to the far end with `ml-auto`) — one
+ * header, one status. S5.9 T10 used to split this into a toggle `<button>` plus a trailing,
+ * non-toggling `DecisionChip` sibling, because that chip needed independent focus for its own
+ * hover/focus tooltip; S5.9.1 (product item 4) removed the chip entirely — leg status now carries
+ * the approval-flow states itself (`PENDING_APPROVAL`/`APPROVED`/…, see `@svyft/shared`'s
+ * `LegStatus`), so showing both was two statuses for one leg ("Pending approval" beside "Pending
+ * Approval"). With nothing left in the trailing area that needs its own focus stop, the split no
+ * longer earns its keep — `LegStatusBadge` renders a plain, non-focusable `<div>` (`Badge`), so it
+ * moved back inside the button with nothing "interactive inside interactive" to worry about.
  * The body renders the read-only `(FF × variant)` comparison — a "N offers received" summary, the
  * `ComparisonGrid` itself (the recommendation now reads by column colour, not a separate banner —
  * S5.7 T1), and — once a column header is clicked — that offer's itemised breakdown in a
@@ -162,9 +72,9 @@ interface CompareLegPanelProps {
  * what used to be per-forwarder buttons inside `MakerPanel` (S5.7 T5); "Send for approval…" opens
  * `SendForApprovalDialog`, which lists every priced offer itself and picks + sends in one call —
  * there is no more per-offer `Select` button inside the grid (S5.7 T4's affordance, retired this
- * task). `MakerPanel` below keeps only the rejection alert (or renders nothing) — its two former
- * locked-state paragraphs now live on the decision chip itself, as a hover tooltip (`DecisionChip`,
- * S5.9 T10, product item 7); `CheckerPanel` sits alongside in the same body.
+ * task). `MakerPanel` below keeps only the rejection alert (or renders nothing) — the two
+ * locked-state explanations `DecisionChip` used to carry as tooltip copy are simply gone with it
+ * (S5.9.1); `CheckerPanel` sits alongside in the same body.
  *
  * **The "which offer" state.** `selectedOfferKey` — which offer's charge breakdown dialog is open —
  * is the ONLY such state left here. Defaults to `undefined` (closed) and TOGGLES closed on a second
@@ -264,32 +174,33 @@ export function CompareLegPanel({
 
   return (
     <Card id={`legcard-${leg.legId}`} className="scroll-mt-4 overflow-hidden">
-      {/* Split into a toggle `<button>` (chevron/code/route/mode) plus a trailing, non-toggling
-          badge area (T10 review round) — the decision chip needs to be independently focusable
-          for its tooltip (see `DecisionChip`'s doc comment), and a focusable non-button element
-          can't nest inside this button without repeating the exact "interactive inside
-          interactive" problem `asChild` exists to avoid. Trade-off: clicking directly on the
-          decision/status badges no longer toggles the accordion — only the left/main portion of
-          the row does now. The row's hover affordance moves with it, onto just the button. */}
-      <div className="flex w-full items-center gap-3 px-4 py-3">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className="flex flex-1 items-center gap-3 rounded text-left hover:bg-muted/50"
-        >
-          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold text-primary">
-            {leg.legCode}
-          </span>
-          <span className="font-medium">{route}</span>
-          {leg.mode && <Badge variant="secondary">{leg.mode}</Badge>}
-        </button>
-        <span className="flex items-center gap-2">
-          {leg.decision && <DecisionChip decision={leg.decision} />}
-          {legStatus && <LegStatusBadge status={legStatus} />}
+      {/* One toggle `<button>` (S5.9.1 — back to `rfq-workspace/LegPanel`'s single-header shape).
+          T10's split into a toggle button plus a trailing, non-toggling badge sibling existed only
+          because the now-deleted `DecisionChip` needed independent focus for its own tooltip; a
+          focusable non-button element couldn't nest inside this button without the same
+          "interactive inside interactive" problem `asChild` avoided elsewhere. `LegStatusBadge`
+          carries no tooltip and renders a plain, non-focusable `<div>` (`Badge`'s own `forwardRef`
+          exists for a `Slot`/`asChild` consumer, not for this), so nothing in the trailing area
+          needs to sit outside the button any more — confirmed before moving it back in, not
+          assumed. Whole-row click/hover is restored as a side effect. */}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
+      >
+        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold text-primary">
+          {leg.legCode}
         </span>
-      </div>
+        <span className="font-medium">{route}</span>
+        {leg.mode && <Badge variant="secondary">{leg.mode}</Badge>}
+        {legStatus && (
+          <span className="ml-auto">
+            <LegStatusBadge status={legStatus} />
+          </span>
+        )}
+      </button>
 
       {open && (
         <div data-testid="leg-body" className="space-y-4 border-t border-border p-4">
