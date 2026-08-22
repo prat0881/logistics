@@ -531,6 +531,39 @@ git commit -m "feat(s5.9.1): rejecting a leg notifies executives; handoff update
 
 ---
 
+## Task 5: Mark the offer that went for approval, from the decision
+
+**Files:**
+- Modify: `apps/web/src/features/compare/comparisonRowModel.ts`
+- Modify: `apps/web/src/features/compare/ComparisonGridColumns.tsx`, `ComparisonGridRows.tsx`
+- Test: `comparisonRowModel.test.ts`, `ComparisonGrid.test.tsx`
+
+**Interfaces:**
+- Consumes: `leg.decision.shortlistedQuoteId` / `shortlistedVariant` — already on the DTO and already used by `ApproveDialog`.
+- Produces: `OfferCell` gains a boolean for "this is the offer that went for approval". `buildComparisonRowModel` keeps its signature.
+
+**Why this exists (found by live inspection, not by a test).** The product owner's point 2 was *"how will Manager know which one is shortlisted... need a way to identify difference between Recommended vs came for Approval"*. The answer so far has been indirect: the selected offer's **quote status** reads "Pending Approval" while its rivals read "Quoted". That works only when the quote status and the decision agree — and they can drift. Observed live on `S56VIS-0001`: `decision.status = PENDING_APPROVAL` with `shortlistedQuoteId` set, while that quote's `quoteStatus` was still `QUOTED`, so **nothing on screen identified the offer under review**. That particular row is stale pre-S5.9 seed data rather than a code defect — the real endpoint fires the quote transition and there is e2e proof — but it demonstrates that a second-hand signal is the wrong source for a decision-critical marker.
+
+`decision.shortlistedQuoteId` is the authoritative record, it is already on the payload, and Task 1 has just established exactly this pattern for the recommendation. Use the same source, so the two markers are symmetric and neither can drift.
+
+**Requirements:**
+1. The offer named by `decision.shortlistedQuoteId` / `shortlistedVariant` is marked in **both** orientations, whenever a decision exists and names one — independent of that offer's quote status.
+2. **Recommended and sent-for-approval remain visually distinct**, and an offer that is both must read as both. Do not overload the `★`.
+3. The marker must carry an accessible name, not be colour or glyph alone.
+4. `locked` suppresses it, consistently with the recommendation — post-generate the award panel below is the authority.
+5. Explain what the marker means, the way the `★` footnote does. Keep the two explanations together rather than adding a second stray line.
+
+**Judgement call to make and justify:** the glyph/treatment for "went for approval", and whether the existing footnote grows a second line or the two share one. Keep it legible next to the `★` and inside a table that Task 3 just made deliberately dense.
+
+- [ ] **Step 1: Write the failing tests** — cover: marked when the decision names it; NOT marked on any other offer; marked even when that offer's `quoteStatus` is still `QUOTED` (the drift case above — this is the test that would have caught the gap); an offer that is both recommended and sent reads as both; nothing marked when `decision` is null or `shortlistedQuoteId` is null; nothing marked when `locked`. Both orientations.
+- [ ] **Step 2: Run them to verify they fail.** `pnpm --filter @svyft/web test -- src/features/compare/`
+- [ ] **Step 3: Derive the flag in `buildComparisonRowModel`**, beside the recommendation resolution, so both markers read from the decision in one place.
+- [ ] **Step 4: Render it in both grid components** with its accessible name, and extend the explanation.
+- [ ] **Step 5: Run the tests, mutation-proving every absence assertion** (break the condition → red → revert → green).
+- [ ] **Step 6: Typecheck, then commit.** `pnpm run typecheck`; verify `git branch --show-current` first.
+
+---
+
 ## Self-review notes
 
 - **Coverage of the nine points:** #1 and #2 → Task 1 (R1/R2); #3 → Task 2 (R3); #4, #5, #6 → Task 2 (R5); #7 → **already delivered in S5.9**, no task — reject restores the status the leg actually left via `legStatusWhenSentForApproval`, including the partially-quoted case a naive fix gets wrong; #8 → Task 3 (R6); #9 → Task 1 (R4). Plus R7's notification in Task 4.
