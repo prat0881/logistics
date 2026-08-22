@@ -46,6 +46,17 @@ describe("award workflow — maker endpoints (e2e)", () => {
   const cookieFor = (userId: string) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role: Role.EXECUTIVE, tenantId: null })}`;
 
+  // S5.9 final whole-branch review — CRITICAL 1. Two tests below carry their A9 fixture one step
+  // further, into the CHECKER endpoints (approve/reject: @Roles(ADMINISTRATOR, MANAGER) plus the
+  // four-eyes rule, hence a MANAGER cookie and a different userId from the sender). They live in
+  // the MAKER spec deliberately: the state that reaches the bug is the one A9 itself produces —
+  // a FULLY_QUOTED leg carrying one QUOTED and one REQUOTED quote, sent with
+  // `proceedWithoutWaiting` — and this file is where that state is built. Extending these two
+  // fixtures beats duplicating them into award-workflow-checker.e2e-spec.ts, which has no A9
+  // fixture of its own.
+  const managerCookieFor = (userId: string) =>
+    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role: Role.MANAGER, tenantId: null })}`;
+
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
       data: {
@@ -464,6 +475,40 @@ describe("award workflow — maker endpoints (e2e)", () => {
     expect(events).toHaveLength(1);
     expect(events[0].reason).toBe("Client needs the number today");
     expect(events[0].actorId).toBe(senderId);
+
+    // ── S5.9 final whole-branch review, CRITICAL 1 (first half: approve) ──────────────────────
+    // A9 is an escape hatch that MEANS something: "I know a re-quote is in flight on this leg,
+    // proceed anyway." A leg legitimately sent through it must therefore be APPROVABLE. It was
+    // not: approve() asked `rollupLegTarget([PENDING_APPROVAL, REQUOTED])`, which is `null`
+    // (status.ts's LEG_ROLLUP_RESOLVED excludes REQUOTED on purpose — a re-quote in flight is
+    // genuinely unresolved), so it 409'd. Forever: negotiate is refused at PENDING_APPROVAL (D5),
+    // a re-send 409s on B2, and reject computed the same `null` and made the leg strictly worse
+    // (see the second half of this fix in the CRITICAL 2 test below). Pre-branch, approve()
+    // guarded on `leg.status !== FULLY_QUOTED` — which this leg PASSES — so this was a
+    // regression, created by the seam between Task 3's A9 hatch and Task 4's rollup predicate.
+    const approverId = randomUUID(); // four-eyes: not `senderId`
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+      .set("Cookie", managerCookieFor(approverId))
+      .send()
+      .expect(200);
+
+    const approvedDecision = await prisma.legAwardDecision.findUniqueOrThrow({
+      where: { legId: leg.id },
+    });
+    expect(approvedDecision.status).toBe("APPROVED");
+    expect(approvedDecision.decidedByUserId).toBe(approverId);
+
+    const [recQuote, reqQuote, approvedLeg] = await Promise.all([
+      prisma.quote.findUniqueOrThrow({ where: { id: quotes.REC.id } }),
+      prisma.quote.findUniqueOrThrow({ where: { id: quotes.REQ.id } }),
+      prisma.leg.findUniqueOrThrow({ where: { id: leg.id } }),
+    ]);
+    expect(recQuote.status).toBe("APPROVED");
+    expect(approvedLeg.status).toBe("APPROVED");
+    // The in-flight re-quote is left exactly where it was: A9 licensed proceeding PAST it, not
+    // resolving, cancelling or approving it.
+    expect(reqQuote.status).toBe("REQUOTED");
   });
 
   it("400s send-for-approval when the body is missing a quoteId (schema-level: no offer to name)", async () => {
@@ -584,6 +629,46 @@ describe("award workflow — maker endpoints (e2e)", () => {
     // REQUOTED/outstanding on this leg (the earlier 409 never touched it), so A9 correctly still
     // requires its own override for THIS send too — proving the two guards are independent, not
     // that CRITICAL 2 subsumes A9.
+    const senderId = randomUUID();
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(senderId))
+      .send({
+        quoteId: quotes.REC.id,
+        variant: "DEDICATED",
+        proceedWithoutWaiting: true,
+        proceedReason: "REC is fine, don't need to wait on the other forwarder's re-quote",
+      })
+      .expect(200);
+
+    // ── S5.9 final whole-branch review, CRITICAL 1 (second half: reject) ──────────────────────
+    // Rejecting must never leave a leg WORSE off than before it was sent. This leg is genuinely
+    // FULLY_QUOTED — hysteresis, exactly as this test's own fixture comment explains: the
+    // projector never walks an already-FULLY_QUOTED leg backwards when a sibling quote goes
+    // REQUOTED — but `rollupLegTarget([PENDING_APPROVAL, REQUOTED])` is `null`, and reject() used
+    // to treat "I cannot tell" as RETURN_PARTIAL, DEMOTING the leg to PARTIALLY_QUOTED. That was
+    // unrecoverable in practice: a re-send then fails A3, because the leg is no longer
+    // FULLY_QUOTED and `requestRequote` has pushed the outstanding RFQ's deadline days into the
+    // future. reject() now restores the status the leg actually LEFT, read back off the immutable
+    // `StatusTransition` row the send's own fire wrote.
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", managerCookieFor(randomUUID())) // four-eyes: not `senderId`
+      .send({ reason: "Hold off — let's see what the re-quote comes back with after all" })
+      .expect(200);
+
+    const [rejectedLeg, returnedQuote, rejectedDecision] = await Promise.all([
+      prisma.leg.findUniqueOrThrow({ where: { id: leg.id } }),
+      prisma.quote.findUniqueOrThrow({ where: { id: quotes.REC.id } }),
+      prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: leg.id } }),
+    ]);
+    expect(rejectedLeg.status).toBe("FULLY_QUOTED"); // NOT the demoted PARTIALLY_QUOTED
+    expect(returnedQuote.status).toBe("QUOTED");
+    expect(rejectedDecision.status).toBe("DRAFT");
+
+    // The point of "not worse off": the leg is back exactly where it was, so the maker can send
+    // it again. Under the demotion this same call 400'd on A3 — the recovery path the bug
+    // destroyed. A9 still applies (REQ is still REQUOTED), which is correct and unchanged.
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
       .set("Cookie", cookieFor(randomUUID()))
@@ -591,7 +676,7 @@ describe("award workflow — maker endpoints (e2e)", () => {
         quoteId: quotes.REC.id,
         variant: "DEDICATED",
         proceedWithoutWaiting: true,
-        proceedReason: "REC is fine, don't need to wait on the other forwarder's re-quote",
+        proceedReason: "Still cannot wait — re-sending after the rejection",
       })
       .expect(200);
   });

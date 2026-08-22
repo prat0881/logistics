@@ -587,6 +587,49 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(decision?.status).toBe("PENDING_APPROVAL");
   });
 
+  // S5.9 final whole-branch review, CRITICAL 1 — the CONVERSE of the test above, and the reason
+  // `isFullyQuotedForDecision` keeps asking `legRollupTarget` at all rather than only reading the
+  // status the leg left. Same PARTIALLY_QUOTED-via-A3 fixture, except the straggler's RFQ then
+  // EXPIRES while the checker is reviewing: `rollupLegTarget([PENDING_APPROVAL, EXPIRED])` is
+  // FULLY_QUOTED (both count as resolved — status.ts's LEG_ROLLUP_RESOLVED), so the leg has
+  // genuinely become fully quoted and approval must be allowed even though it was SENT from
+  // PARTIALLY_QUOTED. Nothing else recomputes this: `LegQuoteProjector`'s ROLLUP_FROZEN guard
+  // skips any leg in PENDING_APPROVAL, so the leg row itself never catches up (the Task-2
+  // "nothing recomputes the rollup when a leg leaves a frozen state" carry-forward) — the caller
+  // owns the question. Without this test, deleting the live-rollup half of
+  // `isFullyQuotedForDecision` as "redundant now that we read the transition log" would leave the
+  // whole suite green.
+  //
+  // The expiry is simulated with a direct DB write (same convention as the A8 test above): only
+  // the row's status matters here, not the legality of the transition that produced it.
+  it("CRITICAL 1 (converse) — approve succeeds on an A3-sent PARTIALLY_QUOTED leg once the straggler's RFQ has EXPIRED, promoting the live rollup to FULLY_QUOTED", async () => {
+    const senderId = randomUUID();
+    const { query, leg, quotes } = await seedPendingApproval(
+      "partialexpired",
+      senderId,
+      [
+        { key: "REC", status: "QUOTED", deadline: past(), draft: { amount: 83200, transitDays: 3 } },
+        { key: "PENDING", status: "RFQ_SENT", deadline: past() },
+      ],
+      "PARTIALLY_QUOTED",
+    );
+
+    await prisma.quote.update({ where: { id: quotes.PENDING.id }, data: { status: "EXPIRED" } });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(200);
+
+    const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
+    expect(quote?.status).toBe("APPROVED");
+    const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
+    expect(updatedLeg?.status).toBe("APPROVED");
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("APPROVED");
+  });
+
   // D4 (task-4-brief.md's own regression case) — the case a hard-coded `FULLY_QUOTED` reject
   // target gets wrong. This leg reached PENDING_APPROVAL via the A3 deadline-passed path above
   // (never itself FULLY_QUOTED — the second FF's RFQ window simply closed without a submission),

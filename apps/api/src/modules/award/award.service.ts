@@ -9,6 +9,7 @@ import { AwardDecisionStatus, Prisma, type LegAwardDecision, type Query } from "
 import { z } from "zod";
 import {
   AIR_VARIANT_KEY,
+  LEG_STATUSES,
   LegEvent,
   LegStatus,
   QuoteEvent,
@@ -167,6 +168,82 @@ export class AwardService {
       select: { status: true },
     });
     return rollupLegTarget(quotes.map((q) => q.status));
+  }
+
+  // S5.9 final whole-branch review — CRITICAL 1, first half.
+  //
+  // The leg status this leg actually LEFT when it was sent for approval. `StatusService.fire`
+  // appends an immutable `StatusTransition` row for EVERY owned status change, so the send's own
+  // `FULLY_QUOTED|PARTIALLY_QUOTED --send_for_approval--> PENDING_APPROVAL` edge already records
+  // this fact — no new column and no migration needed to read it back.
+  //
+  // Latest matching row wins: a leg can be sent, rejected and re-sent, and only the most recent
+  // entry describes the review currently in flight (nothing can append a LATER `to =
+  // PENDING_APPROVAL` row without the leg first leaving PENDING_APPROVAL, which requires a
+  // reject/approve/change-order that also clears the decision). Ordered by `seq` — a monotonic
+  // autoincrement — rather than `at`, whose millisecond resolution can tie for two writes in the
+  // same tick.
+  //
+  // `null` when no such row exists: a decision written straight into the DB by a fixture, or a leg
+  // that reached PENDING_APPROVAL before this log did. Callers fall back to the live rollup alone,
+  // i.e. exactly the pre-fix behaviour.
+  private async legStatusWhenSentForApproval(
+    tx: Prisma.TransactionClient,
+    legId: string,
+  ): Promise<LegStatus | null> {
+    const row = await tx.statusTransition.findFirst({
+      where: { entity: "leg", entityId: legId, to: LegStatus.PENDING_APPROVAL },
+      orderBy: { seq: "desc" },
+      select: { from: true },
+    });
+    const from = row?.from;
+    // `StatusTransition.from` is a plain nullable String column (it serves every machine), so
+    // narrow it back to the leg vocabulary rather than casting blind.
+    return from != null && (LEG_STATUSES as readonly string[]).includes(from)
+      ? (from as LegStatus)
+      : null;
+  }
+
+  // S5.9 final whole-branch review — CRITICAL 1. THE single "is this leg fully quoted?" rule that
+  // approve() and reject() both ask, so the two can never disagree about it (the D4 discipline,
+  // now applied to the right question).
+  //
+  // `rollupLegTarget` alone is not that rule, because `FULLY_QUOTED` is a HYSTERESIS state on this
+  // leg: `LegQuoteProjector` never walks an already-FULLY_QUOTED leg backwards, so a leg with one
+  // `QUOTED` and one `REQUOTED` quote is legitimately FULLY_QUOTED *by history* while
+  // `rollupLegTarget([...])` returns `null` (`LEG_ROLLUP_RESOLVED` deliberately excludes
+  // `REQUOTED` — a re-quote in flight is genuinely unresolved). A pure function over the CURRENT
+  // quote statuses can never reproduce a status that was earned earlier and deliberately not
+  // given back, so asking it alone:
+  //   * made approve() 409 forever on any leg sent via the A9 "proceed without waiting" escape
+  //     hatch — the one path whose entire purpose is "I know a re-quote is in flight, proceed
+  //     anyway" — and
+  //   * made reject() DEMOTE such a leg from FULLY_QUOTED to PARTIALLY_QUOTED, i.e. leave it
+  //     strictly worse off than before it was ever sent (and then fail A3 on a re-send, because
+  //     `requestRequote` has meanwhile pushed the RFQ deadline days out).
+  // Pre-branch, approve() guarded on `leg.status !== FULLY_QUOTED`, which that state PASSES — so
+  // both were regressions introduced by the seam between Task 3 (A9) and Task 4 (the rollup
+  // predicate).
+  //
+  // So: fully quoted iff the quotes justify it RIGHT NOW, *or* the leg genuinely held
+  // FULLY_QUOTED at the moment it was sent. The first term is what promotes a leg whose straggler
+  // came back QUOTED *during* review (the projector's ROLLUP_FROZEN guard skips such a leg, so
+  // nothing else recomputes it — the Task-2 "nothing recomputes on unfreeze" carry-forward); the
+  // second is what preserves hysteresis the projector itself preserves. Neither term can make a
+  // leg WORSE than the other alone would, which is precisely the property reject() needs.
+  //
+  // A3 (send-time: leg is FULLY_QUOTED, or every outstanding RFQ's window has closed) and A9
+  // (explicit, reasoned confirmation to proceed past an in-flight re-quote) already settled
+  // "should this leg be under review at all?" at SEND time. This is not a re-litigation of that:
+  // it is the same FULLY_QUOTED question pre-branch approve() asked, asked of the same fact.
+  // Freshness of the thing actually being decided stays A8's job (approve) / the mirrored quote
+  // check (reject), both of which re-read the shortlisted quote inside this transaction.
+  private async isFullyQuotedForDecision(
+    tx: Prisma.TransactionClient,
+    legId: string,
+  ): Promise<boolean> {
+    if ((await this.legRollupTarget(tx, legId)) === LegStatus.FULLY_QUOTED) return true;
+    return (await this.legStatusWhenSentForApproval(tx, legId)) === LegStatus.FULLY_QUOTED;
   }
 
   // S5.9 Task 3 (register B2/B3) — selecting an offer and sending it for approval are now ONE
@@ -401,9 +478,14 @@ export class AwardService {
   // OLD machine (QUOTED/FULLY_QUOTED --approve--> APPROVED). After Task 3, the leg is always
   // PENDING_APPROVAL by the time anyone can approve (sendForApproval put it there), so that
   // guard would reject EVERY approval. What it actually meant — "no RFQ on this leg may still
-  // be open" — is a property of the QUOTES, not the leg's own status, so it now asks
-  // legRollupTarget directly (D4 — the same rule reject() below uses to pick its return target,
-  // so the two can never disagree about what the quotes justify).
+  // be open" — is a property of the QUOTES, not the leg's own status, so it asks
+  // `isFullyQuotedForDecision` (D4 — the same rule reject() below uses to pick its return target,
+  // so the two can never disagree about it).
+  //
+  // S5.9 final whole-branch review, CRITICAL 1 — that guard originally asked `legRollupTarget`
+  // ALONE, which permanently 409'd every leg sent through A9's "proceed without waiting" escape
+  // hatch. See `isFullyQuotedForDecision` for why a pure function over the current quote statuses
+  // is the wrong (and, pre-branch, never-asked) question.
   //
   // Lock/transaction shape mirrors sendForApproval (S5.9 Task 3): lockLeg FIRST inside the
   // transaction, every guard and the decision write itself INSIDE it, commit, THEN fire the
@@ -418,7 +500,7 @@ export class AwardService {
       await this.lockLeg(tx, queryId, legId);
       const { decision } = await this.requireDecidable(tx, legId, user);
 
-      if ((await this.legRollupTarget(tx, legId)) !== LegStatus.FULLY_QUOTED) {
+      if (!(await this.isFullyQuotedForDecision(tx, legId))) {
         throw new ConflictException(
           "This leg is not fully quoted; its outstanding RFQs must be closed out before approval",
         );
@@ -487,11 +569,25 @@ export class AwardService {
   // the quote RETURN fire below reverts the shortlisted quote off PENDING_APPROVAL — not "after
   // the return" as it might seem more natural to compute. This is deliberately safe: the shared
   // rollup rule (status.ts) treats PENDING_APPROVAL and QUOTED identically as "resolved" for the
-  // FULLY_QUOTED branch, and reject() only ever uses `target` to pick between RETURN_FULL (exact
-  // match on FULLY_QUOTED) and RETURN_PARTIAL (everything else, including `null`) — so computing
-  // pre- or post-return can never change which of those two edges fires. Computing it inside the
-  // same locked transaction as the decision write (rather than as a separate pre-tx read, per
-  // the brief's own illustrative ordering) is what lets the lock cover it.
+  // FULLY_QUOTED branch, and reject() only ever uses the answer to pick between RETURN_FULL
+  // (fully quoted) and RETURN_PARTIAL (everything else) — so computing pre- or post-return can
+  // never change which of those two edges fires. Computing it inside the same locked transaction
+  // as the decision write (rather than as a separate pre-tx read, per the brief's own
+  // illustrative ordering) is what lets the lock cover it.
+  //
+  // S5.9 final whole-branch review, CRITICAL 1 — that choice originally came from
+  // `legRollupTarget` ALONE, with `null` (and everything else) falling through to RETURN_PARTIAL.
+  // On a leg sent through A9 that silently DEMOTED a genuinely FULLY_QUOTED leg to
+  // PARTIALLY_QUOTED: the pure rollup cannot reproduce a hysteresis status the projector itself
+  // deliberately never gives back, and the fall-through treated "I cannot tell" as "partial". It
+  // now asks `isFullyQuotedForDecision`, which also consults the status the leg actually LEFT
+  // when it was sent (recorded immutably in `StatusTransition`), so a reject can never leave a
+  // leg worse off than it was before it was sent. Options weighed and rejected: (a) hard-coding
+  // RETURN_FULL — reintroduces exactly the D4 bug of promoting an A3-deadline-passed leg it never
+  // earned; (b) persisting a `statusBeforeSend` column on `LegAwardDecision` — a migration to
+  // duplicate a fact the immutable transition log already holds verbatim, with a second copy to
+  // keep in sync; (c) widening `LEG_ROLLUP_RESOLVED` to include `REQUOTED` — wrong at the source,
+  // it would tell the PROJECTOR that a re-quote in flight is settled, promoting unrelated legs.
   //
   // S5.9 Task 4 review round — IMPORTANT 3. reject() used to fire QuoteEvent.RETURN
   // unconditionally on `decision.shortlistedQuoteId`. `lockLeg` only locks the LEG row, not the
@@ -519,7 +615,7 @@ export class AwardService {
     input: RejectInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
-    const { decision, target } = await this.prisma.$transaction(async (tx) => {
+    const { decision, returnToFullyQuoted } = await this.prisma.$transaction(async (tx) => {
       await this.lockLeg(tx, queryId, legId);
       const { decision } = await this.requireDecidable(tx, legId, user);
 
@@ -537,7 +633,7 @@ export class AwardService {
         }
       }
 
-      const target = await this.legRollupTarget(tx, legId);
+      const returnToFullyQuoted = await this.isFullyQuotedForDecision(tx, legId);
 
       // Single final write straight to DRAFT (design §9.5: "REJECTED -> back to DRAFT") rather
       // than two updates (REJECTED then DRAFT) — the "REJECTED" moment is captured as audit
@@ -562,14 +658,14 @@ export class AwardService {
           actorId: user.userId,
         },
       });
-      return { decision: updated, target };
+      return { decision: updated, returnToFullyQuoted };
     });
 
     // Quote first, then leg — same order as approve()/sendForApproval. The leg is still
     // PENDING_APPROVAL for the whole duration of the quote fire, so the projector's freeze
     // (Task 2) skips the rollup it would otherwise trigger off this quote's status change; the
     // leg's own RETURN_FULL/RETURN_PARTIAL fire right after is what actually moves it, using the
-    // `target` already computed above.
+    // `returnToFullyQuoted` answer already computed above.
     if (decision.shortlistedQuoteId) {
       await this.status.fire("quote", decision.shortlistedQuoteId, QuoteEvent.RETURN, {
         queryId,
@@ -581,7 +677,7 @@ export class AwardService {
     await this.status.fire(
       "leg",
       legId,
-      target === LegStatus.FULLY_QUOTED ? LegEvent.RETURN_FULL : LegEvent.RETURN_PARTIAL,
+      returnToFullyQuoted ? LegEvent.RETURN_FULL : LegEvent.RETURN_PARTIAL,
       { queryId, actorId: user.userId, reason: input.reason },
     );
 
