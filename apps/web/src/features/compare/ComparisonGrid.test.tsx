@@ -944,7 +944,18 @@ describe("ComparisonGrid edge cases", () => {
 
   // A DRAFT decision (the recommendation-preserving default) has no locked-state hint at all —
   // the chip renders bare, no `TooltipProvider`/`TooltipTrigger` wrapper reachable through it.
-  it("has no hover explanation for a plain shortlisted (DRAFT) chip", async () => {
+  //
+  // T10 REVIEW ROUND — the original version of this test asserted `queryByRole("tooltip")` absent
+  // immediately after `userEvent.hover()`. That's VACUOUS: Radix's default 700ms pointer-open
+  // delay means no `role="tooltip"` element exists in the instant after `hover()` resolves EITHER
+  // way, wrapped or not — the reviewer mutation-proved this by making `DecisionChip` wrap every
+  // badge unconditionally and watching all 138 compare tests, this one included, stay green.
+  // Rewritten to a structural signal instead: Radix's `TooltipTrigger` stamps `data-state` (and,
+  // now, this component's own `tabIndex={0}`) on its child THE INSTANT it's wrapped — regardless
+  // of open/closed — so a bare badge carrying neither is a fact about the render tree, not a race
+  // against a timer. Confirmed empirically (not just from reading Radix's source) by rendering
+  // both a bare and a wrapped chip and inspecting `outerHTML` directly before writing this.
+  it("renders a bare, attribute-free chip for a plain shortlisted (DRAFT) decision — no tooltip wrapper reachable through it", () => {
     const draft = {
       legId: "leg-1",
       status: "DRAFT" as const,
@@ -962,8 +973,53 @@ describe("ComparisonGrid edge cases", () => {
 
     renderPanel({ ...LEG, decision: draft });
 
-    await userEvent.hover(screen.getByTestId("decision-chip"));
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    const chip = screen.getByTestId("decision-chip");
+    expect(chip).not.toHaveAttribute("data-state");
+    expect(chip).not.toHaveAttribute("tabindex");
+  });
+
+  // ── T10 review round, IMPORTANT 2 — keyboard/AT reachability ──────────────────────────────
+  // Before this fix the chip was a plain, non-focusable `<div>` nested inside the header's toggle
+  // `<button>`: `Tab` never landed on it and a direct `.focus()` didn't move `document.activeElement`
+  // (verified live by the reviewer) — the locked-state explanation, previously a permanently
+  // visible paragraph available to everyone, became reachable ONLY by mouse hover. Fixed by
+  // splitting the header into a toggle `<button>` (chevron/code/route/mode) plus a sibling,
+  // non-toggling badge area — see `CompareLegPanel`'s header JSX comment for the trade-off this
+  // requires (clicking the badges themselves no longer toggles the accordion) — and giving the
+  // hint-bearing chip `tabIndex={0}`. Radix's `TooltipTrigger` opens on `focus` immediately (no
+  // hover delay), so a focusable trigger gets full keyboard support for free; this test exercises
+  // the real `Tab` key (not just an imperative `.focus()` call) to prove actual tab order, then
+  // confirms focusing it genuinely opens the tooltip rather than merely being reachable.
+  it("makes a hint-bearing decision chip reachable and operable by keyboard alone, not only by hover", async () => {
+    const approved = {
+      legId: "leg-1",
+      status: "APPROVED" as const,
+      shortlistedQuoteId: "quote-1",
+      shortlistedVariant: "DEDICATED" as const,
+      recommendedQuoteId: "quote-1",
+      recommendedVariant: "DEDICATED" as const,
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: "u1",
+      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+      decidedByUserId: "checker-1",
+      decidedAt: "2026-08-15T09:00:00.000Z",
+    };
+
+    renderPanel({ ...LEG, decision: approved });
+    const chip = screen.getByTestId("decision-chip");
+
+    // The toggle button is the leg header's first (and, before the fix, ONLY) tab stop; the chip
+    // must be the very next one, not skipped over.
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: /LEG-1/i })).toHaveFocus();
+    await userEvent.tab();
+    expect(chip).toHaveFocus();
+
+    // …and focus alone (no mouse, no click) opens the same tooltip hovering does.
+    expect(await screen.findByRole("tooltip", {}, { timeout: 3000 })).toHaveTextContent(
+      /shortlist is final/i,
+    );
   });
 
   // ── S5.9 T9 — this in-grid `Select` seam is gone entirely: `SendForApprovalDialog` is opened

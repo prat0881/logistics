@@ -73,28 +73,43 @@ function decisionBadge(decision: AwardDecision): DecisionBadge {
 }
 
 /**
- * DecisionChip — the badge itself, wrapped in a hover tooltip when `decisionBadge` gives it a
- * `hint` (S5.9 T10). `TooltipTrigger` uses `asChild` on the `Badge` rather than rendering its own
- * (default) `<button>`: the whole leg header is already one `<button>` (`onToggle` below), and a
- * `<button>` nested inside a `<button>` is invalid HTML that breaks keyboard navigation — `Badge`
- * is a plain `<div>`, so `asChild` merges the trigger's pointer/focus handlers onto it instead of
- * introducing a second interactive element. `Badge` is `forwardRef` (`components/ui/badge.tsx`)
- * specifically so Radix's Slot can attach the ref it needs to anchor the popper to the right node.
+ * DecisionChip — the badge itself, wrapped in a hover-**and-focus** tooltip when `decisionBadge`
+ * gives it a `hint` (S5.9 T10; keyboard/AT reachability fixed in T10's review round).
+ *
+ * Two accessibility constraints, both load-bearing:
+ *   1. `TooltipTrigger` uses `asChild` on the `Badge` rather than rendering its own (default)
+ *      `<button>` — `Badge` is a plain `<div>` (`forwardRef` specifically so Radix's `Slot` can
+ *      attach the ref it needs to anchor the popper), so `asChild` merges the trigger's
+ *      pointer/focus handlers onto it instead of introducing a second element.
+ *   2. The hint-bearing chip carries `tabIndex={0}` so it's reachable by `Tab`, not just a mouse —
+ *      Radix's `TooltipTrigger` opens on `focus` (immediately, no hover delay) and closes on
+ *      `blur`, so a focusable trigger gets full keyboard support for free. This is why the chip
+ *      MUST render as a sibling of the leg header's own `onToggle` `<button>`, not a child of it
+ *      (see `CompareLegPanel`'s header JSX below): a focusable, non-button element nested inside a
+ *      `<button>` is exactly the same "interactive-inside-interactive" problem asChild was already
+ *      avoiding, just via `tabIndex` instead of a second `<button>` tag. A leg with no hint (plain
+ *      `DRAFT`) renders a bare, non-focusable badge — there's nothing to reveal, so it isn't given
+ *      a tab stop.
  */
 function DecisionChip({ decision }: { decision: AwardDecision }) {
   const { label, variant, hint } = decisionBadge(decision);
-  const chip = (
-    <Badge variant={variant} data-testid="decision-chip">
-      {label}
-    </Badge>
-  );
 
-  if (!hint) return chip;
+  if (!hint) {
+    return (
+      <Badge variant={variant} data-testid="decision-chip">
+        {label}
+      </Badge>
+    );
+  }
 
   return (
     <TooltipProvider>
       <Tooltip>
-        <TooltipTrigger asChild>{chip}</TooltipTrigger>
+        <TooltipTrigger asChild>
+          <Badge variant={variant} data-testid="decision-chip" tabIndex={0}>
+            {label}
+          </Badge>
+        </TooltipTrigger>
         <TooltipContent>{hint}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
@@ -245,23 +260,32 @@ export function CompareLegPanel({
 
   return (
     <Card id={`legcard-${leg.legId}`} className="scroll-mt-4 overflow-hidden">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
-      >
-        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold text-primary">
-          {leg.legCode}
-        </span>
-        <span className="font-medium">{route}</span>
-        {leg.mode && <Badge variant="secondary">{leg.mode}</Badge>}
-        <span className="ml-auto flex items-center gap-2">
+      {/* Split into a toggle `<button>` (chevron/code/route/mode) plus a trailing, non-toggling
+          badge area (T10 review round) — the decision chip needs to be independently focusable
+          for its tooltip (see `DecisionChip`'s doc comment), and a focusable non-button element
+          can't nest inside this button without repeating the exact "interactive inside
+          interactive" problem `asChild` exists to avoid. Trade-off: clicking directly on the
+          decision/status badges no longer toggles the accordion — only the left/main portion of
+          the row does now. The row's hover affordance moves with it, onto just the button. */}
+      <div className="flex w-full items-center gap-3 px-4 py-3">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="flex flex-1 items-center gap-3 rounded text-left hover:bg-muted/50"
+        >
+          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-xs font-semibold text-primary">
+            {leg.legCode}
+          </span>
+          <span className="font-medium">{route}</span>
+          {leg.mode && <Badge variant="secondary">{leg.mode}</Badge>}
+        </button>
+        <span className="flex items-center gap-2">
           {leg.decision && <DecisionChip decision={leg.decision} />}
           {legStatus && <LegStatusBadge status={legStatus} />}
         </span>
-      </button>
+      </div>
 
       {open && (
         <div data-testid="leg-body" className="space-y-4 border-t border-border p-4">
