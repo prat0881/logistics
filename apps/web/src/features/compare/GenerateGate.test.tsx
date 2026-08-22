@@ -17,7 +17,9 @@ afterEach(() => vi.unstubAllGlobals());
 // already goes through (Negotiate, Send for approval), rather than a bespoke render helper here.
 // `GenerateGate` is a genuinely separate, query-level component (S5.6 Task 5, design §16 O4) that
 // happened to share this file with `CheckerPanel` since it was first written — its own coverage
-// below is untouched by this task and stays here.
+// below is untouched by this task and stays here. Review round (Minor) — renamed from
+// `CheckerPanel.test.tsx` (via `git mv`, history preserved) once nothing `CheckerPanel`-shaped was
+// left in it; this file's own name now matches what it actually tests.
 const PENDING_LEG: LegComparisonDto = {
   legId: "leg-1",
   legCode: "LEG-1",
