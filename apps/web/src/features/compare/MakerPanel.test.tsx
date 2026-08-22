@@ -177,31 +177,28 @@ describe("MakerPanel", () => {
     expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
   });
 
-  // ── final review I1 — post-reopen guidance ────────────────────────────────────────────────
-  it("tells an APPROVED leg its shortlist is final instead of pointing at reject/reopen", () => {
+  // ── S5.9 T10 (product item 7) — both locked-state paragraphs moved off this panel and onto
+  // the leg header's decision chip as a hover tooltip (`CompareLegPanel`'s `DecisionChip`); see
+  // "explains an approved/pending-approval leg on hover of its decision chip instead" in
+  // `ComparisonGrid.test.tsx`, which renders `CompareLegPanel` and covers the tooltip itself. What
+  // is asserted here is only that MakerPanel no longer renders either paragraph AS A BLOCK — not
+  // merely that this one regex is absent, but that the whole panel mounts nothing for these
+  // statuses (final review I1's dead-end wording is gone from this component entirely).
+  it("no longer renders the approved-state paragraph as a block", () => {
     renderMaker({
       ...SAVED_LEG,
       decision: { ...SAVED_LEG.decision!, status: "APPROVED" },
     });
 
-    expect(screen.getByText(/its shortlist is final here/i)).toBeInTheDocument();
-    // Neither route exists for an APPROVED decision: reject 409s (requireDecidable) and reopen
-    // only clears the query's snapshot, leaving every leg APPROVED.
-    expect(screen.queryByText(/reject or reopen/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/its shortlist is final here/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("maker-panel")).not.toBeInTheDocument();
   });
 
-  it("keeps the recoverable wording for a leg that is only pending approval", () => {
+  it("no longer renders the pending-approval paragraph as a block either", () => {
     renderMaker(PENDING_LEG);
 
-    expect(screen.getByText(/a checker has to reject it/i)).toBeInTheDocument();
-    expect(screen.queryByText(/its shortlist is final here/i)).not.toBeInTheDocument();
-  });
-
-  it("shows neither locked message while the decision is still an editable DRAFT", () => {
-    renderMaker(SAVED_LEG);
-
     expect(screen.queryByText(/a checker has to reject it/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/its shortlist is final here/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("maker-panel")).not.toBeInTheDocument();
   });
 
   // Visual-acceptance fix (S5.7) — a plain DRAFT leg (not locked, no rejection reason) is the

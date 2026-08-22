@@ -885,6 +885,87 @@ describe("ComparisonGrid edge cases", () => {
     expect(screen.queryByText("Shortlisted")).not.toBeInTheDocument();
   });
 
+  // ── S5.9 T10 (product item 7) — the two locked-state paragraphs `MakerPanel` used to render as
+  // standing boxes ("This leg is approved — its shortlist is final here…" / "Locked while this leg
+  // is pending approval…") moved onto the decision chip itself, as hover-only copy — see
+  // `MakerPanel.test.tsx`'s "no longer renders the [...] paragraph as a block" for the other half
+  // of this proof (that the panel itself stays silent now). This is the chip side: hovering must
+  // still surface the same wording, just via a tooltip instead of a permanent box.
+  it("explains an approved leg on hover of its decision chip instead of a standing panel paragraph", async () => {
+    const approved = {
+      legId: "leg-1",
+      status: "APPROVED" as const,
+      shortlistedQuoteId: "quote-1",
+      shortlistedVariant: "DEDICATED" as const,
+      recommendedQuoteId: "quote-1",
+      recommendedVariant: "DEDICATED" as const,
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: "u1",
+      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+      decidedByUserId: "checker-1",
+      decidedAt: "2026-08-15T09:00:00.000Z",
+    };
+
+    renderPanel({ ...LEG, decision: approved });
+
+    await userEvent.hover(screen.getByTestId("decision-chip"));
+    // Radix's default `delayDuration` (700ms) eats most of `findBy`'s default 1000ms budget on its
+    // own — a generous explicit timeout keeps this from flaking under a loaded CI runner rather
+    // than genuinely proving the tooltip never opens.
+    expect(await screen.findByRole("tooltip", {}, { timeout: 3000 })).toHaveTextContent(
+      /shortlist is final/i,
+    );
+  });
+
+  it("explains a pending-approval leg on hover of its decision chip too", async () => {
+    const pending = {
+      legId: "leg-1",
+      status: "PENDING_APPROVAL" as const,
+      shortlistedQuoteId: "quote-1",
+      shortlistedVariant: "DEDICATED" as const,
+      recommendedQuoteId: "quote-1",
+      recommendedVariant: "DEDICATED" as const,
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: "u1",
+      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+      decidedByUserId: null,
+      decidedAt: null,
+    };
+
+    renderPanel({ ...LEG, decision: pending });
+
+    await userEvent.hover(screen.getByTestId("decision-chip"));
+    expect(await screen.findByRole("tooltip", {}, { timeout: 3000 })).toHaveTextContent(
+      /checker has to reject it/i,
+    );
+  });
+
+  // A DRAFT decision (the recommendation-preserving default) has no locked-state hint at all —
+  // the chip renders bare, no `TooltipProvider`/`TooltipTrigger` wrapper reachable through it.
+  it("has no hover explanation for a plain shortlisted (DRAFT) chip", async () => {
+    const draft = {
+      legId: "leg-1",
+      status: "DRAFT" as const,
+      shortlistedQuoteId: "quote-1",
+      shortlistedVariant: "DEDICATED" as const,
+      recommendedQuoteId: "quote-1",
+      recommendedVariant: "DEDICATED" as const,
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: null,
+      sentForApprovalAt: null,
+      decidedByUserId: null,
+      decidedAt: null,
+    };
+
+    renderPanel({ ...LEG, decision: draft });
+
+    await userEvent.hover(screen.getByTestId("decision-chip"));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
   // ── S5.9 T9 — this in-grid `Select` seam is gone entirely: `SendForApprovalDialog` is opened
   // by a plain button below the whole grid (`CompareLegPanel`'s action bar), not by a per-offer
   // grid click, so there is no gesture left inside the grid that could re-point what a submit

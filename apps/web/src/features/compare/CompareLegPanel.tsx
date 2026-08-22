@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { LegStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import { ComparisonGrid } from "./ComparisonGrid";
@@ -27,6 +28,12 @@ type AwardDecision = NonNullable<LegComparisonDto["decision"]>;
 interface DecisionBadge {
   label: string;
   variant: BadgeVariant;
+  /** S5.9 T10 (product item 7) — the two locked-state explanations that used to render as
+   *  standing paragraphs in `MakerPanel` moved here, onto the chip itself, as hover-only copy. Only
+   *  the two locked statuses carry one; `DecisionChip` below renders a bare, tooltip-free badge for
+   *  everything else. Copy is unchanged from what `MakerPanel` used to render — this is a location
+   *  change, not a rewrite. */
+  hint?: string;
 }
 
 /**
@@ -41,15 +48,57 @@ interface DecisionBadge {
  */
 function decisionBadge(decision: AwardDecision): DecisionBadge {
   switch (decision.status) {
+    // Two genuinely different dead-ends, so two hints (final review I1, carried from MakerPanel).
+    // PENDING_APPROVAL is recoverable: a checker's Reject writes the decision back to DRAFT and
+    // clears `sentByUserId`, restoring the grid's Send affordance. APPROVED is NOT — `reject`
+    // 409s on anything that isn't PENDING_APPROVAL (`requireDecidable`) and Reopen only clears the
+    // query's award snapshot, deliberately leaving every leg APPROVED (`reopenComparison`).
     case "PENDING_APPROVAL":
-      return { label: "Pending approval", variant: "warning" };
+      return {
+        label: "Pending approval",
+        variant: "warning",
+        hint: "Locked while this leg is pending approval — a checker has to reject it (which returns it to draft) before the shortlist can change.",
+      };
     case "APPROVED":
-      return { label: "Approved", variant: "success" };
+      return {
+        label: "Approved",
+        variant: "success",
+        hint: "This leg is approved — its shortlist is final here. Revising the award needs a change request or a fresh negotiation with the forwarder.",
+      };
     default:
       return decision.rejectionReason
         ? { label: "Rejected — revise", variant: "destructive" }
         : { label: "Shortlisted", variant: "secondary" };
   }
+}
+
+/**
+ * DecisionChip — the badge itself, wrapped in a hover tooltip when `decisionBadge` gives it a
+ * `hint` (S5.9 T10). `TooltipTrigger` uses `asChild` on the `Badge` rather than rendering its own
+ * (default) `<button>`: the whole leg header is already one `<button>` (`onToggle` below), and a
+ * `<button>` nested inside a `<button>` is invalid HTML that breaks keyboard navigation — `Badge`
+ * is a plain `<div>`, so `asChild` merges the trigger's pointer/focus handlers onto it instead of
+ * introducing a second interactive element. `Badge` is `forwardRef` (`components/ui/badge.tsx`)
+ * specifically so Radix's Slot can attach the ref it needs to anchor the popper to the right node.
+ */
+function DecisionChip({ decision }: { decision: AwardDecision }) {
+  const { label, variant, hint } = decisionBadge(decision);
+  const chip = (
+    <Badge variant={variant} data-testid="decision-chip">
+      {label}
+    </Badge>
+  );
+
+  if (!hint) return chip;
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>{chip}</TooltipTrigger>
+        <TooltipContent>{hint}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 interface CompareLegPanelProps {
@@ -98,8 +147,9 @@ interface CompareLegPanelProps {
  * what used to be per-forwarder buttons inside `MakerPanel` (S5.7 T5); "Send for approval…" opens
  * `SendForApprovalDialog`, which lists every priced offer itself and picks + sends in one call —
  * there is no more per-offer `Select` button inside the grid (S5.7 T4's affordance, retired this
- * task). `MakerPanel` below keeps only the leg's status/rejection messaging; `CheckerPanel` sits
- * alongside in the same body.
+ * task). `MakerPanel` below keeps only the rejection alert (or renders nothing) — its two former
+ * locked-state paragraphs now live on the decision chip itself, as a hover tooltip (`DecisionChip`,
+ * S5.9 T10, product item 7); `CheckerPanel` sits alongside in the same body.
  *
  * **The "which offer" state.** `selectedOfferKey` — which offer's charge breakdown dialog is open —
  * is the ONLY such state left here. Defaults to `undefined` (closed) and TOGGLES closed on a second
@@ -208,11 +258,7 @@ export function CompareLegPanel({
         <span className="font-medium">{route}</span>
         {leg.mode && <Badge variant="secondary">{leg.mode}</Badge>}
         <span className="ml-auto flex items-center gap-2">
-          {leg.decision && (
-            <Badge variant={decisionBadge(leg.decision).variant}>
-              {decisionBadge(leg.decision).label}
-            </Badge>
-          )}
+          {leg.decision && <DecisionChip decision={leg.decision} />}
           {legStatus && <LegStatusBadge status={legStatus} />}
         </span>
       </button>

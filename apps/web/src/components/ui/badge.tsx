@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
-import type { HTMLAttributes } from "react";
+import { forwardRef, type HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
@@ -23,6 +23,11 @@ const badgeVariants = cva(
 
 export type BadgeProps = HTMLAttributes<HTMLDivElement> & VariantProps<typeof badgeVariants>;
 
-export function Badge({ className, variant, ...props }: BadgeProps) {
-  return <div className={cn(badgeVariants({ variant }), className)} {...props} />;
-}
+// forwardRef (S5.9 T10) — Radix's `Tooltip`/`Slot` asChild machinery clones its child with a
+// composed ref so the popper can measure and anchor to it; a plain function component silently
+// drops that ref (React logs "Function components cannot be given refs" and the anchor stays
+// null), which is exactly the shape `CompareLegPanel`'s decision-chip tooltip needs `Badge` for.
+export const Badge = forwardRef<HTMLDivElement, BadgeProps>(({ className, variant, ...props }, ref) => {
+  return <div ref={ref} className={cn(badgeVariants({ variant }), className)} {...props} />;
+});
+Badge.displayName = "Badge";
