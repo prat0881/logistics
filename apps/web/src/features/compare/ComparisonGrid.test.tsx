@@ -7,7 +7,7 @@ import { AuthProvider, useAuth } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
 import { ComparisonGrid, STALE_OFFER_LABEL } from "./ComparisonGrid";
-import { METRICS, RECOMMENDATION_FOOTNOTE } from "./comparisonRowModel";
+import { METRICS, RECOMMENDATION_FOOTNOTE, SENT_FOR_APPROVAL_FOOTNOTE } from "./comparisonRowModel";
 import type { ViewMode } from "./useViewMode";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -444,7 +444,14 @@ describe.each(["columns", "rows"] as const)("ComparisonGrid — %s view", (mode)
     // Signal 1 — the recommendation of record is still marked.
     const mark = screen.getByTestId(`offer-recommended-${PARITY_RECOMMENDED_KEY}`);
     expect(mark).toHaveTextContent("★");
-    expect(screen.getByText(RECOMMENDATION_FOOTNOTE)).toBeInTheDocument();
+    // Signal 1b (S5.9.1 Task 5) — this fixture's shortlist names the SAME offer as its
+    // recommendation, so it reads as both: the sent-for-approval mark sits alongside the star,
+    // not in place of it.
+    const sentMark = screen.getByTestId(`offer-sent-for-approval-${PARITY_RECOMMENDED_KEY}`);
+    expect(sentMark).toHaveTextContent("⚑");
+    expect(sentMark).toHaveAccessibleName(/sent for approval/i);
+    expect(screen.getByTestId("comparison-footnote")).toHaveTextContent(RECOMMENDATION_FOOTNOTE);
+    expect(screen.getByTestId("comparison-footnote")).toHaveTextContent(SENT_FOR_APPROVAL_FOOTNOTE);
     // Signal 2 — the offer's own Status cell independently says what's actually happening. The
     // two signals coexist; they don't collapse into one (product item 1 vs. product item 4).
     expect(screen.getByTestId(`offer-status-${PARITY_RECOMMENDED_KEY}`)).toHaveTextContent(
@@ -573,6 +580,124 @@ describe("ComparisonGrid — no Recommended badge in the status cell", () => {
     },
   );
 });
+
+// ── S5.9.1 Task 5 — the `⚑` mark: the offer named by `decision.shortlistedQuoteId`/
+// `shortlistedVariant`, i.e. the one that actually went for approval. `SENT_LEG` deliberately
+// shortlists a DIFFERENT offer (q3) than the one `recommendation`/the decision's own
+// `recommendedQuoteId` name (q1) — an override, the same shape `ApproveDialog`'s own tests use —
+// so the two marks land on two DIFFERENT cells here and can't be confused for one signal wearing
+// two names. It also deliberately does NOT flip q3's `quoteStatus` to `PENDING_APPROVAL` the way
+// the "sent for approval" tests elsewhere in this file do: that's the live drift this task exists
+// for (`S56VIS-0001` — decision moved to PENDING_APPROVAL, the named quote's own status did not),
+// and it is the scenario a `quoteStatus`-derived implementation cannot pass.
+describe.each(["columns", "rows"] as const)(
+  "ComparisonGrid — sent-for-approval mark (S5.9.1 Task 5) — %s view",
+  (mode) => {
+    const SENT_KEY = "q3::DEDICATED";
+    const SENT_LEG: LegComparisonDto = {
+      ...PARITY_LEG,
+      decision: {
+        legId: PARITY_LEG.legId,
+        status: "PENDING_APPROVAL",
+        shortlistedQuoteId: "q3",
+        shortlistedVariant: "DEDICATED",
+        recommendedQuoteId: "q1",
+        recommendedVariant: "DEDICATED",
+        overrideReason: "Faster transit, worth the premium",
+        rejectionReason: null,
+        sentByUserId: "u1",
+        sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+        decidedByUserId: null,
+        decidedAt: null,
+      },
+    };
+
+    it("marks the offer the decision named — even though its own quoteStatus never moved off QUOTED (the drift case)", async () => {
+      render(<ComparisonGrid leg={SENT_LEG} viewMode={mode} />);
+
+      // Sanity — the drift precondition actually holds in this fixture: PARITY_STALE_OFFER's
+      // `quoteStatus` is REQUOTED, not QUOTED, so this asserts against SENT_LEG's real offer.
+      expect(SENT_LEG.offers.find((o) => o.quoteId === "q3")!.quoteStatus).not.toBe(
+        "PENDING_APPROVAL",
+      );
+
+      const mark = await screen.findByTestId(`offer-sent-for-approval-${SENT_KEY}`);
+      expect(mark).toHaveTextContent("⚑");
+      expect(mark).toHaveAccessibleName(/sent for approval/i);
+    });
+
+    it("marks no other offer — the recommended cell (a DIFFERENT offer here) carries the star, not the flag", async () => {
+      render(<ComparisonGrid leg={SENT_LEG} viewMode={mode} />);
+
+      await screen.findByTestId(`offer-sent-for-approval-${SENT_KEY}`); // positive control
+      expect(
+        screen.queryByTestId(`offer-sent-for-approval-${PARITY_RECOMMENDED_KEY}`),
+      ).not.toBeInTheDocument();
+      // ...and the reverse: the sent-for-approval offer does not ALSO wear the star (they are two
+      // different offers in this fixture on purpose).
+      expect(screen.queryByTestId(`offer-recommended-${SENT_KEY}`)).not.toBeInTheDocument();
+    });
+
+    it("is visually distinct from the star — a different glyph and colour, never colour or glyph alone", async () => {
+      render(<ComparisonGrid leg={SENT_LEG} viewMode={mode} />);
+
+      const recommendedMark = await screen.findByTestId(
+        `offer-recommended-${PARITY_RECOMMENDED_KEY}`,
+      );
+      const sentMark = screen.getByTestId(`offer-sent-for-approval-${SENT_KEY}`);
+      expect(sentMark).toHaveTextContent("⚑");
+      expect(sentMark.textContent).not.toBe(recommendedMark.textContent);
+      expect(sentMark.className).toContain("text-primary");
+      expect(sentMark.className).not.toContain("text-emerald-600");
+      // Requirement 3 — an accessible name, not colour/glyph alone.
+      expect(sentMark).toHaveAccessibleName(/sent for approval/i);
+    });
+
+    it("combines both explanations onto one footnote line, not a second stray one", async () => {
+      render(<ComparisonGrid leg={SENT_LEG} viewMode={mode} />);
+
+      await screen.findByTestId(`offer-sent-for-approval-${SENT_KEY}`); // positive control
+      const footnotes = screen.getAllByTestId("comparison-footnote");
+      expect(footnotes).toHaveLength(1); // one paragraph, not one per mark
+      expect(footnotes[0]).toHaveTextContent(RECOMMENDATION_FOOTNOTE);
+      expect(footnotes[0]).toHaveTextContent(SENT_FOR_APPROVAL_FOOTNOTE);
+    });
+
+    it("marks nothing when the leg has no decision yet", () => {
+      render(<ComparisonGrid leg={{ ...SENT_LEG, decision: null }} viewMode={mode} />);
+
+      expect(document.querySelector('[data-testid^="offer-sent-for-approval-"]')).toBeNull();
+      expect(screen.queryByTestId("comparison-footnote")).not.toHaveTextContent(
+        SENT_FOR_APPROVAL_FOOTNOTE,
+      );
+    });
+
+    it("marks nothing when the decision exists but names no shortlist", () => {
+      render(
+        <ComparisonGrid
+          leg={{
+            ...SENT_LEG,
+            decision: { ...SENT_LEG.decision!, shortlistedQuoteId: null, shortlistedVariant: null },
+          }}
+          viewMode={mode}
+        />,
+      );
+
+      expect(document.querySelector('[data-testid^="offer-sent-for-approval-"]')).toBeNull();
+    });
+
+    it("suppresses the mark once locked, consistently with the recommendation", async () => {
+      render(<ComparisonGrid leg={SENT_LEG} viewMode={mode} locked />);
+
+      // Positive control — the grid itself still renders real figures under `locked`.
+      expect(await screen.findByText("$1,824.37")).toBeInTheDocument();
+      expect(document.querySelector('[data-testid^="offer-sent-for-approval-"]')).toBeNull();
+      // `locked` suppresses BOTH marks (SENT_LEG's recommendation is q1, its shortlist q3), so the
+      // footnote that explains them has nothing left to say and disappears entirely too.
+      expect(screen.queryByTestId("comparison-footnote")).not.toBeInTheDocument();
+    });
+  },
+);
 
 // ── S5.9.1 R6 — `METRIC_CELL_CLASS` used to be `text-right` unconditionally, which is correct in
 // the rows view (a metric is a column, right-aligned under a right-aligned header) but wrong in
@@ -969,7 +1094,14 @@ describe("ComparisonGrid edge cases", () => {
     expect(mark).not.toHaveAccessibleName(
       new RegExp(liveReason.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
-    expect(screen.getByText(RECOMMENDATION_FOOTNOTE)).toBeInTheDocument();
+    expect(screen.getByTestId("comparison-footnote")).toHaveTextContent(RECOMMENDATION_FOOTNOTE);
+    // S5.9.1 Task 5 — this decision's shortlist names the SAME offer as its recommendation
+    // (quote-1::DEDICATED), so it reads as both: the sent-for-approval mark sits alongside the
+    // star, and its own explanation shares the one footnote line rather than a second one.
+    const sentMark = screen.getByTestId("offer-sent-for-approval-quote-1::DEDICATED");
+    expect(sentMark).toHaveTextContent("⚑");
+    expect(sentMark).toHaveAccessibleName(/sent for approval/i);
+    expect(screen.getByTestId("comparison-footnote")).toHaveTextContent(SENT_FOR_APPROVAL_FOOTNOTE);
 
     // …while the grid itself stays fully readable, and the Status cell independently says what's
     // actually happening — the two signals coexist (product item 1 vs. product item 4).

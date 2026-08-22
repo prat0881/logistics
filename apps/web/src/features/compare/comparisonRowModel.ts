@@ -28,6 +28,16 @@ export interface OfferCell {
   offer: OfferDto;
   recommended: boolean; // this is the recommendation OF RECORD (S5.9.1 R1) — true both before and
   // after a send, false only once suppressed (`locked`) or when it names some other cell
+  /** This is the offer `decision.shortlistedQuoteId`/`shortlistedVariant` names — the offer that
+   *  actually went for approval (S5.9.1 Task 5). Deliberately NOT derived from `offer.quoteStatus`:
+   *  sending for approval is supposed to flip the named offer's OWN quote to `PENDING_APPROVAL`
+   *  (S5.9 T3), but that is a second-hand signal that can drift from the decision record (observed
+   *  live on `S56VIS-0001` — `decision.status = PENDING_APPROVAL` naming a quote whose
+   *  `quoteStatus` was still `QUOTED`, stale seed data rather than a code bug, but proof that a
+   *  derived signal is the wrong source for this). Reads the decision directly, the same way
+   *  `recommended` reads it for the snapshot above — one source, so the two marks can't drift
+   *  apart from each other either. `locked` suppresses it, consistently with `recommended`. */
+  sentForApproval: boolean;
   stale: boolean; // quoteStatus === "REQUOTED"
 }
 
@@ -91,7 +101,10 @@ export const RECOMMENDED_REASON_ON_RECORD =
  * `model.cells.some(c => c.recommended)`, itself downstream of this) still all move together —
  * there is still exactly one place that decides "is this the recommendation?".
  */
-export function buildComparisonRowModel(leg: LegComparisonDto, locked: boolean): ComparisonRowModel {
+export function buildComparisonRowModel(
+  leg: LegComparisonDto,
+  locked: boolean,
+): ComparisonRowModel {
   const snapshotKey = leg.decision?.recommendedQuoteId
     ? offerKey(leg.decision.recommendedQuoteId, leg.decision.recommendedVariant)
     : null;
@@ -100,12 +113,27 @@ export function buildComparisonRowModel(leg: LegComparisonDto, locked: boolean):
     : null;
   const recKey = locked ? null : leg.decision != null ? snapshotKey : liveKey;
 
+  // S5.9.1 Task 5 — the offer that went for approval, read straight from the decision (never from
+  // `offer.quoteStatus`; see `OfferCell.sentForApproval`'s doc comment for the drift this avoids).
+  // No "no decision yet" live fallback here (unlike `recKey` above): there is no live equivalent of
+  // "sent for approval" to fall back to — before a decision exists, nothing has been sent, full
+  // stop. `locked` suppresses it for the same reason it suppresses `recKey`: post-generate, the
+  // award panel below is the authority on what happened.
+  const sentForApprovalKey =
+    !locked && leg.decision?.shortlistedQuoteId
+      ? offerKey(leg.decision.shortlistedQuoteId, leg.decision.shortlistedVariant)
+      : null;
+
   // The reason text follows the SAME branch recKey just took — live reason only in the live
   // branch (where it's guaranteed to describe recKey, since recKey IS liveKey there), the generic
   // on-record sentence for a snapshot (which has no stored reason of its own), null wherever recKey
   // itself is null (nothing to explain).
   const recommendedReason =
-    recKey == null ? null : leg.decision == null ? (leg.recommendation?.reason ?? null) : RECOMMENDED_REASON_ON_RECORD;
+    recKey == null
+      ? null
+      : leg.decision == null
+        ? (leg.recommendation?.reason ?? null)
+        : RECOMMENDED_REASON_ON_RECORD;
 
   const groups: ForwarderGroup[] = [];
   for (const offer of leg.offers) {
@@ -114,6 +142,7 @@ export function buildComparisonRowModel(leg: LegComparisonDto, locked: boolean):
       key,
       offer,
       recommended: recKey != null && key === recKey,
+      sentForApproval: sentForApprovalKey != null && key === sentForApprovalKey,
       stale: offer.quoteStatus === "REQUOTED",
     };
     const existing = groups.find((g) => g.freightForwarderId === offer.freightForwarderId);
@@ -222,3 +251,19 @@ export const RECOMMENDED_TINT = "bg-emerald-500/10";
  *  is not lost with the badge. The footnote below the table explains it once per leg. */
 export const RECOMMENDED_MARK = "★";
 export const RECOMMENDATION_FOOTNOTE = "★ Recommended by the comparison engine.";
+
+/** The "sent for approval" mark (S5.9.1 Task 5) — the product owner's second signal, "came for
+ *  Approval", answered from `decision.shortlistedQuoteId`/`shortlistedVariant` the same way the
+ *  `★` answers "Recommended" from the decision's snapshot. Deliberately a DIFFERENT glyph and
+ *  colour, not a second use of `★`: recommended (the engine's opinion) and sent-for-approval (the
+ *  maker's actual decision) are independent signals — an offer can be either, neither, or both —
+ *  and a shared glyph could not represent "both" at all. `⚑` was chosen over a checkmark
+ *  specifically because a checkmark reads as "approved" (an outcome this mark must not claim — the
+ *  offer is only under review); a flag reads as "picked out for a decision" with no outcome
+ *  implied. `text-primary` (this feature's own established accent for a highlighted identifier —
+ *  see `CompareLegPanel.tsx`'s leg-code span) keeps it visually distinct from the star's emerald
+ *  without inventing a new colour outside the app's palette. */
+export const SENT_FOR_APPROVAL_MARK = "⚑";
+export const SENT_FOR_APPROVAL_ACCESSIBLE_NAME = "Sent for approval";
+export const SENT_FOR_APPROVAL_FOOTNOTE =
+  "⚑ Sent for approval — the offer currently under checker review.";

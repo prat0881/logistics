@@ -4,6 +4,7 @@ import {
   buildComparisonRowModel,
   offerKey,
   RECOMMENDATION_FOOTNOTE,
+  SENT_FOR_APPROVAL_FOOTNOTE,
   STALE_OFFER_LABEL,
   type OfferCell,
 } from "./comparisonRowModel";
@@ -69,6 +70,19 @@ export function ComparisonGrid({
   // footnote and the mark(s) it explains appearing/disappearing together, which is the whole point
   // of "explain the mark, only when the mark exists" (Step 6's own doc comment below).
   const hasRecommendedCell = model.cells.some((c) => c.recommended);
+  // S5.9.1 Task 5 — same "gate the footnote on an ACTUAL flagged cell" reasoning as
+  // `hasRecommendedCell` above, applied to the new mark.
+  const hasSentForApprovalCell = model.cells.some((c) => c.sentForApproval);
+  // Requirement 5 — the two explanations share ONE line rather than growing a second stray one:
+  // joined into a single string (not two sibling JSX nodes) so the `<p>` below carries exactly one
+  // text node, and `RECOMMENDATION_FOOTNOTE` alone still round-trips unchanged through
+  // `screen.getByText` in the (still-common) case where only the recommendation applies.
+  const footnote = [
+    hasRecommendedCell && RECOMMENDATION_FOOTNOTE,
+    hasSentForApprovalCell && SENT_FOR_APPROVAL_FOOTNOTE,
+  ]
+    .filter((x): x is string => Boolean(x))
+    .join("  ");
 
   function handleOpenBreakdown(cell: OfferCell) {
     onSelectOffer?.(cell.offer.quoteId, cell.offer.variant);
@@ -92,15 +106,18 @@ export function ComparisonGrid({
         />
       )}
 
-      {/* Explains the `★` mark (product item 2) once per leg — only when there's a live
-          recommendation for it to refer to. Gated on an ACTUAL flagged cell, not just a non-null
-          `recommendedKey`: `locked` suppressing the recommendation makes `recommendedKey` `null`
-          (so this and the mark disappear together there too), but a dangling `leg.recommendation`
-          (naming an offer absent from `offers`) leaves `recommendedKey` a non-null string with no
-          cell ever picking it up — this guard is what keeps the footnote from printing in that
-          case with no `★` anywhere on the page for it to explain (code-review fix, round 2). */}
-      {hasRecommendedCell && (
-        <p className="text-xs text-muted-foreground">{RECOMMENDATION_FOOTNOTE}</p>
+      {/* Explains whichever mark(s) are actually on screen (product item 2; S5.9.1 Task 5 adds the
+          `⚑`) — one `<p>`, not one per mark, per Requirement 5 ("keep the two explanations
+          together rather than adding a second stray line"). Each half is gated on an ACTUAL
+          flagged cell, not just a non-null key: `locked` suppressing a mark makes its key `null`
+          (so its half of the footnote disappears too), and a dangling `leg.recommendation` (naming
+          an offer absent from `offers`) leaves `recommendedKey` a non-null string with no cell ever
+          picking it up — this guard is what keeps that half from printing with no `★` anywhere on
+          the page for it to explain (code-review fix, round 2, extended to the new mark). */}
+      {footnote.length > 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="comparison-footnote">
+          {footnote}
+        </p>
       )}
 
       {(leg.pendingForwarders.length > 0 || leg.awaitingReQuote) && (
@@ -124,8 +141,8 @@ export function ComparisonGrid({
           )}
           {leg.awaitingReQuote && (
             <p className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-warning">
-              Awaiting revised quote — the re-quoted offer above is excluded from the
-              recommendation until the forwarder responds.
+              Awaiting revised quote — the re-quoted offer above is excluded from the recommendation
+              until the forwarder responds.
             </p>
           )}
         </div>

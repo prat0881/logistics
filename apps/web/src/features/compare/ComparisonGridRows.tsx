@@ -18,6 +18,8 @@ import {
   METRIC_ALIGN,
   RECOMMENDED_TINT,
   RECOMMENDED_MARK,
+  SENT_FOR_APPROVAL_MARK,
+  SENT_FOR_APPROVAL_ACCESSIBLE_NAME,
   STALE_OFFER_LABEL,
   type ComparisonRowModel,
   type OfferCell,
@@ -132,6 +134,18 @@ export function ComparisonGridRows({
                               {RECOMMENDED_MARK}
                             </span>
                           )}
+                          {/* S5.9.1 Task 5 — same mark and the same doc comment as
+                              `ComparisonGridColumns.tsx`'s identical block. */}
+                          {cell.sentForApproval && (
+                            <span
+                              data-testid={`offer-sent-for-approval-${cell.key}`}
+                              aria-label={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
+                              title={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
+                              className="ml-1 text-primary"
+                            >
+                              {SENT_FOR_APPROVAL_MARK}
+                            </span>
+                          )}
                         </button>
                       ) : (
                         <div
@@ -151,6 +165,18 @@ export function ComparisonGridRows({
                               className="ml-1 text-emerald-600"
                             >
                               {RECOMMENDED_MARK}
+                            </span>
+                          )}
+                          {/* S5.9.1 Task 5 — same mark and the same doc comment as
+                              `ComparisonGridColumns.tsx`'s identical block. */}
+                          {cell.sentForApproval && (
+                            <span
+                              data-testid={`offer-sent-for-approval-${cell.key}`}
+                              aria-label={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
+                              title={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
+                              className="ml-1 text-primary"
+                            >
+                              {SENT_FOR_APPROVAL_MARK}
                             </span>
                           )}
                         </div>

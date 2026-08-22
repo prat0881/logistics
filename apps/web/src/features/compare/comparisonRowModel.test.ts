@@ -3,22 +3,45 @@ import { buildComparisonRowModel, METRICS, offerKey } from "./comparisonRowModel
 import type { LegComparisonDto, OfferDto } from "@svyft/shared";
 
 const offer = (o: Partial<OfferDto>): OfferDto => ({
-  quoteId: "q1", freightForwarderId: "ff1", freightForwarderName: "Bridge",
-  variant: "DEDICATED", variantLabel: "Dedicated", priced: true,
-  nativeTotal: 6700, currency: "AED", unitsPerUsd: 3.6725, usdTotal: 1824.37,
-  transitDays: 3, chargeableWeightKg: 100, validUntil: "2026-09-16T00:00:00.000Z",
-  quoteStatus: "QUOTED", charges: [], ...o,
+  quoteId: "q1",
+  freightForwarderId: "ff1",
+  freightForwarderName: "Bridge",
+  variant: "DEDICATED",
+  variantLabel: "Dedicated",
+  priced: true,
+  nativeTotal: 6700,
+  currency: "AED",
+  unitsPerUsd: 3.6725,
+  usdTotal: 1824.37,
+  transitDays: 3,
+  chargeableWeightKg: 100,
+  validUntil: "2026-09-16T00:00:00.000Z",
+  quoteStatus: "QUOTED",
+  charges: [],
+  ...o,
 });
 
 const leg = (offers: OfferDto[], recommendation: LegComparisonDto["recommendation"] = null) =>
-  ({ legId: "l1", legCode: "L1", mode: "ROAD", origin: "A", destination: "B",
-     offers, pendingForwarders: [], awaitingReQuote: false,
-     recommendation, decision: null, timeline: [] }) as LegComparisonDto;
+  ({
+    legId: "l1",
+    legCode: "L1",
+    mode: "ROAD",
+    origin: "A",
+    destination: "B",
+    offers,
+    pendingForwarders: [],
+    awaitingReQuote: false,
+    recommendation,
+    decision: null,
+    timeline: [],
+  }) as LegComparisonDto;
 
 describe("buildComparisonRowModel", () => {
   it("groups a forwarder's variants under one group", () => {
     const m = buildComparisonRowModel(
-      leg([offer({}), offer({ variant: "GROUPAGE", variantLabel: "Groupage" })]), false);
+      leg([offer({}), offer({ variant: "GROUPAGE", variantLabel: "Groupage" })]),
+      false,
+    );
     expect(m.groups).toHaveLength(1);
     expect(m.groups[0].freightForwarderName).toBe("Bridge");
     expect(m.groups[0].cells).toHaveLength(2);
@@ -28,18 +51,23 @@ describe("buildComparisonRowModel", () => {
   it("marks the recommended cell by (quoteId, variant)", () => {
     const m = buildComparisonRowModel(
       leg([offer({}), offer({ variant: "GROUPAGE", variantLabel: "Groupage" })]),
-      false);
+      false,
+    );
     expect(m.recommendedKey).toBeNull();
 
     const withRec = buildComparisonRowModel(
-      leg([offer({})], { quoteId: "q1", variant: "DEDICATED", reason: "fastest" }), false);
+      leg([offer({})], { quoteId: "q1", variant: "DEDICATED", reason: "fastest" }),
+      false,
+    );
     expect(withRec.recommendedKey).toBe(offerKey("q1", "DEDICATED"));
     expect(withRec.cells[0].recommended).toBe(true);
   });
 
   it("suppresses the recommendation entirely when locked", () => {
     const m = buildComparisonRowModel(
-      leg([offer({})], { quoteId: "q1", variant: "DEDICATED", reason: "fastest" }), true);
+      leg([offer({})], { quoteId: "q1", variant: "DEDICATED", reason: "fastest" }),
+      true,
+    );
     expect(m.recommendedKey).toBeNull();
     expect(m.cells[0].recommended).toBe(false);
   });
@@ -168,6 +196,126 @@ describe("buildComparisonRowModel", () => {
     });
   });
 
+  // ── S5.9.1 Task 5 — the offer that went for approval, read straight from
+  // `decision.shortlistedQuoteId`/`shortlistedVariant`, never from `offer.quoteStatus` (which is a
+  // second-hand signal that can drift from the decision — observed live on `S56VIS-0001`:
+  // `decision.status = PENDING_APPROVAL` naming a quote whose `quoteStatus` was still `QUOTED`).
+  // Mirrors the "recommendation of record" block above: its own full-shape `decision()` helper
+  // (every `AwardDecisionDto` field populated, not the brief's abbreviated partials) so
+  // `pnpm run typecheck` stays honest about what a real decision row looks like.
+  describe("sentForApproval — the offer that went for approval (S5.9.1 Task 5)", () => {
+    const decision = (
+      overrides: Partial<NonNullable<LegComparisonDto["decision"]>> = {},
+    ): NonNullable<LegComparisonDto["decision"]> => ({
+      legId: "l1",
+      status: "PENDING_APPROVAL",
+      shortlistedQuoteId: null,
+      shortlistedVariant: null,
+      recommendedQuoteId: null,
+      recommendedVariant: null,
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: "u1",
+      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+      decidedByUserId: null,
+      decidedAt: null,
+      ...overrides,
+    });
+
+    it("marks the offer the decision names", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([
+            offer({}),
+            offer({ quoteId: "q2", variant: "GROUPAGE", variantLabel: "Groupage" }),
+          ]),
+          decision: decision({ shortlistedQuoteId: "q1", shortlistedVariant: "DEDICATED" }),
+        },
+        false,
+      );
+      expect(m.cells.find((c) => c.key === offerKey("q1", "DEDICATED"))!.sentForApproval).toBe(
+        true,
+      );
+    });
+
+    it("marks no offer other than the one the decision names", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([
+            offer({}),
+            offer({ quoteId: "q2", variant: "GROUPAGE", variantLabel: "Groupage" }),
+          ]),
+          decision: decision({ shortlistedQuoteId: "q1", shortlistedVariant: "DEDICATED" }),
+        },
+        false,
+      );
+      expect(m.cells.find((c) => c.key === offerKey("q2", "GROUPAGE"))!.sentForApproval).toBe(
+        false,
+      );
+    });
+
+    // ── THE test that matters most — the drift case observed live. A naive implementation that
+    // derives "sent for approval" from `offer.quoteStatus === "PENDING_APPROVAL"` (rather than the
+    // decision) passes every other test in this block but fails this one: the quote status stayed
+    // QUOTED (stale/unflipped) while the decision has already moved on to PENDING_APPROVAL, and the
+    // decision is what must win.
+    it("marks the offer even when its own quoteStatus is still QUOTED — the decision moved, the quote status didn't (the drift case)", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([offer({ quoteStatus: "QUOTED" })]),
+          decision: decision({ shortlistedQuoteId: "q1", shortlistedVariant: "DEDICATED" }),
+        },
+        false,
+      );
+      expect(m.cells[0].offer.quoteStatus).toBe("QUOTED"); // sanity: the drift precondition holds
+      expect(m.cells[0].sentForApproval).toBe(true);
+    });
+
+    it("reads as both when the same offer is also the recommendation of record", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([offer({})]),
+          decision: decision({
+            shortlistedQuoteId: "q1",
+            shortlistedVariant: "DEDICATED",
+            recommendedQuoteId: "q1",
+            recommendedVariant: "DEDICATED",
+          }),
+        },
+        false,
+      );
+      expect(m.cells[0].recommended).toBe(true);
+      expect(m.cells[0].sentForApproval).toBe(true);
+    });
+
+    it("marks nothing when there is no decision yet", () => {
+      const m = buildComparisonRowModel(leg([offer({})]), false);
+      expect(m.cells[0].sentForApproval).toBe(false);
+    });
+
+    it("marks nothing when a decision exists but names no shortlist", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([offer({})]),
+          decision: decision({ shortlistedQuoteId: null, shortlistedVariant: null }),
+        },
+        false,
+      );
+      expect(m.cells[0].sentForApproval).toBe(false);
+    });
+
+    it("suppresses the mark once locked, consistently with the recommendation", () => {
+      const m = buildComparisonRowModel(
+        {
+          ...leg([offer({})]),
+          decision: decision({ shortlistedQuoteId: "q1", shortlistedVariant: "DEDICATED" }),
+        },
+        true,
+      );
+      expect(m.cells[0].sentForApproval).toBe(false);
+    });
+  });
+
   // ── S5.9.1 R1, Step 4 — the `★` mark's accessible name. `leg.recommendation.reason` is the LIVE
   // reason and, once a decision snapshot is in play, may describe a different offer entirely (the
   // whole point of the describe block above). `recommendedReason` is resolved in lock-step with
@@ -218,14 +366,20 @@ describe("buildComparisonRowModel", () => {
 
   it("renders the conversion rate metric, and an em-dash when absent", () => {
     const rate = METRICS.find((x) => x.id === "rate")!;
-    const m = buildComparisonRowModel(leg([offer({}), offer({ quoteId: "q2", unitsPerUsd: null, variant: "GROUPAGE" })]), false);
+    const m = buildComparisonRowModel(
+      leg([offer({}), offer({ quoteId: "q2", unitsPerUsd: null, variant: "GROUPAGE" })]),
+      false,
+    );
     expect(rate.render(m.cells[0])).toBe("3.67250");
     expect(rate.render(m.cells[1])).toBe("—");
   });
 
   it("never renders a money figure for an unpriced offer", () => {
     const usd = METRICS.find((x) => x.id === "usdTotal")!;
-    const m = buildComparisonRowModel(leg([offer({ priced: false, usdTotal: null, nativeTotal: 0 })]), false);
+    const m = buildComparisonRowModel(
+      leg([offer({ priced: false, usdTotal: null, nativeTotal: 0 })]),
+      false,
+    );
     expect(usd.render(m.cells[0])).toBe("—");
     expect(usd.render(m.cells[0])).not.toContain("$0");
   });

@@ -17,6 +17,8 @@ import {
   METRIC_ALIGN,
   RECOMMENDED_TINT,
   RECOMMENDED_MARK,
+  SENT_FOR_APPROVAL_MARK,
+  SENT_FOR_APPROVAL_ACCESSIBLE_NAME,
   STALE_OFFER_LABEL,
   type ComparisonRowModel,
   type OfferCell,
@@ -121,6 +123,20 @@ export function ComparisonGridColumns({
                             {RECOMMENDED_MARK}
                           </span>
                         )}
+                        {/* S5.9.1 Task 5 — a DIFFERENT glyph/colour from the `★` above (never a
+                            second use of it): recommended and sent-for-approval are independent
+                            signals, so an offer that is both renders both marks side by side. See
+                            `comparisonRowModel.ts`'s doc comment on `SENT_FOR_APPROVAL_MARK`. */}
+                        {cell.sentForApproval && (
+                          <span
+                            data-testid={`offer-sent-for-approval-${cell.key}`}
+                            aria-label={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
+                            title={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
+                            className="ml-1 text-primary"
+                          >
+                            {SENT_FOR_APPROVAL_MARK}
+                          </span>
+                        )}
                       </span>
                     </button>
                   ) : (
@@ -142,6 +158,20 @@ export function ComparisonGridColumns({
                             className="ml-1 text-emerald-600"
                           >
                             {RECOMMENDED_MARK}
+                          </span>
+                        )}
+                        {/* S5.9.1 Task 5 — a DIFFERENT glyph/colour from the `★` above (never a
+                            second use of it): recommended and sent-for-approval are independent
+                            signals, so an offer that is both renders both marks side by side. See
+                            `comparisonRowModel.ts`'s doc comment on `SENT_FOR_APPROVAL_MARK`. */}
+                        {cell.sentForApproval && (
+                          <span
+                            data-testid={`offer-sent-for-approval-${cell.key}`}
+                            aria-label={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
+                            title={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
+                            className="ml-1 text-primary"
+                          >
+                            {SENT_FOR_APPROVAL_MARK}
                           </span>
                         )}
                       </span>
