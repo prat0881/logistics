@@ -590,7 +590,26 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(rejectRes.status).toBe(400);
   });
 
-  it("CRITICAL — approve on a PARTIALLY_QUOTED leg that reached PENDING_APPROVAL via the A3 deadline-passed path -> 409, no partial commit", async () => {
+  // INVERTED (S5.9.2 Task 1 review, IMPORTANT 1). This test used to assert that approving such a
+  // leg 409s, and titled that "CRITICAL … no partial commit". It was pinning a BUG as intended
+  // behaviour: A3's deadline-passed arm legitimately permits this send (the maker spec's "A3
+  // (converse)" test proves the send itself is a 200), and the leg could then never be approved —
+  // `rollupLegTarget([PENDING_APPROVAL, RFQ_SENT])` is `null` and the transition log says
+  // PARTIALLY_QUOTED, so both terms of `isFullyQuotedForDecision` were false. Rejecting recovered
+  // the leg and re-sending re-reached PENDING_APPROVAL, where approve refused again: nothing
+  // inside the product broke the loop, only the expiry cron — and for an INVALID sibling, nothing
+  // at all, since INVALID has no `expire` edge. Same class as the Critical the final whole-branch
+  // review found on A9's arm, on the arm that fix did not cover, and in direct collision with
+  // S5.9.2 Task 2's premise that rejection IS the recovery path.
+  //
+  // The rule approve() now states: **a legally-permitted send is approvable.** `sendForApproval`
+  // records WHICH arm of A3 permitted a send from a not-fully-quoted leg, on the send's own
+  // immutable StatusTransition row, and approve() honours that verdict — it cannot re-derive it,
+  // because `requestRequote` pushes deadlines days into the future. The narrowness counterpart
+  // (a PENDING_APPROVAL that never went through the send guard carries no permission and is still
+  // refused) lives in award-requote-fallback.e2e-spec.ts as "(m)", alongside the full
+  // reject -> re-send -> approve walk as "(k)".
+  it("approve SUCCEEDS on a PARTIALLY_QUOTED leg that reached PENDING_APPROVAL via the A3 deadline-passed path — a legally-permitted send is approvable", async () => {
     const senderId = randomUUID();
     // Mirrors the maker spec's "A3 (converse)" setup: one QUOTED offer + one FF that never
     // responded (RFQ_SENT) whose deadline has passed — send-for-approval legitimately allows
@@ -610,18 +629,19 @@ describe("award workflow — checker endpoints (e2e)", () => {
       .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
       .send()
-      .expect(409);
+      .expect(200);
 
-    // No partial commit: the FULLY_QUOTED guard runs before any fire, so nothing moved at all —
-    // "nothing moved" means both stay exactly where seedPendingApproval's send-for-approval call
-    // left them (PENDING_APPROVAL for both quote and leg, S5.9 Task 3), not their PRE-send values
-    // (QUOTED / PARTIALLY_QUOTED) as this file originally asserted.
     const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
-    expect(quote?.status).toBe("PENDING_APPROVAL");
+    expect(quote?.status).toBe("APPROVED");
     const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
-    expect(updatedLeg?.status).toBe("PENDING_APPROVAL");
+    expect(updatedLeg?.status).toBe("APPROVED");
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
-    expect(decision?.status).toBe("PENDING_APPROVAL");
+    expect(decision?.status).toBe("APPROVED");
+
+    // The straggler is left exactly where it was: approval closed the leg out, it did not resolve
+    // a forwarder who never answered.
+    const straggler = await prisma.quote.findUnique({ where: { id: quotes.PENDING.id } });
+    expect(straggler?.status).toBe("RFQ_SENT");
   });
 
   // S5.9 final whole-branch review, CRITICAL 1 — the CONVERSE of the test above, and the reason
@@ -665,6 +685,43 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(updatedLeg?.status).toBe("APPROVED");
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decision?.status).toBe("APPROVED");
+  });
+
+  // S5.9.2 Task 1 review — the live-rollup half of `isFullyQuotedForDecision` moved house. Before
+  // the review's IMPORTANT 1, the test above pinned it: approve() needed the rollup to promote an
+  // A3-sent leg once its straggler expired. approve() no longer does — the send's own recorded
+  // permission carries that case now — so the live-rollup term would be silently deletable if
+  // nothing else exercised it. It IS still load-bearing, on the OTHER caller: reject() uses the
+  // same predicate to choose RETURN_FULL vs RETURN_PARTIAL, and a leg whose straggler expired
+  // during review genuinely IS fully quoted by then, so rejecting it must land on FULLY_QUOTED,
+  // not send it back to the PARTIALLY_QUOTED it left. That is the converse of the D4 test below —
+  // same fixture, opposite outcome, and the difference is entirely the live rollup.
+  it("reject on an A3-sent PARTIALLY_QUOTED leg whose straggler EXPIRED during review lands on FULLY_QUOTED — the live rollup, not the status it left", async () => {
+    const senderId = randomUUID();
+    const { query, leg, quotes } = await seedPendingApproval(
+      "rejectexpired",
+      senderId,
+      [
+        { key: "REC", status: "QUOTED", deadline: past(), draft: { amount: 83200, transitDays: 3 } },
+        { key: "PENDING", status: "RFQ_SENT", deadline: past() },
+      ],
+      "PARTIALLY_QUOTED",
+    );
+
+    // Same simulation as the converse test above: only the row's status matters here.
+    await prisma.quote.update({ where: { id: quotes.PENDING.id }, data: { status: "EXPIRED" } });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "Different forwarder, please" })
+      .expect(200);
+
+    const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
+    // NOT PARTIALLY_QUOTED (the status it left): nothing is outstanding any more.
+    expect(updatedLeg?.status).toBe("FULLY_QUOTED");
+    const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
+    expect(quote?.status).toBe("QUOTED");
   });
 
   // D4 (task-4-brief.md's own regression case) — the case a hard-coded `FULLY_QUOTED` reject

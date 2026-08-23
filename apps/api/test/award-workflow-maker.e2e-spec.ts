@@ -440,6 +440,13 @@ describe("award workflow — maker endpoints (e2e)", () => {
   });
 
   it("A9 — an in-flight re-quote on the leg blocks send-for-approval unless proceedWithoutWaiting + proceedReason", async () => {
+    // NOTE (S5.9.2 Task 1): this fixture is SYNTHETIC post-Q1 — a FULLY_QUOTED leg carrying a
+    // REQUOTED quote is no longer reachable through the API, because the projector now walks such
+    // a leg back (REQUOTE_PARTIAL). It is kept as-is deliberately: A9 itself is about the QUOTES,
+    // not the leg's status, so the guard behaviour under test is unchanged, and this file's
+    // fixtures also stand in for legacy rows written before Q1. The LIVE post-Q1 equivalent —
+    // real re-quote, leg at PARTIALLY_QUOTED, override send, then approve — is
+    // award-requote-fallback.e2e-spec.ts's "(c)+(d)".
     const { query, leg, quotes } = await seedLeg("a9", "FULLY_QUOTED", [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
       { key: "REQ", status: "REQUOTED", deadline: future(), draft: { amount: 90000, transitDays: 4 } },
@@ -586,10 +593,21 @@ describe("award workflow — maker endpoints (e2e)", () => {
 
   // ── S5.9 Task 3 review round 2 — CRITICAL 2: a guard-passing send can 500 on the fire ──
   it("CRITICAL 2 — refuses to send a REQUOTED offer (still visible/priced in the comparison) even with overrideReason + proceedWithoutWaiting + proceedReason, and leaves nothing committed", async () => {
-    // FULLY_QUOTED leg with one QUOTED offer and one REQUOTED offer that's cheaper AND faster —
-    // mirrors the reviewer's exact repro: the projector never walks an already-FULLY_QUOTED leg
-    // backwards just because one of its quotes goes REQUOTED (leg-quote.projector.ts only fires
-    // QUOTE_PARTIAL from RFQ_SENT), so this is the realistic shape, not a contrived one.
+    // CORRECTED (S5.9.2 Task 1 review, IMPORTANT 2) — this fixture used to justify itself as
+    // "the realistic shape, not a contrived one", on the grounds that "the projector never walks
+    // an already-FULLY_QUOTED leg backwards just because one of its quotes goes REQUOTED". **That
+    // mechanism is gone.** S5.9.2 Q1 removed it: the projector now fires REQUOTE_PARTIAL /
+    // REQUOTE_OUTSTANDING on a re-quote, so a FULLY_QUOTED leg carrying a REQUOTED quote is no
+    // longer reachable through the API at all. This fixture is now a SYNTHETIC shape — seeded
+    // directly, and equally a legacy row from before Q1 — kept because what it exercises is
+    // orthogonal to how the leg got here: the in-transaction A1 freshness check on the NAMED
+    // offer, which is live and reachable regardless. The live equivalent of the leg/quote
+    // combination itself is award-requote-fallback.e2e-spec.ts's "(a)"/"(e)", reached by a real
+    // re-quote, where the leg correctly reads PARTIALLY_QUOTED.
+    //
+    // Leaving the old justification in place was not a tidiness problem: it asserted a mechanism
+    // this task deleted, and the next contributor reading it would conclude the hysteresis still
+    // carries the A9 path and delete approve()'s permission term as redundant.
     const { query, leg, quotes } = await seedLeg("stale-offer", "FULLY_QUOTED", [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },
       { key: "REQ", status: "REQUOTED", deadline: future(), draft: { amount: 50000, transitDays: 2 } },
@@ -642,10 +660,10 @@ describe("award workflow — maker endpoints (e2e)", () => {
       .expect(200);
 
     // ── S5.9 final whole-branch review, CRITICAL 1 (second half: reject) ──────────────────────
-    // Rejecting must never leave a leg WORSE off than before it was sent. This leg is genuinely
-    // FULLY_QUOTED — hysteresis, exactly as this test's own fixture comment explains: the
-    // projector never walks an already-FULLY_QUOTED leg backwards when a sibling quote goes
-    // REQUOTED — but `rollupLegTarget([PENDING_APPROVAL, REQUOTED])` is `null`, and reject() used
+    // Rejecting must never leave a leg WORSE off than before it was sent. This (synthetic —
+    // see the fixture note above; S5.9.2 Q1 deleted the hysteresis that used to make it arise on
+    // its own) leg is seeded FULLY_QUOTED and genuinely LEFT FULLY_QUOTED when it was sent,
+    // but `rollupLegTarget([PENDING_APPROVAL, REQUOTED])` is `null`, and reject() used
     // to treat "I cannot tell" as RETURN_PARTIAL, DEMOTING the leg to PARTIALLY_QUOTED. That was
     // unrecoverable in practice: a re-send then fails A3, because the leg is no longer
     // FULLY_QUOTED and `requestRequote` has pushed the outstanding RFQ's deadline days into the
@@ -662,6 +680,10 @@ describe("award workflow — maker endpoints (e2e)", () => {
       prisma.quote.findUniqueOrThrow({ where: { id: quotes.REC.id } }),
       prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: leg.id } }),
     ]);
+    // FULLY_QUOTED because THIS (synthetic) leg genuinely left FULLY_QUOTED — reject() restores
+    // the status the leg actually held, which is the invariant under test, not a claim that a
+    // re-quoted leg is fully quoted. On the live post-Q1 path the same reject correctly lands on
+    // PARTIALLY_QUOTED, pinned by award-requote-fallback.e2e-spec.ts's "(e)".
     expect(rejectedLeg.status).toBe("FULLY_QUOTED"); // NOT the demoted PARTIALLY_QUOTED
     expect(returnedQuote.status).toBe("QUOTED");
     expect(rejectedDecision.status).toBe("DRAFT");

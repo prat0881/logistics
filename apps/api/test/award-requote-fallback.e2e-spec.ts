@@ -37,7 +37,7 @@ const CODE = `YAL00-${PREFIX}`;
 
 type FfSpec = {
   key: string;
-  status: "QUOTED" | "RFQ_SENT" | "REQUOTED" | "APPROVED";
+  status: "QUOTED" | "RFQ_SENT" | "REQUOTED" | "APPROVED" | "PENDING_APPROVAL";
   deadline?: Date;
   draft?: { amount: number; transitDays: number };
 };
@@ -496,13 +496,17 @@ describe(`${PREFIX} — a re-quote walks the leg back (e2e)`, () => {
       .expect(200);
   });
 
-  it("(k) the override widens approve ONLY for a send that actually carried it — an A3 deadline-passed send of an equally not-fully-quoted leg is still refused", async () => {
-    // The narrowness discriminator for Step 5. Same shape of leg (PARTIALLY_QUOTED, a
-    // PENDING_APPROVAL shortlist and one unresolved sibling), reached WITHOUT any
-    // proceed-without-waiting: the straggler simply never answered before its window closed.
-    // approve() must still 409. Widen the guard past the recorded override — e.g. by dropping
-    // the FULLY_QUOTED question entirely, or by keying the override off the mere presence of a
-    // SEND_FOR_APPROVAL event — and this goes green when it must not.
+  it("(k) INVARIANT — a legally-permitted send is APPROVABLE: the A3 deadline-passed arm reaches approval, and reject/re-send/approve is no longer an infinite loop", async () => {
+    // Task-1 review, IMPORTANT 1. The reviewer's live repro, verbatim: FF-A QUOTED with a closed
+    // window; FF-B never answered and its window has closed too, but the expiry sweep has not run,
+    // so its quote is still RFQ_SENT. A3's deadline-passed arm legitimately permits the send —
+    // and approve() then 409'd forever, because `rollupLegTarget([PENDING_APPROVAL, RFQ_SENT])` is
+    // `null` and the transition log says PARTIALLY_QUOTED. Nothing inside the product broke the
+    // loop: reject recovered the leg, the re-send succeeded, approve 409'd again. Only the expiry
+    // cron could (and for an INVALID sibling, nothing could — INVALID has no `expire` edge).
+    //
+    // This test asserts the closed invariant AND that the loop is genuinely broken, by walking the
+    // full reject -> re-send -> approve cycle the old bug span.
     const past = new Date(Date.now() - 3600000);
     const { query, leg, quotes } = await seedLeg("k", "PARTIALLY_QUOTED", [
       { key: "KEEP", status: "QUOTED", deadline: past, draft: { amount: 83200, transitDays: 3 } },
@@ -510,11 +514,77 @@ describe(`${PREFIX} — a re-quote walks the leg back (e2e)`, () => {
     ]);
 
     const senderId = randomUUID();
+    const send = () =>
+      request(app.getHttpServer())
+        .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+        .set("Cookie", cookieFor(senderId))
+        .send({ quoteId: quotes.KEEP.id, variant: "DEDICATED" });
+
+    await send().expect(200);
+
+    // The send recorded WHY it was permitted, on its own transition row — the fact approve() reads
+    // back, and the one approve() cannot re-derive later.
+    const sendRow = await prisma.statusTransition.findFirst({
+      where: { entity: "leg", entityId: leg.id, event: "send_for_approval", to: "PENDING_APPROVAL" },
+      orderBy: { seq: "desc" },
+    });
+    expect(sendRow?.from).toBe("PARTIALLY_QUOTED");
+    expect(sendRow?.reason).toBe("All outstanding RFQ windows had closed at send time");
+
+    // Reject first — proving the recovery path Task 2 relies on still works, and that a fresh send
+    // re-records its own permission rather than inheriting the old row.
     await request(app.getHttpServer())
-      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
-      .set("Cookie", cookieFor(senderId))
-      .send({ quoteId: quotes.KEEP.id, variant: "DEDICATED" })
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", managerCookieFor(randomUUID()))
+      .send({ reason: "Second opinion first" })
       .expect(200);
+    // reject() asks the FACT predicate alone, so it lands on the status the leg actually held.
+    expect(await legStatus(leg.id)).toBe("PARTIALLY_QUOTED");
+
+    await send().expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+      .set("Cookie", managerCookieFor(randomUUID())) // four-eyes: not senderId
+      .send()
+      .expect(200);
+
+    expect(await legStatus(leg.id)).toBe("APPROVED");
+    expect(
+      (await prisma.quote.findUniqueOrThrow({ where: { id: quotes.KEEP.id } })).status,
+    ).toBe("APPROVED");
+    // The silent forwarder is untouched — approval closed out the leg, it did not resolve them.
+    expect(
+      (await prisma.quote.findUniqueOrThrow({ where: { id: quotes.SILENT.id } })).status,
+    ).toBe("RFQ_SENT");
+  });
+
+  it("(m) NARROWNESS — a PENDING_APPROVAL that never went through the send guard carries no permission and is still refused", async () => {
+    // The counterpart to (k), and what stops "a legally-permitted send is approvable" collapsing
+    // into "anything at PENDING_APPROVAL is approvable". This decision and leg status are written
+    // straight into the DB — a fixture, a legacy row from before the transition log, or some
+    // future path that reaches PENDING_APPROVAL without A3 — so there is NO send_for_approval
+    // transition row and therefore no recorded permission. Meanwhile a forwarder's window is
+    // genuinely still open, so the leg is not fully quoted by any measure. approve() must refuse.
+    //
+    // Mutation discriminator: key the permission off `from != null` ("a send row exists") or drop
+    // the FULLY_QUOTED question entirely and this goes green when it must not.
+    const { query, leg } = await seedLeg(
+      "m",
+      "PENDING_APPROVAL",
+      [
+        { key: "WIN", status: "PENDING_APPROVAL", draft: { amount: 83200, transitDays: 3 } },
+        { key: "OPEN", status: "RFQ_SENT", deadline: future() },
+      ],
+      { decisionStatus: "PENDING_APPROVAL", shortlistKey: "WIN" },
+    );
+
+    // No send row exists at all — the state was fabricated, not earned.
+    expect(
+      await prisma.statusTransition.findFirst({
+        where: { entity: "leg", entityId: leg.id, event: "send_for_approval" },
+      }),
+    ).toBeNull();
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
@@ -523,6 +593,114 @@ describe(`${PREFIX} — a re-quote walks the leg back (e2e)`, () => {
       .expect(409);
 
     expect(await legStatus(leg.id)).toBe("PENDING_APPROVAL");
+  });
+
+  it("(o) NARROWNESS — a send row that carries NO recorded permission does not become one just by existing; reject + re-send is the recovery", async () => {
+    // The discriminator between "the send recorded a permission" and the weaker "a send row
+    // exists". It is not contrived: this is exactly the shape of an IN-FLIGHT row from before this
+    // change shipped — a leg sent through A3's deadline arm whose transition row predates the
+    // marker, so `from = PARTIALLY_QUOTED` with `reason = null`. Approving it on the strength of
+    // the row's mere existence would approve a leg no guard ever recorded a verdict for; it stays
+    // refused, which is the pre-existing conservative behaviour.
+    //
+    // It then walks the recovery, which is the migration path for any such row still in flight at
+    // deploy: reject (always possible) -> re-send (records a real permission) -> approve.
+    const past = new Date(Date.now() - 3600000);
+    const { query, leg, quotes } = await seedLeg(
+      "o",
+      "PENDING_APPROVAL",
+      [
+        { key: "WIN", status: "PENDING_APPROVAL", deadline: past, draft: { amount: 83200, transitDays: 3 } },
+        { key: "SILENT", status: "RFQ_SENT", deadline: past },
+      ],
+      { decisionStatus: "PENDING_APPROVAL", shortlistKey: "WIN" },
+    );
+    // The pre-marker send row: the edge fired, but nothing recorded WHY it was permitted.
+    await prisma.statusTransition.create({
+      data: {
+        entity: "leg",
+        entityId: leg.id,
+        from: "PARTIALLY_QUOTED",
+        to: "PENDING_APPROVAL",
+        event: "send_for_approval",
+        reason: null,
+      },
+    });
+
+    // A LATER row that also lands on PENDING_APPROVAL but was written by some other edge — a
+    // hypothetical future contribution onto the leg machine — must not be mistaken for the send's
+    // own verdict just because it sorts first by `seq`. This is what the `event` filter in
+    // `latestSendForApproval`'s WHERE buys (review MINOR 1); without it, this decoy's `reason` is
+    // read as a permission and the approve below returns 200.
+    await prisma.statusTransition.create({
+      data: {
+        entity: "leg",
+        entityId: leg.id,
+        from: "PARTIALLY_QUOTED",
+        to: "PENDING_APPROVAL",
+        event: "some.future.edge",
+        reason: "not a send-for-approval verdict",
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+      .set("Cookie", managerCookieFor(randomUUID()))
+      .send()
+      .expect(409);
+    expect(await legStatus(leg.id)).toBe("PENDING_APPROVAL");
+
+    // Recovery: reject returns the leg to what it actually held…
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", managerCookieFor(randomUUID()))
+      .send({ reason: "Re-send so the permission is on record" })
+      .expect(200);
+    expect(await legStatus(leg.id)).toBe("PARTIALLY_QUOTED");
+
+    // …and a fresh send records its own permission, after which approval goes through.
+    const senderId = randomUUID();
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(senderId))
+      .send({ quoteId: quotes.WIN.id, variant: "DEDICATED" })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+      .set("Cookie", managerCookieFor(randomUUID()))
+      .send()
+      .expect(200);
+    expect(await legStatus(leg.id)).toBe("APPROVED");
+  });
+
+  it("(n) a send from a genuinely FULLY_QUOTED leg records NO permission — the marker is written iff A3 had to permit something", async () => {
+    // Pins the construction the invariant rests on: `reason` is non-null EXACTLY when the leg was
+    // not FULLY_QUOTED at send time. Without this, writing the permission unconditionally would go
+    // unnoticed, and "a legally-permitted send is approvable" would quietly become "any send is",
+    // with the FULLY_QUOTED question dead code. A gratuitous `proceedWithoutWaiting` on a leg with
+    // nothing outstanding must not mint one either.
+    const { query, leg, quotes } = await seedLeg("n", "FULLY_QUOTED", [
+      { key: "ONLY", status: "QUOTED", draft: { amount: 83200, transitDays: 3 } },
+    ]);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({
+        quoteId: quotes.ONLY.id,
+        variant: "DEDICATED",
+        proceedWithoutWaiting: true,
+        proceedReason: "belt and braces, though nothing is outstanding",
+      })
+      .expect(200);
+
+    const sendRow = await prisma.statusTransition.findFirst({
+      where: { entity: "leg", entityId: leg.id, event: "send_for_approval", to: "PENDING_APPROVAL" },
+      orderBy: { seq: "desc" },
+    });
+    expect(sendRow?.from).toBe("FULLY_QUOTED");
+    expect(sendRow?.reason).toBeNull();
   });
 
   it("(l) the override waives ONLY the re-quotes — an open RFQ window on a THIRD forwarder still refuses the send", async () => {
