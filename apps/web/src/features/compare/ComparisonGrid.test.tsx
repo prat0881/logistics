@@ -1474,11 +1474,14 @@ describe("Checker action bar — Approve/Reject (S5.9.1 Task 2)", () => {
   it("does not offer Send for approval to a manager when no decision row exists yet", async () => {
     renderPanel({ ...LEG, decision: null }, { role: "MANAGER", withAuthProbe: true });
     await screen.findByText("MANAGER");
+    // Positive control that the body itself actually rendered (not an absence assertion — the
+    // withheld-bar claim below is one of the things under test, so it cannot also stand in as
+    // proof that `CompareLegPanel` didn't just regress to an empty body). Mirrors the page-level
+    // sibling test's own `await screen.findByTestId("leg-body")` control.
+    await screen.findByTestId("leg-body");
     // Withholding Send leaves this manager with zero action-bar controls on a fresh, never-sent
     // leg (no Negotiate — checker; no Approve/Reject — nothing pending; no Send — no decision row
-    // yet), so the whole bar is withheld (`hasActionBarControls`) — checked as the positive control
-    // that the panel rendered something real for this render, not the auth-settlement control
-    // (the probe above is that).
+    // yet), so the whole bar is withheld too (`hasActionBarControls`).
     expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /send for approval/i })).not.toBeInTheDocument();
   });

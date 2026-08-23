@@ -362,9 +362,13 @@ describe("SendForApprovalDialog", () => {
     const reason = await screen.findByLabelText(/^reason$/i);
     expect(reason).toBeInTheDocument();
     expect(reason).toBeRequired();
-    expect(
-      screen.getByRole("checkbox", { name: /proceed without waiting/i }),
-    ).not.toBeChecked();
+
+    // Review round (Minor) — `handleSend` blocks on BOTH `!proceed` and `!proceedReason.trim()`;
+    // the checkbox's own requirement must be visible too, not just the reason's, or a maker who
+    // fills in the reason but leaves the box unticked only learns it was mandatory after Send.
+    const checkbox = screen.getByRole("checkbox", { name: /proceed without waiting/i });
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox).toHaveAttribute("aria-required", "true");
   });
 
   it("sends the A9 confirmation once the box is ticked and a reason given", async () => {

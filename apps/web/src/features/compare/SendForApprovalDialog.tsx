@@ -292,9 +292,20 @@ export function SendForApprovalDialog({
                   checked={proceed}
                   onCheckedChange={(v) => setProceed(v === true)}
                   aria-label="Proceed without waiting"
+                  required
+                  aria-required="true"
                 />
                 Proceed without waiting
               </label>
+              {/* Review round (Minor) — `handleSend` below blocks on BOTH `!proceed` and
+                  `!proceedReason.trim()`; the reason alone was marked required, leaving the
+                  checkbox's own requirement enforced-but-invisible (exactly the shape this whole
+                  change existed to remove) until Send was clicked and `proceedError` explained it.
+                  This line makes that half visible too, matching the box's own `required`/
+                  `aria-required` above. */}
+              <p className="pl-6 text-xs text-muted-foreground">
+                Required — you must confirm this before sending the leg for approval.
+              </p>
               {/* PO ruling (S5.9.2 product item 9) — always rendered, not only after ticking the
                   box above, and marked required: the reason is already enforced on submit
                   (`handleSend` below), so this makes that requirement visible rather than

@@ -79,16 +79,17 @@ Keep the ordering rules: the decision write and the leg fire are unchanged, fire
 
 ---
 
-## Task 3: Compare-screen behaviour — notes, override, manager gate, reason placement
+## Task 3: Compare-screen behaviour — notes, override, manager gate, reason placement, duplicate badge
 
-**Files:** `apps/web/src/features/compare/NegotiateDialog.tsx`, `SendForApprovalDialog.tsx`, `CompareLegPanel.tsx`, `MakerPanel.tsx`, plus tests.
+**Files:** `apps/web/src/features/compare/NegotiateDialog.tsx`, `SendForApprovalDialog.tsx`, `CompareLegPanel.tsx`, `MakerPanel.tsx`, `ComparisonGridColumns.tsx`, `ComparisonGridRows.tsx`, plus tests.
 
 1. **Negotiate — one shared note (#1).** Remove the `separateNotes` toggle and the per-forwarder note boxes; keep the single shared note applied to every selected forwarder. An exec wanting different wording selects one forwarder at a time. Remove the now-dead per-forwarder note state and any tests that only covered the toggle — but **keep** the multi-forwarder selection, the eligibility list with its disabled reasons, and the per-forwarder result list on partial failure.
-2. **Override block simplified (#9).** In `SendForApprovalDialog`, drop the bordered warning box around the in-flight-re-quote override. Keep a plain checkbox, and render its reason field **always** (not only after ticking), marked required. The reason is already enforced on submit; make the requirement visible rather than conditional, matching how the override reason is handled in the main body of the same dialog.
-3. **Manager gate on Send (#8, Q6).** Manager/Admin see "Send for approval" only when `leg.decision != null`. Executives are unaffected. Test all four combinations of role × decision-exists, and mutation-prove the absence assertions — this is role-gated, so the async-auth trap applies and a careless test will pass vacuously.
+2. **Override block simplified (#9).** In `SendForApprovalDialog`, drop the bordered warning box around the in-flight-re-quote override. Keep a plain checkbox, and render its reason field **always** (not only after ticking), marked required. The reason is already enforced on submit; make the requirement visible rather than conditional, matching how the override reason is handled in the main body of the same dialog. Mark the checkbox's own requirement visible too — `handleSend` blocks on both the checkbox and the reason, so both must read as required, not just the field.
+3. **Manager gate on Send (#8, Q6).** Manager/Admin see "Send for approval" only when `leg.decision != null`. Executives are unaffected. Test all four combinations of role × decision-exists, and mutation-prove the absence assertions — this is role-gated, so the async-auth trap applies and a careless test will pass vacuously. Watch for Q6 neutering the SUBJECT leg of an unrelated test elsewhere in the compare suite: any test that withholds a leg's whole action bar for a checker (e.g. a decision-less leg) can no longer serve as the scene for a DIFFERENT role-gated absence claim (Negotiate, etc.) on that same leg, since the claim would hold vacuously once the bar itself is gone. Point such tests at a leg where the bar still renders for that role, or assert the bar's presence first.
 4. **Reject reason placement (#3, Q7).** Move `MakerPanel`'s rejection alert to the **top** of the expanded leg body, above the comparison table and the action bar. It stays visible (never hover), and nothing appears on a collapsed row.
+5. **Drop the duplicate status badge (Q4's second half).** Task 1 renamed `REQUOTED`'s label to "RFQ-Resent" but deliberately left the grid's status cell alone (its own second badge, carrying `STALE_OFFER_LABEL`, would have collided with T3/T4's own edits to the same grid files — see the S5.9.2 ledger). Remove that second badge from `ComparisonGridColumns.tsx`/`ComparisonGridRows.tsx`'s status cells in **both** orientations — `ForwarderStatusBadge` alone is enough once it reads "RFQ-Resent". `STALE_OFFER_LABEL` itself stays: `SendForApprovalDialog` still uses it to explain a disabled, stale offer, which is a different thing.
 
-- [ ] **Step 1: Write the failing tests** for all four.
+- [ ] **Step 1: Write the failing tests** for all five.
 - [ ] **Step 2: Run them; confirm they fail.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run the compare suite, mutation-proving every absence assertion.**
@@ -121,7 +122,7 @@ Keep the ordering rules: the decision write and the leg fire are unchanged, fire
 
 ## Self-review notes
 
-- **Coverage:** #1 → T3.1 · #2 → T1 (Q1/Q2/Q4) · #2b → T1 (Q3) · #3 → T3.4 · #4 → **already working, no task** (`requestRequote` clears `shortlistedQuoteId` but not `recommendedQuoteId`, and the `⚑` is gated on `PENDING_APPROVAL`) · #5 → T4.2 · #6 → T4.1 · #7 → T2 · #8 → T3.3 · #9 → T3.2.
+- **Coverage:** #1 → T3.1 · #2 → T1 (Q1/Q2, and Q4's label half) + T3.5 (Q4's second half — the duplicate stale badge, deliberately deferred out of T1 to avoid colliding with T3/T4's own edits to the same grid files) · #2b → T1 (Q3) · #3 → T3.4 · #4 → **already working, no task** (`requestRequote` clears `shortlistedQuoteId` but not `recommendedQuoteId`, and the `⚑` is gated on `PENDING_APPROVAL`) · #5 → T4.2 · #6 → T4.1 · #7 → T2 · #8 → T3.3 · #9 → T3.2.
 - **Ordering:** T1 → T2 are both `award.service.ts` and must run in order. T3 and T4 are frontend and independent of both, but T3 and T4 both touch the compare feature — run T3 first. T5 last.
 - **The single highest-risk change is T1's guard widening.** That guard has now been rewritten three times, and each of the previous two shipped a defect the task-scoped review missed and the whole-branch review caught. Give it the most adversarial review of this sub-build, and specifically re-walk the A9 matrix afterwards.
 - **The likeliest silent failure in T4** is satisfying "full width" by reintroducing `w-full` while losing the centring — the two tests must both survive, and the earlier round showed a hard-coded literal in the header can drift from the shared alignment source without any test noticing.

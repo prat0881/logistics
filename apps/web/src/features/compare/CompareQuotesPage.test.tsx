@@ -390,21 +390,27 @@ describe("CompareQuotesPage", () => {
     expect(screen.getByRole("button", { name: /negotiate/i })).toBeInTheDocument();
   });
 
+  // ── Review round (Important) — this used to target LEG-1, which carries no decision at all.
+  // S5.9.2 Q6 makes `hasActionBarControls` false on ALL THREE terms for a MANAGER on that leg
+  // (no Negotiate — checker; no Approve/Reject — nothing pending; no Send — no decision row yet),
+  // so the whole bar is withheld and Negotiate's absence there was trivially true regardless of
+  // its own `!isChecker` gate — a test that cannot fail. LEG-2 carries a PENDING_APPROVAL decision
+  // (see COMPARISON above), so the bar DOES render for this MANAGER via `canCheck`; asserting the
+  // bar (and a real Approve button on it) is present BEFORE asserting Negotiate's absence proves
+  // this is exercising `!isChecker` specifically, not the bar collapsing to empty. Mutation-proved:
+  // dropping the `!isChecker` guard on the Negotiate button (`{!isChecker && (<Button>Negotiate…`
+  // → `{true && (…`) turns this red; restoring it turns it green (task-3-report.md). ─────────────
   it("does not offer Negotiate to a MANAGER", async () => {
     renderPage({ role: "MANAGER" });
     await screen.findByText("MANAGER");
 
-    // Positive control before the absence assertion — LEG-2's PENDING_APPROVAL decision offers
-    // this MANAGER a real Approve button, proving the tree has settled as a real MANAGER (not a
-    // still-null viewer, which would also show no Negotiate for the wrong reason). Send for
-    // approval can no longer serve as this control on LEG-1 — S5.9.2 Q6 withholds it from a
-    // MANAGER there too, since LEG-1 carries no decision row.
     const leg2 = await screen.findByRole("button", { name: /LEG-2/i });
     await userEvent.click(leg2);
+    // Positive controls, in order: the action bar itself rendered (proves the body isn't just
+    // empty), and a real checker control on it (proves this MANAGER's role gate has genuinely
+    // resolved, not a still-null viewer that would also show no Negotiate for the wrong reason).
+    await screen.findByTestId("leg-action-bar");
     await screen.findByRole("button", { name: /^approve$/i });
-
-    await userEvent.click(screen.getByRole("button", { name: /LEG-1/i }));
-    await screen.findByTestId("leg-body");
 
     expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
   });
