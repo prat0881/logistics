@@ -11,4 +11,11 @@ describe("status badges", () => {
     render(<ForwarderStatusBadge status="SELECT" />);
     expect(screen.getByText("Select")).toBeInTheDocument();
   });
+  // S5.9.2 Q4 — REQUOTED reads "RFQ-Resent", never "Requoted": the state is pending (we are
+  // waiting on the forwarder), and it must read alongside RFQ_SENT's "RFQ Sent".
+  it("labels a REQUOTED forwarder RFQ-Resent, not Requoted", () => {
+    render(<ForwarderStatusBadge status="REQUOTED" />);
+    expect(screen.getByText("RFQ-Resent")).toBeInTheDocument();
+    expect(screen.queryByText("Requoted")).not.toBeInTheDocument();
+  });
 });

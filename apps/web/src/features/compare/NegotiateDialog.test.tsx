@@ -272,7 +272,8 @@ describe("NegotiateDialog", () => {
     // The status is the grid's own `ForwarderStatusBadge`, per forwarder — not a second vocabulary.
     const row = (name: RegExp) => screen.getByRole("checkbox", { name }).closest("li")!;
     expect(within(row(/bridge/i)).getByText("Quoted")).toBeInTheDocument();
-    expect(within(row(/zenith/i)).getByText("Requoted")).toBeInTheDocument();
+    // S5.9.2 Q4 — "RFQ-Resent", never "Requoted" (the badge is shared with the grid).
+    expect(within(row(/zenith/i)).getByText("RFQ-Resent")).toBeInTheDocument();
     expect(within(row(/orion/i)).getByText("RFQ Sent")).toBeInTheDocument();
   });
 

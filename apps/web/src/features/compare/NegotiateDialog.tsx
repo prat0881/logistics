@@ -111,7 +111,7 @@ function buildCandidates(leg: LegComparisonDto): Candidate[] {
     } else if (quotable && !existing.eligible) {
       // A later offer for the same forwarder turned out quotable (e.g. Dedicated is QUOTED after
       // Groupage, seen first, was REQUOTED) — the forwarder as a whole is still eligible. The badge
-      // follows the quote that made it eligible, so it can't say "Requoted" next to an enabled box.
+      // follows the quote that made it eligible, so it can't say "RFQ-Resent" next to an enabled box.
       existing.eligible = true;
       existing.quoteId = offer.quoteId;
       existing.reason = undefined;

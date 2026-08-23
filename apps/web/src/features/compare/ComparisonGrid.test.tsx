@@ -902,7 +902,8 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
   it("badges a REQUOTED offer as stale re-quote-requested", () => {
     renderPanel();
 
-    expect(screen.getByTestId("offer-status-quote-3::DEDICATED")).toHaveTextContent("Requoted");
+    // S5.9.2 Q4 — the forwarder-status badge reads "RFQ-Resent", never "Requoted".
+    expect(screen.getByTestId("offer-status-quote-3::DEDICATED")).toHaveTextContent("RFQ-Resent");
     expect(screen.getByTestId("offer-stale-quote-3::DEDICATED")).toHaveTextContent(
       /re-quote requested/i,
     );

@@ -44,7 +44,12 @@ const FORWARDER_LABEL: Record<QuoteStatus, string> = {
   QUOTED: "Quoted",
   EXPIRED: "Expired",
   INVALID: "Invalid",
-  REQUOTED: "Requoted",
+  // S5.9.2 Q4 — "Requoted" reads past-tense for a state that is actually PENDING: we have asked
+  // the forwarder to re-quote and are waiting. "RFQ-Resent" reads alongside RFQ_SENT's "RFQ Sent"
+  // above, which is exactly what the leg now falls back to (Q1). Internal vocabulary only — the
+  // forwarder portal keeps its own forwarder-facing wording (ff-portal/LegSection.tsx), where
+  // RFQ_SENT is "Open for quoting", not "RFQ Sent", so there is no pair to read alongside.
+  REQUOTED: "RFQ-Resent",
   PENDING_APPROVAL: "Pending Approval",
   CLOSED: "Closed",
   APPROVED: "Approved",

@@ -158,6 +158,8 @@ describe("status vocabularies", () => {
       "return.full",
       "return.partial",
       "reopen_award",
+      "requote.partial",
+      "requote.outstanding",
     ]);
     expect(QUERY_STATUSES).toEqual([
       "DRAFT",

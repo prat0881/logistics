@@ -10,6 +10,7 @@ import {
 import { PrismaService } from "../../prisma/prisma.service";
 import type { RequestUser } from "../auth/types";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
+import { LegQuoteProjector } from "../rfq/leg-quote.projector";
 import { RfqService } from "../rfq/rfq.service";
 import { QueryStatusProjector } from "../status/query-status.projector";
 import { StatusService } from "../status/status.service";
@@ -34,6 +35,7 @@ export class NegotiationService {
     private readonly rfq: RfqService,
     private readonly dispatcher: NotificationDispatcher,
     private readonly projector: QueryStatusProjector,
+    private readonly legRollup: LegQuoteProjector,
   ) {}
 
   async requestRequote(
@@ -117,13 +119,27 @@ export class NegotiationService {
     // RFQ_SENT backstop is never reached at all. Fired
     // BEFORE step 3's transaction, deliberately: fire() commits its own tx and only emits its
     // event after that commit (status.service.ts), so by the time this call resolves the leg
-    // row is durably FULLY_QUOTED — which step 3's own QueryStatusProjector.recompute needs to
+    // row is durably reopened — which step 3's own QueryStatusProjector.recompute needs to
     // see, not the stale APPROVED value, to land the query on the right post-teardown status.
+    //
+    // S5.9.2 Q1 (register C7) — REOPEN_AWARD lands the leg on FULLY_QUOTED, which after Q1 is a
+    // LIE on this branch: the quote it was approved off is now REQUOTED, so we are waiting on a
+    // forwarder again and the leg must fall to PARTIALLY_QUOTED/RFQ_SENT like any other
+    // re-quoted leg. The projector cannot do it for us — its own `quote.status.changed` listener
+    // already ran during step 1's fire and hit ROLLUP_FROZEN while the leg was still APPROVED,
+    // and REOPEN_AWARD emits `leg.status.changed`, which it does not listen for. This is exactly
+    // the "unfreeze gap" leg-quote.projector.ts documents ("a caller that moves a leg OUT of
+    // PENDING_APPROVAL/APPROVED owns computing the correct target itself"), so this caller owns
+    // it — through the projector's own narrow re-quote entry point, so the rule stays in ONE
+    // place (D4) rather than being re-derived here. Sequenced after REOPEN_AWARD because the
+    // backward edges start from FULLY_QUOTED/PARTIALLY_QUOTED, and still before step 3, for the
+    // same durability reason as above.
     if (wasApproved) {
       await this.status.fire("leg", legId, LegEvent.REOPEN_AWARD, {
         queryId,
         actorId: user.userId,
       });
+      await this.legRollup.recomputeAfterRequote(legId, queryId);
     }
 
     // 3) Decision: reset to a clean DRAFT slate (the basis changed) + audit event, PLUS —

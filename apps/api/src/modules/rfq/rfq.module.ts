@@ -22,7 +22,11 @@ import { RfqService } from "./rfq.service";
   imports: [StatusModule, ChangesModule, FreightForwardersModule, CommsModule],
   controllers: [RfqController],
   providers: [RfqNumberService, RfqTokenService, LegQuoteProjector, EligibilityService, RfqService, RfqScheduleListener, RfqNotificationsService],
-  exports: [RfqNumberService, RfqTokenService, RfqNotificationsService, RfqService],
+  // LegQuoteProjector is exported (S5.9.2 Task 1, Q1) for NegotiationService's one call to
+  // `recomputeAfterRequote` — the "unfreeze gap" this projector documents on ROLLUP_FROZEN: a
+  // caller that moves a leg OUT of PENDING_APPROVAL/APPROVED owns recomputing the rollup itself.
+  // AwardModule already imports RfqModule (for RfqService); no new module edge, no cycle.
+  exports: [RfqNumberService, RfqTokenService, RfqNotificationsService, RfqService, LegQuoteProjector],
 })
 export class RfqModule implements OnModuleInit {
   constructor(

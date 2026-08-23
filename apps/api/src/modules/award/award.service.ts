@@ -193,21 +193,56 @@ export class AwardService {
   // `null` when no such row exists: a decision written straight into the DB by a fixture, or a leg
   // that reached PENDING_APPROVAL before this log did. Callers fall back to the live rollup alone,
   // i.e. exactly the pre-fix behaviour.
-  private async legStatusWhenSentForApproval(
+  //
+  // S5.9.2 Q3 — this now returns the row's `reason` too, because the SAME row carries the second
+  // fact approve() needs: whether that send was an explicit proceed-without-waiting override.
+  // `sendForApproval` is the ONLY caller in the codebase that fires `LegEvent.SEND_FOR_APPROVAL`
+  // (grep it), and it writes `reason` on that fire if and ONLY if the A9 override was actually
+  // exercised — an in-flight re-quote on the leg AND `proceedWithoutWaiting: true` AND a
+  // `proceedReason`. So on this one row, `reason != null` means exactly that, with no ordering,
+  // pairing or cross-table timestamp comparison to get wrong: it is the very row whose `from`
+  // already decides the hysteresis term, read once, inside the caller's locked transaction.
+  //
+  // Why not the `AwardDecisionEvent` log, which the brief calls "the honest source": its
+  // SEND_FOR_APPROVAL row's `reason` column already CONFLATES two different reasons
+  // (`input.proceedReason ?? decision.overrideReason`), so a non-null value there does not mean
+  // "override" — and distinguishing them would need either a second event row paired to this one
+  // by a `now()`-defaulted timestamp with no monotonic tiebreak, or a new column (forbidden).
+  // NOTHING ELSE MAY WRITE `reason` ON A LEG send_for_approval FIRE — doing so silently widens
+  // approve()'s guard. There is a mutation-proven e2e for exactly that
+  // (award-requote-fallback.e2e-spec.ts's "(k)").
+  private async latestSendForApproval(
     tx: Prisma.TransactionClient,
     legId: string,
-  ): Promise<LegStatus | null> {
+  ): Promise<{ from: LegStatus | null; proceedReason: string | null }> {
     const row = await tx.statusTransition.findFirst({
       where: { entity: "leg", entityId: legId, to: LegStatus.PENDING_APPROVAL },
       orderBy: { seq: "desc" },
-      select: { from: true },
+      select: { from: true, reason: true },
     });
     const from = row?.from;
-    // `StatusTransition.from` is a plain nullable String column (it serves every machine), so
-    // narrow it back to the leg vocabulary rather than casting blind.
-    return from != null && (LEG_STATUSES as readonly string[]).includes(from)
-      ? (from as LegStatus)
-      : null;
+    return {
+      // `StatusTransition.from` is a plain nullable String column (it serves every machine), so
+      // narrow it back to the leg vocabulary rather than casting blind.
+      from:
+        from != null && (LEG_STATUSES as readonly string[]).includes(from)
+          ? (from as LegStatus)
+          : null,
+      proceedReason: row?.reason ?? null,
+    };
+  }
+
+  // S5.9.2 Q3 — "was the send currently under review an explicit, reasoned decision to proceed
+  // without waiting for an in-flight re-quote?" Used by approve() ALONE. Deliberately NOT folded
+  // into `isFullyQuotedForDecision` below: that predicate answers a question of FACT ("are this
+  // leg's quotes settled?") which reject() uses to choose its return target, and an override is a
+  // PERMISSION the maker granted, not evidence the leg is fully quoted. Folding it in would send
+  // a rejected leg back to FULLY_QUOTED and leak back the exact leg/quote mismatch Q1 removes.
+  private async wasSentWithProceedOverride(
+    tx: Prisma.TransactionClient,
+    legId: string,
+  ): Promise<boolean> {
+    return (await this.latestSendForApproval(tx, legId)).proceedReason != null;
   }
 
   // S5.9 final whole-branch review — CRITICAL 1. THE single "is this leg fully quoted?" rule that
@@ -244,12 +279,22 @@ export class AwardService {
   // it is the same FULLY_QUOTED question pre-branch approve() asked, asked of the same fact.
   // Freshness of the thing actually being decided stays A8's job (approve) / the mirrored quote
   // check (reject), both of which re-read the shortlisted quote inside this transaction.
+  //
+  // S5.9.2 Q1/Q3 — UNCHANGED in meaning, and deliberately so. Q1 does change what its SECOND term
+  // answers for a re-quoted leg: such a leg now leaves PARTIALLY_QUOTED, not FULLY_QUOTED, so
+  // this predicate correctly reports "not fully quoted" for it — which is exactly what reject()
+  // needs (return it to PARTIALLY_QUOTED, not a promoted FULLY_QUOTED). The A9 leg that used to
+  // depend on the hysteresis to be APPROVABLE is now carried by approve()'s own separate override
+  // term (`wasSentWithProceedOverride`), not by loosening this. The second term still earns its
+  // keep for the case Q1 does not touch: a leg sent from a genuine FULLY_QUOTED whose sibling
+  // quote is knocked off "resolved" DURING review (e.g. a change-order INVALIDATEs it), where
+  // ROLLUP_FROZEN means nothing recomputes the leg row itself.
   private async isFullyQuotedForDecision(
     tx: Prisma.TransactionClient,
     legId: string,
   ): Promise<boolean> {
     if ((await this.legRollupTarget(tx, legId)) === LegStatus.FULLY_QUOTED) return true;
-    return (await this.legStatusWhenSentForApproval(tx, legId)) === LegStatus.FULLY_QUOTED;
+    return (await this.latestSendForApproval(tx, legId)).from === LegStatus.FULLY_QUOTED;
   }
 
   // S5.9 Task 3 (register B2/B3) — selecting an offer and sending it for approval are now ONE
@@ -302,7 +347,7 @@ export class AwardService {
     }
     const rec = compLeg.recommendation;
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const { updated, proceedReason } = await this.prisma.$transaction(async (tx) => {
       // 0. MUTUAL EXCLUSION (review round 2, CRITICAL 1 / register B3) — see lockLeg's own doc
       // (S5.9 Task 4 extracted it there so approve()/reject() take the identical lock). A second
       // concurrent `sendForApproval`/approve/reject on the same leg blocks HERE — before it reads
@@ -364,16 +409,61 @@ export class AwardService {
         throw new ConflictException("This leg has already been sent for approval");
       }
 
-      // 4. A3 (D10) — either the rollup already reached FULLY_QUOTED, or every still-outstanding
+      // 4a. A9 — a re-quote in flight on this leg must be explicitly proceeded past.
+      //
+      // S5.9.2 Q3 — MOVED AHEAD OF A3 (it used to be step 7, after persistSelection). Q1 makes a
+      // re-quoted leg fall back to PARTIALLY_QUOTED/RFQ_SENT, so from now on an un-waived
+      // in-flight re-quote also fails A3 — and A3's message ("not fully quoted yet and its RFQ
+      // deadline has not passed") is the wrong, unactionable one for that case, since the leg IS
+      // quoted and the deadline was pushed out by the re-quote itself. Evaluating A9 first keeps
+      // the actionable message and fails faster; both are 400s raised before anything is written
+      // (persistSelection is step 5, and the whole method is one transaction anyway), so no
+      // caller can tell the difference other than by the message. The A2 override-reason check
+      // stays where it is — it needs the freshly-written decision row.
+      const inFlightRequotes = leg.quotes.filter((q) => q.status === QuoteStatus.REQUOTED);
+      const proceedOverride =
+        inFlightRequotes.length > 0 &&
+        input.proceedWithoutWaiting === true &&
+        !!input.proceedReason;
+      if (inFlightRequotes.length > 0 && !proceedOverride) {
+        throw new BadRequestException(
+          "This leg has an in-flight re-quote; confirm proceeding without waiting for it",
+        );
+      }
+
+      // 4b. A3 (D10) — either the rollup already reached FULLY_QUOTED, or every still-outstanding
       // FF's RFQ window has closed (so waiting longer cannot produce a better offer).
+      //
+      // S5.9.2 Q3 — an explicit, reasoned proceed-without-waiting WAIVES exactly the re-quotes it
+      // was ticked for, and nothing else. Before Q1 this widening was unnecessary: a leg that had
+      // once been FULLY_QUOTED stayed FULLY_QUOTED through a re-quote (the projector's
+      // never-walk-backwards backstop), so `fullyQuoted` carried the A9 flow on its own. Now the
+      // leg honestly reads PARTIALLY_QUOTED and `fullyQuoted` is false, so without this an exec
+      // who asks one forwarder to sharpen a price could never send a DIFFERENT forwarder for
+      // approval — the flow A9 exists to permit.
+      //
+      // The waiver is scoped to REQUOTED members of the outstanding set. Any OTHER outstanding
+      // quote (a forwarder who simply has not answered, or an INVALID one awaiting
+      // re-distribution) still has to have closed its window — proceedWithoutWaiting is licence
+      // to proceed past a re-quote, never past an open RFQ. And the waiver can only ever SATISFY
+      // A3, never bypass it: with no override, `stillWaitedOn` is the full outstanding set and
+      // this is byte-for-byte the old check.
       const fullyQuoted = leg.status === LegStatus.FULLY_QUOTED;
       const outstanding = leg.quotes.filter((q) => OUTSTANDING_QUOTE_STATUSES.includes(q.status));
+      const stillWaitedOn = proceedOverride
+        ? outstanding.filter((q) => q.status !== QuoteStatus.REQUOTED)
+        : outstanding;
       const deadlinePassed =
-        outstanding.length > 0 &&
-        outstanding.every(
+        stillWaitedOn.length > 0 &&
+        stillWaitedOn.every(
           (q) => q.rfq != null && q.rfq.submissionDeadline.getTime() <= Date.now(),
         );
-      if (!fullyQuoted && !deadlinePassed) {
+      // The waived re-quotes were the ONLY thing left outstanding — there is nothing further to
+      // wait for. Gated on `proceedOverride` on purpose: an empty outstanding set on a leg that
+      // is somehow still not FULLY_QUOTED (a lagging leg row) must keep failing A3 as it always
+      // did, not sail through on an empty `every()`.
+      const nothingLeftOutstanding = proceedOverride && stillWaitedOn.length === 0;
+      if (!fullyQuoted && !deadlinePassed && !nothingLeftOutstanding) {
         throw new BadRequestException(
           "This leg is not fully quoted yet and its RFQ deadline has not passed",
         );
@@ -395,13 +485,7 @@ export class AwardService {
         );
       }
 
-      // 7. A9 — a re-quote in flight on this leg must be explicitly proceeded past.
-      const hasInFlightRequote = leg.quotes.some((q) => q.status === QuoteStatus.REQUOTED);
-      if (hasInFlightRequote && !(input.proceedWithoutWaiting === true && input.proceedReason)) {
-        throw new BadRequestException(
-          "This leg has an in-flight re-quote; confirm proceeding without waiting for it",
-        );
-      }
+      // 7. (A9 moved to step 4a — see there.)
 
       // 8. Every guard passed — advance the decision and append the single audit event covering
       // this whole call (selection + send, formerly two events: SHORTLIST + SEND_FOR_APPROVAL).
@@ -424,7 +508,11 @@ export class AwardService {
           actorId: user.userId,
         },
       });
-      return updated;
+      // `proceedOverride` (not the raw `input` flags) is what the leg fire below records: it is
+      // true only where A9 actually applied — an in-flight re-quote AND an explicit, reasoned
+      // confirmation — so a gratuitous `proceedWithoutWaiting` on a leg with nothing outstanding
+      // cannot mint an approve-time licence it never needed. See `latestSendForApproval`.
+      return { updated, proceedReason: proceedOverride ? (input.proceedReason ?? null) : null };
     });
 
     // After commit: fire the two transitions — quote first, then leg. `StatusService.fire` owns
@@ -441,9 +529,14 @@ export class AwardService {
       actorId: user.userId,
       reason: null,
     });
+    // S5.9.2 Q3 — `reason` on THIS row is the override marker approve() reads back
+    // (`latestSendForApproval`). Non-null iff A9 actually applied to this send. Nothing else in
+    // the codebase fires `LegEvent.SEND_FOR_APPROVAL`, so nothing else can write it; do not add a
+    // reason here for any other purpose without moving the marker somewhere of its own.
     await this.status.fire("leg", legId, LegEvent.SEND_FOR_APPROVAL, {
       queryId,
       actorId: user.userId,
+      reason: proceedReason,
     });
 
     return updated;
@@ -506,7 +599,31 @@ export class AwardService {
       await this.lockLeg(tx, queryId, legId);
       const { decision } = await this.requireDecidable(tx, legId, user);
 
-      if (!(await this.isFullyQuotedForDecision(tx, legId))) {
+      // S5.9.2 Q3 — the THIRD term, and the one that keeps the A9 flow alive after Q1.
+      //
+      // Q1 makes a re-quoted leg fall back, so a leg sent through A9 now LEAVES
+      // PARTIALLY_QUOTED, not FULLY_QUOTED. Both terms of `isFullyQuotedForDecision` are
+      // therefore false for it (the live rollup is `null` — REQUOTED is not "resolved" — and the
+      // transition log says PARTIALLY_QUOTED), and without this term approve() would 409 forever
+      // on exactly the path whose entire purpose is "I know a re-quote is in flight, proceed
+      // anyway": the same Critical the last whole-branch review found, re-created by Q1.
+      //
+      // This is NOT a claim that the leg is fully quoted — it is a claim that the maker
+      // explicitly, and with a recorded reason, decided not to wait, which A9 already validated
+      // at send time under this leg's own lock. It is deliberately narrow in three ways:
+      //   * it is read off the send's OWN immutable StatusTransition row, so it describes THIS
+      //     review, not some earlier one (a reject/re-quote/change-order must move the leg off
+      //     PENDING_APPROVAL before another send can append a later row);
+      //   * `sendForApproval` only writes that marker where A9 genuinely applied, so a send that
+      //     never faced a re-quote cannot carry it; and
+      //   * it is NOT in `isFullyQuotedForDecision`, so reject() still returns such a leg to
+      //     PARTIALLY_QUOTED rather than promoting it.
+      // A leg that is genuinely not ready, with no override — e.g. the A3 deadline-passed path —
+      // still 409s here exactly as before.
+      if (
+        !(await this.isFullyQuotedForDecision(tx, legId)) &&
+        !(await this.wasSentWithProceedOverride(tx, legId))
+      ) {
         throw new ConflictException(
           "This leg is not fully quoted; its outstanding RFQs must be closed out before approval",
         );

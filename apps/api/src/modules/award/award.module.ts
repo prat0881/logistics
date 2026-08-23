@@ -87,6 +87,24 @@ export class AwardModule implements OnModuleInit {
       // change-order source
       { from: LegStatus.APPROVED, on: LegEvent.REOPEN, to: LegStatus.READY_FOR_RFQ, kind: "reopen" },
       { from: LegStatus.PENDING_APPROVAL, on: LegEvent.REOPEN, to: LegStatus.READY_FOR_RFQ, kind: "reopen" },
+      // S5.9.2 Task 1 (Q1, register C7) — the BACKWARD rollup edges a re-quote walks. Until now
+      // a re-quote moved neither leg nor query: `rollupLegTarget` already answered
+      // PARTIALLY_QUOTED/null for a leg carrying a REQUOTED quote (LEG_ROLLUP_RESOLVED excludes
+      // REQUOTED on purpose), but `LegQuoteProjector`'s never-walk-backwards backstop discarded
+      // the answer, so a leg read "Fully Quoted" while we were waiting on a forwarder again.
+      // ONLY LegQuoteProjector's re-quote branch fires these (see its own doc for why nothing
+      // else can) — hence `requote.*` event names rather than reusing the forward rollup's.
+      // `requote.outstanding` also has PARTIALLY_QUOTED as a source: re-quoting the single
+      // comparable offer of a leg whose other forwarder never answered leaves nothing comparable
+      // at all, and that leg must fall to RFQ_SENT too, not sit at PARTIALLY_QUOTED claiming a
+      // quote it no longer has.
+      { from: LegStatus.FULLY_QUOTED, on: LegEvent.REQUOTE_PARTIAL, to: LegStatus.PARTIALLY_QUOTED, kind: "reopen" },
+      {
+        from: [LegStatus.FULLY_QUOTED, LegStatus.PARTIALLY_QUOTED],
+        on: LegEvent.REQUOTE_OUTSTANDING,
+        to: LegStatus.RFQ_SENT,
+        kind: "reopen",
+      },
     ]);
   }
 }

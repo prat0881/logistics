@@ -297,7 +297,7 @@ describe(`${PREFIX} (e2e)`, () => {
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
-  it("APPROVED leg: request-requote -> 200; quote REQUOTED (draft retained), decision reset to DRAFT, leg back to FULLY_QUOTED, token+deadline reset, FF notified", async () => {
+  it("APPROVED leg: request-requote -> 200; quote REQUOTED (draft retained), decision reset to DRAFT, leg walked back to RFQ_SENT, token+deadline reset, FF notified", async () => {
     const { query, leg, rfq, quote, seededHash } = await seedLeg("approved", "APPROVED", "APPROVED", {
       withDraft: true,
       decisionStatus: "APPROVED",
@@ -329,9 +329,14 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(decisionAfter?.decidedAt).toBeNull();
     expect(decisionAfter?.rejectionReason).toBeNull();
 
-    // leg: reopened from APPROVED back to FULLY_QUOTED
+    // leg: reopened from APPROVED (REOPEN_AWARD -> FULLY_QUOTED) and then, S5.9.2 Q1, walked the
+    // rest of the way back to what its quotes actually justify. This leg's ONE quote is now
+    // REQUOTED, so nothing comparable is left and the honest status is RFQ_SENT — we are waiting
+    // on the forwarder again. It used to stop at FULLY_QUOTED, which is register C7's mismatch
+    // reached through the APPROVED door (LegQuoteProjector's ROLLUP_FROZEN guard skips a leg in
+    // APPROVED, so requestRequote owns this recompute — see its own comment).
     const legAfter = await prisma.leg.findUniqueOrThrow({ where: { id: leg.id } });
-    expect(legAfter.status).toBe("FULLY_QUOTED");
+    expect(legAfter.status).toBe("RFQ_SENT");
 
     // RFQ: deadline moved forward. S5.9 D7 — the token is deliberately NOT rotated any more
     // (rotation protected nothing: the same token already survives the whole first round, and
@@ -376,7 +381,7 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(events[0].quoteId).toBe(quote.id);
   });
 
-  it("QUOTED leg (no approval yet): request-requote -> 200; quote REQUOTED, leg NOT force-reopened, decision (if any) reset to DRAFT", async () => {
+  it("QUOTED leg (no approval yet): request-requote -> 200; quote REQUOTED, no REOPEN_AWARD fire, leg walked back by the rollup to RFQ_SENT, decision (if any) reset to DRAFT", async () => {
     const { query, leg, quote } = await seedLeg("quoted", "FULLY_QUOTED", "QUOTED", {
       withDraft: true,
       decisionStatus: "DRAFT",
@@ -391,9 +396,12 @@ describe(`${PREFIX} (e2e)`, () => {
     const quoteAfter = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
     expect(quoteAfter.status).toBe("REQUOTED");
 
-    // never was APPROVED -> no REOPEN_AWARD fire -> leg stays exactly where it was
+    // Never APPROVED, so no REOPEN_AWARD fire — but S5.9.2 Q1 means the LegQuoteProjector now
+    // walks the leg back off FULLY_QUOTED anyway, because its only quote is REQUOTED and nothing
+    // comparable is left. (The REOPEN_AWARD/no-REOPEN_AWARD distinction still holds; it just no
+    // longer shows up as "the leg does not move".)
     const legAfter = await prisma.leg.findUniqueOrThrow({ where: { id: leg.id } });
-    expect(legAfter.status).toBe("FULLY_QUOTED");
+    expect(legAfter.status).toBe("RFQ_SENT");
 
     const decisionAfter = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
     expect(decisionAfter?.status).toBe("DRAFT");
@@ -470,7 +478,7 @@ describe(`${PREFIX} (e2e)`, () => {
   // this, deriveQueryStatus's `quotingClient` milestone short-circuits ahead of the leg rollup
   // and the query keeps reporting QUOTING_CLIENT with a stale client-facing total naming a
   // quote that's now REQUOTED and a decision that's now DRAFT.
-  it("QUOTING_CLIENT teardown — request-requote on a generated query's leg winner clears awardSnapshot and rolls the query OFF QUOTING_CLIENT (to QUOTED, not back to QUOTING_CLIENT); the untouched leg is unaffected", async () => {
+  it("QUOTING_CLIENT teardown — request-requote on a generated query's leg winner clears awardSnapshot and rolls the query OFF QUOTING_CLIENT (to RFQ_SENT, not back to QUOTING_CLIENT); the untouched leg is unaffected", async () => {
     const { query, legs } = await seedApprovedQuery("qc", [
       { amount: 83200, transitDays: 3 },
       { amount: 41600, transitDays: 5 },
@@ -495,12 +503,15 @@ describe(`${PREFIX} (e2e)`, () => {
       .send({ comment })
       .expect(200);
 
-    // --- the query rolled OFF QUOTING_CLIENT (to QUOTED — leg1 FULLY_QUOTED, leg2 still
-    //     APPROVED -> leastAdvanced = FULLY_QUOTED -> QUOTED), snapshot cleared ---
+    // --- the query rolled OFF QUOTING_CLIENT, snapshot cleared. S5.9.2 Q1/Q2: leg1 now walks
+    //     all the way back to RFQ_SENT (its only quote is REQUOTED — nothing comparable left),
+    //     so leastAdvanced(RFQ_SENT, APPROVED) = RFQ_SENT -> QueryStatus.RFQ_SENT. It used to
+    //     read QUOTED off a leg1 parked at FULLY_QUOTED, which claimed a live price we were in
+    //     fact waiting on a forwarder to re-send. ---
     const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
     expect(updated.awardSnapshot).toBeNull();
     expect(updated.status).not.toBe("QUOTING_CLIENT");
-    expect(updated.status).toBe("QUOTED");
+    expect(updated.status).toBe("RFQ_SENT");
 
     // --- leg 1: negotiated as expected ---
     const quote1After = await prisma.quote.findUniqueOrThrow({ where: { id: legs[0].quoteId } });
@@ -508,7 +519,7 @@ describe(`${PREFIX} (e2e)`, () => {
     const decision1After = await prisma.legAwardDecision.findUnique({ where: { legId: legs[0].id } });
     expect(decision1After?.status).toBe("DRAFT");
     const leg1After = await prisma.leg.findUniqueOrThrow({ where: { id: legs[0].id } });
-    expect(leg1After.status).toBe("FULLY_QUOTED");
+    expect(leg1After.status).toBe("RFQ_SENT"); // S5.9.2 Q1 — was FULLY_QUOTED (see above)
 
     // --- leg 2: NOT touched by leg 1's negotiation (the fix must not over-reach) ---
     const quote2After = await prisma.quote.findUniqueOrThrow({ where: { id: legs[1].quoteId } });

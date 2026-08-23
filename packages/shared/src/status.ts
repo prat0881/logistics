@@ -63,6 +63,15 @@ export const LegEvent = {
   RETURN_FULL: "return.full",
   RETURN_PARTIAL: "return.partial",
   REOPEN_AWARD: "reopen_award",
+  // S5.9.2 Q1 (register C7) — the two BACKWARD rollup edges a re-quote walks. Deliberately their
+  // own events rather than reusing QUOTE_PARTIAL/SEND_RFQ from a later state: `findTransition`
+  // matches on (from, on), so a backward `FULLY_QUOTED --quote.partial--> PARTIALLY_QUOTED` would
+  // be indistinguishable in the StatusTransition log from the forward rollup, and there is no
+  // existing event that lands on RFQ_SENT other than "the RFQ was distributed". Named
+  // `requote.*` because a re-quote is the ONLY input allowed to fire them — see
+  // leg-quote.projector.ts.
+  REQUOTE_PARTIAL: "requote.partial", // FULLY_QUOTED -> PARTIALLY_QUOTED (a comparable sibling survives)
+  REQUOTE_OUTSTANDING: "requote.outstanding", // -> RFQ_SENT (nothing comparable left at all)
 } as const;
 export type LegEvent = (typeof LegEvent)[keyof typeof LegEvent];
 export const LEG_EVENTS = Object.values(LegEvent) as [LegEvent, ...LegEvent[]];
