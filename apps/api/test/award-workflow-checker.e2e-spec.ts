@@ -854,6 +854,81 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(await prisma.quote.findUnique({ where: { id: quotes.REC.id } })).toBeNull();
   });
 
+  // FINAL WHOLE-BRANCH REVIEW, IMPORTANT 1 — the case Q5's first pass claimed to close and did
+  // not. All three fixtures above drift only the QUOTE and leave the leg at PENDING_APPROVAL, so
+  // none of them ever reached the leg fire. The REGISTERED wedge (see "Accepted risks carried
+  // forward" in the Stage-5 handoff) is the other shape entirely: `sendForApproval` commits, its
+  // post-commit QUOTE fire throws, and the leg therefore never gets its own fire at all — leaving
+  // `decision = PENDING_APPROVAL` above `leg = FULLY_QUOTED` and `quote = QUOTED`. Rejecting from
+  // there fired `return.full` at a FULLY_QUOTED leg, which has no such edge (award.module.ts's leg
+  // machine gives both return edges `from: PENDING_APPROVAL` and nothing else): an
+  // `IllegalTransitionError` AFTER the decision had already committed to DRAFT — a 500 for an
+  // action that had in fact happened, with the executive notification never dispatched.
+  //
+  // The wedge is reproduced by writing the two rows back to where the failed fire would have left
+  // them (same direct-write convention as the CRITICAL 1 / D4 / Q5 tests above — only the shape of
+  // the state matters here, not the route that produced it), after a REAL send so the decision and
+  // its `send_for_approval` transition row are genuine.
+  it("Q5 (final review) — reject succeeds on the registered wedge (decision PENDING_APPROVAL + leg FULLY_QUOTED + quote QUOTED): 200, decision DRAFT with the reason, the leg left exactly as found, and the executive notification still dispatches", async () => {
+    const senderId = randomUUID();
+    const assignee = await mkExec();
+    const { query, leg, quotes } = await seedPendingApproval(
+      "rejectwedge",
+      senderId,
+      undefined,
+      "FULLY_QUOTED",
+      assignee.id,
+    );
+
+    // What a thrown post-commit quote fire leaves behind: the leg never left FULLY_QUOTED and the
+    // quote never left QUOTED, while the decision is already PENDING_APPROVAL.
+    await prisma.leg.update({ where: { id: leg.id }, data: { status: "FULLY_QUOTED" } });
+    await prisma.quote.update({ where: { id: quotes.REC.id }, data: { status: "QUOTED" } });
+
+    // "The leg is untouched" asserted as a fact about the immutable log, not just the end status:
+    // a fire that landed the leg back on FULLY_QUOTED by some other route would still satisfy a
+    // bare status assertion, but would append a row past this watermark.
+    const legSeqBefore =
+      (
+        await prisma.statusTransition.findFirst({
+          where: { entity: "leg", entityId: leg.id },
+          orderBy: { seq: "desc" },
+          select: { seq: true },
+        })
+      )?.seq ?? 0;
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "the send half-failed; unwind it" })
+      .expect(200);
+
+    const decision = await prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: leg.id } });
+    expect(decision.status).toBe("DRAFT");
+    expect(decision.rejectionReason).toBe("the send half-failed; unwind it");
+    expect(decision.sentByUserId).toBeNull(); // re-sendable by the maker
+
+    const updatedLeg = await prisma.leg.findUniqueOrThrow({ where: { id: leg.id } });
+    expect(updatedLeg.status).toBe("FULLY_QUOTED"); // nothing to return it to — it never left
+    expect(
+      await prisma.statusTransition.findFirst({
+        where: { entity: "leg", entityId: leg.id, seq: { gt: legSeqBefore } },
+      }),
+    ).toBeNull();
+
+    // The quote skip (Q5's original half) still applies on this path too.
+    const quote = await prisma.quote.findUniqueOrThrow({ where: { id: quotes.REC.id } });
+    expect(quote.status).toBe("QUOTED");
+
+    // The tail of reject() — unreachable while the leg fire threw above it, which is half of why
+    // the 500 mattered: the assigned executive was never told the leg had come back to them.
+    const notes = await prisma.notification.findMany({
+      where: { type: "award.rejected", entityId: query.id },
+    });
+    expect(notes.map((n) => n.recipientUserId)).toEqual([assignee.id]);
+    expect(notes[0].message).toContain("the send half-failed; unwind it");
+  });
+
   it("reject a leg whose decision is still DRAFT (a name picked, never sent) -> 409", async () => {
     const { query, leg, quotes } = await seedLeg("rejectdraft", "FULLY_QUOTED", [
       { key: "REC", status: "QUOTED", deadline: future(), draft: { amount: 83200, transitDays: 3 } },

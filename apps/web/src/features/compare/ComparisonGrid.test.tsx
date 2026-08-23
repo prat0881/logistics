@@ -1802,15 +1802,15 @@ describe("SendForApprovalDialog is gated by the same rule as the button that ope
     decidedAt: null,
   };
 
-  /** Renders the panel in a form that can be re-rendered with a different `leg`, so a test can
-   *  simulate the read model changing under an open dialog. */
+  /** Renders the panel in a form that can be re-rendered with a different `leg` — or a different
+   *  `locked` — so a test can simulate the read model changing under an open dialog. */
   function renderRefetchablePanel(leg: LegComparisonDto) {
     vi.stubGlobal(
       "fetch",
       mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })),
     );
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const tree = (l: LegComparisonDto) => (
+    const tree = (l: LegComparisonDto, locked = false) => (
       <QueryClientProvider client={qc}>
         <AuthProvider>
           <CompareLegPanel
@@ -1818,7 +1818,7 @@ describe("SendForApprovalDialog is gated by the same rule as the button that ope
             leg={l}
             open
             onToggle={() => {}}
-            locked={false}
+            locked={locked}
             fxAsOf="2026-08-14T00:00:00.000Z"
             viewMode="columns"
             onViewModeChange={() => {}}
@@ -1827,7 +1827,10 @@ describe("SendForApprovalDialog is gated by the same rule as the button that ope
       </QueryClientProvider>
     );
     const { rerender } = render(tree(leg));
-    return { refetchAs: (l: LegComparisonDto) => rerender(tree(l)) };
+    return {
+      refetchAs: (l: LegComparisonDto) => rerender(tree(l)),
+      lockWith: (l: LegComparisonDto) => rerender(tree(l, true)),
+    };
   }
 
   it("unmounts an already-open SendForApprovalDialog once the leg stops being sendable", async () => {
@@ -1862,5 +1865,34 @@ describe("SendForApprovalDialog is gated by the same rule as the button that ope
     // Positive control — sending really is available again, so "no dialog" isn't vacuous.
     expect(await screen.findByRole("button", { name: /send for approval/i })).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // Final whole-branch review, MINOR 2 — the replacement for the assertion deleted from
+  // `CompareQuotesPage.test.tsx`'s locked-gate test, which S5.9.2's Q6 had quietly made
+  // unfailable (a MANAGER on a decision-less leg loses Send on `canSend`'s new `decision != null`
+  // term, whatever `locked` says). No page-level ABSENCE assertion can isolate `canSend`'s own
+  // `!locked` term: the action bar carries its own `!locked` gate, so the button vanishes under a
+  // lock regardless. The dialog is mounted OUTSIDE that bar — `{canSend && <SendForApprovalDialog
+  // …>}` — so it is the one surface where `canSend`'s `!locked` is the only thing standing between
+  // an engaged lock and a live modal, and this is the shape that gets there: the maker has the
+  // dialog open when the award snapshot lands under them (`CompareQuotesPage` derives `locked =
+  // awardSnapshot != null` and passes it straight down, so a refetch that brings the snapshot back
+  // flips this prop exactly like the `leg` changes above).
+  //
+  // Mutation-proven: deleting `!locked &&` from `canSend` in `CompareLegPanel.tsx` turns this red
+  // (the bar goes, the dialog stays open) and leaves the rest of the web suite green.
+  it("unmounts an already-open SendForApprovalDialog when the award snapshot locks the screen under it", async () => {
+    const draftLeg = { ...LEG, decision: DRAFT_DECISION };
+    const { lockWith } = renderRefetchablePanel(draftLeg);
+
+    await userEvent.click(await screen.findByRole("button", { name: /send for approval/i }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    // Same leg, same decision — `locked` is the ONLY thing that changes, so nothing else can be
+    // what closes the dialog.
+    lockWith(draftLeg);
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
   });
 });

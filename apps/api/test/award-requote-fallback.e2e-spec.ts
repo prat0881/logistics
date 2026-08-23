@@ -583,8 +583,19 @@ describe(`${PREFIX} — a re-quote walks the leg back (e2e)`, () => {
     // transition row and therefore no recorded permission. Meanwhile a forwarder's window is
     // genuinely still open, so the leg is not fully quoted by any measure. approve() must refuse.
     //
-    // Mutation discriminator: key the permission off `from != null` ("a send row exists") or drop
-    // the FULLY_QUOTED question entirely and this goes green when it must not.
+    // Mutation discriminator: treat an ABSENT send row as licence — gate approve()'s refusal on
+    // `sent.from != null`, i.e. "only refuse legs that actually went through a send" — or drop the
+    // FULLY_QUOTED question entirely, and this goes green when it must not. Both verified against
+    // the running app.
+    //
+    // CORRECTED (final whole-branch review) — this line used to name "key the permission off
+    // `from != null` (a send row exists)" as the discriminator. It is not one HERE: this fixture
+    // has no `send_for_approval` row at all (asserted immediately below), so `from` is null under
+    // that mutation too, the permission stays null, and approve 409s either way — the test cannot
+    // tell. That discriminator belongs to **(o)**, which seeds a row that exists carrying
+    // `reason: null`. Both directions were re-run before this rewrite rather than reasoned about:
+    // minting a permission from row existence leaves (m) green and reddens (o); gating the refusal
+    // on row existence reddens (m) and leaves (o) green.
     const { query, leg } = await seedLeg(
       "m",
       "PENDING_APPROVAL",

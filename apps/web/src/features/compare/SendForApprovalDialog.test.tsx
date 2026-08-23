@@ -341,12 +341,50 @@ describe("SendForApprovalDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
-  // ── A9 (design §9) — carried over unchanged from `ShortlistDialog` ───────────────────────────
-  it("requires the A9 reason even with proceed-without-waiting left unticked", async () => {
+  // ── A9 (design §9) — carried over from `ShortlistDialog` ─────────────────────────────────────
+  //
+  // `handleSend`'s A9 guard is ONE disjunction — `leg.awaitingReQuote && (!proceed ||
+  // !proceedReason.trim())` — so it has two independent failure modes and needs a case per mode.
+  // Final whole-branch review, IMPORTANT 2: only the first was ever covered. Task 3 retitled that
+  // test "requires the A9 reason even with proceed-without-waiting left unticked" but left its body
+  // alone, and the body never ticks the box or types a reason — `!proceed` short-circuits, so
+  // deleting the reason half of the guard outright left all 859 web tests green (confirmed). The
+  // second case below is the missing one; both now assert the A9 message TEXT (a bare
+  // `findByRole("alert")` was also satisfied by the override-reason error and by the mutation
+  // error alert) and each pins the precondition that makes it the mode it claims to be.
+  it("refuses the send while proceed-without-waiting is unticked (A9, first failure mode)", async () => {
     renderDialog({ leg: { ...LEG, awaitingReQuote: true } });
     await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/));
+
+    // The mode under test: the box is genuinely unticked.
+    expect(screen.getByRole("checkbox", { name: /proceed without waiting/i })).not.toBeChecked();
+
     await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /give a reason before sending this leg for approval/i,
+    );
+    expect(postJson).not.toHaveBeenCalled();
+  });
+
+  // Mutation-proven (final review, IMPORTANT 2): weakening the guard to `leg.awaitingReQuote &&
+  // !proceed` — i.e. deleting the reason requirement — turns THIS test red (the send goes through
+  // with an empty `proceedReason`) while every other web test stays green.
+  it("refuses the send when proceed-without-waiting is ticked but the reason is blank (A9, second failure mode)", async () => {
+    renderDialog({ leg: { ...LEG, awaitingReQuote: true } });
+    await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/));
+
+    const checkbox = screen.getByRole("checkbox", { name: /proceed without waiting/i });
+    await userEvent.click(checkbox);
+    // The mode under test: the FIRST disjunct is now satisfied, so only the reason can refuse.
+    expect(checkbox).toBeChecked();
+    // Whitespace, not emptiness — the guard reads `.trim()`, and a spaces-only reason is exactly
+    // the input that separates the two.
+    await userEvent.type(screen.getByLabelText(/^reason$/i), "   ");
+
+    await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /give a reason before sending this leg for approval/i,
+    );
     expect(postJson).not.toHaveBeenCalled();
   });
 

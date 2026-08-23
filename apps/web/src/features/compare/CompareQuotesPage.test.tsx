@@ -311,15 +311,24 @@ describe("CompareQuotesPage", () => {
     expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/recommended/i)).not.toBeInTheDocument();
 
-    // "Send for approval…" (S5.9 T9 — the in-grid Select affordance this used to check is retired
-    // entirely, so its absence would no longer isolate anything) is NOT safe to prove on LEG-2:
-    // its decision is already PENDING_APPROVAL, which withholds Send on its own regardless of
-    // `locked` (`CompareLegPanel`'s `canSend`), so asserting its absence there would pass even
-    // with the `locked` gate itself deleted. LEG-1 has `decision: null` — nothing else would hide
-    // Send on it — so switching to it isolates the `locked` condition specifically.
-    await userEvent.click(await screen.findByRole("button", { name: /LEG-1/i }));
-    await screen.findByTestId("leg-body");
-    expect(screen.queryByRole("button", { name: /send for approval/i })).not.toBeInTheDocument();
+    // DELETED (final whole-branch review, MINOR 2) — the Send half of this test, which used to
+    // switch to LEG-1 here and assert "Send for approval" absent. Its own comment justified the
+    // switch by saying LEG-1's `decision: null` means "nothing else would hide Send on it", so the
+    // assertion isolated `locked`. **Q6 falsified that premise in this very sub-build**: for a
+    // MANAGER on a decision-less leg, `canSend`'s new `(!isChecker || leg.decision != null)` term
+    // is false whatever `locked` says, so the assertion could not fail and the comment claiming it
+    // proved something was the second instance of the pattern this round already fixed once
+    // ("three tests that could not fail"). Confirmed by mutation: deleting `!locked &&` from
+    // `canSend` left the whole 859-test suite green.
+    //
+    // It is not repaired in place because NO page-level absence assertion can isolate that term:
+    // the action bar carries its own `!locked` gate (`{!locked && hasActionBarControls && …}`), so
+    // the button is gone under a lock either way. The one surface where `canSend`'s own `!locked`
+    // is observable is the dialog mounted OUTSIDE that bar (`{canSend && <SendForApprovalDialog>}`)
+    // — an already-open dialog when the lock engages mid-session. That is where the replacement
+    // test lives, in `ComparisonGrid.test.tsx`'s "SendForApprovalDialog is gated by the same rule
+    // as the button that opens it" block, which has a re-renderable panel harness for exactly this
+    // shape. The whole-bar assertion above still covers the locked gate at this level.
   });
 
   describe.each(["EXECUTIVE", "MANAGER"] as const)("compare screen as %s", (role) => {

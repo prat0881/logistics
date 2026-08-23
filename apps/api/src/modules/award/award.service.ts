@@ -815,79 +815,118 @@ export class AwardService {
   // resets this exact decision to DRAFT and reopens the leg moments later regardless, so a skipped
   // quote fire here loses nothing — the quote's true post-change-order status (INVALID, headed
   // for its own REOPEN) is exactly what staying untouched preserves.
+  //
+  // COMPLETED (final whole-branch review, IMPORTANT 1) — Q5's first pass tolerated only the QUOTE's
+  // drift and left the LEG fire unguarded, which meant it did NOT close the wedge the handoff said
+  // it closed. That registered wedge is `decision = PENDING_APPROVAL` + `leg = FULLY_QUOTED` +
+  // `quote = QUOTED`, reachable when `sendForApproval`'s post-commit QUOTE fire throws — the leg
+  // never gets its own fire, so it never leaves FULLY_QUOTED while the decision already committed
+  // to PENDING_APPROVAL. On that exact triple the quote skip fired correctly and then the leg fire
+  // hit `No 'return.full' transition from 'FULLY_QUOTED'` (both return edges start at
+  // PENDING_APPROVAL and nowhere else — award.module.ts's leg machine, lines 84-85), i.e. an
+  // `IllegalTransitionError` AFTER the decision had committed to DRAFT: HTTP 500, the UI saying
+  // "Failed to reject" for a rejection that had in fact happened, and the post-reject executive
+  // notification at the tail of this method never dispatching. The state "recovered" only as a side
+  // effect of a partially-applied request. The leg fire is now conditioned on the SAME question the
+  // quote fire asks — is this entity still where sendForApproval left it? — and skipped with a warn
+  // when it is not. Skipping is right rather than lossy: a leg that never left its rollup status has
+  // nothing to be returned TO, so the leg is already correct, and every other effect of the
+  // rejection (the DRAFT write, the reason, the REJECT event, the notification) still runs.
+  // Mutation-proven: with the guard removed, the wedge-state test below 500s.
   async reject(
     queryId: string,
     legId: string,
     input: RejectInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
-    const { decision, returnToFullyQuoted, quoteNeedsReturn } = await this.prisma.$transaction(async (tx) => {
-      await this.lockLeg(tx, queryId, legId);
-      const { decision } = await this.requireDecidable(tx, legId, user);
+    const { decision, returnToFullyQuoted, quoteNeedsReturn, legNeedsReturn } =
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockLeg(tx, queryId, legId);
+        const { decision } = await this.requireDecidable(tx, legId, user);
 
-      // Q5 — tolerate rather than refuse. Only fire the quote's own RETURN when it is still
-      // exactly where sendForApproval left it; otherwise skip that one fire and carry on (see the
-      // class doc above for why this is safe).
-      let quoteNeedsReturn = false;
-      if (decision.shortlistedQuoteId) {
-        const quote = await tx.quote.findUnique({
-          where: { id: decision.shortlistedQuoteId },
-          select: { status: true },
-        });
-        if (quote && quote.status === QuoteStatus.PENDING_APPROVAL) {
-          quoteNeedsReturn = true;
-        } else {
+        // Final review IMPORTANT 1 — the LEG half of the same tolerance. Read under lockLeg's own
+        // row lock, so nothing can move the leg between this read and the post-commit fire that acts
+        // on it (a concurrent send/approve/reject blocks on that lock; the projector's ROLLUP_FROZEN
+        // guard leaves a PENDING_APPROVAL leg alone). PENDING_APPROVAL is the ONLY `from` either
+        // return edge has, so anything else has no edge to fire and nothing to be returned to.
+        const legRow = await tx.leg.findUnique({ where: { id: legId }, select: { status: true } });
+        const legNeedsReturn = legRow?.status === LegStatus.PENDING_APPROVAL;
+        if (!legNeedsReturn) {
           this.logger.warn(
-            `reject: leg ${legId}'s shortlisted quote ${decision.shortlistedQuoteId} is ` +
-              `${quote ? `already ${quote.status}` : "missing"}, not PENDING_APPROVAL — skipping ` +
-              "its RETURN fire and rejecting the leg anyway (Q5: rejection must stay possible).",
+            `reject: leg ${legId} is ${legRow ? legRow.status : "missing"}, not PENDING_APPROVAL — ` +
+              "skipping its RETURN fire and rejecting the decision anyway (Q5: rejection must stay " +
+              "possible). Reachable when sendForApproval's post-commit quote fire threw, leaving the " +
+              "decision PENDING_APPROVAL above a leg that never moved.",
           );
         }
-      }
 
-      // Deliberately asks the FACT predicate alone — never `sent.permission`. A permission is
-      // licence to have been under review, not evidence the leg is fully quoted; honouring it here
-      // would return a fallen-back leg to FULLY_QUOTED and leak back the exact leg/quote mismatch
-      // Q1 removes. Mutation-proven (award-requote-fallback.e2e-spec.ts "(e)"). Reads the SAME
-      // live quote statuses regardless of whether the shortlisted quote itself just got tolerated
-      // above — see the class doc's drift-by-drift walkthrough.
-      const returnToFullyQuoted = await this.isFullyQuotedForDecision(
-        tx,
-        legId,
-        await this.latestSendForApproval(tx, legId),
-      );
+        // Q5 — tolerate rather than refuse. Only fire the quote's own RETURN when it is still
+        // exactly where sendForApproval left it; otherwise skip that one fire and carry on (see the
+        // class doc above for why this is safe).
+        let quoteNeedsReturn = false;
+        if (decision.shortlistedQuoteId) {
+          const quote = await tx.quote.findUnique({
+            where: { id: decision.shortlistedQuoteId },
+            select: { status: true },
+          });
+          if (quote && quote.status === QuoteStatus.PENDING_APPROVAL) {
+            quoteNeedsReturn = true;
+          } else {
+            this.logger.warn(
+              `reject: leg ${legId}'s shortlisted quote ${decision.shortlistedQuoteId} is ` +
+                `${quote ? `already ${quote.status}` : "missing"}, not PENDING_APPROVAL — skipping ` +
+                "its RETURN fire and rejecting the leg anyway (Q5: rejection must stay possible).",
+            );
+          }
+        }
 
-      // Single final write straight to DRAFT (design §9.5: "REJECTED -> back to DRAFT") rather
-      // than two updates (REJECTED then DRAFT) — the "REJECTED" moment is captured as audit
-      // intent by the REJECT event + rejectionReason, not as a persisted intermediate decision
-      // status. Clearing sentByUserId re-enables the maker to send again.
-      const updated = await tx.legAwardDecision.update({
-        where: { legId },
-        data: {
-          status: AwardDecisionStatus.DRAFT,
-          sentByUserId: null,
-          rejectionReason: input.reason,
-          decidedByUserId: user.userId,
-          decidedAt: new Date(),
-        },
-      });
-      await tx.awardDecisionEvent.create({
-        data: {
+        // Deliberately asks the FACT predicate alone — never `sent.permission`. A permission is
+        // licence to have been under review, not evidence the leg is fully quoted; honouring it here
+        // would return a fallen-back leg to FULLY_QUOTED and leak back the exact leg/quote mismatch
+        // Q1 removes. Mutation-proven (award-requote-fallback.e2e-spec.ts "(e)"). Reads the SAME
+        // live quote statuses regardless of whether the shortlisted quote itself just got tolerated
+        // above — see the class doc's drift-by-drift walkthrough.
+        const returnToFullyQuoted = await this.isFullyQuotedForDecision(
+          tx,
           legId,
-          queryId,
-          type: "REJECT",
-          reason: input.reason,
-          actorId: user.userId,
-        },
-      });
-      return { decision: updated, returnToFullyQuoted, quoteNeedsReturn };
-    });
+          await this.latestSendForApproval(tx, legId),
+        );
 
-    // Quote first, then leg — same order as approve()/sendForApproval. The leg is still
-    // PENDING_APPROVAL for the whole duration of the quote fire, so the projector's freeze
+        // Single final write straight to DRAFT (design §9.5: "REJECTED -> back to DRAFT") rather
+        // than two updates (REJECTED then DRAFT) — the "REJECTED" moment is captured as audit
+        // intent by the REJECT event + rejectionReason, not as a persisted intermediate decision
+        // status. Clearing sentByUserId re-enables the maker to send again.
+        const updated = await tx.legAwardDecision.update({
+          where: { legId },
+          data: {
+            status: AwardDecisionStatus.DRAFT,
+            sentByUserId: null,
+            rejectionReason: input.reason,
+            decidedByUserId: user.userId,
+            decidedAt: new Date(),
+          },
+        });
+        await tx.awardDecisionEvent.create({
+          data: {
+            legId,
+            queryId,
+            type: "REJECT",
+            reason: input.reason,
+            actorId: user.userId,
+          },
+        });
+        return { decision: updated, returnToFullyQuoted, quoteNeedsReturn, legNeedsReturn };
+      });
+
+    // Quote first, then leg — same order as approve()/sendForApproval. On the ordinary path the leg
+    // is still PENDING_APPROVAL for the whole duration of the quote fire, so the projector's freeze
     // (Task 2) skips the rollup it would otherwise trigger off this quote's status change; the
     // leg's own RETURN_FULL/RETURN_PARTIAL fire right after is what actually moves it, using the
-    // `returnToFullyQuoted` answer already computed above.
+    // `returnToFullyQuoted` answer already computed above. The one path where that is NOT true is
+    // the `legNeedsReturn === false` skip below: there the leg is not PENDING_APPROVAL, so it is not
+    // frozen and a quote fire here would let `LegQuoteProjector` recompute it — which is fine
+    // precisely because this method then fires nothing at the leg itself, so the projector's answer
+    // is the only one, and no half-applied pair of statuses can result.
     //
     // Q5 — `quoteNeedsReturn` is false whenever the shortlisted quote had already drifted off
     // PENDING_APPROVAL (or vanished) by guard time; firing RETURN against it here would find no
@@ -901,12 +940,18 @@ export class AwardService {
       });
     }
 
-    await this.status.fire(
-      "leg",
-      legId,
-      returnToFullyQuoted ? LegEvent.RETURN_FULL : LegEvent.RETURN_PARTIAL,
-      { queryId, actorId: user.userId, reason: input.reason },
-    );
+    // Final review IMPORTANT 1 — same shape, same reason as the quote skip above: firing a return
+    // edge at a leg that is not PENDING_APPROVAL finds no matching transition and throws
+    // `IllegalTransitionError` AFTER the decision has already committed to DRAFT, turning a
+    // rejection that really happened into a 500 and swallowing the notification below with it.
+    if (legNeedsReturn) {
+      await this.status.fire(
+        "leg",
+        legId,
+        returnToFullyQuoted ? LegEvent.RETURN_FULL : LegEvent.RETURN_PARTIAL,
+        { queryId, actorId: user.userId, reason: input.reason },
+      );
+    }
 
     // S5.9.1 (R7) — the product owner asked that a rejected leg "go directly to the executive
     // queue", and the write above already cleared sentByUserId + returned the decision to DRAFT,
