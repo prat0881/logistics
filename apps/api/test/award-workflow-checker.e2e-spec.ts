@@ -759,34 +759,99 @@ describe("award workflow — checker endpoints (e2e)", () => {
     expect(decision?.rejectionReason).toBe("Wait for the straggler before deciding");
   });
 
-  // S5.9 Task 4 review round — IMPORTANT 3. Mirrors the A8 test above, but for reject(): if the
-  // shortlisted quote has moved off PENDING_APPROVAL since it was sent (e.g. a racing
-  // change-order invalidated it — see reject()'s own doc comment), reject() must refuse (409)
-  // BEFORE writing anything, not commit the decision to DRAFT and then blow up trying to fire a
-  // now-illegal quote transition. Simulates the race the same way the A8 test does — a direct DB
-  // write, not through StatusService, since only the DB row's shape (not a legal transition)
-  // matters for exercising this guard in isolation.
-  it("IMPORTANT 3 — reject when the shortlisted quote is no longer PENDING_APPROVAL (raced by e.g. a change-order) -> 409, nothing moves", async () => {
-    const senderId = randomUUID();
-    const { query, leg, quotes } = await seedPendingApproval("rejectstale", senderId);
+  // S5.9.2 Q5 — SUPERSEDES the old "IMPORTANT 3" test (S5.9 Task 4 review), which asserted the
+  // opposite: a 409 refusal whenever the shortlisted quote had moved off PENDING_APPROVAL since
+  // it was sent. That refusal made a leg unrecoverable — approve()'s A8 refuses for the same
+  // reason, so neither checker action could move it. Rejection is the recovery path and must not
+  // require the thing being recovered from to be healthy, so reject() now TOLERATES a drifted or
+  // missing shortlisted quote: it skips only that quote's own RETURN fire (logged at warn) and
+  // otherwise proceeds exactly as normal — decision to DRAFT with the reason, leg fired to its
+  // truthful rollup status. All three fixtures below share the D4 test's shape (one QUOTED->sent
+  // offer, one still-outstanding RFQ_SENT sibling on a leg sent via A3's deadline-passed arm from
+  // PARTIALLY_QUOTED) so the "truthful landing" is identical and easy to reason about across all
+  // three: the sibling is still outstanding regardless of what happened to the shortlisted quote,
+  // so the leg must land on PARTIALLY_QUOTED in every case — never a promoted FULLY_QUOTED.
+  const seedTwoFfPartial = (label: string, senderId: string) =>
+    seedPendingApproval(
+      label,
+      senderId,
+      [
+        { key: "REC", status: "QUOTED", deadline: past(), draft: { amount: 83200, transitDays: 3 } },
+        { key: "PENDING", status: "RFQ_SENT", deadline: past() },
+      ],
+      "PARTIALLY_QUOTED",
+    );
 
-    await prisma.quote.update({ where: { id: quotes.REC.id }, data: { status: "INVALID" } });
+  it("Q5 — reject succeeds when the shortlisted quote has drifted to QUOTED (e.g. some other path already returned it): decision reaches DRAFT, leg lands on PARTIALLY_QUOTED (the still-outstanding sibling), the drifted quote is left exactly as found", async () => {
+    const senderId = randomUUID();
+    const { query, leg, quotes } = await seedTwoFfPartial("rejectdriftquoted", senderId);
+
+    // Simulate the drift with a direct DB write (same convention as the CRITICAL 1/D4 tests
+    // above) — only the row's shape matters for exercising the guard, not the legality of
+    // whatever moved it there.
+    await prisma.quote.update({ where: { id: quotes.REC.id }, data: { status: "QUOTED" } });
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send({ reason: "should not matter — refused before any write" })
-      .expect(409);
+      .send({ reason: "drifted to QUOTED before the checker got to it" })
+      .expect(200);
 
-    // Nothing moved: decision still PENDING_APPROVAL (not DRAFT — the half-committed hazard this
-    // guard exists to prevent), leg still PENDING_APPROVAL (never fired), quote left exactly as
-    // the test set it (INVALID — reject() never touched it).
     const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
-    expect(decision?.status).toBe("PENDING_APPROVAL");
+    expect(decision?.status).toBe("DRAFT");
+    expect(decision?.rejectionReason).toBe("drifted to QUOTED before the checker got to it");
     const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
-    expect(updatedLeg?.status).toBe("PENDING_APPROVAL");
+    expect(updatedLeg?.status).toBe("PARTIALLY_QUOTED");
+    // The RETURN fire was skipped (no PENDING_APPROVAL -> QUOTED edge fired), not that the quote
+    // coincidentally ended up QUOTED anyway — the mutation test below proves the skip is load-
+    // bearing by removing it and watching this exact case 500 instead of 200.
     const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
-    expect(quote?.status).toBe("INVALID");
+    expect(quote?.status).toBe("QUOTED");
+  });
+
+  it("Q5 — reject succeeds when the shortlisted quote has drifted to REQUOTED (e.g. a re-quote was requested elsewhere): decision reaches DRAFT, leg lands on PARTIALLY_QUOTED, the REQUOTED quote is left untouched", async () => {
+    const senderId = randomUUID();
+    const { query, leg, quotes } = await seedTwoFfPartial("rejectdriftrequoted", senderId);
+
+    await prisma.quote.update({ where: { id: quotes.REC.id }, data: { status: "REQUOTED" } });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "drifted to REQUOTED before the checker got to it" })
+      .expect(200);
+
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("DRAFT");
+    expect(decision?.rejectionReason).toBe("drifted to REQUOTED before the checker got to it");
+    const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
+    // Neither offer is resolved (REQUOTED is excluded from the rollup's resolved set, same as the
+    // still-outstanding RFQ_SENT sibling — S5.9.2 Q1), so PARTIALLY_QUOTED, never FULLY_QUOTED.
+    expect(updatedLeg?.status).toBe("PARTIALLY_QUOTED");
+    const quote = await prisma.quote.findUnique({ where: { id: quotes.REC.id } });
+    expect(quote?.status).toBe("REQUOTED");
+  });
+
+  it("Q5 — reject succeeds when the shortlisted quote row is missing entirely: decision reaches DRAFT, leg lands on PARTIALLY_QUOTED from its remaining quotes alone", async () => {
+    const senderId = randomUUID();
+    const { query, leg, quotes } = await seedTwoFfPartial("rejectdriftmissing", senderId);
+
+    await prisma.quote.delete({ where: { id: quotes.REC.id } });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/reject`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "shortlisted quote row vanished before the checker got to it" })
+      .expect(200);
+
+    const decision = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
+    expect(decision?.status).toBe("DRAFT");
+    expect(decision?.rejectionReason).toBe("shortlisted quote row vanished before the checker got to it");
+    const updatedLeg = await prisma.leg.findUnique({ where: { id: leg.id } });
+    // Computed from the one remaining (outstanding) quote alone — the deleted offer contributes
+    // nothing to the rollup, same as if it had never been distributed.
+    expect(updatedLeg?.status).toBe("PARTIALLY_QUOTED");
+    expect(await prisma.quote.findUnique({ where: { id: quotes.REC.id } })).toBeNull();
   });
 
   it("reject a leg whose decision is still DRAFT (a name picked, never sent) -> 409", async () => {

@@ -776,46 +776,71 @@ export class AwardService {
   // keep in sync; (c) widening `LEG_ROLLUP_RESOLVED` to include `REQUOTED` — wrong at the source,
   // it would tell the PROJECTOR that a re-quote in flight is settled, promoting unrelated legs.
   //
-  // S5.9 Task 4 review round — IMPORTANT 3. reject() used to fire QuoteEvent.RETURN
-  // unconditionally on `decision.shortlistedQuoteId`. `lockLeg` only locks the LEG row, not the
-  // quote — a change-order can race in on the SAME leg (ChangeOrderStrategy takes no leg lock;
-  // `award.module.ts` registers `PENDING_APPROVAL --invalidate--> INVALID`) and move the
-  // shortlisted quote off PENDING_APPROVAL between this transaction's commit and the post-commit
-  // fire below. Without a check, that fire throws `IllegalTransitionError` AFTER the decision
-  // has already committed to DRAFT — the leg's own RETURN_FULL/RETURN_PARTIAL fire (sequenced
-  // after) never runs, leaving a DRAFT decision on a leg still wedged at PENDING_APPROVAL that no
-  // HTTP path recovers (approve/reject both 409 in requireDecidable; send-for-approval has no
-  // edge from PENDING_APPROVAL). Mirrors A8 exactly: checked and refused (409) BEFORE any write,
-  // not "skip the quote fire but still move the leg" — firing the leg's RETURN_FULL/
-  // RETURN_PARTIAL from a `target` computed against the OLD quote statuses, while a concurrent
-  // change-order's own INVALIDATE+REOPEN cascade for the SAME leg is independently in flight,
-  // risks moving the leg to a status the change-order never intended (e.g. FULLY_QUOTED off a
-  // now-invalid quote) and that the change-order's own queued REOPEN fire then can't find an
-  // edge from — corrupting or aborting its cascade. A clean 409 here leaves the decision at
-  // PENDING_APPROVAL, untouched; the change-order's own listener
-  // (`award-change-order.listener.ts`) independently resets this exact decision to DRAFT and
-  // reopens the leg moments later regardless, so nothing is lost by refusing. Not reachable on
-  // the happy path (hardening, not a live bug) — mutation-proven in the e2e spec.
+  // S5.9 Task 4 review round — IMPORTANT 3, SUPERSEDED by S5.9.2 Q5. reject() used to fire
+  // QuoteEvent.RETURN unconditionally on `decision.shortlistedQuoteId`, discovered a race where a
+  // concurrent change-order could move the shortlisted quote off PENDING_APPROVAL between this
+  // transaction's commit and the post-commit fire below, and closed it by REFUSING the whole
+  // rejection (409) whenever the quote wasn't PENDING_APPROVAL — mirroring approve()'s A8.
+  //
+  // That refusal is exactly the bug Q5 exists to fix. approve()'s A8 refuses for the identical
+  // reason, so a leg whose shortlisted quote drifted off PENDING_APPROVAL (the change-order race
+  // above, but just as easily a re-quote or any other resolution the checker didn't cause) could
+  // be moved by NEITHER checker action — unrecoverable without a change order or DB surgery.
+  // Rejection is supposed to BE the recovery path; it must not require the thing being recovered
+  // from to still be healthy. So the guard below no longer throws: it TOLERATES a drifted or
+  // missing quote by skipping only that quote's own RETURN fire (logged at warn) and otherwise
+  // proceeding exactly as before — the decision still reaches DRAFT with the reason, and the
+  // leg's own RETURN_FULL/RETURN_PARTIAL fire still runs.
+  //
+  // Why this is safe rather than a reintroduction of the corruption IMPORTANT 3 was written
+  // against: `returnToFullyQuoted` below is computed from a LIVE read of the leg's quotes inside
+  // this same locked transaction (`legRollupTarget` → `isFullyQuotedForDecision`), which reads
+  // whatever status the shortlisted quote currently holds (QUOTED, REQUOTED, or simply absent
+  // from the `findMany` if the row is gone) — it was never computed FROM the quote's
+  // PENDING_APPROVAL-ness, only asked to answer the question fresh. So a drifted quote is already
+  // correctly reflected in the leg's landing status without any extra branching:
+  //   * QUOTED — already counts as "resolved" (status.ts's LEG_ROLLUP_RESOLVED), exactly as it
+  //     would if the quote were still PENDING_APPROVAL (also resolved) — no behaviour change;
+  //   * REQUOTED — excluded from LEG_ROLLUP_RESOLVED (Q1), so the rollup correctly treats this
+  //     leg as unresolved and reject() lands it on PARTIALLY_QUOTED, never a promoted
+  //     FULLY_QUOTED — it never fabricates a resolution the drifted quote doesn't have;
+  //   * missing — simply excluded from `tx.quote.findMany`'s result set, so the rollup is computed
+  //     from whatever quotes remain, same as if that offer had never existed.
+  // A leg whose ROW said FULLY_QUOTED at send time (`sent.from`) still lands on FULLY_QUOTED
+  // regardless of the drift, per `isFullyQuotedForDecision`'s own second term — unchanged by this
+  // task, not something Q5 needed to touch.
+  //
+  // The change-order race IMPORTANT 3 was written for is still real, but no longer needs refusing
+  // to be safe: the change-order's own listener (`award-change-order.listener.ts`) independently
+  // resets this exact decision to DRAFT and reopens the leg moments later regardless, so a skipped
+  // quote fire here loses nothing — the quote's true post-change-order status (INVALID, headed
+  // for its own REOPEN) is exactly what staying untouched preserves.
   async reject(
     queryId: string,
     legId: string,
     input: RejectInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
-    const { decision, returnToFullyQuoted } = await this.prisma.$transaction(async (tx) => {
+    const { decision, returnToFullyQuoted, quoteNeedsReturn } = await this.prisma.$transaction(async (tx) => {
       await this.lockLeg(tx, queryId, legId);
       const { decision } = await this.requireDecidable(tx, legId, user);
 
-      // IMPORTANT 3 (above) — same shape as approve()'s A8: refuse before any write if the
-      // shortlisted quote has moved off PENDING_APPROVAL since it was sent.
+      // Q5 — tolerate rather than refuse. Only fire the quote's own RETURN when it is still
+      // exactly where sendForApproval left it; otherwise skip that one fire and carry on (see the
+      // class doc above for why this is safe).
+      let quoteNeedsReturn = false;
       if (decision.shortlistedQuoteId) {
         const quote = await tx.quote.findUnique({
           where: { id: decision.shortlistedQuoteId },
           select: { status: true },
         });
-        if (!quote || quote.status !== QuoteStatus.PENDING_APPROVAL) {
-          throw new ConflictException(
-            "The shortlisted quote is no longer available to reject — it may already have been resolved elsewhere",
+        if (quote && quote.status === QuoteStatus.PENDING_APPROVAL) {
+          quoteNeedsReturn = true;
+        } else {
+          this.logger.warn(
+            `reject: leg ${legId}'s shortlisted quote ${decision.shortlistedQuoteId} is ` +
+              `${quote ? `already ${quote.status}` : "missing"}, not PENDING_APPROVAL — skipping ` +
+              "its RETURN fire and rejecting the leg anyway (Q5: rejection must stay possible).",
           );
         }
       }
@@ -823,7 +848,9 @@ export class AwardService {
       // Deliberately asks the FACT predicate alone — never `sent.permission`. A permission is
       // licence to have been under review, not evidence the leg is fully quoted; honouring it here
       // would return a fallen-back leg to FULLY_QUOTED and leak back the exact leg/quote mismatch
-      // Q1 removes. Mutation-proven (award-requote-fallback.e2e-spec.ts "(e)").
+      // Q1 removes. Mutation-proven (award-requote-fallback.e2e-spec.ts "(e)"). Reads the SAME
+      // live quote statuses regardless of whether the shortlisted quote itself just got tolerated
+      // above — see the class doc's drift-by-drift walkthrough.
       const returnToFullyQuoted = await this.isFullyQuotedForDecision(
         tx,
         legId,
@@ -853,7 +880,7 @@ export class AwardService {
           actorId: user.userId,
         },
       });
-      return { decision: updated, returnToFullyQuoted };
+      return { decision: updated, returnToFullyQuoted, quoteNeedsReturn };
     });
 
     // Quote first, then leg — same order as approve()/sendForApproval. The leg is still
@@ -861,7 +888,12 @@ export class AwardService {
     // (Task 2) skips the rollup it would otherwise trigger off this quote's status change; the
     // leg's own RETURN_FULL/RETURN_PARTIAL fire right after is what actually moves it, using the
     // `returnToFullyQuoted` answer already computed above.
-    if (decision.shortlistedQuoteId) {
+    //
+    // Q5 — `quoteNeedsReturn` is false whenever the shortlisted quote had already drifted off
+    // PENDING_APPROVAL (or vanished) by guard time; firing RETURN against it here would find no
+    // matching edge and throw `IllegalTransitionError` AFTER the decision above has already
+    // committed to DRAFT, which is precisely the half-committed hazard this skip exists to avoid.
+    if (decision.shortlistedQuoteId && quoteNeedsReturn) {
       await this.status.fire("quote", decision.shortlistedQuoteId, QuoteEvent.RETURN, {
         queryId,
         actorId: user.userId,
