@@ -144,9 +144,11 @@ function buildCandidates(leg: LegComparisonDto): Candidate[] {
 /**
  * NegotiateDialog — the maker's leg-level "ask selected forwarders to revise their price" action
  * (S5.7 T5, replacing S5.6's per-forwarder button + single-forwarder dialog in `MakerPanel`). One
- * `Checkbox` per eligible/ineligible forwarder (deduplicated — see `buildCandidates`), a shared
- * note by default with a toggle that swaps in one note box per SELECTED forwarder, and a Send that
- * fires N sequential `request-requote` calls via `useRequestRequoteBatch` — see that hook's doc
+ * `Checkbox` per eligible/ineligible forwarder (deduplicated — see `buildCandidates`), ONE shared
+ * note applied to every selected forwarder (S5.9.2 product item 1 — the earlier per-forwarder
+ * note toggle/boxes are gone; a maker wanting different wording for one forwarder selects just
+ * that forwarder and sends alone), and a Send that fires N sequential `request-requote` calls via
+ * `useRequestRequoteBatch` — see that hook's doc
  * comment for why there is no single combined success/error state.
  *
  * **Partial success is a real state, not an error path.** `run()` never throws; it always resolves
@@ -170,9 +172,7 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
   const eligible = candidates.filter((c) => c.eligible);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [separateNotes, setSeparateNotes] = useState(false);
   const [sharedNote, setSharedNote] = useState("");
-  const [notes, setNotes] = useState<Record<string, string>>({});
   const [results, setResults] = useState<RequoteResult[] | null>(null);
 
   // Reset every bit of selection/note/result state whenever the dialog re-opens — a cancelled (or
@@ -180,9 +180,7 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
   useEffect(() => {
     if (open) {
       setSelected(new Set());
-      setSeparateNotes(false);
       setSharedNote("");
-      setNotes({});
       setResults(null);
     }
   }, [open]);
@@ -191,17 +189,11 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
   const selectedCandidates = candidates.filter((c) => c.eligible && selected.has(c.freightForwarderId));
   const n = selectedCandidates.length;
 
-  function noteFor(id: string): string {
-    return separateNotes ? (notes[id] ?? "") : sharedNote;
-  }
-
   // Same rule `requestRequoteSchema` enforces server-side — non-empty AND no more than
-  // `NOTE_MAX_LENGTH` — checked against whichever note each selected forwarder will actually send
-  // (shared, or its own from `notes` when `separateNotes` is on).
-  const hasInvalidNote = selectedCandidates.some((c) => {
-    const trimmed = noteFor(c.freightForwarderId).trim();
-    return trimmed.length === 0 || trimmed.length > NOTE_MAX_LENGTH;
-  });
+  // `NOTE_MAX_LENGTH`. One shared note applies to every selected forwarder (S5.9.2 product item 1
+  // — an exec wanting different wording per forwarder selects one at a time instead), so there is
+  // only ever one note to validate.
+  const hasInvalidNote = n > 0 && (sharedNote.trim().length === 0 || sharedNote.trim().length > NOTE_MAX_LENGTH);
   const canSubmit = n > 0 && !hasInvalidNote && !batch.isPending;
 
   function toggleForwarder(id: string, checked: boolean) {
@@ -219,10 +211,11 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
 
   async function handleSend() {
     if (!canSubmit) return;
+    const note = sharedNote.trim();
     const targets: RequoteTarget[] = selectedCandidates.map((c) => ({
       quoteId: c.quoteId as string,
       freightForwarderName: c.freightForwarderName,
-      comment: noteFor(c.freightForwarderId).trim(),
+      comment: note,
     }));
     const idByQuoteId = new Map(selectedCandidates.map((c) => [c.quoteId as string, c.freightForwarderId]));
 
@@ -301,53 +294,26 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
                 {!c.eligible && (
                   <p className="pl-6 text-xs text-muted-foreground">{c.reason}</p>
                 )}
-                {separateNotes && selected.has(c.freightForwarderId) && (
-                  <div className="space-y-1 pl-6">
-                    <Label htmlFor={`negotiate-note-${c.freightForwarderId}`}>
-                      Note for {c.freightForwarderName}
-                    </Label>
-                    <Textarea
-                      id={`negotiate-note-${c.freightForwarderId}`}
-                      value={notes[c.freightForwarderId] ?? ""}
-                      onChange={(e) =>
-                        setNotes((prev) => ({ ...prev, [c.freightForwarderId]: e.target.value }))
-                      }
-                    />
-                    {noteTooLong(notes[c.freightForwarderId] ?? "") && (
-                      <p role="alert" className="text-sm text-destructive">
-                        Note must be {NOTE_MAX_LENGTH} characters or fewer.
-                      </p>
-                    )}
-                  </div>
-                )}
               </li>
             ))}
           </ul>
 
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={separateNotes}
-              onCheckedChange={(v) => setSeparateNotes(v === true)}
-              aria-label="Send a separate note per forwarder"
+          {/* S5.9.2 product item 1 — one shared note applied to every selected forwarder. The
+              per-forwarder note toggle/boxes this used to offer are gone: an exec who wants
+              different wording for one forwarder selects just that forwarder and sends alone. */}
+          <div className="space-y-1">
+            <Label htmlFor="negotiate-note">Note</Label>
+            <Textarea
+              id="negotiate-note"
+              value={sharedNote}
+              onChange={(e) => setSharedNote(e.target.value)}
             />
-            Send a separate note per forwarder
-          </label>
-
-          {!separateNotes && (
-            <div className="space-y-1">
-              <Label htmlFor="negotiate-note">Note</Label>
-              <Textarea
-                id="negotiate-note"
-                value={sharedNote}
-                onChange={(e) => setSharedNote(e.target.value)}
-              />
-              {noteTooLong(sharedNote) && (
-                <p role="alert" className="text-sm text-destructive">
-                  Note must be {NOTE_MAX_LENGTH} characters or fewer.
-                </p>
-              )}
-            </div>
-          )}
+            {noteTooLong(sharedNote) && (
+              <p role="alert" className="text-sm text-destructive">
+                Note must be {NOTE_MAX_LENGTH} characters or fewer.
+              </p>
+            )}
+          </div>
 
           {results && (
             <ul className="space-y-1 text-sm" data-testid="negotiate-results">

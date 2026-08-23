@@ -73,31 +73,37 @@ interface CompareLegPanelProps {
  * Approval"). With nothing left in the trailing area that needs its own focus stop, the split no
  * longer earns its keep — `LegStatusBadge` renders a plain, non-focusable `<div>` (`Badge`), so it
  * moved back inside the button with nothing "interactive inside interactive" to worry about.
- * The body renders the read-only `(FF × variant)` comparison — a "N offers received" summary, the
- * `ComparisonGrid` itself (the recommendation now reads by column colour, not a separate banner —
- * S5.7 T1), and — once a column header is clicked — that offer's itemised breakdown in a
- * `ChargeBreakdownDialog` modal (S5.7 T3; used to be an inline detail block). Below the grid sits
- * ONE action bar (`data-testid="leg-action-bar"`) shared by maker and checker roles, composed by
- * role rather than swapped wholesale (S5.9.1 Task 2, product decision): "Negotiate…" opens
- * `NegotiateDialog` (S5.7 T5) for an EXECUTIVE viewer only — Manager/Admin never see it, because
- * their path to a revised price is Reject with a reason (product item 1), not a per-condition
- * disable the way `negotiateDisabledReason` handles PENDING_APPROVAL for an Executive. "Send for
- * approval…" opens `SendForApprovalDialog` (S5.9 T9) and stays available to EVERY role the
- * `canSend` gate allows, Manager/Admin included — deliberately: the four-eyes rule needs a Manager
- * able to send a leg for a *different* Manager to check, so Send is not checker-exclusive the way
- * Negotiate is maker-exclusive. "Approve"/"Reject" (S5.9.1 Task 2) render only for Manager/Admin
- * once `decision.status === "PENDING_APPROVAL"` (`canCheck`, absorbing what used to be the
- * standalone `CheckerPanel`'s self-gate), each opening its own confirmation — `ApproveDialog`
- * names the shortlisted forwarder before firing `useApprove`, `RejectDialog` collects the required
- * reason before firing `useReject` — never mutating from the bar directly. Four-eyes
- * (`decision.sentByUserId === user.id`) disables both WITHOUT hiding them, with the same visible
- * hint `CheckerPanel` carried since S5.6; `CheckerPanel.tsx` itself is deleted (Task 2's judgement
- * call — see its own removal note atop `GenerateGate.test.tsx`, the file `CheckerPanel.test.tsx`
- * was renamed to once nothing `CheckerPanel`-shaped was left in it) since every line it rendered (the
- * hint, the two buttons, the reason form) now lives directly in this bar or in the two dialogs it
- * opens, leaving nothing for a separate component to own. `MakerPanel` below keeps only the
- * rejection alert (or renders nothing) — the two locked-state explanations `DecisionChip` used to
- * carry as tooltip copy are simply gone with it (S5.9.1).
+ * The body opens with `MakerPanel` (S5.9.2 Q7 — moved to the TOP of the body, above everything
+ * else, product owner's own words: "we don't want anything at [sic] leg collapse" but the reason
+ * must be found first, not last) — it renders only the rejection alert (or nothing at all); the
+ * two locked-state explanations `DecisionChip` used to carry as tooltip copy are simply gone with
+ * it (S5.9.1). Below that sits the read-only `(FF × variant)` comparison — a "N offers received"
+ * summary, the `ComparisonGrid` itself (the recommendation now reads by column colour, not a
+ * separate banner — S5.7 T1), and — once a column header is clicked — that offer's itemised
+ * breakdown in a `ChargeBreakdownDialog` modal (S5.7 T3; used to be an inline detail block). Below
+ * the grid sits ONE action bar (`data-testid="leg-action-bar"`) shared by maker and checker roles,
+ * composed by role rather than swapped wholesale (S5.9.1 Task 2, product decision): "Negotiate…"
+ * opens `NegotiateDialog` (S5.7 T5) for an EXECUTIVE viewer only — Manager/Admin never see it,
+ * because their path to a revised price is Reject with a reason (product item 1), not a
+ * per-condition disable the way `negotiateDisabledReason` handles PENDING_APPROVAL for an
+ * Executive. "Send for approval…" opens `SendForApprovalDialog` (S5.9 T9); for an Executive it is
+ * available whenever `canSend`'s decision-status terms allow it, but for Manager/Admin `canSend`
+ * carries one more term (S5.9.2 Q6, PO ruling): `leg.decision != null` — a checker only ever sees
+ * Send once an exec has sent this leg at least once (the ONLY thing that can create a
+ * `LegAwardDecision` row is `sendForApproval`'s upsert), which still lets the four-eyes rule work
+ * (a Manager can push a leg an exec sent — and a different Manager rejected back to DRAFT, or a
+ * re-quote fell back from — forward for a *different* Manager to check) without offering a
+ * checker a Send affordance on a leg no exec has ever shortlisted. "Approve"/"Reject" (S5.9.1
+ * Task 2) render only for Manager/Admin once `decision.status === "PENDING_APPROVAL"` (`canCheck`,
+ * absorbing what used to be the standalone `CheckerPanel`'s self-gate), each opening its own
+ * confirmation — `ApproveDialog` names the shortlisted forwarder before firing `useApprove`,
+ * `RejectDialog` collects the required reason before firing `useReject` — never mutating from the
+ * bar directly. Four-eyes (`decision.sentByUserId === user.id`) disables both WITHOUT hiding them,
+ * with the same visible hint `CheckerPanel` carried since S5.6; `CheckerPanel.tsx` itself is
+ * deleted (Task 2's judgement call — see its own removal note atop `GenerateGate.test.tsx`, the
+ * file `CheckerPanel.test.tsx` was renamed to once nothing `CheckerPanel`-shaped was left in it)
+ * since every line it rendered (the hint, the two buttons, the reason form) now lives directly in
+ * this bar or in the two dialogs it opens, leaving nothing for a separate component to own.
  *
  * **The "which offer" state.** `selectedOfferKey` — which offer's charge breakdown dialog is open —
  * is the ONLY such state left here. Defaults to `undefined` (closed) and TOGGLES closed on a second
@@ -152,7 +158,6 @@ export function CompareLegPanel({
   // never persisted — `reject()` writes DRAFT + `rejectionReason` in one update — so a returned leg
   // is an editable DRAFT and keeps Send available (final review I2).
   const decisionStatus = leg.decision?.status;
-  const canSend = !locked && decisionStatus !== "PENDING_APPROVAL" && decisionStatus !== "APPROVED";
 
   // S5.9.1 Task 2 (R3/R5) — `isChecker` gates Negotiate OFF (product item 1: Manager/Admin reject
   // with a reason instead) and gates Approve/Reject ON once there's something to check. This is
@@ -161,6 +166,21 @@ export function CompareLegPanel({
   // already uses — one predicate, computed identically wherever "is this viewer a checker?" comes
   // up, so the three call sites can't quietly drift apart on who counts.
   const isChecker = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
+
+  // S5.9.2 Q6 (PO ruling) — a Manager/Admin sees "Send for approval" only once a `LegAwardDecision`
+  // row exists (`leg.decision != null`). `sendForApproval`'s upsert is the ONLY creator of that
+  // row anywhere in the codebase, so `decision != null` means exactly "an exec has sent this leg
+  // for approval at least once" — it bites on a leg an exec sent and a checker rejected back to
+  // DRAFT (the row survives with the rejection reason on it), or one a re-quote fell back from
+  // PENDING_APPROVAL: a manager may still push either forward. A brand-new, never-sent leg has no
+  // decision row at all, and Manager/Admin have no shortlist of their own to send — that path is
+  // exec-only, same as Negotiate. Executives are unaffected by this term (`!isChecker` short-
+  // circuits it) — this is a checker-only condition on top of the existing decision-status gate.
+  const canSend =
+    !locked &&
+    decisionStatus !== "PENDING_APPROVAL" &&
+    decisionStatus !== "APPROVED" &&
+    (!isChecker || leg.decision != null);
   // The `!locked` term is the final whole-branch review's fix: this component's `locked` contract
   // says the checker surfaces are NOT MOUNTED while locked, and the action BAR honoured that
   // (`!locked && hasActionBarControls`) — but `ApproveDialog`/`RejectDialog` below were gated on
@@ -278,6 +298,13 @@ export function CompareLegPanel({
 
       {open && (
         <div data-testid="leg-body" className="space-y-4 border-t border-border p-4">
+          {/* S5.9.2 Q7 (PO ruling) — the rejection alert sits at the very TOP of the expanded body,
+              above the comparison table and the action bar, so it is found first rather than last.
+              It stays a standing, visible alert (never a hover/tooltip — the exact defect an
+              earlier review already caught once, S5.6 final review I2) and renders nothing at all
+              when there is no rejection reason to show (`MakerPanel` itself returns `null`) — and,
+              being inside `{open && (...)}`, nothing on a collapsed row either. */}
+          {!locked && <MakerPanel leg={leg} />}
           {/* Left: offer count. Right: the view-mode toggle — the wrapper Task 2 left room for.
               The maker action bar (S5.9 T9) moved below the grid; this line is purely informational
               now. */}
@@ -400,7 +427,6 @@ export function CompareLegPanel({
               leg={leg}
             />
           )}
-          {!locked && <MakerPanel leg={leg} />}
           <DecisionTimeline timeline={leg.timeline} />
         </div>
       )}

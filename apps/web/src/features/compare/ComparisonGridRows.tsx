@@ -8,7 +8,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ForwarderStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import {
@@ -20,7 +19,6 @@ import {
   RECOMMENDED_MARK,
   SENT_FOR_APPROVAL_MARK,
   SENT_FOR_APPROVAL_ACCESSIBLE_NAME,
-  STALE_OFFER_LABEL,
   type ComparisonRowModel,
   type OfferCell,
 } from "./comparisonRowModel";
@@ -201,16 +199,11 @@ export function ComparisonGridRows({
                       className={cn("px-3 py-2 text-center", cell.recommended && RECOMMENDED_TINT)}
                     >
                       <div className="flex flex-wrap items-center justify-center gap-1">
+                        {/* S5.9.2 Q4 (PO ruling) — same removal as `ComparisonGridColumns.tsx`'s
+                            identical block: `ForwarderStatusBadge` already reads "RFQ-Resent" for
+                            a `REQUOTED` offer, so the second `STALE_OFFER_LABEL` badge here just
+                            duplicated it. */}
                         <ForwarderStatusBadge status={cell.offer.quoteStatus} />
-                        {cell.stale && (
-                          <Badge
-                            variant="warning"
-                            data-testid={`offer-stale-${cell.key}`}
-                            className="whitespace-nowrap"
-                          >
-                            {STALE_OFFER_LABEL}
-                          </Badge>
-                        )}
                       </div>
                     </TableCell>
                   </TableRow>

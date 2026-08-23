@@ -32,7 +32,10 @@ export interface MakerPanelProps {
  *     of the panel (final review I2). This is the ONE thing left that this panel renders: it is the
  *     maker's only on-screen cue that rework is needed, and burying it behind a hover was the exact
  *     defect an earlier review already caught once (S5.6 final review, finding I2) — it must stay a
- *     standing, visible alert, never a tooltip;
+ *     standing, visible alert, never a tooltip. S5.9.2 Q7 (PO ruling) went further and moved
+ *     `CompareLegPanel`'s render of this panel to the very TOP of the expanded leg body — above the
+ *     comparison table and the action bar — because a standing alert buried below both was still
+ *     found last, not first; this component itself is unchanged, only where its caller mounts it;
  *   - the per-forwarder Negotiate buttons are GONE — S5.7 T5 moved negotiation to one leg-level
  *     "Negotiate…" button + multi-forwarder dialog, wired in `CompareLegPanel` itself (it already
  *     owns the leg's decision status the button disables on, and — since S5.9.1 Task 2 — the same

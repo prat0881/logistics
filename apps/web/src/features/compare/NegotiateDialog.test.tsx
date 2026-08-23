@@ -293,22 +293,18 @@ describe("NegotiateDialog", () => {
     expect(JSON.parse(lastFetchBody("request-requote"))).toEqual({ comment: "budget is $1,500" });
   });
 
-  it("sends a per-forwarder note when the separate-notes toggle is on", async () => {
-    const { fetchFn, calls } = createRequoteFetch();
-    const user = userEvent.setup();
-    renderNegotiate({ fetchFn });
+  // S5.9.2 product item 1 — the per-forwarder note toggle is gone; only ONE shared note exists
+  // now, applied to every selected forwarder. Mutation-proved: restoring the deleted `Checkbox`
+  // (`aria-label="Send a separate note per forwarder"`) turns this red; removing it again turns it
+  // green (task-3-report.md).
+  it("no longer offers a separate-notes toggle — one shared note applies to everyone selected", async () => {
+    renderNegotiate();
 
-    await user.click(await screen.findByRole("checkbox", { name: /select all/i }));
-    await user.click(screen.getByRole("checkbox", { name: /separate note/i }));
-
-    await user.type(screen.getByLabelText(/note for bridge/i), "Bridge: sharpen the freight line.");
-    await user.type(screen.getByLabelText(/note for falcon/i), "Falcon: match Bridge's rate.");
-    await user.click(screen.getByRole("button", { name: /send to 2 forwarders/i }));
-
-    await waitFor(() => expect(calls).toHaveLength(2));
-    const byQuote = Object.fromEntries(calls.map((c) => [c.quoteId, c.body]));
-    expect(byQuote["q-bridge"]).toEqual({ comment: "Bridge: sharpen the freight line." });
-    expect(byQuote["q-falcon"]).toEqual({ comment: "Falcon: match Bridge's rate." });
+    await screen.findByRole("checkbox", { name: /bridge/i }); // positive control — list has rendered
+    expect(
+      screen.queryByRole("checkbox", { name: /separate note/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/note for bridge/i)).not.toBeInTheDocument();
   });
 
   it("disables Send until every required note is filled in", async () => {
@@ -325,14 +321,12 @@ describe("NegotiateDialog", () => {
 
   // Fix round 1, MINOR #2 — the single-forwarder dialog this replaced enforced
   // `requestRequoteSchema`'s FULL bound (`.trim().min(1).max(2000)`) via `zodResolver`; the
-  // rewrite only checked non-empty, silently dropping the max-length half. Covers both the shared
-  // note and a per-forwarder note under the separate-notes toggle.
-  it("flags a note over 2000 characters and disables Send, for both the shared and per-forwarder note", async () => {
+  // rewrite only checked non-empty, silently dropping the max-length half.
+  it("flags a note over 2000 characters and disables Send", async () => {
     const { fetchFn } = createRequoteFetch();
-    const user = userEvent.setup();
     renderNegotiate({ fetchFn });
 
-    await user.click(await screen.findByRole("checkbox", { name: /bridge/i }));
+    await userEvent.setup().click(await screen.findByRole("checkbox", { name: /bridge/i }));
     const sharedNote = screen.getByLabelText(/^note$/i);
     // `userEvent.type` drives one keystroke at a time — far too slow for 2000+ characters — so the
     // over-limit value is set directly, same as a paste would land in the controlled input.
@@ -346,15 +340,6 @@ describe("NegotiateDialog", () => {
     fireEvent.change(sharedNote, { target: { value: "a".repeat(2000) } });
     expect(screen.queryByText(/2000 characters or fewer/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /send to 1 forwarder/i })).toBeEnabled();
-
-    // Same bound on the per-forwarder path.
-    await user.click(await screen.findByRole("checkbox", { name: /falcon/i }));
-    await user.click(screen.getByRole("checkbox", { name: /separate note/i }));
-    const falconNote = screen.getByLabelText(/note for falcon/i);
-    fireEvent.change(falconNote, { target: { value: "b".repeat(2001) } });
-
-    expect(await screen.findByText(/2000 characters or fewer/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /send to 2 forwarders/i })).toBeDisabled();
   });
 
   it("reports partial success per forwarder and stays open", async () => {

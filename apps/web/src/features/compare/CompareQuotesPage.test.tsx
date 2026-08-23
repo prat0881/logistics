@@ -323,7 +323,7 @@ describe("CompareQuotesPage", () => {
   });
 
   describe.each(["EXECUTIVE", "MANAGER"] as const)("compare screen as %s", (role) => {
-    it("shows the grid and the Send for approval action", async () => {
+    it("shows the grid", async () => {
       renderPage({ role });
       await screen.findByText(role);
 
@@ -332,11 +332,47 @@ describe("CompareQuotesPage", () => {
       await screen.findByTestId("leg-body");
 
       expect(screen.getByTestId("comparison-grid")).toBeInTheDocument();
-      // S5.9 T9 — the action bar below the grid, not a per-offer Select button inside it. Send
-      // stays on for BOTH roles (S5.9.1 Task 2, R3) — the four-eyes flow needs a Manager able to
-      // send a leg for a different Manager to check, so Send is never checker-exclusive.
-      expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
     });
+  });
+
+  // ── S5.9.2 Q6 (PO ruling) — split out of the `describe.each` above, which used to assert Send
+  // for BOTH roles unconditionally: a Manager/Admin now sees "Send for approval" only once a
+  // `LegAwardDecision` row exists on the leg (`leg.decision != null`). LEG-1 carries no decision
+  // at all (see COMPARISON above), so an EXECUTIVE still gets Send on it (unaffected by Q6, the
+  // four-eyes flow this used to justify staying on for both roles only ever applied once a decision
+  // row already existed) while a MANAGER does not. ───────────────────────────────────────────────
+  it("offers Send for approval to an EXECUTIVE on a decision-less leg", async () => {
+    renderPage({ role: "EXECUTIVE" });
+    await screen.findByText("EXECUTIVE");
+
+    const leg1 = await screen.findByRole("button", { name: /LEG-1/i });
+    await userEvent.click(leg1);
+    await screen.findByTestId("leg-body");
+
+    expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
+  });
+
+  it("does not offer Send for approval to a MANAGER on a leg with no decision row yet (Q6)", async () => {
+    renderPage({ role: "MANAGER" });
+    await screen.findByText("MANAGER");
+
+    // Positive control — LEG-2's PENDING_APPROVAL decision offers this MANAGER a real Approve
+    // button, proving the role gate has genuinely resolved as MANAGER (not a still-null viewer)
+    // before the absence assertion below on the DIFFERENT, decision-less LEG-1 (Send is exactly
+    // what's under test here, so it can't be its own positive control the way it was for the
+    // Negotiate split above — a sibling leg's real checker control stands in for it instead).
+    const leg2 = await screen.findByRole("button", { name: /LEG-2/i });
+    await userEvent.click(leg2);
+    await screen.findByRole("button", { name: /^approve$/i });
+
+    // Single-open accordion — switching to LEG-1 closes LEG-2's body.
+    await userEvent.click(screen.getByRole("button", { name: /LEG-1/i }));
+    await screen.findByTestId("leg-body");
+
+    expect(screen.queryByRole("button", { name: /send for approval/i })).not.toBeInTheDocument();
+    // No decision row and no checker role match either, so the whole bar has zero controls left
+    // and withholds itself (`hasActionBarControls`) rather than rendering empty.
+    expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
   });
 
   // ── S5.9.1 Task 2 (product item 1) — split out of the describe.each above, which used to assert
@@ -358,12 +394,17 @@ describe("CompareQuotesPage", () => {
     renderPage({ role: "MANAGER" });
     await screen.findByText("MANAGER");
 
-    const leg1 = await screen.findByRole("button", { name: /LEG-1/i });
-    await userEvent.click(leg1);
-    // Positive control before the absence assertion — Send for approval renders for a Manager on
-    // this decision-less leg, proving the tree has settled as a real MANAGER (not a still-null
-    // viewer, which would also show no Negotiate for the wrong reason).
-    await screen.findByRole("button", { name: /send for approval/i });
+    // Positive control before the absence assertion — LEG-2's PENDING_APPROVAL decision offers
+    // this MANAGER a real Approve button, proving the tree has settled as a real MANAGER (not a
+    // still-null viewer, which would also show no Negotiate for the wrong reason). Send for
+    // approval can no longer serve as this control on LEG-1 — S5.9.2 Q6 withholds it from a
+    // MANAGER there too, since LEG-1 carries no decision row.
+    const leg2 = await screen.findByRole("button", { name: /LEG-2/i });
+    await userEvent.click(leg2);
+    await screen.findByRole("button", { name: /^approve$/i });
+
+    await userEvent.click(screen.getByRole("button", { name: /LEG-1/i }));
+    await screen.findByTestId("leg-body");
 
     expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
   });

@@ -7,7 +7,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ForwarderStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import {
@@ -19,7 +18,6 @@ import {
   RECOMMENDED_MARK,
   SENT_FOR_APPROVAL_MARK,
   SENT_FOR_APPROVAL_ACCESSIBLE_NAME,
-  STALE_OFFER_LABEL,
   type ComparisonRowModel,
   type OfferCell,
 } from "./comparisonRowModel";
@@ -229,16 +227,12 @@ export function ComparisonGridColumns({
                 )}
               >
                 <div className="flex flex-col items-center gap-1">
+                  {/* S5.9.2 Q4 (PO ruling) — the second `STALE_OFFER_LABEL` badge that used to sit
+                      here is gone: it duplicated `ForwarderStatusBadge`, which already reads
+                      "RFQ-Resent" for a `REQUOTED` offer (renamed for exactly this reason). Two
+                      badges saying the same thing was the duplication the product owner asked
+                      about — one status, one badge. */}
                   <ForwarderStatusBadge status={cell.offer.quoteStatus} />
-                  {cell.stale && (
-                    <Badge
-                      variant="warning"
-                      data-testid={`offer-stale-${cell.key}`}
-                      className="whitespace-nowrap"
-                    >
-                      {STALE_OFFER_LABEL}
-                    </Badge>
-                  )}
                 </div>
               </TableCell>
             ))}

@@ -282,7 +282,7 @@ export function SendForApprovalDialog({
           </div>
 
           {leg.awaitingReQuote && (
-            <div className="space-y-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm">
+            <div className="space-y-2 text-sm">
               <p>
                 This leg has an in-flight re-quote — the recommendation excludes it until the
                 forwarder responds. Confirm to send for approval anyway.
@@ -295,16 +295,24 @@ export function SendForApprovalDialog({
                 />
                 Proceed without waiting
               </label>
-              {proceed && (
-                <div className="space-y-1">
-                  <Label htmlFor={proceedId}>Reason</Label>
-                  <Textarea
-                    id={proceedId}
-                    value={proceedReason}
-                    onChange={(e) => setProceedReason(e.target.value)}
-                  />
-                </div>
-              )}
+              {/* PO ruling (S5.9.2 product item 9) — always rendered, not only after ticking the
+                  box above, and marked required: the reason is already enforced on submit
+                  (`handleSend` below), so this makes that requirement visible rather than
+                  conditional — the same treatment (label + helper text stating the requirement)
+                  the recommendation-override reason gets above. */}
+              <div className="space-y-1">
+                <Label htmlFor={proceedId}>Reason</Label>
+                <Textarea
+                  id={proceedId}
+                  required
+                  aria-required="true"
+                  value={proceedReason}
+                  onChange={(e) => setProceedReason(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Required — this leg has an in-flight re-quote.
+                </p>
+              </div>
               {proceedError && (
                 <p role="alert" className="text-sm text-destructive">
                   {proceedError}

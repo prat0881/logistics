@@ -342,12 +342,29 @@ describe("SendForApprovalDialog", () => {
   });
 
   // ── A9 (design §9) — carried over unchanged from `ShortlistDialog` ───────────────────────────
-  it("requires the A9 reason once proceed-without-waiting is ticked", async () => {
+  it("requires the A9 reason even with proceed-without-waiting left unticked", async () => {
     renderDialog({ leg: { ...LEG, awaitingReQuote: true } });
     await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/));
     await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(postJson).not.toHaveBeenCalled();
+  });
+
+  // ── S5.9.2 product item 9 (PO ruling) — the reason field renders ALWAYS, not only once the
+  // "Proceed without waiting" box is ticked; only the requirement (enforced above) was ever
+  // conditional. Mutation-proved: reintroducing the deleted `{proceed && (...)}` wrapper around
+  // the reason `Textarea` in `SendForApprovalDialog.tsx` makes this red (the field disappears
+  // before the box is ticked); removing the wrapper again turns it green (task-3-report.md).
+  it("shows the A9 reason field before proceed-without-waiting is ticked, marked required", async () => {
+    renderDialog({ leg: { ...LEG, awaitingReQuote: true } });
+    await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/));
+
+    const reason = await screen.findByLabelText(/^reason$/i);
+    expect(reason).toBeInTheDocument();
+    expect(reason).toBeRequired();
+    expect(
+      screen.getByRole("checkbox", { name: /proceed without waiting/i }),
+    ).not.toBeChecked();
   });
 
   it("sends the A9 confirmation once the box is ticked and a reason given", async () => {

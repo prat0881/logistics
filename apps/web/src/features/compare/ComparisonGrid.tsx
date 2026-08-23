@@ -2,23 +2,20 @@ import type { LegComparisonDto } from "@svyft/shared";
 import { ForwarderStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import {
   buildComparisonRowModel,
-  offerKey,
   RECOMMENDATION_FOOTNOTE,
   SENT_FOR_APPROVAL_FOOTNOTE,
-  STALE_OFFER_LABEL,
   type OfferCell,
 } from "./comparisonRowModel";
 import { ComparisonGridColumns } from "./ComparisonGridColumns";
 import { ComparisonGridRows } from "./ComparisonGridRows";
 import type { ViewMode } from "./useViewMode";
 
-// Both of these now LIVE in `comparisonRowModel.ts` (S5.7 T1) — `offerKey` moved there verbatim,
-// `STALE_OFFER_LABEL` moved there to avoid a module cycle with `ComparisonGridColumns.tsx`, which
-// also needs it. They stay re-exported here because `ComparisonGrid.test.tsx` imports
-// `STALE_OFFER_LABEL` from this module; no production file resolves either symbol through here any
-// more (final review MINOR #8 — `MakerPanel` stopped importing from this module in T4, and
-// `CompareLegPanel` now takes `offerKey` from the leaf module alongside `buildComparisonRowModel`).
-export { offerKey, STALE_OFFER_LABEL };
+// `offerKey`/`STALE_OFFER_LABEL` used to be re-exported from here for `ComparisonGrid.test.tsx`
+// (final review MINOR #8 traces the earlier moves). S5.9.2 Task 3 (Q4's duplicate-badge removal)
+// deleted the grid's own use of `STALE_OFFER_LABEL` and the test's import of it through this
+// module — nothing resolves either symbol through here any more, so the re-export is gone too;
+// `offerKey` lives in `comparisonRowModel.ts` and `STALE_OFFER_LABEL` in the same module, imported
+// directly by whoever still needs them (`SendForApprovalDialog.tsx` and its own test).
 
 export interface ComparisonGridProps {
   leg: LegComparisonDto;

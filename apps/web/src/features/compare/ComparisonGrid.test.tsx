@@ -6,7 +6,7 @@ import type { LegComparisonDto, LegStatus, OfferDto } from "@svyft/shared";
 import { AuthProvider, useAuth } from "@/features/auth/AuthProvider";
 import { mockFetch } from "@/test/mock-fetch";
 import { CompareLegPanel } from "./CompareLegPanel";
-import { ComparisonGrid, STALE_OFFER_LABEL } from "./ComparisonGrid";
+import { ComparisonGrid } from "./ComparisonGrid";
 import {
   METRICS,
   METRIC_ALIGN,
@@ -464,9 +464,19 @@ describe.each(["columns", "rows"] as const)("ComparisonGrid — %s view", (mode)
     );
   });
 
-  it("badges a REQUOTED offer as stale re-quote-requested", async () => {
+  // S5.9.2 Q4 (PO ruling) — a REQUOTED offer now carries exactly ONE badge, the shared
+  // `ForwarderStatusBadge` reading "RFQ-Resent" (Task 1's rename) — the second, duplicate
+  // `STALE_OFFER_LABEL` badge that used to sit beside it is gone. Mutation-proved: restoring the
+  // deleted `{cell.stale && <Badge data-testid={`offer-stale-${cell.key}`}>…}</Badge>}` block in
+  // `ComparisonGridColumns.tsx`/`ComparisonGridRows.tsx` turns the second assertion below red;
+  // removing it again turns it green (task-3-report.md).
+  it("badges a REQUOTED offer with exactly one status badge — 'RFQ-Resent', not a second duplicate", async () => {
     renderGrid({ viewMode: mode });
-    expect(await screen.findByText(STALE_OFFER_LABEL)).toBeInTheDocument();
+    // "q3::DEDICATED" — `offerKey(quoteId, variant)` of `PARITY_STALE_OFFER` above, same literal
+    // convention `PARITY_RECOMMENDED_KEY` uses for its own offer.
+    const statusCell = await screen.findByTestId("offer-status-q3::DEDICATED");
+    expect(statusCell).toHaveTextContent("RFQ-Resent");
+    expect(screen.queryByTestId("offer-stale-q3::DEDICATED")).not.toBeInTheDocument();
   });
 
   it("keeps an un-priced offer's header non-interactive (never a button)", async () => {
@@ -899,14 +909,13 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
     expect(screen.queryByText("0.00 INR")).not.toBeInTheDocument();
   });
 
-  it("badges a REQUOTED offer as stale re-quote-requested", () => {
+  // S5.9.2 Q4 (PO ruling) — the duplicate second badge is gone; the shared `ForwarderStatusBadge`
+  // alone carries the "RFQ-Resent" label (Task 1's rename) for a REQUOTED offer.
+  it("badges a REQUOTED offer with exactly one status badge — 'RFQ-Resent', not a second duplicate", () => {
     renderPanel();
 
-    // S5.9.2 Q4 — the forwarder-status badge reads "RFQ-Resent", never "Requoted".
     expect(screen.getByTestId("offer-status-quote-3::DEDICATED")).toHaveTextContent("RFQ-Resent");
-    expect(screen.getByTestId("offer-stale-quote-3::DEDICATED")).toHaveTextContent(
-      /re-quote requested/i,
-    );
+    expect(screen.queryByTestId("offer-stale-quote-3::DEDICATED")).not.toBeInTheDocument();
   });
 
   it("lists the pending forwarder and the awaiting-re-quote note", () => {
@@ -954,6 +963,82 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
   it("keeps the leg-body offer-count summary the page test relies on", () => {
     renderPanel();
     expect(screen.getByTestId("leg-body")).toHaveTextContent("5 offers received");
+  });
+
+  // ── S5.9.2 Q7 (PO ruling) — the rejection alert moves to the TOP of the expanded leg body,
+  // above the comparison table and the action bar, so a maker finds it first rather than last.
+  // Mutation-proved: moving `{!locked && <MakerPanel leg={leg} />}` back to just above
+  // `<DecisionTimeline …>` in `CompareLegPanel.tsx` (its pre-S5.9.2 position) turns this red;
+  // moving it back to the top turns it green (task-3-report.md).
+  it("shows the rejection alert at the top of the expanded leg body, above the grid and the action bar", () => {
+    const rejectedLeg: LegComparisonDto = {
+      ...LEG,
+      decision: {
+        legId: LEG.legId,
+        status: "DRAFT",
+        shortlistedQuoteId: "quote-1",
+        shortlistedVariant: "DEDICATED",
+        recommendedQuoteId: "quote-1",
+        recommendedVariant: "DEDICATED",
+        overrideReason: null,
+        rejectionReason: "Transit too slow for this client.",
+        sentByUserId: "u1",
+        sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+        decidedByUserId: "u2",
+        decidedAt: "2026-08-14T10:00:00.000Z",
+      },
+    };
+    renderPanel(rejectedLeg);
+
+    const body = screen.getByTestId("leg-body");
+    const alert = screen.getByTestId("rejection-notice");
+    const grid = screen.getByTestId("comparison-grid");
+    expect(alert).toHaveTextContent("Transit too slow for this client.");
+    // DOCUMENT_POSITION_FOLLOWING (4) on `grid` relative to `alert` — the alert precedes the grid.
+    expect(alert.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(body.firstElementChild).toContainElement(alert);
+  });
+
+  // Nothing renders on a collapsed row — the alert lives inside `{open && (...)}` in
+  // `CompareLegPanel`, same as the rest of the body.
+  it("shows nothing for the rejection when the leg row is collapsed", () => {
+    const rejectedLeg: LegComparisonDto = {
+      ...LEG,
+      decision: {
+        legId: LEG.legId,
+        status: "DRAFT",
+        shortlistedQuoteId: "quote-1",
+        shortlistedVariant: "DEDICATED",
+        recommendedQuoteId: "quote-1",
+        recommendedVariant: "DEDICATED",
+        overrideReason: null,
+        rejectionReason: "Transit too slow for this client.",
+        sentByUserId: "u1",
+        sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+        decidedByUserId: "u2",
+        decidedAt: "2026-08-14T10:00:00.000Z",
+      },
+    };
+    vi.stubGlobal("fetch", mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })));
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AuthProvider>
+          <CompareLegPanel
+            queryId="q1"
+            leg={rejectedLeg}
+            open={false}
+            onToggle={() => {}}
+            locked={false}
+            fxAsOf={null}
+            viewMode="columns"
+            onViewModeChange={() => {}}
+          />
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByTestId("rejection-notice")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("leg-body")).not.toBeInTheDocument();
   });
 
   // ── S5.7 T5 — the leg-level Negotiate button `CompareLegPanel` now owns ──────────────────────
@@ -1375,11 +1460,83 @@ describe("Checker action bar — Approve/Reject (S5.9.1 Task 2)", () => {
   it("does not offer Approve or Reject to a manager when the leg has no pending decision", async () => {
     renderPanel({ ...LEG, decision: null }, { role: "MANAGER", withAuthProbe: true });
     await screen.findByText("MANAGER");
-    // A fresh, decision-less leg is always sendable — checked as a sanity check that the panel
-    // rendered something real, not as the auth-settlement control (the probe above is that).
-    expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^approve$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
+  });
+
+  // ── S5.9.2 Q6 (PO ruling): "Manager cannot see Send for approval without Exec requested." Four
+  // combinations of role × decision-exists — see this describe block's other Q6 tests for the
+  // EXECUTIVE half, which is unaffected by this gate. `LEG` (module-level fixture) has
+  // `decision: null`; overriding just `decision` on `PENDING_LEG` (this block's own fixture, whose
+  // `decision.status` is `PENDING_APPROVAL`) isn't usable here since PENDING_APPROVAL already
+  // excludes Send for an unrelated reason (`canSend` excludes it outright) — a DRAFT decision row
+  // is the one that isolates "does a row exist" from "is it currently pending".
+  it("does not offer Send for approval to a manager when no decision row exists yet", async () => {
+    renderPanel({ ...LEG, decision: null }, { role: "MANAGER", withAuthProbe: true });
+    await screen.findByText("MANAGER");
+    // Withholding Send leaves this manager with zero action-bar controls on a fresh, never-sent
+    // leg (no Negotiate — checker; no Approve/Reject — nothing pending; no Send — no decision row
+    // yet), so the whole bar is withheld (`hasActionBarControls`) — checked as the positive control
+    // that the panel rendered something real for this render, not the auth-settlement control
+    // (the probe above is that).
+    expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /send for approval/i })).not.toBeInTheDocument();
+  });
+
+  // The DRAFT-with-a-decision-row shape a rejected-then-returned leg is in (`MakerPanel.test.tsx`'s
+  // `withSavedShortlist`/`SAVED_LEG` are the exact same shape) — the case Q6 exists to unblock.
+  it("offers Send for approval to a manager once a decision row exists (e.g. a leg rejected back to DRAFT)", async () => {
+    const returnedLeg: LegComparisonDto = {
+      ...LEG,
+      decision: {
+        legId: LEG.legId,
+        status: "DRAFT",
+        shortlistedQuoteId: "quote-1",
+        shortlistedVariant: "DEDICATED",
+        recommendedQuoteId: "quote-1",
+        recommendedVariant: "DEDICATED",
+        overrideReason: null,
+        rejectionReason: "Transit too slow for this client.",
+        sentByUserId: "sender-1",
+        sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+        decidedByUserId: "checker-1",
+        decidedAt: "2026-08-14T10:00:00.000Z",
+      },
+    };
+    renderPanel(returnedLeg, { role: "MANAGER", withAuthProbe: true });
+    await screen.findByText("MANAGER");
+    expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
+  });
+
+  // Executive half of the same four combinations — Q6's gate is a checker-only term
+  // (`!isChecker || leg.decision != null`), so an EXECUTIVE must see Send in both shapes.
+  it("still offers Send for approval to an executive with no decision row yet", async () => {
+    renderPanel({ ...LEG, decision: null }, { role: "EXECUTIVE", withAuthProbe: true });
+    await screen.findByText("EXECUTIVE");
+    expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
+  });
+
+  it("still offers Send for approval to an executive once a decision row exists", async () => {
+    const returnedLeg: LegComparisonDto = {
+      ...LEG,
+      decision: {
+        legId: LEG.legId,
+        status: "DRAFT",
+        shortlistedQuoteId: "quote-1",
+        shortlistedVariant: "DEDICATED",
+        recommendedQuoteId: "quote-1",
+        recommendedVariant: "DEDICATED",
+        overrideReason: null,
+        rejectionReason: "Transit too slow for this client.",
+        sentByUserId: "sender-1",
+        sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+        decidedByUserId: "checker-1",
+        decidedAt: "2026-08-14T10:00:00.000Z",
+      },
+    };
+    renderPanel(returnedLeg, { role: "EXECUTIVE", withAuthProbe: true });
+    await screen.findByText("EXECUTIVE");
+    expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
   });
 
   // ── Review round (Minor) — the bar itself must not render when it would have zero controls
