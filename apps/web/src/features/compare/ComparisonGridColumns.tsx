@@ -55,12 +55,18 @@ export function ComparisonGridColumns({
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
-      {/* `w-auto` overrides the shared `Table`'s own `w-full` (table.tsx is off-limits — this is a
-       *  className override from the consumer, the sanctioned seam). With few offers, a `w-full`
-       *  table stretches its columns to fill the panel and the numbers end up stranded far from
-       *  their (narrow, centred) headers — the product owner's complaint. Sized-to-content still
-       *  scrolls correctly for a wide leg: the wrapping div above keeps `overflow-x-auto`. */}
-      <Table className="w-auto">
+      {/* S5.9.2 T4 (#6, PO ruling) — full width, columns spread evenly, values still centred.
+       *  A previous round set `w-auto` (sizing the table to its content, table.tsx is off-limits —
+       *  this is a className override from the consumer, the sanctioned seam) to fix a centring
+       *  regression, but that reopened the ORIGINAL complaint: a narrow table stranded in a wide
+       *  panel, all dead space to its right. `w-full` alone would just let `table-auto` stretch
+       *  columns in proportion to their content, which is uneven and not what "distributed evenly"
+       *  asks for. `table-fixed` makes column width purely a function of the header row's own
+       *  classes instead: the one cell with an explicit width (the `w-32` label column below) stays
+       *  fixed, and every offer column — none of which sets a width — splits the remaining space
+       *  equally. Centring is untouched: it still comes from `METRIC_ALIGN.columns` on both the
+       *  header and the cell (see the comment where it's applied below), not from anything here. */}
+      <Table className="w-full table-fixed">
         <TableHeader>
           <TableRow>
             <TableHead className="h-9 w-32 px-3" />

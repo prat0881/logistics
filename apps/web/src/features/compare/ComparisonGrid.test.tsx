@@ -816,6 +816,48 @@ describe("ComparisonGrid — orientation-aware metric alignment (S5.9.1 R6)", ()
   });
 });
 
+// ── S5.9.2 T4 (#6) — the columns table must fill its panel (no dead space beside it) AND keep
+// values centred under their headers at the same time. A previous round set `w-auto` so the table
+// sized to its content, which fixed a centring regression but reintroduced the product owner's
+// original "lot of white space" complaint. This round restores full width — via `table-fixed`, so
+// the offer columns split the remaining space evenly around the one genuinely fixed label column —
+// while `METRIC_ALIGN` keeps doing the centring, completely unchanged. The rows view never took
+// `w-auto` and is out of scope for this task; the last test below confirms it stayed that way.
+describe("ComparisonGrid — columns table fills its panel width (S5.9.2 T4)", () => {
+  const cellKey = PARITY_RECOMMENDED_KEY;
+
+  it("spreads the columns table to the full panel width, not sized to its content", () => {
+    renderGrid({ viewMode: "columns" });
+    const table = screen.getByRole("table");
+    expect(table.className).toContain("w-full");
+    expect(table.className).not.toMatch(/(^|\s)w-auto(\s|$)/);
+  });
+
+  it("distributes the offer columns evenly (table-layout: fixed) rather than sizing to content", () => {
+    renderGrid({ viewMode: "columns" });
+    expect(screen.getByRole("table").className).toContain("table-fixed");
+  });
+
+  // The trap this task exists to avoid: satisfying "full width" by reinstating `w-full` while
+  // losing the centring fix. Both must hold on the SAME render.
+  it("keeps values centred under their headers even at full width — the two must hold together", () => {
+    renderGrid({ viewMode: "columns" });
+    const table = screen.getByRole("table");
+    expect(table.className).toContain("w-full");
+    const header = screen.getByTestId(`offer-header-${cellKey}`).closest("th");
+    expect(header).not.toBeNull();
+    expect(header!.className).toContain(METRIC_ALIGN.columns);
+    expect(screen.getByTestId(`offer-usd-${cellKey}`).className).toContain(METRIC_ALIGN.columns);
+  });
+
+  it("leaves the rows table's width classing untouched", () => {
+    renderGrid({ viewMode: "rows" });
+    const table = screen.getByRole("table");
+    expect(table.className).not.toMatch(/(^|\s)w-auto(\s|$)/);
+    expect(table.className).not.toContain("table-fixed");
+  });
+});
+
 describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
   it("renders one column per offer, grouped under its forwarder, with USD total + transit", () => {
     renderPanel();

@@ -95,4 +95,49 @@ describe("GenerateGate", () => {
     renderGate([]);
     expect(screen.getByRole("button", { name: /generate quotation/i })).toBeDisabled();
   });
+
+  // ── S5.9.2 T4 (#5, PO ruling) — "Remove the box … just keep the button after all legs on the
+  // right hand side." The bordered card + heading is gone; the readiness note must still be
+  // reachable, but as text next to a right-aligned button, not inside a box with its own heading.
+  it("renders no heading and no bordered card — just the button and its readiness note", () => {
+    renderGate([APPROVED_LEG, PENDING_LEG]);
+    // The card used to carry an uppercase h3 heading with this exact copy; the button now carries
+    // the only occurrence of this text, as its own accessible name.
+    expect(screen.queryByRole("heading", { name: /generate quotation/i })).not.toBeInTheDocument();
+    const gate = screen.getByTestId("generate-gate");
+    expect(gate.className).not.toMatch(/\bborder\b/);
+    expect(gate.className).not.toMatch(/\brounded-lg\b/);
+  });
+
+  it("right-aligns the button after the legs", () => {
+    renderGate([APPROVED_LEG, PENDING_LEG]);
+    const gate = screen.getByTestId("generate-gate");
+    // Justified to the end (right, in LTR) rather than left-aligned inside a full-width card.
+    expect(gate.className).toMatch(/items-end|justify-end/);
+  });
+
+  it("keeps the readiness reason reachable as the disabled button's accessible description", () => {
+    renderGate([APPROVED_LEG, PENDING_LEG]);
+    // RTL's accessible-description matching resolves aria-describedby for us — this fails if the
+    // reason text is removed OR if it stops being wired to the button via aria-describedby.
+    const btn = screen.getByRole("button", { name: /generate quotation/i, description: /1 of 2/i });
+    expect(btn).toBeDisabled();
+  });
+
+  it("surfaces the inline error when the generate call fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/queries/q1/generate-client-quote") && init?.method === "POST") {
+          return { status: 409, body: { message: "Not every leg is approved yet." } };
+        }
+        return { status: 404 };
+      }),
+    );
+    renderWithProviders(<GenerateGate queryId="q1" legs={[APPROVED_LEG, OTHER_APPROVED_LEG]} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /generate quotation/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not every leg is approved yet.");
+  });
 });
