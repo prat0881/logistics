@@ -344,14 +344,26 @@ describe("SendForApprovalDialog", () => {
   // ── A9 (design §9) — carried over from `ShortlistDialog` ─────────────────────────────────────
   //
   // `handleSend`'s A9 guard is ONE disjunction — `leg.awaitingReQuote && (!proceed ||
-  // !proceedReason.trim())` — so it has two independent failure modes and needs a case per mode.
-  // Final whole-branch review, IMPORTANT 2: only the first was ever covered. Task 3 retitled that
-  // test "requires the A9 reason even with proceed-without-waiting left unticked" but left its body
-  // alone, and the body never ticks the box or types a reason — `!proceed` short-circuits, so
-  // deleting the reason half of the guard outright left all 859 web tests green (confirmed). The
-  // second case below is the missing one; both now assert the A9 message TEXT (a bare
-  // `findByRole("alert")` was also satisfied by the override-reason error and by the mutation
-  // error alert) and each pins the precondition that makes it the mode it claims to be.
+  // !proceedReason.trim())` — so it has two independent failure modes. Final whole-branch review,
+  // IMPORTANT 2: only the first was ever covered, and even that coverage was never a per-mode
+  // falsification. Task 3 retitled that test "requires the A9 reason even with proceed-without-
+  // waiting left unticked" but left its body alone, and the body never ticks the box or types a
+  // reason — `!proceed` short-circuits, so deleting the reason half of the guard outright left all
+  // 859 web tests green (confirmed).
+  //
+  // The second case below closes the reason half: it ticks the box and types a spaces-only reason,
+  // so `!proceedReason.trim()` is the only disjunct left standing — mutating it away (see the
+  // comment above that test) turns it red. That half is now genuinely falsifiable.
+  //
+  // The checkbox half (`!proceed`) is still NOT, re-verified directly: deleting `!proceed` outright
+  // — leaving `leg.awaitingReQuote && !proceedReason.trim()` — leaves this file's 18 tests green,
+  // "first failure mode" included, because that test never fills in a reason either; the blank
+  // reason refuses the send on its own regardless of what `!proceed` says. Isolating `!proceed`
+  // would need a case with the box left UNTICKED but a non-blank reason typed in, which no test
+  // here provides. Both tests below assert the A9 message TEXT (a bare `findByRole("alert")` was
+  // also satisfied by the override-reason error and by the mutation error alert) and each pins the
+  // precondition that sets up its scenario — but only the second pins one that actually falsifies
+  // the term it names.
   it("refuses the send while proceed-without-waiting is unticked (A9, first failure mode)", async () => {
     renderDialog({ leg: { ...LEG, awaitingReQuote: true } });
     await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/));

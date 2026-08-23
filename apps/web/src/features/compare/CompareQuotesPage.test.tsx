@@ -328,7 +328,11 @@ describe("CompareQuotesPage", () => {
     // — an already-open dialog when the lock engages mid-session. That is where the replacement
     // test lives, in `ComparisonGrid.test.tsx`'s "SendForApprovalDialog is gated by the same rule
     // as the button that opens it" block, which has a re-renderable panel harness for exactly this
-    // shape. The whole-bar assertion above still covers the locked gate at this level.
+    // shape. The whole-bar assertion above still covers the locked BEHAVIOUR at this level, but
+    // not either term that produces it: `canCheck`'s own `!locked` (`CompareLegPanel.tsx:193`) and
+    // the action bar's own `!locked` (`:331`) mask each other for this leg (LEG-2 is
+    // PENDING_APPROVAL, MANAGER is the checker) — deleting just one still leaves the other blocking
+    // the bar, so this assertion stays green either way; only deleting both turns it red.
   });
 
   describe.each(["EXECUTIVE", "MANAGER"] as const)("compare screen as %s", (role) => {
