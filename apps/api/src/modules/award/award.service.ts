@@ -281,10 +281,35 @@ export class AwardService {
   //   * the live rollup promotes a leg whose straggler resolved DURING review — the projector's
   //     ROLLUP_FROZEN guard skips a leg in PENDING_APPROVAL, so nothing else recomputes it (the
   //     Task-2 "nothing recomputes on unfreeze" carry-forward); and
-  //   * `from === FULLY_QUOTED` covers the converse — a leg sent from a genuine FULLY_QUOTED whose
-  //     sibling is knocked OFF "resolved" during review (e.g. a change-order INVALIDATEs it),
-  //     where the live rollup would now say `null` and reject() would otherwise demote the leg
+  //   * `from === FULLY_QUOTED` covers the converse — a leg whose ROW said FULLY_QUOTED at send
+  //     time while its quotes no longer justify it, where the live rollup alone would demote it
   //     below the status it actually held.
+  //
+  // CORRECTED (S5.9.2 Task 1, review round 2 — NEW-1). The second bullet used to justify itself
+  // with "a sibling knocked OFF 'resolved' during review (e.g. a change-order INVALIDATEs it)".
+  // **Traced, and it cannot happen**: ChangeOrderStrategy fires the quote's INVALIDATE *and* the
+  // leg's REOPEN across every affected leg, and AwardChangeOrderListener resets the decision to
+  // DRAFT — the leg leaves PENDING_APPROVAL, so `requireDecidable` 409s long before either
+  // predicate runs. `requestRequote` on a sibling mid-review is refused outright by its own
+  // decision-is-PENDING_APPROVAL guard. That claim replaced the false hysteresis claim in this
+  // same spot and was no better; naming a mechanism without tracing it is the pattern this round
+  // existed to end.
+  //
+  // The mechanism that IS reachable, traced end-to-end against the running app: **a later RFQ
+  // distribution adding a forwarder to a leg that is already FULLY_QUOTED.** `rfq.service.ts`
+  // gates its `SEND_RFQ` leg fire on `leg.status === READY_FOR_RFQ`, so the leg gets no fire at
+  // all (and no error — distribution is refused only for a DRAFT leg), while the new quote's own
+  // SEND fire lands it at RFQ_SENT. `LegQuoteProjector` then computes PARTIALLY_QUOTED and
+  // DISCARDS it: the never-walk-backwards backstop only fires QUOTE_PARTIAL from RFQ_SENT, and
+  // the Q1 backward walk is gated on a re-quote, which this is not. So the leg ROW stays
+  // FULLY_QUOTED above a rollup that has dropped below it — A3 passes on the row, the send
+  // records `from = FULLY_QUOTED` and NO permission, and by approve time only this term can carry
+  // the decision. Verified: with this term deleted that flow 409s.
+  //
+  // Note the honest limit of the phrase "the leg genuinely held FULLY_QUOTED": it means the leg
+  // ROW said so. As the case above shows (and `award-requote-fallback.e2e-spec.ts`'s "(j)" pins),
+  // such a leg can carry an unresolved quote. The predicate's letter is exact — it reports what
+  // the leg held — but it is a weaker statement about the quotes than it first reads as.
   // Neither term can make a leg WORSE than the other alone would, which is precisely the property
   // reject() needs to pick RETURN_FULL vs RETURN_PARTIAL without ever promoting a leg into a state
   // it never earned.
@@ -736,9 +761,11 @@ export class AwardService {
   // S5.9 final whole-branch review, CRITICAL 1 — that choice originally came from
   // `legRollupTarget` ALONE, with `null` (and everything else) falling through to RETURN_PARTIAL.
   // On a leg sent through A9 that silently DEMOTED a genuinely FULLY_QUOTED leg to
-  // PARTIALLY_QUOTED: the pure rollup cannot reproduce a status the leg earned earlier and was
-  // not given back (at the time, the projector's hysteresis — since removed by S5.9.2 Q1; today
-  // the same gap arises when a change-order knocks a sibling off "resolved" mid-review), and the
+  // PARTIALLY_QUOTED: the pure rollup cannot reproduce a status the leg earned earlier and was not
+  // given back (at the time, the projector's hysteresis — since removed by S5.9.2 Q1; the gap
+  // still exists, reached today by a later distribution onto an already-FULLY_QUOTED leg — see
+  // `isFullyQuotedForDecision`, which traces it, and do NOT substitute the change-order story that
+  // used to stand here: it is unreachable), and the
   // fall-through treated "I cannot tell" as "partial". It
   // now asks `isFullyQuotedForDecision`, which also consults the status the leg actually LEFT
   // when it was sent (recorded immutably in `StatusTransition`), so a reject can never leave a

@@ -23,15 +23,31 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 // (`leg.status === RFQ_SENT`) discarded that answer — the leg kept reading "Fully Quoted" and the
 // query "Quoted" while we were in fact waiting on a forwarder again.
 //
-// The second half of this file is the guard interaction Q1 breaks and Q3 repairs. A leg sent via
-// A9's "proceed without waiting" hatch used to leave FULLY_QUOTED, which `approve()` reads back
-// off the immutable StatusTransition row (`legStatusWhenSentForApproval`) as its second
-// "is this leg fully quoted?" term. After Q1 the same leg leaves PARTIALLY_QUOTED, so that term
-// stops covering the case and approve would 409 forever — exactly the Critical the last
-// whole-branch review found. Q3 gives approve a THIRD, narrower term: the send was an explicit,
-// recorded proceed-without-waiting override. Deliberately NOT added to
-// `isFullyQuotedForDecision` itself, because reject() uses that to pick its return target and
-// must still return a fallen-back leg to PARTIALLY_QUOTED, never a promoted FULLY_QUOTED.
+// The second half of this file is the guard interaction Q1 breaks. A leg sent via A9's "proceed
+// without waiting" hatch used to leave FULLY_QUOTED, which `approve()` reads back off the
+// immutable StatusTransition row as its "the leg held FULLY_QUOTED" term. After Q1 the same leg
+// leaves PARTIALLY_QUOTED, so that term stops covering the case and approve would 409 forever —
+// exactly the Critical the last whole-branch review found.
+//
+// CORRECTED (review round 2 — NEW-2): this preamble used to stop there, describing Q3's original,
+// narrower repair ("a THIRD term: the send was an explicit, recorded proceed-without-waiting
+// override") and naming `legStatusWhenSentForApproval`, a method that no longer exists. The tests
+// directly beneath it had already outgrown both. The rule they actually pin is:
+//
+//   **A leg is approvable iff it is fully quoted, OR its send was legally permitted.**
+//
+// `sendForApproval` records WHICH arm of A3 permitted a send from a leg that was NOT FULLY_QUOTED
+// — A9's arm keeps the exec's own `proceedReason`, the deadline-passed arm gets a fixed sentence
+// — as the `reason` on the send's own leg transition row, read back by `latestSendForApproval`.
+// Non-null exactly when the leg was not FULLY_QUOTED, which is what makes the invariant total.
+// The first review round found the deadline-passed arm still wedged (a legally-sent leg that
+// could never be approved, and that reject/re-send could not free either); "(k)" is that case.
+//
+// The permission is deliberately NOT part of `isFullyQuotedForDecision`, because reject() uses
+// that predicate to pick its return target and must still return a fallen-back leg to
+// PARTIALLY_QUOTED, never a promoted FULLY_QUOTED — "(e)". And it is narrow: a PENDING_APPROVAL
+// that never passed A3 has no row and no permission — "(m)" — and a row that carries no recorded
+// permission is not one merely by existing — "(o)".
 const PREFIX = "AWRF";
 const CODE = `YAL00-${PREFIX}`;
 
