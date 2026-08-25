@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QuotationDto, QuotationIssue, QuotationPatch } from "@svyft/shared";
-import { fetchJson, patchJson, postJson } from "@/lib/api";
+import { ApiError, fetchJson, patchJson, postJson } from "@/lib/api";
 
 /**
  * The Client Quotation builder's read model (S5.8 Task 5). `GET .../quotation` creates the DRAFT
@@ -56,6 +56,16 @@ export function usePatchQuotation(queryId?: string) {
  * the shell around it (header/rail) picks up the new query status too. `setQueryData` on the
  * quotation key mirrors `usePatchQuotation`'s own pattern, so the UI reflects ISSUED immediately
  * rather than waiting on the round trip the invalidate's background refetch will also do.
+ *
+ * 🔴 S5.9.3 final review, IMPORTANT #1 — the body now carries `expectedUpdatedAt`, the server's
+ * optimistic-concurrency token (see `quotationIssueSchema`). A 409 means this browser's cached
+ * quotation was repriced elsewhere while the preview was open, so the FIRST thing that has to
+ * happen is getting rid of the stale cache: `onError` invalidates `["quotation", queryId]` on 409
+ * specifically, which refetches the current pricing and — through `QuotationPreviewDialog`'s
+ * re-seed/conflict logic — puts the correct letter in front of the manager. Without this the
+ * dialog would sit on the same stale `previewBody` and re-send the same doomed `expectedUpdatedAt`
+ * on every retry, turning a recoverable conflict into a dead end. Scoped to 409 because that is
+ * the only status where refetching is part of the remedy; a 403/500 refetch would just be noise.
  */
 export function useIssueQuotation(queryId?: string) {
   const qc = useQueryClient();
@@ -66,6 +76,11 @@ export function useIssueQuotation(queryId?: string) {
       qc.setQueryData(["quotation", queryId], data);
       qc.invalidateQueries({ queryKey: ["quotation", queryId] });
       qc.invalidateQueries({ queryKey: ["query", queryId] });
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        qc.invalidateQueries({ queryKey: ["quotation", queryId] });
+      }
     },
   });
 }

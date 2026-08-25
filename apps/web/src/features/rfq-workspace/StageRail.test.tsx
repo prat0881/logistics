@@ -184,4 +184,25 @@ describe("StageRail", () => {
     expect(screen.getByText("4")).toBeInTheDocument(); // Award (upcoming)
     expect(screen.queryByText("1")).toBeNull();        // Create is done → checkmark, not "1"
   });
+
+  // 🔴 S5.9.3 final review — `active` used to admit "award" while a comment in the same file said
+  // no caller may pass it. It is not a harmless spare literal: `Step` puts `aria-current="step"`
+  // on whichever step is active, disabled span included, so a caller passing it would have the
+  // app announce a *current* stage named "Award" — the exact 2026-08-19 D5 mistake, reachable
+  // through a type the component itself permitted. The type is the guard now.
+  //
+  // This assertion is compile-time, enforced by `pnpm run typecheck` (vitest transpiles without
+  // type-checking, so it proves nothing at runtime and deliberately renders nothing). Mutation
+  // proof: put `| "award"` back in `StageRailProps["active"]` and `tsc` fails right here with
+  // "Unused '@ts-expect-error' directive" — the directive reddens on the widening, which is the
+  // regression this is guarding against.
+  it("refuses active=\"award\" at the type level — D5: 'Award' may name only the future, disabled stage", () => {
+    const railWithAwardActive = () => (
+      <MemoryRouter>
+        {/* @ts-expect-error "award" is not an assignable `active` value — see StageRailProps. */}
+        <StageRail queryId="q1" active="award" rfqEnabled />
+      </MemoryRouter>
+    );
+    expect(typeof railWithAwardActive).toBe("function");
+  });
 });

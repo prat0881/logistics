@@ -40,11 +40,23 @@ export type QuotationPatch = z.infer<typeof quotationPatchSchema>;
  *
  * `subject` stays caller-suppliable but OPTIONAL — the design's envelope names subject as
  * editable; omit it to fall back to the template's own rendered subject.
+ *
+ * `expectedUpdatedAt` is REQUIRED and is the optimistic-concurrency token (S5.9.3 final review,
+ * IMPORTANT #1): the `QuotationDto.updatedAt` the caller's copy of the quotation was read at.
+ * `Quotation.updatedAt` is Prisma `@updatedAt`, so EVERY repricing PATCH moves it — which makes it
+ * the one value that proves the letter in the request body was composed against the pricing that
+ * is still current. Without it, a manager whose cached quotation was repriced by a second tab (or
+ * a second manager) could send a letter quoting the OLD grand total while `issue()` charged the
+ * NEW one, silently: `bodyText` is prose the server never parses, and nothing else in this body
+ * carries a version. `issue()` refuses a mismatch with 409 (see `quotation.service.ts#issue`).
+ * Deliberately not `version`: `version` only moves on `revise()`, never on a PATCH, so it cannot
+ * see the repricing that actually causes the divergence.
  */
 export const quotationIssueSchema = z.object({
   recipientEmail: z.string().email(),
   subject: z.string().trim().min(1).max(200).optional(),
   bodyText: z.string().trim().min(1).max(5000).optional(),
+  expectedUpdatedAt: z.string().datetime(),
 });
 export type QuotationIssue = z.infer<typeof quotationIssueSchema>;
 

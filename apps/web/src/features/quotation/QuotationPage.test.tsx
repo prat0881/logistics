@@ -141,6 +141,12 @@ function renderPage(
     patchGate?: Promise<void>;
     onIssuePost?: (body: unknown) => void;
     issueResponse?: { status: number; body?: unknown };
+    /** S5.9.3 final review (IMPORTANT #1) — models a SECOND client having repriced this quotation
+     *  behind this browser's back. The real sequence is: the other tab PATCHes (the server row
+     *  changes; this browser is told nothing), then this browser's issue POST is refused as
+     *  stale, then its refetch finally sees the new row. Applied at the moment the issue POST is
+     *  refused, which is the first point in that sequence where this harness is involved at all. */
+    repricedByAnotherClientTo?: QuotationDto;
     onRevisePost?: () => void;
     reviseResponse?: { status: number; body?: unknown };
     captureUrl?: (url: string) => void;
@@ -185,6 +191,7 @@ function renderPage(
           body: { ...currentQuotation, status: "ISSUED", recipientEmail: body?.recipientEmail ?? null },
         };
         if (res.status < 300) currentQuotation = res.body as QuotationDto;
+        else if (opts.repricedByAnotherClientTo) currentQuotation = opts.repricedByAnotherClientTo;
         return respond(res.status, res.body);
       }
       if (url.endsWith("/api/queries/q1/quotation/revise") && init?.method === "POST") {
@@ -930,11 +937,14 @@ describe("QuotationPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /issue quotation/i }));
 
     await waitFor(() => expect(issueBodies).toHaveLength(1));
-    // S5.9.3 Task 1: the (unedited, prefilled) body is posted too now.
+    // S5.9.3 Task 1: the (unedited, prefilled) body is posted too now. S5.9.3 final review
+    // IMPORTANT #1: so is `expectedUpdatedAt`, the server's freshness token, threaded end-to-end
+    // from the quotation this page actually loaded.
     expect(issueBodies[0]).toEqual({
       recipientEmail: "buyer@client.test",
       subject: "Quotation YAL26-0001-Q1 · Ref YAL26-0001",
       bodyText: "Dear Acme Ltd,\n\nTotal — all inclusive: USD 330.00\n\nRegards,\nYankalfa Logistics",
+      expectedUpdatedAt: "2026-08-14T00:00:00.000Z",
     });
 
     // The dialog closes and the page itself flips to the read-only ISSUED view.
@@ -970,5 +980,95 @@ describe("QuotationPage", () => {
     await waitFor(() => expect(revisePosts).toHaveLength(1));
     expect(await screen.findByRole("button", { name: /preview quotation/i })).toBeInTheDocument();
     expect(screen.queryByTestId("quotation-status-note")).not.toBeInTheDocument();
+  });
+
+  // 🔴 S5.9.3 final review, IMPORTANT #2. P5 merged Compare Quotes and this screen into one rail
+  // step whose link prefers `/quotation` as soon as `quotationEnabled` is true — and
+  // `/queries/:id/compare` is linked from nowhere else in the app, so from QUOTING_CLIENT onward
+  // Compare Quotes became reachable only by typing its URL. That matters because
+  // `QuotingClientPanel`'s "Reopen comparison" — the only control that undoes a frozen award —
+  // lives on that screen and renders precisely at QUOTING_CLIENT+.
+  //
+  // Mutation proof: delete the `back-to-compare-link` block from `QuotationPage` and this reddens
+  // on the second assertion. The FIRST assertion is what makes that meaningful rather than
+  // vacuous — it proves the rail step really does resolve to this screen (so the rail genuinely
+  // is not the way back), and it is unaffected by removing the link, so the two cannot both be
+  // satisfied by one accidental cause.
+  it("S5.9.3 final review (IMPORTANT #2) — links back to Compare Quotes, the only route there once the merged rail step resolves here", async () => {
+    renderPage();
+    await screen.findByText("MANAGER");
+    await screen.findByTestId("quotation-page");
+
+    const rail = screen.getByRole("navigation", { name: /query stages/i });
+    expect(within(rail).getByRole("link", { name: /quotation/i })).toHaveAttribute(
+      "href",
+      "/queries/q1/quotation",
+    );
+    expect(within(rail).queryByRole("link", { name: /compare/i })).not.toBeInTheDocument();
+
+    const back = screen.getByTestId("back-to-compare-link");
+    expect(back).toHaveAttribute("href", "/queries/q1/compare");
+    expect(back).toHaveAccessibleName(/compare quotes/i);
+    // Discoverable, not merely present: it says what is on the other side, including the reopen.
+    expect(back).toHaveAccessibleDescription(/reopen the comparison/i);
+  });
+
+  // 🔴 S5.9.3 final review, IMPORTANT #1 — the web half. The server refuses an issue whose
+  // freshness token is stale; this asserts the client (a) sends the token the letter on screen
+  // actually agrees with, and (b) treats the refusal as recoverable — `useIssueQuotation`
+  // refetches on 409, which flows through the dialog's own re-seed logic and replaces the stale
+  // letter with the current one, rather than leaving the manager re-posting the same doomed body.
+  //
+  // Mutation proof: drop the `if (... status === 409) invalidateQueries` arm from
+  // `useIssueQuotation` and the "USD 375.00" assertion reddens (the box keeps showing 330.00).
+  // Drop `expectedUpdatedAt` from `handleIssue` instead and the token assertion reddens. The two
+  // cannot collapse into each other: the first is about the response path, the second the request.
+  it("S5.9.3 final review (IMPORTANT #1) — a stale-pricing 409 explains itself and reloads the letter, instead of dead-ending on the stale one", async () => {
+    const repriced = baseQuotation({
+      marginPct: 25,
+      previewBody:
+        "Dear Acme Ltd,\n\nTotal — all inclusive: USD 375.00\n\nRegards,\nYankalfa Logistics",
+      updatedAt: "2026-08-14T09:00:00.000Z",
+    });
+    const issueBodies: unknown[] = [];
+
+    renderPage({
+      queryDetail: { ...QUERY_DETAIL, contactEmail: "buyer@client.test" },
+      onIssuePost: (b) => issueBodies.push(b),
+      issueResponse: {
+        status: 409,
+        body: {
+          message:
+            "this quotation was repriced after you opened this preview — the letter has been " +
+            "reloaded with the current total; check it before issuing",
+        },
+      },
+      repricedByAnotherClientTo: repriced,
+    });
+
+    await screen.findByText("MANAGER");
+    await userEvent.click(await screen.findByRole("button", { name: /preview quotation/i }));
+    const letter = (await screen.findByTestId("quotation-letter")) as HTMLTextAreaElement;
+    expect(letter.value).toContain("USD 330.00");
+
+    await userEvent.click(screen.getByRole("button", { name: /issue quotation/i }));
+
+    // The token sent is the one the letter on screen agreed with — which is exactly what lets the
+    // server recognise it as stale.
+    await waitFor(() => expect(issueBodies).toHaveLength(1));
+    expect(issueBodies[0]).toMatchObject({ expectedUpdatedAt: "2026-08-14T00:00:00.000Z" });
+
+    // The refusal is explained in the manager's own terms …
+    expect(
+      await screen.findByText(/repriced after you opened this preview/i),
+    ).toBeInTheDocument();
+    // … and recovered from: the 409's refetch puts the CURRENT letter in the box.
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId("quotation-letter") as HTMLTextAreaElement).value,
+      ).toContain("USD 375.00"),
+    );
+    // Still open and still issuable — a conflict to resolve, not a wall.
+    expect(screen.getByRole("button", { name: /issue quotation/i })).not.toBeDisabled();
   });
 });

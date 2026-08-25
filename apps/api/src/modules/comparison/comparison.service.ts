@@ -201,7 +201,21 @@ export class ComparisonService {
       eventsByLeg.set(e.legId, arr);
     }
 
-    const legDtos: LegComparisonDto[] = legs.map((leg) =>
+    // 🔴 S5.9.3 final review — P4 was applied to `awardSnapshot.legs` below but NOT to this list,
+    // so ONE screen showed two different leg sequences: the Compare Quotes accordion in `legCode`
+    // order and the frozen-award panel on the same page in route order. Same canonical
+    // `orderLegsByRoute` as `quotation.service.ts#toDto` and as the snapshot ordering below — no
+    // third copy of the rule — and the same deterministic tiebreak, which here costs nothing extra:
+    // the `legs` query above is already `orderBy: { legCode: "asc" }`, which is exactly the
+    // pre-sort `orderLegsByRoute`'s disconnected-route fallback needs to be reproducible.
+    // READ-ONLY, like the snapshot reorder: nothing is rewritten, so this heals on every read.
+    const routeOrderedLegs = orderLegsByRoute(
+      legs,
+      (l) => l.originPointId,
+      (l) => l.destinationPointId,
+    );
+
+    const legDtos: LegComparisonDto[] = routeOrderedLegs.map((leg) =>
       this.buildLeg(
         leg,
         quotesByLeg.get(leg.id) ?? [],

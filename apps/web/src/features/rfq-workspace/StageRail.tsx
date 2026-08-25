@@ -40,7 +40,15 @@ type StepState = "done" | "current" | "upcoming";
 
 interface StageRailProps {
   queryId: string;
-  active: "create" | "rfq" | "quotation" | "award";
+  /** 🔴 S5.9.3 final review — "award" is deliberately NOT in this union. The rail renders an
+   *  "Award" step (Stage 6, always disabled), and D5 permits that label only because it names a
+   *  stage that has not happened. A caller passing `active="award"` would make it the CURRENT
+   *  step — `aria-current="step"` on it, every earlier step ticked "done" — i.e. the app telling
+   *  the user this query has been awarded, which is exactly the 2026-08-19 D5 mistake. The union
+   *  previously admitted it while a comment three lines away said no caller may pass it; a
+   *  comment is not a guard, so the type is the guard now. `STEP_KEYS` still lists "award"
+   *  because the step is rendered — it just can never be the active one. */
+  active: "create" | "rfq" | "quotation";
   rfqEnabled: boolean;
   /** Gates the "Quotation" step's link to Compare Quotes — pass `isQuotesStageEnabled(query.status)`. */
   quotesEnabled?: boolean;
@@ -59,8 +67,9 @@ interface StageRailProps {
 // S5.9.3 P5 — the rail is now Create → RFQ → Quotation → Award. "Quotation" absorbs the former
 // standalone "Quotes" step (Compare Quotes) AND the client-quotation builder: one rail step, two
 // possible destinations, resolved below by which gate is open. "Award" names Stage 6 and is a
-// legitimate label under D5 ONLY because it is a future, disabled stage — no caller may pass
-// active="award" yet, and this component never enables or links it in Stage 5.
+// legitimate label under D5 ONLY because it is a future, disabled stage — `StageRailProps.active`
+// cannot name it (see that prop's own doc comment), and this component never enables or links it
+// in Stage 5.
 const STEP_KEYS = ["create", "rfq", "quotation", "award"] as const;
 
 export function StageRail({ queryId, active, rfqEnabled, quotesEnabled, quotationEnabled }: StageRailProps) {
@@ -81,7 +90,7 @@ export function StageRail({ queryId, active, rfqEnabled, quotesEnabled, quotatio
     { key: "create", label: "Create", to: `/queries/${queryId}`, state: stateAt(0) },
     { key: "rfq", label: "RFQ", to: rfqEnabled ? `/queries/${queryId}/workspace` : undefined, state: stateAt(1) },
     { key: "quotation", label: "Quotation", to: quotationTo, state: stateAt(2) },
-    // Always disabled in Stage 5 — no enabling prop exists yet, and nothing sets active="award".
+    // Always disabled in Stage 5 — no enabling prop exists yet, and `active` cannot name it.
     { key: "award", label: "Award", to: undefined, state: stateAt(3) },
   ];
 

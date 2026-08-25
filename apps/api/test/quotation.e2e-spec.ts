@@ -240,9 +240,25 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
   // (packages/shared/src/quotation.ts), so every existing test built on this helper keeps
   // exercising the fallback-to-server-render path unchanged. Tests for the override path send
   // `bodyText` explicitly (see the "S5.9.3 Task 1" block below).
-  const issueBody = (suffix: string) => ({
+  /** The current quotation row's `updatedAt`, as the ISO string `quotationIssueSchema
+   *  .expectedUpdatedAt` wants — read straight from the DB rather than over HTTP so calling it
+   *  never has the side effect of creating a draft that the test under test didn't ask for. */
+  const currentUpdatedAt = async (queryId: string) => {
+    const row = await prisma.quotation.findFirstOrThrow({
+      where: { queryId },
+      orderBy: { version: "desc" },
+    });
+    return row.updatedAt.toISOString();
+  };
+
+  /** S5.9.3 final review IMPORTANT #1 — `expectedUpdatedAt` is REQUIRED on every issue, so this
+   *  helper is async now: it reads the row's CURRENT `updatedAt` at call time, which is what makes
+   *  every pre-existing test here go on exercising the happy path (their caller is, by
+   *  construction, up to date). The staleness tests build their body by hand instead. */
+  const issueBody = async (suffix: string, queryId: string) => ({
     recipientEmail: `client-${suffix}@e2e.test`,
     subject: `Quotation for your shipment — ${suffix}`,
+    expectedUpdatedAt: await currentUpdatedAt(queryId),
   });
 
   beforeAll(async () => {
@@ -435,7 +451,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
       .expect(200);
 
-    const body = issueBody("8");
+    const body = await issueBody("8", query.id);
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(userId, Role.MANAGER))
@@ -478,7 +494,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     // it disagrees with the server-priced `clientTotalUsd` below.
     const editedBody =
       "Dear valued client,\n\nOur best all-in offer stands at USD 999,999.00, today only.\n\nRegards,\nYankalfa Logistics";
-    const body = { ...issueBody("8b"), bodyText: editedBody };
+    const body = { ...(await issueBody("8b", query.id)), bodyText: editedBody };
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(userId, Role.MANAGER))
@@ -516,7 +532,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send({ ...issueBody("8c"), bodyText: "" })
+      .send({ ...(await issueBody("8c", query.id)), bodyText: "" })
       .expect(400);
 
     // Refused, not frozen — the draft is untouched by the rejected attempt.
@@ -534,7 +550,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send({ ...issueBody("8d"), bodyText: "x".repeat(5001) })
+      .send({ ...(await issueBody("8d", query.id)), bodyText: "x".repeat(5001) })
       .expect(400);
   });
 
@@ -545,7 +561,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
       .expect(200);
 
-    const body = issueBody("9");
+    const body = await issueBody("9", query.id);
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
@@ -596,7 +612,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("15"))
+      .send(await issueBody("15", query.id))
       .expect(200);
 
     // present: the one number the client is allowed to see — the CLIENT total.
@@ -625,7 +641,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("16"))
+      .send(await issueBody("16", query.id))
       .expect(200);
 
     expect(res.body.bodyText).not.toMatch(/valid until/i);
@@ -641,7 +657,10 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send({ recipientEmail: "client-17@e2e.test" }) // no subject
+      .send({
+        recipientEmail: "client-17@e2e.test", // no subject
+        expectedUpdatedAt: await currentUpdatedAt(query.id),
+      })
       .expect(200);
 
     expect(res.body.subject).toContain(query.queryCode);
@@ -661,7 +680,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("18"))
+      .send(await issueBody("18", query.id))
       .expect(200);
 
     const log = await prisma.messageLog.findFirst({
@@ -689,7 +708,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("10"))
+      .send(await issueBody("10", query.id))
       .expect(409);
   });
 
@@ -703,7 +722,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.EXECUTIVE))
-      .send(issueBody("11"))
+      .send(await issueBody("11", query.id))
       .expect(403);
   });
 
@@ -725,7 +744,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("12"))
+      .send(await issueBody("12", query.id))
       .expect(200);
 
     const res = await request(app.getHttpServer())
@@ -804,7 +823,11 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const issueRes = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send({ recipientEmail: "client-20@e2e.test" }) // no subject — let the template win, same as previewSubject
+      .send({
+        // no subject — let the template win, same as previewSubject
+        recipientEmail: "client-20@e2e.test",
+        expectedUpdatedAt: draftRes.body.updatedAt,
+      })
       .expect(200);
 
     expect(issueRes.body.subject).toBe(draftRes.body.previewSubject);
@@ -830,7 +853,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const issueRes = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("21"))
+      .send(await issueBody("21", query.id))
       .expect(200);
 
     const getAfterIssue = await request(app.getHttpServer())
@@ -862,7 +885,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("13"))
+      .send(await issueBody("13", query.id))
       .expect(200);
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/revise`)
@@ -904,7 +927,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("22"))
+      .send(await issueBody("22", query.id))
       .expect(200);
 
     // Capture the frozen award before the reopen clears it — the "re-award" step below re-freezes
@@ -968,7 +991,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("23"))
+      .send(await issueBody("23", query.id))
       .expect(200);
 
     const body = res.body.bodyText as string;
@@ -1012,7 +1035,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const res = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("24"))
+      .send(await issueBody("24", query.id))
       .expect(200);
 
     expect(res.body.bodyText).toContain("Vessel: MV Testarossa");
@@ -1036,7 +1059,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const issueRes = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
-      .send(issueBody("25"))
+      .send(await issueBody("25", query.id))
       .expect(200);
     expect(issueRes.body.bodyText).toContain("MV Original");
 
@@ -1072,7 +1095,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/issue`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER, tenantId))
-      .send(issueBody("26"))
+      .send(await issueBody("26", query.id))
       .expect(200);
     const revised = await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/quotation/revise`)
@@ -1082,6 +1105,115 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     expect(
       (await prisma.quotation.findUniqueOrThrow({ where: { id: revised.body.id } })).tenantId,
     ).toBe(tenantId);
+  });
+
+  // ── S5.9.3 final review, IMPORTANT #1: the stale-letter window ────────────────────────────
+
+  // The defect, in full: Manager A opens the preview and reads a letter quoting USD 100.00.
+  // Manager B — or A's own second tab — reprices. A's browser never learns (`useQuotation` has no
+  // polling; TanStack Query refetches only on focus/mount), so every client-side guard the Task-1
+  // re-review added stays quiet: they all react to A's own `quotation` prop, and nothing makes it
+  // move. A clicks Issue: the letter says 100.00 while `issue()` reprices from live `draftJson`
+  // and charges 125.00. The client reads one figure and the system charges another, with nobody
+  // having typed a wrong number. This test drives exactly that sequence over real HTTP against a
+  // real database — two independent requests, no mocking of the concurrency.
+  //
+  // Mutation proof: delete the `current.updatedAt.getTime() !== expectedUpdatedAt.getTime()`
+  // guard in `QuotationService.issue` and the 409 half of this test reddens (the stale POST
+  // succeeds and charges 125.00 for a letter that says 100.00). The second half is the positive
+  // control: same endpoint, same actor, same recipient, ONLY the token and the letter differ —
+  // so a 409 that came from anything other than staleness would redden that half instead.
+  it("S5.9.3 final review (IMPORTANT #1) — refuses a letter composed against pricing a concurrent PATCH has since moved, then accepts it once the caller has caught up", async () => {
+    const { query } = await mkAwardedQuery("stale1");
+
+    // Manager A opens the preview. THIS is the copy their letter is composed against.
+    const managerA = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    expect(managerA.body.previewBody).toContain("USD 100.00");
+
+    // Manager B (or A's own second tab) reprices. Nothing tells A.
+    const managerB = await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 25 })
+      .expect(200);
+    expect(managerB.body.pricing.clientTotalUsd).toBe(125);
+    expect(managerB.body.updatedAt).not.toBe(managerA.body.updatedAt);
+
+    transportSend.mockClear();
+
+    // A clicks Issue, sending the letter they actually read — the one quoting the OLD total.
+    const stale = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({
+        recipientEmail: "client-stale1@e2e.test",
+        bodyText: managerA.body.previewBody,
+        expectedUpdatedAt: managerA.body.updatedAt,
+      })
+      .expect(409);
+    // A message a manager can act on — not "conflict".
+    expect(stale.body.message).toContain("repriced");
+    expect(stale.body.message).toContain("check it before issuing");
+
+    // Nothing happened: still an editable DRAFT, no letter frozen, no audit row, nothing sent.
+    const row = await prisma.quotation.findFirstOrThrow({ where: { queryId: query.id } });
+    expect(row.status).toBe("DRAFT");
+    expect(row.bodyText).toBeNull();
+    expect(row.issuedAt).toBeNull();
+    expect(
+      await prisma.messageLog.count({
+        where: { entityType: "QUERY", entityId: query.id, eventKey: "quotation.issued" },
+      }),
+    ).toBe(0);
+    expect(transportSend).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL — A refetches (what `useIssueQuotation`'s 409 handler does for them), sees
+    // the 125.00 letter, and issues that. Same endpoint, same role, same recipient; the ONLY
+    // differences are the token and the letter it agrees with.
+    const fresh = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({
+        recipientEmail: "client-stale1@e2e.test",
+        bodyText: managerB.body.previewBody,
+        expectedUpdatedAt: managerB.body.updatedAt,
+      })
+      .expect(200);
+    expect(fresh.body.status).toBe("ISSUED");
+    expect(fresh.body.pricing.clientTotalUsd).toBe(125);
+    expect(fresh.body.bodyText).toContain("USD 125.00");
+    expect(transportSend).toHaveBeenCalledTimes(1);
+  });
+
+  // The guard is only a guard if it cannot be skipped by simply not sending the field — an
+  // OPTIONAL token would leave every caller that omits it in exactly the pre-fix state. Mutation
+  // proof: make `expectedUpdatedAt` `.optional()` in `quotationIssueSchema` and this reddens
+  // (the POST 200s instead of 400ing).
+  it("S5.9.3 final review (IMPORTANT #1) — the freshness token is required, so no caller can opt out of the check", async () => {
+    const { query } = await mkAwardedQuery("stale2");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ recipientEmail: "client-stale2@e2e.test" })
+      .expect(400);
+
+    // Positive control for the same request shape: with the token, it goes through.
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({
+        recipientEmail: "client-stale2@e2e.test",
+        expectedUpdatedAt: await currentUpdatedAt(query.id),
+      })
+      .expect(200);
   });
 
   // S5.9.3 Task 2 (P4) — product owner: "Legs sequence should be as per route diagram instead of

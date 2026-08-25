@@ -32,13 +32,17 @@ export interface QuotationPreviewDialogProps {
    *  on every prop change, so it can't clobber an in-progress edit mid-session. */
   defaultRecipientEmail: string;
   /** True while `QuotationPage` has a margin/override PATCH in flight OR debounced-but-not-yet-
-   *  fired (S5.9.3 Task 1 review, IMPORTANT). The dialog is modal (Radix traps/blocks the page
-   *  behind it — see `components/ui/dialog.tsx`), so the ONLY way pricing can change while this
-   *  is open is a request that was already in flight or queued at the moment it opened. While
-   *  `true`, Issue stays disabled and a note explains why — see this component's own doc comment
-   *  for why this, not just disabling the *trigger* button in `QuotationPage`, is what actually
-   *  closes the window: a click that blurs an override field and opens this dialog in the same
-   *  gesture can beat a `disabled` attribute update, so the dialog itself has to be the backstop. */
+   *  fired (S5.9.3 Task 1 review, IMPORTANT). Because the dialog is modal (Radix traps/blocks the
+   *  page behind it — see `components/ui/dialog.tsx`), THIS browser cannot start a new reprice
+   *  while the dialog is open, so what this prop covers is exactly one window: a request that was
+   *  already in flight or queued at the moment it opened. It covers nothing outside this browser
+   *  — another tab or another manager can PATCH at any time, and this prop stays `false` — which
+   *  is why the server, not this flag, is the guard against issuing against stale pricing (final
+   *  review IMPORTANT #1; see `handleIssue`'s `expectedUpdatedAt` below). While `true`, Issue
+   *  stays disabled and a note explains why — see this component's own doc comment for why this,
+   *  not just disabling the *trigger* button in `QuotationPage`, is what closes the in-flight
+   *  window: a click that blurs an override field and opens this dialog in the same gesture can
+   *  beat a `disabled` attribute update, so the dialog itself has to be the backstop. */
   pricingPending: boolean;
 }
 
@@ -89,6 +93,18 @@ export interface QuotationPreviewDialogProps {
  * - `pricingPending` (prop, from `QuotationPage`) covers the narrower window where a request is
  *   still outstanding — Issue disables and a note explains why, rather than letting a manager
  *   issue in the split second before a reprice lands.
+ *
+ * 🔴 S5.9.3 final review (IMPORTANT #1): all three of those layers react only to THIS browser's
+ * `quotation` prop changing, and nothing makes that prop change on its own. `useQuotation` has no
+ * polling and TanStack Query refetches only on focus/mount, so a manager who opens this dialog and
+ * stays in the tab never sees a PATCH made by a second tab or a second manager — every layer above
+ * stays quiet and Issue stays enabled, while the letter on screen quotes the pre-PATCH total and
+ * the server charges the post-PATCH one. That is not closable from here (the client is the thing
+ * that is stale), so `handleIssue` sends `expectedUpdatedAt` — the `updatedAt` of the quotation
+ * this letter was composed against — and the server refuses a mismatch with a 409. The refusal is
+ * recoverable, not a wall: `useIssueQuotation` refetches the quotation on that 409, which flows
+ * back in through the same re-seed/conflict logic above and puts the CURRENT letter in front of
+ * the manager, with the server's message still on screen explaining why it changed.
  *
  * The action is labelled "Issue quotation", not "Send" (ambiguity resolution #2): `LogTransport
  * .send()` is a no-op until `SmtpTransport` lands at the go-live gate, so the footer states
@@ -181,6 +197,12 @@ export function QuotationPreviewDialog({
         // whatever the template quietly rendered instead would contradict the audit record's
         // whole point (P2 — it must reflect what was actually sent).
         bodyText: bodyText.trim(),
+        // The optimistic-concurrency token (final review IMPORTANT #1). Read off the CURRENT
+        // `quotation` prop, not off a value captured when the dialog opened — if a refetch has
+        // landed since, this is exactly the pricing the re-seed/conflict logic above has already
+        // reconciled the letter against, so the server accepts it. If no refetch has landed, it
+        // is stale by definition and the server is the one that says so.
+        expectedUpdatedAt: quotation.updatedAt,
       });
       onOpenChange(false);
     } catch {

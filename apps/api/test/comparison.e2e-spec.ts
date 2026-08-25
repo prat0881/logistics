@@ -588,4 +588,78 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     const storedSnapshot = stored.awardSnapshot as unknown as QueryAwardSnapshot;
     expect(storedSnapshot.legs.map((l) => l.legId)).toEqual([legL2.id, legL1.id]);
   });
+
+  // 🔴 S5.9.3 final review — P4 was half-applied: the reorder above was added to
+  // `awardSnapshot.legs` but NOT to `comparison.legs`, which stayed on the `legCode asc` the
+  // Prisma query returns. Both render on the SAME screen (`CompareQuotesPage`: the leg accordion
+  // from `legs`, `QuotingClientPanel` from `awardSnapshot.legs`), so one page showed two different
+  // leg sequences.
+  //
+  // The fixture is built so `legCode asc` and route order genuinely DISAGREE — leg "L1" is the
+  // SECOND hop (p2->p3) and leg "L2" is the first (p1->p2). A fixture whose codes happened to
+  // agree with its route would pass identically with or without the fix.
+  //
+  // Mutation proof: map over `legs` instead of `routeOrderedLegs` in `getComparison` and the
+  // first assertion reddens (it comes back [L1, L2], i.e. legCode order). The awardSnapshot
+  // assertion is the positive control — it is already route-ordered by the fix above and stays
+  // green under that mutation, so the two halves cannot both be satisfied by one accidental
+  // cause, and the "they agree with each other" assertion cannot pass vacuously by both being
+  // wrong in the same way.
+  it("S5.9.3 final review — the comparison's own legs come back in ROUTE order too, matching awardSnapshot on the same screen instead of contradicting it", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-route2`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    const p1 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const p2 = await prisma.point.create({
+      data: { queryId: query.id, type: "WAREHOUSE", city: "Singapore", country: "SG" },
+    });
+    const p3 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    // Deliberately inverted: the FIRST hop is coded "L2", the second "L1".
+    const firstHop = await prisma.leg.create({
+      data: { queryId: query.id, legCode: "L2", mode: "ROAD", originPointId: p1.id, destinationPointId: p2.id },
+    });
+    const secondHop = await prisma.leg.create({
+      data: { queryId: query.id, legCode: "L1", mode: "ROAD", originPointId: p2.id, destinationPointId: p3.id },
+    });
+
+    const snapshotLeg = (legId: string): QueryAwardSnapshot["legs"][number] => ({
+      legId,
+      winningQuoteId: randomUUID(),
+      freightForwarderId: randomUUID(),
+      variant: "DEDICATED",
+      currency: "INR",
+      unitsPerUsd: 83.2,
+      usdTotal: 100,
+      nativeTotal: 8320,
+      transitDays: 5,
+    });
+    await prisma.query.update({
+      where: { id: query.id },
+      data: {
+        awardSnapshot: {
+          generatedByUserId: randomUUID(),
+          legs: [snapshotLeg(secondHop.id), snapshotLeg(firstHop.id)],
+          combinedUsd: 200,
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+
+    const legOrder = res.body.legs.map((l: { legId: string }) => l.legId);
+    const snapshotOrder = res.body.awardSnapshot.legs.map((l: { legId: string }) => l.legId);
+
+    // Route order — NOT legCode order, which would be [L1 (second hop), L2 (first hop)].
+    expect(legOrder).toEqual([firstHop.id, secondHop.id]);
+    expect(snapshotOrder).toEqual([firstHop.id, secondHop.id]);
+    // …and therefore the two lists on that one screen agree.
+    expect(legOrder).toEqual(snapshotOrder);
+  });
 });

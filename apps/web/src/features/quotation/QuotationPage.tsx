@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import { Role } from "@svyft/shared";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { useQueryDetail } from "@/features/query-wizard/useQueryDetail";
@@ -173,6 +174,33 @@ export function QuotationPage() {
         quotesEnabled={isQuotesStageEnabled(q.status)}
         quotationEnabled={isQuotationStageEnabled(q.status)}
       />
+
+      {/* 🔴 S5.9.3 final review, IMPORTANT #2 — the ONLY entry point to Compare Quotes from
+          QUOTING_CLIENT onward. P5 merged the two screens into one rail step whose link prefers
+          `/quotation` the moment `quotationEnabled` is true, and a repo-wide search found
+          `/queries/:id/compare` linked from nowhere else — so the rail that brought a manager here
+          could not take them back, and `QuotingClientPanel`'s "Reopen comparison" (the one control
+          that undoes a frozen award, rendered precisely at QUOTING_CLIENT+) became reachable only
+          by typing the URL. This is the same defect the merge's own predecessor comment in
+          `CompareQuotesPage` records having already been found and fixed once, in the other
+          direction. Rendered unconditionally: this screen only loads at all once an award is
+          frozen, which is strictly later than Compare Quotes' own RFQ_SENT gate, so there is no
+          reachable state here where the destination would be closed. */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <Link
+          to={`/queries/${id}/compare`}
+          data-testid="back-to-compare-link"
+          aria-describedby="back-to-compare-description"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-4 hover:underline"
+        >
+          <ArrowLeft aria-hidden className="h-4 w-4" />
+          Compare quotes
+        </Link>
+        <p id="back-to-compare-description" className="text-xs text-muted-foreground">
+          Review the offers behind this quotation, or reopen the comparison to change the
+          selection.
+        </p>
+      </div>
 
       <div className="space-y-5">
         <QueryOverviewHeader query={q} />

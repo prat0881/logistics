@@ -26,6 +26,15 @@ import type { RequestUser } from "../auth/types";
 // duplicated locally rather than imported since that module doesn't export its constant.
 const QUOTATION_EMAIL_FROM = "logistics@yankalfa.com";
 
+// S5.9.3 final review, IMPORTANT #1 — the 409 a stale issue attempt gets back. Worded for the
+// manager staring at the preview dialog, not for a log: it says what happened, what it means for
+// the number in front of them, and what to do about it. The web client also refetches the
+// quotation on this 409 (`useIssueQuotation`), so "reload" is a description of what already
+// happened rather than an instruction to go find a refresh button.
+const STALE_QUOTATION_MESSAGE =
+  "this quotation was repriced after you opened this preview — the letter has been reloaded with " +
+  "the current total; check it before issuing";
+
 // The tokens the seeded `quotation.issued.email` template's subject/body reference (Task 4 fix
 // round 1, review IMPORTANT #1) — every value a plain string, "" when the underlying data is
 // absent (`renderTemplate` blanks a missing token the same way).
@@ -248,7 +257,22 @@ export class QuotationService {
    *  own prose say a different number than `priced.clientTotalUsd` (e.g. if a manager retypes the
    *  `Grand_Total` line by hand) — `bodyText`/`MessageLog.bodyRendered` still record that letter
    *  verbatim (P2: the audit trail reflects what was actually sent), so the discrepancy is
-   *  visible after the fact even though nothing here catches it before sending. */
+   *  visible after the fact even though nothing here catches it before sending.
+   *
+   *  🔴 S5.9.3 final review, IMPORTANT #1 — the one divergence that needed catching BEFORE
+   *  sending, because no human typed anything wrong to cause it. Manager A opens the preview; the
+   *  letter (rendered from pricing as it was at that moment) reads USD 5,356.11. Manager B — or
+   *  A's own second tab — PATCHes `marginPct`. A's browser never learns: `useQuotation` has no
+   *  polling and TanStack Query refetches only on focus/mount, so a manager who stays in the tab
+   *  keeps the old cache indefinitely. A clicks Issue: `body.bodyText` is the letter A read
+   *  (5,356.11), while `priced` below is recomputed from the row's CURRENT `marginPct`/`overrides`
+   *  (6,100) and is what lands in `clientTotalUsd`/`issuedSnapshot`. The client reads one figure
+   *  and the system charges another. The client could not be the guard here — the client is what
+   *  is stale — so the check is server-side: `body.expectedUpdatedAt` is the `updatedAt` A's copy
+   *  was read at, and any PATCH in between has moved the row's own `@updatedAt`. Mismatch → 409.
+   *  Checked twice on purpose: once up front (fast, and the place the manager-facing message comes
+   *  from) and again inside the UPDATE's WHERE clause, which is what actually makes it atomic
+   *  against a PATCH that commits between the read and the write. */
   async issue(queryId: string, body: QuotationIssue, user: RequestUser): Promise<QuotationDto> {
     const current = await this.latestQuotation(queryId);
     if (!current) {
@@ -256,6 +280,14 @@ export class QuotationService {
     }
     if (current.status !== "DRAFT") {
       throw new ConflictException("this quotation is not a draft and cannot be issued");
+    }
+    // 🔴 S5.9.3 final review, IMPORTANT #1 — optimistic concurrency on the row's own `updatedAt`.
+    // Fails fast here with the manager-facing message; the SAME comparison is repeated as part of
+    // the UPDATE's WHERE clause below, which is what makes it atomic (this read is several round
+    // trips away from that write). See this method's doc comment for the scenario.
+    const expectedUpdatedAt = new Date(body.expectedUpdatedAt);
+    if (current.updatedAt.getTime() !== expectedUpdatedAt.getTime()) {
+      throw new ConflictException(STALE_QUOTATION_MESSAGE);
     }
 
     const stored = current.draftJson as unknown as StoredQuotationDraft;
@@ -303,7 +335,7 @@ export class QuotationService {
       // the guard into the UPDATE's own WHERE clause makes the check atomic with the write: a
       // losing concurrent call's `updateMany` affects 0 rows once the winner has committed.
       const guard = await tx.quotation.updateMany({
-        where: { id: current.id, status: "DRAFT" },
+        where: { id: current.id, status: "DRAFT", updatedAt: current.updatedAt },
         data: {
           status: "ISSUED",
           issuedAt,
@@ -320,7 +352,18 @@ export class QuotationService {
         },
       });
       if (guard.count === 0) {
-        throw new ConflictException("this quotation is not a draft and cannot be issued");
+        // Two distinct losers reach here and they need DIFFERENT messages: a concurrent issue()
+        // (row is no longer DRAFT) and a concurrent PATCH (still DRAFT, but repriced since the
+        // read above). One extra read, only on the already-failing path, to tell them apart.
+        const latest = await tx.quotation.findUnique({
+          where: { id: current.id },
+          select: { status: true },
+        });
+        throw new ConflictException(
+          latest?.status === "DRAFT"
+            ? STALE_QUOTATION_MESSAGE
+            : "this quotation is not a draft and cannot be issued",
+        );
       }
       const row = await tx.quotation.findUniqueOrThrow({ where: { id: current.id } });
 

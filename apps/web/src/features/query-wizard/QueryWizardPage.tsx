@@ -1,7 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { StageRail, isRfqStageEnabled } from "@/features/rfq-workspace/StageRail";
+import {
+  StageRail,
+  isRfqStageEnabled,
+  isQuotesStageEnabled,
+  isQuotationStageEnabled,
+} from "@/features/rfq-workspace/StageRail";
 import type {
   Finding,
   QueryForValidation,
@@ -223,10 +228,16 @@ export function QueryWizardPage() {
     <>
       {id && railDetail && (
         <div className="mb-4">
+          {/* 🔴 S5.9.3 final review — all THREE gates, not just `rfqEnabled`. See
+              `QueryWorkspaceHub`'s own note: a consumer that omits a gate renders that step with
+              `to: undefined`, i.e. a dead link. Revisiting `/queries/:id` for a query that is
+              already QUOTED+ used to show a Quotation step that looked present and did nothing. */}
           <StageRail
             queryId={id}
             active="create"
             rfqEnabled={isRfqStageEnabled(railDetail.status)}
+            quotesEnabled={isQuotesStageEnabled(railDetail.status)}
+            quotationEnabled={isQuotationStageEnabled(railDetail.status)}
           />
         </div>
       )}

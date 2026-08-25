@@ -194,10 +194,15 @@ describe("QuotationPreviewDialog", () => {
     await userEvent.click(screen.getByRole("button", { name: /issue quotation/i }));
 
     await waitFor(() => expect(bodies).toHaveLength(1));
+    // 🔴 `toEqual`, not `toMatchObject` — this is also the mutation-proof for the final review's
+    // IMPORTANT #1 web half: drop `expectedUpdatedAt` from `handleIssue` and this reddens.
+    // Without the freshness token on the wire the server has nothing to compare, and a manager
+    // whose cached quotation was repriced in another tab issues a letter quoting the old total.
     expect(bodies[0]).toEqual({
       recipientEmail: "buyer@client.test",
       subject: QUOTATION.previewSubject,
       bodyText: QUOTATION.previewBody,
+      expectedUpdatedAt: QUOTATION.updatedAt,
     });
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
