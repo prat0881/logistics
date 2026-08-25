@@ -4,9 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { QuotationDto } from "@svyft/shared";
 import { mockFetch } from "@/test/mock-fetch";
+import * as clip from "@/lib/clipboard";
 import { QuotationPreviewDialog } from "./QuotationPreviewDialog";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 /**
  * A realistic rendering of the seeded `quotation.issued.email` template (verbatim copy in
@@ -131,22 +135,36 @@ function renderDialog(
 }
 
 describe("QuotationPreviewDialog", () => {
-  it("shows the client's own enquiry particulars and one grand total", async () => {
+  // S5.9.3 Task 1 (P1): the letter is now an editable textarea (`data-testid="quotation-letter"`),
+  // seeded from `previewBody` — `toHaveValue`, not `toHaveTextContent`, is the correct matcher for
+  // a form control (a controlled textarea's rendered value lives on the DOM node's `.value`
+  // property, not as a text-node child, so `toHaveTextContent` would vacuously pass/fail here
+  // regardless of what's actually in the box).
+  it("shows the client's own enquiry particulars and one grand total, prefilled and editable", async () => {
     renderDialog();
     const letter = await screen.findByTestId("quotation-letter");
-    expect(letter).toHaveTextContent("USD 5,356.11");
-    expect(letter).toHaveTextContent("PO-88431");
+    expect(letter).toHaveValue(QUOTATION.previewBody);
+    expect((letter as HTMLTextAreaElement).value).toContain("USD 5,356.11");
+    expect((letter as HTMLTextAreaElement).value).toContain("PO-88431");
+
+    await userEvent.type(letter, " Please confirm at your earliest convenience.");
+    expect((letter as HTMLTextAreaElement).value).toContain(
+      "Please confirm at your earliest convenience.",
+    );
   });
 
   // The commercial guard for the whole feature (S5.8 Task 6) — mutation-proven separately by
-  // temporarily rendering a withheld figure into the letter and confirming this goes red.
-  it("never renders forwarder cost, margin, charge lines or forwarder names", async () => {
+  // temporarily rendering a withheld figure into the letter and confirming this goes red. P1 makes
+  // this only a DEFAULT guarantee (the manager could in principle type these back in), which is
+  // exactly why the server-side total in QuotationService.issue() stays independent of this text.
+  it("never PREFILLS forwarder cost, margin, charge lines or forwarder names into the letter", async () => {
     renderDialog();
     const letter = await screen.findByTestId("quotation-letter");
-    expect(letter).not.toHaveTextContent("Bridge Logistics");
-    expect(letter).not.toHaveTextContent("4,539.08"); // the withheld cost total
-    expect(letter).not.toHaveTextContent(/margin/i);
-    expect(letter).not.toHaveTextContent("Terminal handling"); // a charge-line label
+    const value = (letter as HTMLTextAreaElement).value;
+    expect(value).not.toContain("Bridge Logistics");
+    expect(value).not.toContain("4,539.08"); // the withheld cost total
+    expect(value.toLowerCase()).not.toContain("margin");
+    expect(value).not.toContain("Terminal handling"); // a charge-line label
   });
 
   it("prefills the recipient from the query contact and allows editing it", async () => {
@@ -159,9 +177,9 @@ describe("QuotationPreviewDialog", () => {
     expect(recipient).toHaveValue("new-contact@client.test");
   });
 
-  // Corrected from the (now out-of-date) brief: `quotationIssueSchema` has no `bodyText` field —
-  // the letter is always rendered server-side — so issuing posts ONLY recipient + subject.
-  it("issue posts recipient and subject only — never a body — then closes", async () => {
+  // S5.9.3 Task 1 (P1) supersedes the S5.8 Task 6 contract: issuing now posts the (editable)
+  // body too, defaulting to the prefilled `previewBody` when the manager never touches it.
+  it("issue posts recipient, subject, and the prefilled body — then closes", async () => {
     const bodies: unknown[] = [];
     const onOpenChange = vi.fn();
     renderDialog({ onOpenChange, onIssuePost: (b) => bodies.push(b) });
@@ -172,10 +190,48 @@ describe("QuotationPreviewDialog", () => {
     expect(bodies[0]).toEqual({
       recipientEmail: "buyer@client.test",
       subject: QUOTATION.previewSubject,
+      bodyText: QUOTATION.previewBody,
     });
-    expect(Object.keys(bodies[0] as Record<string, unknown>)).not.toContain("bodyText");
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  // The single highest-risk behavior in this task (per the plan's self-review notes): an edit to
+  // the letter must actually reach the wire, verbatim, rather than the dialog silently reverting
+  // to the server's own render.
+  it("an edited body reaches the issue request verbatim", async () => {
+    const bodies: unknown[] = [];
+    renderDialog({ onIssuePost: (b) => bodies.push(b) });
+
+    const letter = await screen.findByTestId("quotation-letter");
+    await userEvent.clear(letter);
+    await userEvent.type(letter, "Dear Acme Ltd,\n\nA hand-typed offer.\n\nRegards.");
+
+    await userEvent.click(screen.getByRole("button", { name: /issue quotation/i }));
+
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect((bodies[0] as { bodyText: string }).bodyText).toBe(
+      "Dear Acme Ltd,\n\nA hand-typed offer.\n\nRegards.",
+    );
+  });
+
+  // P1's explicit carve-out from `subject`'s own fallback-on-blank behavior: a genuinely empty
+  // letter must never be silently swapped back for the server's render — the manager gets an
+  // unambiguous "you cleared it", via the Issue action itself refusing to fire.
+  it("refuses to issue an empty body — the Issue action disables rather than silently falling back", async () => {
+    const bodies: unknown[] = [];
+    renderDialog({ onIssuePost: (b) => bodies.push(b) });
+
+    const letter = await screen.findByTestId("quotation-letter");
+    const issueButton = screen.getByRole("button", { name: /issue quotation/i });
+    expect(issueButton).not.toBeDisabled();
+
+    await userEvent.clear(letter);
+    expect(issueButton).toBeDisabled();
+
+    // Mutation check: an attempted click while disabled must not somehow still fire the request.
+    await userEvent.click(issueButton);
+    expect(bodies).toHaveLength(0);
   });
 
   it("surfaces an issue failure inline and keeps the dialog open", async () => {
@@ -207,5 +263,53 @@ describe("QuotationPreviewDialog", () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onIssuePost).not.toHaveBeenCalled();
+  });
+
+  // P3 — the product owner's report that "Copy text" reads and behaves as broken:
+  // `handleCopy` used to swallow every error AND give no success signal, so a working copy and a
+  // failed one were indistinguishable. Renamed, and now gives real feedback either way, reusing
+  // the app's existing `copyToClipboard` (apps/web/src/lib/clipboard.ts) — the same helper
+  // RegeneratePortalLink/PortalLinkRow already use for this exact problem.
+  it('renames "Copy text" to "Copy to clipboard"', async () => {
+    renderDialog();
+    expect(screen.getByRole("button", { name: "Copy to clipboard" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy text" })).not.toBeInTheDocument();
+  });
+
+  it("shows a visible confirmation when the copy succeeds", async () => {
+    const copySpy = vi.spyOn(clip, "copyToClipboard").mockResolvedValue(true);
+    renderDialog();
+
+    expect(screen.queryByText(/copied to clipboard/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }));
+
+    expect(await screen.findByText(/copied to clipboard/i)).toBeInTheDocument();
+    expect(copySpy).toHaveBeenCalledWith(QUOTATION.previewBody);
+  });
+
+  // Clipboard access can genuinely fail (non-secure context, denied permission) — `copyToClipboard`
+  // models that as resolving `false` (see its own test suite), which must surface here as a
+  // visible inline error, not silence.
+  it("shows an inline error when the clipboard is unavailable", async () => {
+    vi.spyOn(clip, "copyToClipboard").mockResolvedValue(false);
+    renderDialog();
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }));
+
+    expect(await screen.findByText(/couldn't copy/i)).toBeInTheDocument();
+    expect(screen.queryByText(/copied to clipboard/i)).not.toBeInTheDocument();
+  });
+
+  it("copies the CURRENT (possibly edited) body, not the original template render", async () => {
+    const copySpy = vi.spyOn(clip, "copyToClipboard").mockResolvedValue(true);
+    renderDialog();
+
+    const letter = await screen.findByTestId("quotation-letter");
+    await userEvent.clear(letter);
+    await userEvent.type(letter, "Edited letter text.");
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }));
+
+    await waitFor(() => expect(copySpy).toHaveBeenCalledWith("Edited letter text."));
   });
 });

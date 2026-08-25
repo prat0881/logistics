@@ -162,9 +162,10 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     });
   };
 
-  // Task 4, fix round 1 — `.../issue`'s body no longer carries `bodyText` at all (schema
-  // change, packages/shared/src/quotation.ts): the letter is always rendered server-side from
-  // the seeded template, never accepted as free text.
+  // Deliberately omits `bodyText` — S5.9.3 Task 1 made it an OPTIONAL caller override
+  // (packages/shared/src/quotation.ts), so every existing test built on this helper keeps
+  // exercising the fallback-to-server-render path unchanged. Tests for the override path send
+  // `bodyText` explicitly (see the "S5.9.3 Task 1" block below).
   const issueBody = (suffix: string) => ({
     recipientEmail: `client-${suffix}@e2e.test`,
     subject: `Quotation for your shipment — ${suffix}`,
@@ -373,8 +374,9 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     expect(res.body.issuedAt).not.toBeNull();
     expect(res.body.recipientEmail).toBe(body.recipientEmail);
     expect(res.body.subject).toBe(body.subject); // caller-supplied subject wins over the template's
-    // bodyText is always server-rendered now (fix round 1) — never the caller's, since there is
-    // no bodyText field on the request body anymore.
+    // `issueBody()` (this file) never sends `bodyText`, so this exercises the FALLBACK path —
+    // S5.9.3 Task 1 made `bodyText` a caller-editable override, but omitting it must still render
+    // the template server-side exactly as before P1 (see the tests below for the override path).
     expect(res.body.bodyText).toContain("USD 100.00");
     expect(res.body.pricing.clientTotalUsd).toBe(100);
 
@@ -385,6 +387,81 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
 
     const updatedQuery = await prisma.query.findUnique({ where: { id: query.id } });
     expect(updatedQuery?.status).toBe("AWAITING_CLIENT_DECISION");
+  });
+
+  // ── S5.9.3 Task 1 (P1/P2): the editable body ────────────────────────────────────────────────
+
+  it("persists a caller-edited body verbatim into bodyText/MessageLog, while the grand total stays priced server-side regardless of what the text claims", async () => {
+    const userId = randomUUID();
+    const { query } = await mkAwardedQuery("8b");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    // Deliberately claims a WRONG total in the prose — this is the exact divergence risk the
+    // task brief calls out: the audit record must still capture this verbatim (P2), even though
+    // it disagrees with the server-priced `clientTotalUsd` below.
+    const editedBody =
+      "Dear valued client,\n\nOur best all-in offer stands at USD 999,999.00, today only.\n\nRegards,\nYankalfa Logistics";
+    const body = { ...issueBody("8b"), bodyText: editedBody };
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(userId, Role.MANAGER))
+      .send(body)
+      .expect(200);
+
+    // The audit record reflects exactly what was typed — never the template's own render.
+    expect(res.body.bodyText).toBe(editedBody);
+    expect(res.body.bodyText).not.toContain("USD 100.00");
+
+    // But the amount the client is actually quoted never comes from that text: it is the SAME
+    // priced total the server would have computed regardless, off the frozen draft alone.
+    expect(res.body.pricing.clientTotalUsd).toBe(100);
+
+    const row = await prisma.quotation.findUnique({ where: { id: res.body.id } });
+    expect(row?.bodyText).toBe(editedBody);
+    expect(Number(row?.clientTotalUsd)).toBe(100);
+    expect(Number(row?.costTotalUsd)).toBe(100);
+    expect((row?.issuedSnapshot as unknown as { clientTotalUsd: number } | null)?.clientTotalUsd).toBe(100);
+
+    const log = await prisma.messageLog.findFirst({
+      where: { entityId: query.id, eventKey: "quotation.issued" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(log?.bodyRendered).toBe(editedBody);
+  });
+
+  it("400s an issue whose bodyText is explicitly empty — never silently replaced by the template's render", async () => {
+    const { query } = await mkAwardedQuery("8c");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ ...issueBody("8c"), bodyText: "" })
+      .expect(400);
+
+    // Refused, not frozen — the draft is untouched by the rejected attempt.
+    const row = await prisma.quotation.findFirst({ where: { queryId: query.id } });
+    expect(row?.status).toBe("DRAFT");
+  });
+
+  it("400s an issue whose bodyText exceeds the sane maximum", async () => {
+    const { query } = await mkAwardedQuery("8d");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ ...issueBody("8d"), bodyText: "x".repeat(5001) })
+      .expect(400);
   });
 
   it("issue composes exactly one MessageLog row against quotation.issued.email", async () => {

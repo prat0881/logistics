@@ -226,14 +226,28 @@ export class QuotationService {
 
   /** `POST /api/queries/:id/quotation/issue` — Manager+. Freezes the current DRAFT: reprices
    *  one more time off its own `draftJson` (never re-reads the award), renders the seeded
-   *  `quotation.issued.email` template server-side (fix round 1, review IMPORTANT #1 — the ONLY
-   *  way "grand total only, no forwarder names" is enforced by code rather than by the shape of
-   *  a UI that doesn't exist yet), stamps `ISSUED` + `issuedAt`/`issuedByUserId` + the rendered
-   *  `recipientEmail`/`subject`/`bodyText`, writes `issuedSnapshot` (the priced output,
-   *  verbatim), and logs one audit `MessageLog` row. All in one transaction, closing with the
-   *  projector's `client` recompute — same shape as `generateClientQuote` (award.service.ts).
-   *  `transport.send` fires only AFTER that transaction commits (fix round 1, review
-   *  IMPORTANT #2 — mirrors `StatusService.fire`'s post-commit `emitAsync`). */
+   *  `quotation.issued.email` template server-side as the DEFAULT subject/body, stamps `ISSUED` +
+   *  `issuedAt`/`issuedByUserId` + the final `recipientEmail`/`subject`/`bodyText`, writes
+   *  `issuedSnapshot` (the priced output, verbatim), and logs one audit `MessageLog` row. All in
+   *  one transaction, closing with the projector's `client` recompute — same shape as
+   *  `generateClientQuote` (award.service.ts). `transport.send` fires only AFTER that transaction
+   *  commits (fix round 1, review IMPORTANT #2 — mirrors `StatusService.fire`'s post-commit
+   *  `emitAsync`).
+   *
+   *  S5.9.3 Task 1 (P1/P2): `body.subject`/`body.bodyText` are now BOTH caller-editable overrides
+   *  of the render, falling back to it when omitted or blank (mirrors the pre-existing `subject`
+   *  behavior). This is the one place the structural "grand total only" guarantee (fix round 1,
+   *  review IMPORTANT #1) became procedural — the letter's PROSE can now say anything a manager
+   *  types. What is NOT reachable through `body` is the money: `priced` above is computed from
+   *  `stored.legs`/`marginPct`/`overrides` — this row's own frozen draft — and that is the ONLY
+   *  input to `costTotalUsd`/`clientTotalUsd`/`issuedSnapshot` below. `body.bodyText` is never
+   *  parsed for a total and never touches `priced`, so whatever a manager types into the letter,
+   *  the amount the system of record charges the client is exactly what `priceQuotation` computed
+   *  server-side — unchanged from before P1. What the free-text edit CAN do is make the letter's
+   *  own prose say a different number than `priced.clientTotalUsd` (e.g. if a manager retypes the
+   *  `Grand_Total` line by hand) — `bodyText`/`MessageLog.bodyRendered` still record that letter
+   *  verbatim (P2: the audit trail reflects what was actually sent), so the discrepancy is
+   *  visible after the fact even though nothing here catches it before sending. */
   async issue(queryId: string, body: QuotationIssue, user: RequestUser): Promise<QuotationDto> {
     const current = await this.latestQuotation(queryId);
     if (!current) {
@@ -263,10 +277,16 @@ export class QuotationService {
     // see its own doc comment for why sharing it is what makes a draft's preview byte-identical
     // to what issuing it actually persists.
     const { subject: renderedSubject, body: renderedBody } = this.renderFromTemplate(template, tokens);
-    // Subject stays caller-editable (design doc: the envelope names it as such); the letter
-    // itself never is — `body` no longer carries a `bodyText` field at all (schema change,
-    // packages/shared/src/quotation.ts).
+    // Both subject and body are caller-editable overrides of the render, falling back to it when
+    // omitted/blank (S5.9.3 Task 1, P1) — `quotationIssueSchema` enforces non-empty-after-trim
+    // when either IS supplied, so `?.trim()` here only ever sees `""` for an omitted field, never
+    // for one the caller explicitly sent empty (that 400s at the validation pipe, before this
+    // method even runs).
     const finalSubject = body.subject?.trim() || renderedSubject;
+    // 🔴 Grand-total authority (see this method's own doc comment): `finalBody` is prose only —
+    // it is what gets PERSISTED as the audit record, but it never feeds `priced` below. The
+    // client's actual charged amount stays entirely off `stored.legs`/`marginPct`/`overrides`.
+    const finalBody = body.bodyText?.trim() || renderedBody;
 
     const issuedAt = new Date();
     const { row, logId } = await this.prisma.$transaction(async (tx) => {
@@ -284,7 +304,10 @@ export class QuotationService {
           issuedByUserId: user.userId,
           recipientEmail: body.recipientEmail,
           subject: finalSubject,
-          bodyText: renderedBody,
+          bodyText: finalBody,
+          // `priced` (line ~255) is computed from `stored.legs`/`marginPct`/`overrides` alone —
+          // never from `finalBody` — so the grand total below stays server-authoritative
+          // regardless of what the manager typed into the letter (see this method's doc comment).
           issuedSnapshot: priced as unknown as Prisma.InputJsonValue,
           costTotalUsd: priced.costTotalUsd,
           clientTotalUsd: priced.clientTotalUsd,
@@ -306,7 +329,7 @@ export class QuotationService {
           fromAddress: QUOTATION_EMAIL_FROM,
           toAddress: body.recipientEmail,
           subject: finalSubject,
-          bodyRendered: renderedBody,
+          bodyRendered: finalBody,
           tokens: tokens as unknown as Prisma.InputJsonValue,
           composedById: user.userId,
         },

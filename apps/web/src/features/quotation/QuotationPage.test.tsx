@@ -210,8 +210,10 @@ describe("QuotationPage", () => {
     expect(preview).not.toBeDisabled();
 
     await userEvent.click(preview);
+    // S5.9.3 Task 1: the letter is now an editable textarea — `toHaveValue`, not
+    // `toHaveTextContent`, is the correct matcher for a form control's value.
     const letter = await screen.findByTestId("quotation-letter");
-    expect(letter).toHaveTextContent("USD 330.00");
+    expect((letter as HTMLTextAreaElement).value).toContain("USD 330.00");
   });
 
   it("hides the builder for an EXECUTIVE and never issues the Manager+-only quotation request", async () => {
@@ -767,10 +769,11 @@ describe("QuotationPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /issue quotation/i }));
 
     await waitFor(() => expect(issueBodies).toHaveLength(1));
-    // Never a `bodyText` field — the letter is always server-rendered, never posted by the client.
+    // S5.9.3 Task 1: the (unedited, prefilled) body is posted too now.
     expect(issueBodies[0]).toEqual({
       recipientEmail: "buyer@client.test",
       subject: "Quotation YAL26-0001-Q1 · Ref YAL26-0001",
+      bodyText: "Dear Acme Ltd,\n\nTotal — all inclusive: USD 330.00\n\nRegards,\nYankalfa Logistics",
     });
 
     // The dialog closes and the page itself flips to the read-only ISSUED view.

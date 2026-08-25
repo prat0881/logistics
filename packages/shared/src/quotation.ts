@@ -17,21 +17,34 @@ export type QuotationPatch = z.infer<typeof quotationPatchSchema>;
 /**
  * `POST /api/queries/:id/quotation/issue` body.
  *
- * Fix round 1 (S5.8 Task 4 review, IMPORTANT #1): the letter's BODY is always rendered
- * server-side from the seeded `quotation.issued.email` template + tokens computed from the
- * query's own data — never accepted as free text. That is the only way "grand total only, no
- * charge lines, no forwarder names" (design doc, "Withheld from the client") is a rule the
- * backend actually enforces, rather than one only the (not-yet-built) compose screen happens to
- * respect. `bodyText` is therefore NOT a field here — not kept-as-override, not kept-but-ignored,
- * since either would reopen the hole this closes.
+ * S5.9.3 Task 1 (P1, product owner's explicit ruling): the letter's body IS now caller-editable.
+ * Fix round 1 (S5.8 Task 4 review, IMPORTANT #1) had made it server-rendered-only precisely
+ * because that was the only STRUCTURAL way to enforce "grand total only, no charge lines, no
+ * forwarder names" (design doc, "Withheld from the client") — a UI could not put in the letter
+ * what the backend never accepted as input. P1 trades that structural guarantee for a procedural
+ * one (P2): the manager always starts from the server-rendered draft (`QuotationDto.previewBody`)
+ * and can edit it before issuing, the same way `subject` already worked. What the guarantee still
+ * IS NOT is a way to change what the client is actually charged — `bodyText` is prose only;
+ * `issue()` prices the grand total from the frozen draft (`priceQuotation` over `draftJson`)
+ * exactly as before, and that computed total — never anything parsed out of this string — is what
+ * lands in `Quotation.clientTotalUsd`/`issuedSnapshot`. The persisted `bodyText` is whatever was
+ * actually sent (auditable), which can diverge from that number if a manager edits the total's own
+ * digits in the prose; see quotation.service.ts `issue()` for how that risk is documented.
  *
- * `subject` stays caller-suppliable but now OPTIONAL — the design's envelope names subject as
- * editable (unlike the letter, which "has no controls inside it"); omit it to fall back to the
- * template's own rendered subject.
+ * `bodyText` is OPTIONAL, matching `subject`'s own fallback rule: omit it (or the whole field) to
+ * fall back to the template's own rendered body — the manager never composes from blank, and every
+ * pre-P1 caller that never sent a body keeps working unchanged. When present it must be non-empty
+ * after trimming — an explicitly empty body is refused (400), never silently replaced by the
+ * template's render, so a manager who clears the box gets a clear rejection rather than a letter
+ * they didn't actually write.
+ *
+ * `subject` stays caller-suppliable but OPTIONAL — the design's envelope names subject as
+ * editable; omit it to fall back to the template's own rendered subject.
  */
 export const quotationIssueSchema = z.object({
   recipientEmail: z.string().email(),
   subject: z.string().trim().min(1).max(200).optional(),
+  bodyText: z.string().trim().min(1).max(5000).optional(),
 });
 export type QuotationIssue = z.infer<typeof quotationIssueSchema>;
 
@@ -56,12 +69,14 @@ export type QuotationIssue = z.infer<typeof quotationIssueSchema>;
  * `previewSubject`/`previewBody` (T6) are what the seeded `quotation.issued.email` template would
  * render RIGHT NOW from this row's own current `marginPct`/`overrides` — computed by the exact
  * same `buildIssueTokens` → `omitEmptyTokenLine` → `renderTemplate` chain `issue()` itself uses to
- * freeze `subject`/`bodyText`, so a DRAFT's preview is byte-identical to what issuing it would
- * persist (T6 ruling — the client preview must never be reconstructed client-side, since that can
- * drift from the template). Read-only: nothing in `quotationPatchSchema`/`quotationIssueSchema`
- * sets these directly; only `POST .../issue` writes the persisted `subject`/`bodyText`. Both are
- * `""` in the (should-be-unreachable) case where the `quotation.issued.email` template itself
- * isn't configured.
+ * seed `subject`/`bodyText`'s DEFAULTS. Through S5.8 T6 that made a DRAFT's preview byte-identical
+ * to what issuing it would persist; as of S5.9.3 Task 1 (P1) that is only true when the caller
+ * doesn't override — `quotationIssueSchema.subject`/`bodyText` are both caller-editable now, so
+ * `Quotation.subject`/`bodyText` end up holding whatever text was actually sent, not necessarily
+ * this render. Read-only here regardless: nothing in `quotationPatchSchema` sets these directly,
+ * and `quotationIssueSchema` only ever supplies the freeform OVERRIDE, never mutates the template
+ * render itself. Both are `""` in the (should-be-unreachable) case where the
+ * `quotation.issued.email` template itself isn't configured.
  */
 export interface QuotationDto {
   id: string;

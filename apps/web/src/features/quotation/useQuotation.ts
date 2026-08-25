@@ -44,8 +44,10 @@ export function usePatchQuotation(queryId?: string) {
 
 /**
  * `POST /api/queries/:id/quotation/issue` (S5.8 Task 6). Body is exactly `quotationIssueSchema`
- * — `recipientEmail` + optional `subject`, never a `bodyText` (the letter is always rendered
- * server-side; see `QuotationDto.previewBody`'s doc comment and `QuotationPreviewDialog`).
+ * — `recipientEmail` + optional `subject` + optional `bodyText`. As of S5.9.3 Task 1 (P1), both
+ * `subject` and `bodyText` are manager-editable overrides of the server-rendered template default
+ * (`QuotationDto.previewSubject`/`previewBody`); see `QuotationPreviewDialog`'s doc comment for
+ * what that trade-off does and doesn't affect (the grand total stays server-priced regardless).
  *
  * Issuing moves the query to `AWAITING_CLIENT_DECISION` (Task 4), which `QueryOverviewHeader`'s
  * status pill and `StageRail`'s stage-enablement both read straight off `QueryDetail.status` — so
