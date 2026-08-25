@@ -1305,4 +1305,323 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
       legs[1].legId,
     ]);
   });
+
+  // ── S5.9.4: register C10 (unguarded patch write) and C11 (false 409 on a no-op patch) ────────
+
+  /** The current quotation row, straight off the DB — the tests below assert on `updatedAt` and on
+   *  the persisted money columns, neither of which any DTO can prove on its own. */
+  const currentRow = (queryId: string) =>
+    prisma.quotation.findFirstOrThrow({ where: { queryId }, orderBy: { version: "desc" } });
+
+  /** Blocks until at least `n` backends on this database are waiting on a lock, or throws.
+   *
+   *  This is what makes the C10 race test DETERMINISTIC rather than a hopeful `Promise.all`: it is
+   *  positive proof that the request we just fired has already got past its own read and is sitting
+   *  on the UPDATE. A request that had been refused by `patch()`'s UP-FRONT status check would have
+   *  returned immediately and never appeared here — so the test timing out is itself the signal
+   *  that the wrong guard fired. */
+  const waitForBlockedBackends = async (n: number, timeoutMs = 10_000) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const [{ c }] = await prisma.$queryRaw<{ c: number }[]>`
+        SELECT count(*)::int AS c FROM pg_stat_activity
+        WHERE datname = current_database() AND state = 'active' AND wait_event_type = 'Lock'`;
+      if (c >= n) return;
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for ${n} lock-blocked backends (saw ${c})`);
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
+
+  // 🔴 Register C10 — `patch()` read the row, checked `status !== "DRAFT"`, then wrote on `id`
+  // ALONE. A PATCH racing a winning `issue()` could therefore land `marginPct`/`draftJson`/the
+  // totals on a quotation that had already gone to the client: the letter says one number, the
+  // system of record then says another, with nobody having made a mistake.
+  //
+  // The race is made deterministic WITHOUT mocking anything: the test opens its own transaction and
+  // takes a `SELECT … FOR UPDATE` row lock, then fires the real HTTP issue and the real HTTP PATCH
+  // in that order. Postgres queues row-lock waiters FIFO, so when the test releases its lock the
+  // issue commits first and the PATCH — which has ALREADY done its read and seen a DRAFT — is the
+  // one that has to be refused by the write itself. Both racers are ordinary requests through the
+  // real app against the real database.
+  //
+  // Mutation proof: drop `status: "DRAFT"` from the `updateMany`'s WHERE in `QuotationService.patch`
+  // and the PATCH 200s, overwriting the ISSUED row's margin and totals — every assertion below the
+  // `.expect(409)` reddens as well, so this cannot pass on a coincidence.
+  it(
+    "S5.9.4 (C10) — a PATCH that races a winning issue is refused BY THE WRITE, leaving the issued row untouched",
+    async () => {
+      const { query } = await mkAwardedQuery("c10race");
+      await request(app.getHttpServer())
+        .get(`/api/queries/${query.id}/quotation`)
+        .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+        .expect(200);
+
+      // POSITIVE CONTROL, part 1 — this exact request (same endpoint, same actor, same body shape)
+      // succeeds and moves the money while the row is a DRAFT. Whatever refuses it below is
+      // therefore about the race, not about the request.
+      const control = await request(app.getHttpServer())
+        .patch(`/api/queries/${query.id}/quotation`)
+        .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+        .send({ marginPct: 10 })
+        .expect(200);
+      expect(control.body.pricing.clientTotalUsd).toBe(110);
+
+      const before = await currentRow(query.id);
+      const expectedUpdatedAt = before.updatedAt.toISOString();
+
+      // The test takes the row lock and holds it until `release()`.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const heldLock = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Quotation" WHERE id = ${before.id}::uuid FOR UPDATE`;
+          await gate;
+        },
+        { timeout: 25_000, maxWait: 15_000 },
+      );
+
+      try {
+        // Racer 1 — the winner. Queues behind the test's lock at its own UPDATE.
+        const issuing = request(app.getHttpServer())
+          .post(`/api/queries/${query.id}/quotation/issue`)
+          .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+          .send({ recipientEmail: "client-c10race@e2e.test", expectedUpdatedAt });
+        const issuePromise = issuing.then((r) => r);
+        await waitForBlockedBackends(1);
+
+        // Racer 2 — the loser. Its READ happens now, while the row is still a DRAFT (the issue has
+        // not committed), which is precisely the window C10 is about. It then queues second.
+        const patching = request(app.getHttpServer())
+          .patch(`/api/queries/${query.id}/quotation`)
+          .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+          .send({ marginPct: 90 });
+        const patchPromise = patching.then((r) => r);
+        // Two waiters: the PATCH has passed its own DRAFT check and is on the UPDATE. If the
+        // up-front check had been what refused it, it would never have reached a lock at all.
+        await waitForBlockedBackends(2);
+
+        release();
+        await heldLock;
+
+        const issueRes = await issuePromise;
+        const patchRes = await patchPromise;
+
+        expect(issueRes.status).toBe(200);
+        expect(issueRes.body.status).toBe("ISSUED");
+        expect(issueRes.body.pricing.clientTotalUsd).toBe(110);
+
+        expect(patchRes.status).toBe(409);
+        expect(patchRes.body.message).toBe("this quotation is not a draft and can no longer be edited");
+
+        // The row the client was actually sent — untouched by the losing PATCH.
+        const after = await currentRow(query.id);
+        expect(after.status).toBe("ISSUED");
+        expect(Number(after.marginPct)).toBe(10);
+        expect(Number(after.clientTotalUsd)).toBe(110);
+        expect(Number(after.costTotalUsd)).toBe(100);
+        expect((after.issuedSnapshot as unknown as { clientTotalUsd: number }).clientTotalUsd).toBe(110);
+        // …and the letter that went out agrees with it.
+        expect(after.bodyText).toContain("USD 110.00");
+      } finally {
+        release();
+        await heldLock.catch(() => undefined);
+      }
+    },
+    60_000,
+  );
+
+  // 🔴 Register C11, half 1 — Prisma's `@updatedAt` stamps on EVERY update, and no PATCH trigger is
+  // dirty-checked, so a PATCH that changed nothing still moved the row's clock. Fixed server-side,
+  // because a client-side dirty check cannot cover a DIFFERENT client — which is the whole
+  // population `issue()`'s guard exists to protect against.
+  //
+  // Mutation proof: delete the `if (unchanged) return this.toDto(current);` short-circuit in
+  // `QuotationService.patch` and every `toEqual(t1)` below reddens. The last block is the positive
+  // control that keeps the comparison honest in the other direction: a PATCH that genuinely drops
+  // an override MUST move the clock, so a comparison that simply answered "unchanged" always would
+  // redden there instead.
+  it("S5.9.4 (C11) — a PATCH that changes nothing writes nothing: updatedAt unmoved, current state returned", async () => {
+    const { query, legs } = await mkAwardedRouteQuery(
+      "c11noop",
+      {
+        origin: { type: "PICKUP", city: "Shanghai", country: "CN" },
+        mid: { type: "WAREHOUSE", city: "Singapore", country: "SG" },
+        dest: { type: "DELIVERY", city: "Dubai", country: "AE" },
+      },
+      [
+        { legCode: "L1", from: "origin", to: "mid" },
+        { legCode: "L2", from: "mid", to: "dest" },
+      ],
+      [0, 1],
+    );
+
+    const getRes = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    const keyOf = (i: number) =>
+      `${legs[i].legId}:${getRes.body.pricing.legs[i].groups[0].lines[0].id as string}`;
+    const [k1, k2] = [keyOf(0), keyOf(1)];
+
+    // A real edit first, so the no-ops below are compared against a NON-trivial state (a margin
+    // with a fractional part, and a two-key overrides map) rather than the pristine 0/{} default.
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 12.5, overrides: { [k1]: 55, [k2]: 66 } })
+      .expect(200);
+
+    const t1 = (await currentRow(query.id)).updatedAt;
+
+    // (a) The exact same state, re-sent — with the overrides map's keys in the OPPOSITE order to
+    // the one it was written in (and Postgres `jsonb` has re-sorted the stored copy anyway), and
+    // the margin as an equal-but-differently-written number.
+    const resend = await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 12.5, overrides: { [k2]: 66, [k1]: 55 } })
+      .expect(200);
+    expect(resend.body.marginPct).toBe(12.5);
+    expect(resend.body.overrides).toEqual({ [k1]: 55, [k2]: 66 });
+    expect((await currentRow(query.id)).updatedAt).toEqual(t1);
+
+    // (b) The empty PATCH — nothing supplied at all.
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({})
+      .expect(200);
+    expect((await currentRow(query.id)).updatedAt).toEqual(t1);
+
+    // (c) The literal C11 scenario: "Reset overrides" posted from a second tab that had nothing
+    // pinned — here, the same map re-posted wholesale.
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ overrides: { [k2]: 66, [k1]: 55 } })
+      .expect(200);
+    expect((await currentRow(query.id)).updatedAt).toEqual(t1);
+
+    // POSITIVE CONTROL — the comparison must not be so loose that a real edit reads as a no-op.
+    // Releasing ONE pin is a genuine change: it must be written, and it must move the clock.
+    const real = await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ overrides: { [k1]: 55 } })
+      .expect(200);
+    expect(real.body.overrides).toEqual({ [k1]: 55 });
+    const t2 = (await currentRow(query.id)).updatedAt;
+    expect(t2.getTime()).toBeGreaterThan(t1.getTime());
+  });
+
+  // Decision N3 — the DRAFT refusal still applies to a no-op. Accepting one silently would report
+  // an already-sent quotation as editable. The DRAFT check therefore runs BEFORE the no-op
+  // short-circuit; the second half is the positive control that the very same body is a 200 on a
+  // DRAFT, so the 409 is about the row's status and nothing else.
+  it("S5.9.4 (N3) — a no-op PATCH against an ISSUED quotation is still refused, though the identical body 200s on a draft", async () => {
+    const { query } = await mkAwardedQuery("c11issued");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    // POSITIVE CONTROL — margin 0 and an empty overrides map are exactly this draft's current
+    // state, i.e. a no-op, and it is accepted while the row is a DRAFT.
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 0, overrides: {} })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send(await issueBody("c11issued", query.id))
+      .expect(200);
+
+    const issued = await currentRow(query.id);
+    for (const body of [{}, { marginPct: 0, overrides: {} }]) {
+      const res = await request(app.getHttpServer())
+        .patch(`/api/queries/${query.id}/quotation`)
+        .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+        .send(body)
+        .expect(409);
+      expect(res.body.message).toBe("this quotation is not a draft and can no longer be edited");
+    }
+    // Refused, not quietly stamped: the issued row's own clock never moved either.
+    expect((await currentRow(query.id)).updatedAt).toEqual(issued.updatedAt);
+  });
+
+  // 🔴 Register C11, half 2 — the point of the fix is that `issue()`'s guard stops crying WOLF,
+  // never that it fires less. Both halves run the identical sequence (manager A opens the preview,
+  // someone else PATCHes, A issues against A's own token); the ONLY difference is whether that
+  // intervening PATCH actually changed anything. They must end differently — 200 and 409 — so
+  // neither outcome can be reached by a bug that collapses both into one answer.
+  //
+  // Mutation proof (a): remove the no-op short-circuit and the FIRST half reddens (A's legitimate
+  // send is refused, which is C11 itself). Mutation proof (b): loosen the comparison so the genuine
+  // reprice is treated as a no-op and the SECOND half reddens — the stale letter goes out.
+  it("S5.9.4 (C11) — a no-op PATCH no longer invalidates a pending issue, while a genuine reprice still does", async () => {
+    // Half 1 — the false 409 that C11 is about.
+    const quiet = await mkAwardedQuery("c11quiet");
+    const quietA = await request(app.getHttpServer())
+      .get(`/api/queries/${quiet.query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    expect(quietA.body.previewBody).toContain("USD 100.00");
+
+    // A second tab clicks "Reset overrides" with nothing pinned — posts the map unconditionally.
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${quiet.query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ overrides: {} })
+      .expect(200);
+    expect((await currentRow(quiet.query.id)).updatedAt.toISOString()).toBe(quietA.body.updatedAt);
+
+    const sent = await request(app.getHttpServer())
+      .post(`/api/queries/${quiet.query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({
+        recipientEmail: "client-c11quiet@e2e.test",
+        bodyText: quietA.body.previewBody,
+        expectedUpdatedAt: quietA.body.updatedAt,
+      })
+      .expect(200);
+    expect(sent.body.status).toBe("ISSUED");
+    expect(sent.body.pricing.clientTotalUsd).toBe(100);
+
+    // Half 2 — same sequence, but the intervening PATCH genuinely reprices. The guard must still
+    // bite, and the clock must still have moved for it to be able to.
+    const loud = await mkAwardedQuery("c11loud");
+    const loudA = await request(app.getHttpServer())
+      .get(`/api/queries/${loud.query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    expect(loudA.body.previewBody).toContain("USD 100.00");
+
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${loud.query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 25 })
+      .expect(200);
+    const repriced = await currentRow(loud.query.id);
+    expect(repriced.updatedAt.toISOString()).not.toBe(loudA.body.updatedAt);
+    expect(Number(repriced.clientTotalUsd)).toBe(125);
+
+    const refused = await request(app.getHttpServer())
+      .post(`/api/queries/${loud.query.id}/quotation/issue`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({
+        recipientEmail: "client-c11loud@e2e.test",
+        bodyText: loudA.body.previewBody, // the letter quoting the OLD total
+        expectedUpdatedAt: loudA.body.updatedAt,
+      })
+      .expect(409);
+    expect(refused.body.message).toContain("repriced");
+    expect((await currentRow(loud.query.id)).status).toBe("DRAFT");
+  });
 });

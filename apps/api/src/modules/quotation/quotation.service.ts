@@ -35,6 +35,39 @@ const STALE_QUOTATION_MESSAGE =
   "this quotation was repriced after you opened this preview — the letter has been reloaded with " +
   "the current total; check it before issuing";
 
+// S5.9.4 (register C10) — the 409 an edit against a no-longer-editable quotation gets back. ONE
+// constant because `patch()` now raises it from two places that mean the same thing to the caller:
+// the up-front read (the row was already ISSUED/SUPERSEDED when we looked) and the UPDATE's own
+// WHERE clause (it became so between that look and the write). The distinction is ours, not the
+// manager's — either way the answer is "reload; this one has gone out".
+const NOT_A_DRAFT_MESSAGE = "this quotation is not a draft and can no longer be edited";
+
+/**
+ * S5.9.4 (register C11) — a stable, key-order-independent serialisation, used to decide whether a
+ * PATCH would actually change `draftJson`.
+ *
+ * Two properties matter and both are deliberate:
+ *
+ * 1. **Object keys are sorted**, recursively, so `{a:1,b:2}` and `{b:2,a:1}` compare equal. This is
+ *    not hypothetical: the overrides map is a `Record<string, number>` whose key order comes from
+ *    whatever the browser happened to send, and Postgres `jsonb` re-orders keys on storage anyway
+ *    (length, then bytewise) — so a plain `JSON.stringify` comparison would report "changed" on
+ *    almost every genuine no-op.
+ * 2. **Array order is preserved.** `draftJson.legs` is an ordered list; a reordering IS a change.
+ *
+ * Numbers compare by VALUE, not by source formatting: `JSON.stringify` emits the canonical shortest
+ * representation of a double, so `1.50` and `1.5` both serialise to `1.5`. Anything that is not
+ * exactly the same double still differs, which is the direction to be wrong in — see `patch()`.
+ */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+}
+
 // The tokens the seeded `quotation.issued.email` template's subject/body reference (Task 4 fix
 // round 1, review IMPORTANT #1) — every value a plain string, "" when the underlying data is
 // absent (`renderTemplate` blanks a missing token the same way).
@@ -204,16 +237,55 @@ export class QuotationService {
    *  when present in the body, REPLACES the stored map wholesale (the builder screen always
    *  holds/sends the full current override state — this is also what lets a future "reset
    *  overrides" action release a pin simply by omitting its key); when absent, the stored map is
-   *  left untouched, which is what lets a pinned line survive a margin-only PATCH. */
+   *  left untouched, which is what lets a pinned line survive a margin-only PATCH.
+   *
+   *  🔴 S5.9.4, register C10 — the DRAFT check used to be a plain read followed by an
+   *  `update({ where: { id } })`, which is not atomic: a PATCH racing a winning `issue()` could
+   *  write `marginPct`/`draftJson`/the totals onto a quotation that had ALREADY gone to the client,
+   *  silently making the system of record disagree with the letter. The check now also lives inside
+   *  the UPDATE's own WHERE clause — the same shape `issue()` already uses (see its doc comment) —
+   *  so the database itself refuses the write and the loser 409s on `count === 0`. The up-front
+   *  read is deliberately kept: it is the fast path and the one that answers a caller who was
+   *  simply looking at a stale screen; the WHERE clause is what makes it CORRECT.
+   *
+   *  🔴 S5.9.4, register C11 — a PATCH that would change nothing writes nothing at all. Prisma's
+   *  `@updatedAt` stamps on every update whether or not a value moved, and none of the web
+   *  triggers is dirty-checked (a keystroke debounces a PATCH, a blur commits one, "Reset
+   *  overrides" posts the map unconditionally). Since `issue()`'s concurrency guard is a comparison
+   *  on exactly that timestamp, a second tab clicking "Reset overrides" with nothing overridden
+   *  used to refuse a perfectly legitimate send with "this quotation was repriced" — when it was
+   *  not. Enforced HERE rather than at the trigger because the timestamp is a server concern and a
+   *  client-side check can only ever cover its own client; a *different* client is the entire
+   *  population `issue()`'s guard exists to protect against.
+   *
+   *  What "changes nothing" means is deliberately the WHOLE of what this method persists — every
+   *  one of the four columns in `data` below — and the comparison is biased toward "it changed":
+   *  - `marginPct`: `Decimal.equals`, i.e. NUMERIC equality against the stored `Decimal(5,2)`, so
+   *    `12.5` and a stored `12.50` are the same value rather than two different strings.
+   *  - `draftJson`: `canonicalJson` (see above) — key-order-independent, so a differently-ordered
+   *    overrides map is not a change, while a reordered `legs` array still is.
+   *  - `costTotalUsd`/`clientTotalUsd`: `Decimal.equals` against the freshly-`priceQuotation`d
+   *    figures. These are derivable from the three inputs above, so they are strictly redundant —
+   *    and included anyway, because a row whose persisted totals have drifted from what the current
+   *    pricing code computes MUST be rewritten (and MUST move its clock, so `issue()` refuses a
+   *    letter composed against the drifted number) rather than short-circuited as "unchanged".
+   *  The failure this ordering guards against is the dangerous one: calling a genuine reprice a
+   *  no-op would leave `updatedAt` unmoved and walk a stale letter straight past `issue()`'s guard.
+   *
+   *  The DRAFT refusal is checked BEFORE the no-op short-circuit, on purpose: editing an issued
+   *  quotation is refused whether or not the edit would have changed anything, or a 200 would
+   *  misreport an already-sent quotation as editable. */
   async patch(queryId: string, body: QuotationPatch): Promise<QuotationDto> {
     const current = await this.latestQuotation(queryId);
     if (!current) {
       throw new NotFoundException("no quotation exists for this query yet — GET .../quotation first");
     }
     // An issued (or superseded) quotation is immutable — the second of the two guards this
-    // service must never lose (S5.8 Task 3 report contract).
+    // service must never lose (S5.8 Task 3 report contract). Fails fast here with the caller-facing
+    // message; the SAME condition is repeated inside the UPDATE's WHERE clause below, which is what
+    // makes it atomic against an `issue()` that commits between this read and that write.
     if (current.status !== "DRAFT") {
-      throw new ConflictException("this quotation is not a draft and can no longer be edited");
+      throw new ConflictException(NOT_A_DRAFT_MESSAGE);
     }
 
     const stored = current.draftJson as unknown as StoredQuotationDraft;
@@ -222,8 +294,19 @@ export class QuotationService {
     const nextDraft: StoredQuotationDraft = { legs: stored.legs, overrides };
     const priced = priceQuotation(nextDraft.legs, marginPct, overrides);
 
-    const updated = await this.prisma.quotation.update({
-      where: { id: current.id },
+    // C11 (see doc comment) — every column the UPDATE below would write, compared against what is
+    // already stored. All four must match for this to be a no-op; any doubt is a change.
+    const unchanged =
+      current.marginPct.equals(marginPct) &&
+      current.costTotalUsd.equals(priced.costTotalUsd) &&
+      current.clientTotalUsd.equals(priced.clientTotalUsd) &&
+      canonicalJson(nextDraft) === canonicalJson(current.draftJson);
+    if (unchanged) return this.toDto(current);
+
+    // C10 (see doc comment) — `updateMany` rather than `update` purely because Prisma only accepts
+    // unique fields in `update`'s `where`, and `status` is not one; same reason `issue()` uses it.
+    const guard = await this.prisma.quotation.updateMany({
+      where: { id: current.id, status: "DRAFT" },
       data: {
         marginPct,
         draftJson: nextDraft as unknown as Prisma.InputJsonValue,
@@ -231,6 +314,14 @@ export class QuotationService {
         clientTotalUsd: priced.clientTotalUsd,
       },
     });
+    if (guard.count === 0) {
+      // The row stopped being a DRAFT between the read above and this write — the C10 race. Unlike
+      // `issue()`, which has two distinct losers to tell apart, this has exactly one: `status` is
+      // the only condition in the WHERE beyond the primary key, so `count === 0` can only mean the
+      // status moved. (A concurrent PATCH is NOT a loser here — last write wins, by design.)
+      throw new ConflictException(NOT_A_DRAFT_MESSAGE);
+    }
+    const updated = await this.prisma.quotation.findUniqueOrThrow({ where: { id: current.id } });
     return this.toDto(updated);
   }
 
