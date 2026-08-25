@@ -64,6 +64,14 @@ export function QuotationPage() {
   const [marginInput, setMarginInput] = useState("");
   const seededMarginRef = useRef<number | null>(null);
   const marginTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True from the first keystroke that schedules a debounced margin PATCH until that PATCH
+  // actually fires (S5.9.3 Task 1 review, IMPORTANT) — `patch.isPending` alone only covers the
+  // network round trip, missing the ~400ms window where a reprice is already queued but hasn't
+  // been sent yet. Combined with `patch.isPending` below into `pricingPending`, which gates both
+  // the "Preview quotation" trigger (mirrors the existing "Reset overrides" gating) and, as a
+  // backstop inside the dialog itself, the Issue action — see QuotationPreviewDialog's doc
+  // comment for why the dialog-level backstop is what actually closes the window.
+  const [marginDebouncePending, setMarginDebouncePending] = useState(false);
 
   useEffect(() => {
     if (quotation.data && seededMarginRef.current !== quotation.data.marginPct) {
@@ -84,10 +92,19 @@ export function QuotationPage() {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return;
     if (marginTimerRef.current !== null) clearTimeout(marginTimerRef.current);
+    setMarginDebouncePending(true);
     marginTimerRef.current = setTimeout(() => {
+      marginTimerRef.current = null;
+      setMarginDebouncePending(false);
       patch.mutate({ marginPct: parsed });
     }, MARGIN_DEBOUNCE_MS);
   }
+
+  // A margin/override change is "in flight or debounced" (S5.9.3 Task 1 review, IMPORTANT) from
+  // the moment it's scheduled/sent until the PATCH resolves — the exact window in which
+  // `quotation.data`'s pricing can move out from under an already-open (or opening) preview
+  // dialog. `patch.isPending` alone would miss the debounce half of that window.
+  const pricingPending = patch.isPending || marginDebouncePending;
 
   // 🔴 See module doc comment — always the FULL map. Seeded from the LAST MAP WE SENT, falling
   // back to the server's own copy only before the first send (final review IMPORTANT #6):
@@ -274,7 +291,11 @@ export function QuotationPage() {
               </Button>
             )}
             {isDraft && (
-              <Button type="button" onClick={() => setPreviewOpen(true)}>
+              <Button
+                type="button"
+                onClick={() => setPreviewOpen(true)}
+                disabled={pricingPending}
+              >
                 Preview quotation
               </Button>
             )}
@@ -289,6 +310,7 @@ export function QuotationPage() {
           queryId={id}
           quotation={qu}
           defaultRecipientEmail={q.contactEmail ?? ""}
+          pricingPending={pricingPending}
         />
       )}
     </div>

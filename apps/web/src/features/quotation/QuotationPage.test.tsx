@@ -5,7 +5,6 @@ import { Routes, Route } from "react-router-dom";
 import type { QuotationDto } from "@svyft/shared";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { renderWithProviders } from "@/test/renderWithProviders";
-import { mockFetch } from "@/test/mock-fetch";
 import { QuotationPage } from "./QuotationPage";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -133,6 +132,13 @@ function renderPage(
     onPatch?: (body: unknown) => void;
     /** nth PATCH call gets the nth response; the last entry repeats once exhausted. */
     patchResponses?: QuotationDto[];
+    /** S5.9.3 Task 1 re-review (IMPORTANT) — awaited before a PATCH response resolves, so a test
+     *  can hold a margin/override PATCH "in flight" for an observable window (assert on
+     *  `pricingPending`-gated UI, then release it) instead of racing a promise that always settles
+     *  in the same microtask. Defaults to an already-resolved promise, so every other test's PATCH
+     *  behaves exactly as before (settles on the next microtask, same as the old `mockFetch`-based
+     *  stub). */
+    patchGate?: Promise<void>;
     onIssuePost?: (body: unknown) => void;
     issueResponse?: { status: number; body?: unknown };
     onRevisePost?: () => void;
@@ -150,18 +156,26 @@ function renderPage(
   // "server" would actually have after each PATCH/issue/revise.
   let currentQuotation = opts.quotation ?? baseQuotation();
   let patchCall = 0;
+  const respond = (status: number, body?: unknown) =>
+    ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body ?? {},
+      text: async () => (body === undefined ? "" : JSON.stringify(body)),
+    }) as Response;
   vi.stubGlobal(
     "fetch",
-    mockFetch((url, init) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
       opts.captureUrl?.(url);
       if (url.endsWith("/api/queries/q1/quotation") && init?.method === "PATCH") {
+        if (opts.patchGate) await opts.patchGate;
         const body = init.body ? JSON.parse(init.body as string) : undefined;
         opts.onPatch?.(body);
         const responses = opts.patchResponses ?? [currentQuotation];
         const res = responses[Math.min(patchCall, responses.length - 1)];
         patchCall += 1;
         currentQuotation = res;
-        return { status: 200, body: res };
+        return respond(200, res);
       }
       if (url.endsWith("/api/queries/q1/quotation/issue") && init?.method === "POST") {
         const body = init.body ? JSON.parse(init.body as string) : undefined;
@@ -171,7 +185,7 @@ function renderPage(
           body: { ...currentQuotation, status: "ISSUED", recipientEmail: body?.recipientEmail ?? null },
         };
         if (res.status < 300) currentQuotation = res.body as QuotationDto;
-        return res;
+        return respond(res.status, res.body);
       }
       if (url.endsWith("/api/queries/q1/quotation/revise") && init?.method === "POST") {
         opts.onRevisePost?.();
@@ -180,11 +194,11 @@ function renderPage(
           body: { ...currentQuotation, status: "DRAFT", version: currentQuotation.version + 1 },
         };
         if (res.status < 300) currentQuotation = res.body as QuotationDto;
-        return res;
+        return respond(res.status, res.body);
       }
-      if (url.endsWith("/api/queries/q1/quotation")) return { status: 200, body: currentQuotation };
-      if (url.endsWith("/api/queries/q1")) return { status: 200, body: opts.queryDetail ?? QUERY_DETAIL };
-      return { status: 404 };
+      if (url.endsWith("/api/queries/q1/quotation")) return respond(200, currentQuotation);
+      if (url.endsWith("/api/queries/q1")) return respond(200, opts.queryDetail ?? QUERY_DETAIL);
+      return respond(404);
     }),
   );
   return renderWithProviders(
@@ -326,6 +340,138 @@ describe("QuotationPage", () => {
     expect(
       within(screen.getByTestId("line-l1-ORIGIN:0")).getByDisplayValue("72"),
     ).toBeInTheDocument();
+  });
+
+  // ── S5.9.3 Task 1 re-review (IMPORTANT) — closing the reprice-while-open window ─────────────
+  //
+  // Before this fix, "Preview quotation" had no gating at all (unlike "Reset overrides", which
+  // already disables on `patch.isPending`). A margin edit still mid-debounce, or an override PATCH
+  // still in flight, could be immediately followed by opening the preview — the dialog would then
+  // hold the OLD total while the query cache's `quotation.pricing` moved on underneath it.
+
+  it('"Preview quotation" disables while a margin edit is still debounced, and re-enables once it resolves with the new total', async () => {
+    const at20Pct = baseQuotation({
+      marginPct: 20,
+      previewBody: "Dear Acme Ltd,\n\nTotal — all inclusive: USD 360.00\n\nRegards,\nYankalfa Logistics",
+      pricing: {
+        legs: [
+          {
+            legId: "l1",
+            legCode: "LEG-1",
+            forwarderName: "TCI Freight",
+            variantLabel: "Dedicated",
+            groups: [
+              {
+                group: "ORIGIN",
+                label: "Origin charges",
+                lines: [
+                  { id: "ORIGIN:0", group: "ORIGIN", label: "Origin handling", costNative: 60, costUsd: 60, clientUsd: 72, overridden: false },
+                  { id: "ORIGIN:1", group: "ORIGIN", label: "Origin documentation", costNative: 40, costUsd: 40, clientUsd: 48, overridden: false },
+                ],
+                costUsd: 100,
+                clientUsd: 120,
+              },
+              {
+                group: "FREIGHT",
+                label: "Freight",
+                lines: [
+                  { id: "FREIGHT:0", group: "FREIGHT", label: "Ocean freight", costNative: 200, costUsd: 200, clientUsd: 240, overridden: false },
+                ],
+                costUsd: 200,
+                clientUsd: 240,
+              },
+            ],
+            costUsd: 300,
+            clientUsd: 360,
+          },
+        ],
+        costTotalUsd: 300,
+        clientTotalUsd: 360,
+        marginValueUsd: 60,
+      },
+    });
+
+    renderPage({ patchResponses: [at20Pct] });
+
+    const marginInput = await screen.findByLabelText(/margin/i);
+    const preview = screen.getByRole("button", { name: /preview quotation/i });
+    expect(preview).not.toBeDisabled();
+
+    fireEvent.change(marginInput, { target: { value: "20" } });
+    // Still inside the 400ms debounce window — no PATCH has fired yet, but a reprice is queued.
+    expect(preview).toBeDisabled();
+
+    await waitFor(() => expect(preview).not.toBeDisabled(), { timeout: 2000 });
+    expect(await screen.findByTestId("grand-total")).toHaveTextContent("$360.00");
+  });
+
+  it('"Preview quotation" disables while an override PATCH is in flight, and re-enables once it resolves — the dialog it opens afterward shows the repriced total, not the stale one', async () => {
+    const afterEdit = baseQuotation({
+      overrides: { "l1:ORIGIN:0": 45 },
+      previewBody: "Dear Acme Ltd,\n\nTotal — all inclusive: USD 309.00\n\nRegards,\nYankalfa Logistics",
+      pricing: {
+        legs: [
+          {
+            legId: "l1",
+            legCode: "LEG-1",
+            forwarderName: "TCI Freight",
+            variantLabel: "Dedicated",
+            groups: [
+              {
+                group: "ORIGIN",
+                label: "Origin charges",
+                lines: [
+                  { id: "ORIGIN:0", group: "ORIGIN", label: "Origin handling", costNative: 60, costUsd: 60, clientUsd: 45, overridden: true },
+                  { id: "ORIGIN:1", group: "ORIGIN", label: "Origin documentation", costNative: 40, costUsd: 40, clientUsd: 44, overridden: false },
+                ],
+                costUsd: 100,
+                clientUsd: 89,
+              },
+              {
+                group: "FREIGHT",
+                label: "Freight",
+                lines: [
+                  { id: "FREIGHT:0", group: "FREIGHT", label: "Ocean freight", costNative: 200, costUsd: 200, clientUsd: 220, overridden: false },
+                ],
+                costUsd: 200,
+                clientUsd: 220,
+              },
+            ],
+            costUsd: 300,
+            clientUsd: 309,
+          },
+        ],
+        costTotalUsd: 300,
+        clientTotalUsd: 309,
+        marginValueUsd: 9,
+      },
+    });
+
+    let releasePatch!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releasePatch = resolve;
+    });
+
+    renderPage({ patchGate: gate, patchResponses: [afterEdit] });
+
+    await userEvent.click(await screen.findByRole("button", { name: /origin charges/i }));
+    const input = within(screen.getByTestId("line-l1-ORIGIN:0")).getByRole("spinbutton");
+    await userEvent.clear(input);
+    await userEvent.type(input, "45");
+    await userEvent.tab(); // blur -> onCommitOverride -> patch.mutate; the request now hangs on `gate`.
+
+    const preview = screen.getByRole("button", { name: /preview quotation/i });
+    await waitFor(() => expect(preview).toBeDisabled());
+
+    releasePatch();
+    await waitFor(() => expect(preview).not.toBeDisabled());
+    expect(await screen.findByTestId("grand-total")).toHaveTextContent("$309.00");
+
+    // The reprice is now reflected in the query cache, so opening the dialog after the PATCH
+    // settles shows the CURRENT total, not the one from before the edit.
+    await userEvent.click(preview);
+    const letter = await screen.findByTestId("quotation-letter");
+    expect((letter as HTMLTextAreaElement).value).toContain("USD 309.00");
   });
 
   it("editing a line pins it, badges it, and holds it across a margin change", async () => {

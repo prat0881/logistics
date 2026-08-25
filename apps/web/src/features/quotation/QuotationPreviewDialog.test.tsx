@@ -97,16 +97,17 @@ const QUOTATION: QuotationDto = {
   updatedAt: "2026-08-14T00:00:00.000Z",
 };
 
-function renderDialog(
-  opts: {
-    open?: boolean;
-    onOpenChange?: (open: boolean) => void;
-    defaultRecipientEmail?: string;
-    quotation?: QuotationDto;
-    onIssuePost?: (body: unknown) => void;
-    issueResponse?: { status: number; body?: unknown };
-  } = {},
-) {
+type RenderDialogOpts = {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  defaultRecipientEmail?: string;
+  quotation?: QuotationDto;
+  pricingPending?: boolean;
+  onIssuePost?: (body: unknown) => void;
+  issueResponse?: { status: number; body?: unknown };
+};
+
+function renderDialog(opts: RenderDialogOpts = {}) {
   vi.stubGlobal(
     "fetch",
     mockFetch((url, init) => {
@@ -121,17 +122,23 @@ function renderDialog(
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const dialog = (o: RenderDialogOpts) => (
     <QueryClientProvider client={qc}>
       <QuotationPreviewDialog
-        open={opts.open ?? true}
-        onOpenChange={opts.onOpenChange ?? vi.fn()}
+        open={o.open ?? true}
+        onOpenChange={o.onOpenChange ?? vi.fn()}
         queryId="q1"
-        quotation={opts.quotation ?? QUOTATION}
-        defaultRecipientEmail={opts.defaultRecipientEmail ?? "buyer@client.test"}
+        quotation={o.quotation ?? QUOTATION}
+        defaultRecipientEmail={o.defaultRecipientEmail ?? "buyer@client.test"}
+        pricingPending={o.pricingPending ?? false}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(dialog(opts));
+  // Lets a test simulate a prop change WITHOUT unmounting/remounting (e.g. `quotation` prop
+  // repricing, or `pricingPending` flipping) — a fresh `render()` would reset all internal state
+  // and prove nothing about how the mounted dialog reacts to its props changing under it.
+  return { ...view, rerenderWith: (next: RenderDialogOpts) => view.rerender(dialog({ ...opts, ...next })) };
 }
 
 describe("QuotationPreviewDialog", () => {
@@ -311,5 +318,164 @@ describe("QuotationPreviewDialog", () => {
     await userEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }));
 
     await waitFor(() => expect(copySpy).toHaveBeenCalledWith("Edited letter text."));
+  });
+
+  // MINOR (S5.9.3 Task 1 re-review): copy feedback must be announced to assistive tech, the same
+  // way the issue error already is (`role="alert"` there).
+  it("announces copy feedback to assistive tech (status on success, alert on failure)", async () => {
+    vi.spyOn(clip, "copyToClipboard").mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    renderDialog();
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/copied to clipboard/i);
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't copy/i);
+  });
+
+  // MINOR — a "Copied to clipboard" confirmation left on screen after the manager edits the
+  // letter is actively misleading, since Copy now copies whatever's CURRENTLY in the box (see
+  // the test above): the clipboard content it refers to is no longer what's on screen.
+  it("clears a stale copy confirmation once the letter is edited afterward", async () => {
+    vi.spyOn(clip, "copyToClipboard").mockResolvedValue(true);
+    renderDialog();
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }));
+    expect(await screen.findByText(/copied to clipboard/i)).toBeInTheDocument();
+
+    const letter = await screen.findByTestId("quotation-letter");
+    await userEvent.type(letter, " more text");
+
+    expect(screen.queryByText(/copied to clipboard/i)).not.toBeInTheDocument();
+  });
+
+  // MINOR — the schema caps bodyText at 5000 chars; a client-side `maxLength` catches overflow at
+  // the keyboard instead of costing a round trip for the pipe's generic "Validation failed".
+  it("caps the letter at the schema's own max length", async () => {
+    renderDialog();
+    const letter = await screen.findByTestId("quotation-letter");
+    expect(letter).toHaveAttribute("maxLength", "5000");
+  });
+
+  // ── S5.9.3 Task 1 re-review (IMPORTANT): reprice-while-open ────────────────────────────────
+  //
+  // Before this fix, `bodyText` only ever re-seeded on `[open]` — a `quotation` prop update while
+  // the dialog stayed open (an override/margin PATCH that was already in flight when it opened,
+  // settling moments later) left the textarea AND the eventual issue POST holding the OLD total
+  // while `QuotationService.issue()` prices off the NEW draft. Reproduced here exactly as the
+  // reviewer's probe described: reprice the `quotation` prop under a still-open dialog via
+  // `rerenderWith`, without touching the textarea.
+
+  const REPRICED_110 = QUOTATION; // previewBody contains "USD 5,356.11" — treated as the "old" total here
+  const REPRICED_125 = {
+    ...QUOTATION,
+    previewBody: QUOTATION.previewBody.replace("USD 5,356.11", "USD 6,100.00"),
+  };
+
+  it("an UNEDITED body silently re-syncs when pricing reprices while the dialog stays open", async () => {
+    const bodies: unknown[] = [];
+    const view = renderDialog({ quotation: REPRICED_110, onIssuePost: (b) => bodies.push(b) });
+
+    const letter = await screen.findByTestId("quotation-letter");
+    expect((letter as HTMLTextAreaElement).value).toContain("USD 5,356.11");
+
+    // The reprice — nobody touched the textarea in between.
+    view.rerenderWith({ quotation: REPRICED_125 });
+
+    await waitFor(() =>
+      expect((screen.getByTestId("quotation-letter") as HTMLTextAreaElement).value).toContain(
+        "USD 6,100.00",
+      ),
+    );
+    expect((screen.getByTestId("quotation-letter") as HTMLTextAreaElement).value).not.toContain(
+      "USD 5,356.11",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /issue quotation/i }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect((bodies[0] as { bodyText: string }).bodyText).toContain("USD 6,100.00");
+  });
+
+  it("an EDITED body shows a stale-pricing conflict when pricing reprices while open, and blocks Issue until resolved", async () => {
+    const bodies: unknown[] = [];
+    const view = renderDialog({ quotation: REPRICED_110, onIssuePost: (b) => bodies.push(b) });
+
+    const letter = await screen.findByTestId("quotation-letter");
+    await userEvent.clear(letter);
+    await userEvent.type(letter, "Dear Acme Ltd,\n\nA hand-typed offer.\n\nRegards.");
+
+    const issueButton = screen.getByRole("button", { name: /issue quotation/i });
+    expect(issueButton).not.toBeDisabled();
+
+    view.rerenderWith({ quotation: REPRICED_125 });
+
+    const conflictBanner = await screen.findByRole("alert");
+    expect(conflictBanner).toHaveTextContent(/pricing changed after this letter was written/i);
+    expect(issueButton).toBeDisabled();
+
+    // The manager's edit is untouched — never silently discarded.
+    expect((screen.getByTestId("quotation-letter") as HTMLTextAreaElement).value).toBe(
+      "Dear Acme Ltd,\n\nA hand-typed offer.\n\nRegards.",
+    );
+
+    // Resolve by reloading — an explicit choice, not a silent one.
+    await userEvent.click(screen.getByRole("button", { name: /reload letter from current pricing/i }));
+    expect((screen.getByTestId("quotation-letter") as HTMLTextAreaElement).value).toBe(
+      REPRICED_125.previewBody,
+    );
+    expect(screen.queryByText(/pricing changed after this letter was written/i)).not.toBeInTheDocument();
+    expect(issueButton).not.toBeDisabled();
+
+    await userEvent.click(issueButton);
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect((bodies[0] as { bodyText: string }).bodyText).toBe(REPRICED_125.previewBody);
+  });
+
+  it("an EDITED body can be kept deliberately after a reprice, via an explicit acknowledgment — never silently discarded, never silently sent unaided either", async () => {
+    const bodies: unknown[] = [];
+    const view = renderDialog({ quotation: REPRICED_110, onIssuePost: (b) => bodies.push(b) });
+
+    const letter = await screen.findByTestId("quotation-letter");
+    await userEvent.clear(letter);
+    await userEvent.type(letter, "Dear Acme Ltd,\n\nA hand-typed offer.\n\nRegards.");
+
+    view.rerenderWith({ quotation: REPRICED_125 });
+    expect(await screen.findByText(/pricing changed after this letter was written/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /keep my edits/i }));
+
+    // The edit survives verbatim, the warning clears (explicit acknowledgment, not silence), and
+    // Issue re-enables — the manager made an informed choice, which is exactly what's required.
+    expect((screen.getByTestId("quotation-letter") as HTMLTextAreaElement).value).toBe(
+      "Dear Acme Ltd,\n\nA hand-typed offer.\n\nRegards.",
+    );
+    expect(screen.queryByText(/pricing changed after this letter was written/i)).not.toBeInTheDocument();
+    const issueButton = screen.getByRole("button", { name: /issue quotation/i });
+    expect(issueButton).not.toBeDisabled();
+
+    await userEvent.click(issueButton);
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect((bodies[0] as { bodyText: string }).bodyText).toBe(
+      "Dear Acme Ltd,\n\nA hand-typed offer.\n\nRegards.",
+    );
+  });
+
+  // ── S5.9.3 Task 1 re-review (IMPORTANT): patch-in-flight ────────────────────────────────────
+  //
+  // `pricingPending` (from `QuotationPage`, true while a margin/override PATCH is in flight or
+  // still debounced) is the dialog-level backstop: even in the same-click race the review
+  // describes (a click that both blurs an override field, firing the PATCH, and opens this
+  // dialog), Issue must not be usable until that settles.
+
+  it("Issue is disabled while pricingPending, with an explanatory note, and re-enables once it clears", async () => {
+    const view = renderDialog({ pricingPending: true });
+
+    const issueButton = screen.getByRole("button", { name: /issue quotation/i });
+    expect(issueButton).toBeDisabled();
+    expect(await screen.findByRole("status")).toHaveTextContent(/pricing is still updating/i);
+
+    view.rerenderWith({ pricingPending: false });
+
+    await waitFor(() => expect(issueButton).not.toBeDisabled());
   });
 });
