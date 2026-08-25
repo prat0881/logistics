@@ -11,7 +11,21 @@ _Last updated: 2026-08-25 (S5.6 + S5.7 + S5.8 + S5.9 + S5.9.1 + S5.9.2 + S5.9.3 
 - **S5.9.4** (Quotation Concurrency Hardening, 1 task — closes register **C10** and **C11**, the last unguarded write on the quotation row and the false refusal its sibling guard could produce) landed on top. Touches `QuotationService.patch` and `apps/api/test/quotation.e2e-spec.ts` only — no schema change, no migration, no web change (the C11 fix is deliberately server-side; see the register).
 - `pnpm run ci` **GREEN** (re-verified for S5.9.4): shared 27 files/397 tests · web 115 files/886 tests · api 94 suites/**481** tests (+6 new, all mutation-proven) · lint + typecheck + 3 builds clean. Reproduced in a full `--runInBand` run this session; no C5-family flake was hit (all five registered specs passed clean).
 
-## What's built (10 sub-builds, all on PR #52)
+## ▶ Start here (fresh session)
+
+**State:** everything through S5.9.4 is built, reviewed and **pushed**; PR #52 is OPEN and mergeable and *you* merge it manually. `pnpm run ci` is green at the tip. Nothing is half-finished — there is no in-flight task to resume.
+
+**The one open item I would do next is C8** (register below): `GET /api/queries/:id/emails` returns the rendered invitation email — including the working portal link — with no `@Roles`, for any query. That link is an unauthenticated bearer credential for the `@Public` forwarder portal, so any authenticated Executive can read another forwarder's frozen manifest and **submit a quote as them**. It predates this branch and the product owner ruled it stays its own item; the fix is small.
+
+**How work has been run here, and why it kept paying off:** every sub-build was subagent-driven — a fresh implementer per task, a task-scoped review, then an **opus whole-branch review at the end**. That last pass found a real defect on *every single* sub-build that all the task-scoped reviews had passed. Do not skip it.
+
+**Two failure patterns recur in this area — expect them:**
+1. **Tests that cannot fail.** Six were found across these sub-builds. The shapes: an absence assertion with no positive control; a Radix element's absence queried inside its open delay; two failure modes collapsed by a short-circuit; and one that passed only because an unrelated change had withheld the element it asserted about. **Mutation-prove every absence assertion** — break it, watch it redden, revert.
+2. **Comments asserting mechanisms nobody traced.** Five separate rounds were spent correcting these, including one round that replaced a false claim with a *different* false claim. Trace before you write, and prefer "this is a safety bias, not exercised behaviour" over inventing a scenario.
+
+**Before touching user-facing strings, read the Vocabulary section below.** D5 is binding and has been violated twice.
+
+## What's built (11 sub-builds, all on PR #52)
 | SB | Scope | State |
 | :-- | :-- | :-- |
 | S5.1 | FX master (`FxRate` + `toUsd` + `fx-rates` module + `masters/fx-rates` screen) | ✅ merged into PR |
@@ -26,6 +40,7 @@ _Last updated: 2026-08-25 (S5.6 + S5.7 + S5.8 + S5.9 + S5.9.1 + S5.9.2 + S5.9.3 
 | **S5.9.1** | **Compare Screen Review Fixes** — recommendation marker survives a send, checker action-bar confirmations, Negotiate hidden for Manager/Admin, dense aligned columnar grid, shortlisted-offer marker, reject notifies Executives | ✅ COMPLETE — 5 tasks, per-task review, ci green (see its own section below) |
 | **S5.9.2** | **Re-quote Status & Compare Screen Round 3** — a re-quote walks the leg (and query) back honestly, rejection is always possible, plus five more compare-screen review points | ✅ COMPLETE — 5 tasks, per-task review + fix loops, ci green (see its own section below) |
 | **S5.9.3** | **Quotation Screen & Stage Rail** — the client-quotation letter's body becomes editable (product owner's ruling, closes register C2's "body safe by construction" the old way), legs render in route order everywhere, the stage rail merges to four steps | ✅ COMPLETE — 3 tasks, per-task review + fix loops, ci green (see its own section below) |
+| **S5.9.4** | **Quotation Concurrency Hardening** — closes register **C10** (a save racing a send could rewrite an already-issued quotation) and **C11** (that fix's sibling guard refusing a legitimate send after a no-op save) | ✅ COMPLETE — 1 task + review round, ci green (full detail in the register's C10/C11 rows) |
 
 Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **opus whole-branch review**). S5.4's reviews caught 5 real defects before merge; S5.5's caught the `StatusRegistry` init-order issue + the request-requote/`QUOTING_CLIENT` teardown seam. S5.9's caught the `REQUOTED` portal dead-end (see its own section — found and fixed, no frontend coverage existed for it). All findings fixed or adjudicated.
 
@@ -52,7 +67,7 @@ Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **o
 
 **S5.9.3 reintroduced the word "Award" on the rail on purpose, and this is NOT a reversion of the 2026-08-19 correction.** The rail is now four steps — Create → RFQ → Quotation → Award — per the product owner's explicit ruling (see the S5.9.3 section below, P5). The two "Award" uses are different in kind: the 2026-08-19 instance named the *current* quotation screen (a thing that has already happened); this one names **Stage 6**, has no link, is rendered disabled at every Stage-5 status, and no code path can make it otherwise this stage. D5's rule — no user-visible string may claim something has happened before it has — is what makes THIS "Award" legitimate: it claims nothing has happened. If a future change ever makes this step clickable, enabled, or reachable while still inside Stage 5, that is the 2026-08-19 mistake happening again and should be reverted the same way.
 
-## 📋 Open points register — consolidated 2026-08-19, updated 2026-08-25 (S5.9.3)
+## 📋 Open points register — consolidated 2026-08-19, updated 2026-08-25 (through S5.9.4)
 
 Everything still open across S5.4–S5.9.3, in one place so nothing is lost between sessions. Nothing here blocks merging PR #52.
 
@@ -409,6 +424,20 @@ Full detail and file/line references are in the SDD ledger; listed here so nothi
 - Task 1: **a template-unconfigured edge would seed a blank box** — still open, and the only one of this group that is.
   - *Corrected in the S5.9.3 final-fix round:* three further items were listed here as carried-forward, but all three had already shipped in `c085b28` with named tests, and leaving them listed would have made the next session re-do finished work. For the record, so nobody re-opens them: the copy feedback DOES carry `role="status"`/`role="alert"` (`QuotationPreviewDialog.tsx`; test *"announces copy feedback to assistive tech (status on success, alert on failure)"*); a stale "Copied" message IS cleared the moment the letter is edited (`handleBodyChange`; test *"clears a stale copy confirmation once the letter is edited afterward"*); and the textarea DOES carry `maxLength={5000}` mirroring the schema cap (`BODY_MAX_LENGTH`; test *"caps the letter at the schema's own max length"*).
 - The override permission convention (S5.9.2 Q3), the pre-existing `PENDING_APPROVAL`-via-old-deadline-arm case, the `ComparisonGridColumns.tsx` Status-row alignment literal, dialogs not resetting on Cancel, and the `★`/`⚑` accessible-name concatenation (all carried forward from S5.9.2, unchanged by this sub-build) remain open — see that section above.
+
+## S5.9.4 (Quotation Concurrency Hardening) — ✅ COMPLETE (1 task)
+Closes **C10** and **C11**; the full reasoning, the pinning tests and the mutation evidence live in those two register rows rather than being duplicated here. Plan: `docs/plans/stage-5/Stage 5 - S5.9.4 - Quotation Concurrency Hardening - Implementation Plan.md`. Commits `ce34900..ec4f9ed`. No schema change, no migration, no web change.
+
+**Worth knowing beyond the register:**
+- **The dangerous direction of the C11 fix is a false *silence*, not a false alarm.** A genuine reprice mistaken for a no-op would freeze the row's clock and hand a stale letter straight through the S5.9.3 issue-side guard — turning an annoyance into the exact defect that guard exists to stop. The comparison was therefore attacked from eight angles looking for a real change it would call unchanged; none was found. If you ever loosen it, that is the property to re-prove.
+- **`jsonb` re-sorts object keys on storage**, so a naive `JSON.stringify` comparison reports "changed" on a genuine no-op. That is why `canonicalJson` sorts keys. Verified against the live database, not assumed.
+- **The margin quantization was verified by sweeping 2,065 values** through `numeric(5,2)` on the live DB against the code's rounding: zero mismatches, and no quantized group spanning more than one stored value. The same quantized value provably reaches both `priceQuotation` and the persisted column, so stored totals always correspond to the stored margin.
+
+### Testing C10 and C11 in a deployed environment
+**Issuing a quotation emails nobody** — the transport is still `LogTransport`, a no-op (register C1) — so this is safe to exercise anywhere. It does move the query to `AWAITING_CLIENT_DECISION` and supersede the draft, so use a throwaway query. Both need a query at **Quoting Client** with a DRAFT quotation and a Manager/Admin login.
+
+- **C11 is fully hand-testable and deterministic.** Open the quotation in two tabs. In tab B click **Reset overrides** with nothing overridden (a save that changes nothing). In tab A — without reloading — Preview → Issue. **Pass:** it issues. **Fail:** *"this quotation was repriced"*. Then the control that matters more: on a fresh query, change the **margin** in tab B, and issue from the un-reloaded tab A. **Pass:** it *is* refused. If the first passes but the second also issues, the guard has gone too far — that is worse than the original bug.
+- **C10's race is NOT hand-testable, and a "pass" proves nothing** — you cannot hit a microsecond window by clicking, you can only miss it. What is checkable by hand is the surrounding behaviour: issue a quotation, then try to edit it — it must be refused as no longer a draft (that was already true before the fix, so it is a regression check, not a test of C10). Genuine confidence comes from the automated e2e, which is deterministic rather than lucky: it holds a `SELECT … FOR UPDATE` so Postgres queues the two requests in a known order.
 
 ## Reusable facts (learned across S5.4/S5.5 SDD)
 - Caller id = `user.userId` (`RequestUser`); e2e actor `@db.Uuid` cols need cookie `sub: randomUUID()`.
