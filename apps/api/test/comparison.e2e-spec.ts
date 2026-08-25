@@ -520,4 +520,72 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     // ...yet forwarderNames still carries its name — the whole point of the fix.
     expect(res.body.forwarderNames[ffWinner.id]).toBe(ffWinner.companyName);
   });
+
+  // S5.9.3 Task 2 follow-up (P4, review Important) — the SAME "legs sequence should be as per
+  // route diagram" complaint on Compare Quotes' `QuotingClientPanel`, which renders
+  // `awardSnapshot.legs` straight through. The route here is p1->p2 (L1) then p2->p3 (L2), but
+  // the FROZEN snapshot lists them [L2, L1] — deliberately the OPPOSITE of route order, so a
+  // fixture whose natural order already happened to match route order couldn't make this pass
+  // for the wrong reason. Real `Leg` rows exist (so `getComparison`'s reorder has origin/
+  // destination point ids to work with); no quotes/decisions are needed since the award snapshot
+  // itself is planted directly, independent of any real generate() call.
+  it("S5.9.3 Task 2 follow-up (P4) — the awardSnapshot returned to Compare Quotes is reordered into ROUTE order, even though it was frozen with legs listed in the OPPOSITE order", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-route1`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    const p1 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const p2 = await prisma.point.create({
+      data: { queryId: query.id, type: "WAREHOUSE", city: "Singapore", country: "SG" },
+    });
+    const p3 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    const legL1 = await prisma.leg.create({
+      data: { queryId: query.id, legCode: "L1", mode: "ROAD", originPointId: p1.id, destinationPointId: p2.id },
+    });
+    const legL2 = await prisma.leg.create({
+      data: { queryId: query.id, legCode: "L2", mode: "ROAD", originPointId: p2.id, destinationPointId: p3.id },
+    });
+
+    const snapshotLeg = (legId: string): QueryAwardSnapshot["legs"][number] => ({
+      legId,
+      winningQuoteId: randomUUID(),
+      freightForwarderId: randomUUID(),
+      variant: "DEDICATED",
+      currency: "INR",
+      unitsPerUsd: 83.2,
+      usdTotal: 100,
+      nativeTotal: 8320,
+      transitDays: 5,
+    });
+    const snapshot: QueryAwardSnapshot = {
+      generatedByUserId: randomUUID(),
+      // Frozen order is [L2, L1] — the OPPOSITE of route order [L1, L2].
+      legs: [snapshotLeg(legL2.id), snapshotLeg(legL1.id)],
+      combinedUsd: 200,
+    };
+    await prisma.query.update({
+      where: { id: query.id },
+      data: { awardSnapshot: snapshot as unknown as Prisma.InputJsonValue },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+
+    expect(res.body.awardSnapshot.legs.map((l: { legId: string }) => l.legId)).toEqual([
+      legL1.id,
+      legL2.id,
+    ]);
+
+    // READ-ONLY (review requirement) — the stored column itself is never rewritten as a side
+    // effect of this GET; it stays frozen in the original (wrong) order forever, and every read
+    // re-derives route order live instead.
+    const stored = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    const storedSnapshot = stored.awardSnapshot as unknown as QueryAwardSnapshot;
+    expect(storedSnapshot.legs.map((l) => l.legId)).toEqual([legL2.id, legL1.id]);
+  });
 });

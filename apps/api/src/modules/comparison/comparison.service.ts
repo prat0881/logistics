@@ -10,6 +10,7 @@ import {
   recommendOffer,
   toUsd,
   latestRateByCurrency,
+  orderLegsByRoute,
   type QuoteDraft,
   type ComparisonDto,
   type LegComparisonDto,
@@ -33,6 +34,13 @@ const LEG_SELECT = {
   id: true,
   legCode: true,
   mode: true,
+  // originPointId/destinationPointId (S5.9.3 Task 2 follow-up, P4) — the scalar FKs, needed
+  // alongside the originPoint/destinationPoint relation selects below (display names) so
+  // getComparison can route-order `awardSnapshot.legs` using the SAME shared `orderLegsByRoute`
+  // topology sorter award.service.ts/quotation.service.ts already use, instead of a third,
+  // subtly-different implementation.
+  originPointId: true,
+  destinationPointId: true,
   originPoint: { select: { name: true, city: true, country: true } },
   destinationPoint: { select: { name: true, city: true, country: true } },
 } satisfies Prisma.LegSelect;
@@ -212,6 +220,31 @@ export class ComparisonService {
     // a shape nothing else in the codebase parses defensively either).
     const awardSnapshot = query.awardSnapshot as unknown as QueryAwardSnapshot | null;
 
+    // S5.9.3 Task 2 follow-up (P4, review Important) — `QuotingClientPanel` (Compare Quotes)
+    // renders `awardSnapshot.legs` straight through with no reorder of its own, so a
+    // pre-existing QUOTING_CLIENT query kept showing the pre-fix approval-order sequence there
+    // until it was regenerated. Same render-time fix as `quotation.service.ts#toDto`, same
+    // canonical `orderLegsByRoute` (no third copy of the ordering rule), same deterministic
+    // leg-code tiebreak for a disconnected/ambiguous route: pre-sort by the winning leg's own
+    // `legCode` (resolved via `legById`, built from the SAME `legs` query above — no extra round
+    // trip) before handing it to the topology sorter. READ-ONLY: this reorders the in-memory DTO
+    // returned to the caller; `query.awardSnapshot` itself is never rewritten, so an
+    // already-frozen snapshot heals on every read without a migration, exactly like the
+    // quotation path.
+    const legById = new Map(legs.map((l) => [l.id, l]));
+    const orderedAwardSnapshot: QueryAwardSnapshot | null = awardSnapshot
+      ? {
+          ...awardSnapshot,
+          legs: orderLegsByRoute(
+            [...awardSnapshot.legs].sort((a, b) =>
+              (legById.get(a.legId)?.legCode ?? "").localeCompare(legById.get(b.legId)?.legCode ?? ""),
+            ),
+            (l) => legById.get(l.legId)?.originPointId ?? null,
+            (l) => legById.get(l.legId)?.destinationPointId ?? null,
+          ),
+        }
+      : null;
+
     // Review round 1 fix — reuse the SAME status-unfiltered `ffNameById` map built above (from
     // every quote on this query, `APPROVED` winners included) rather than a second query. This is
     // the one place a snapshot's `freightForwarderId` can be named without depending on that
@@ -224,7 +257,7 @@ export class ComparisonService {
       priority: query.priority,
       fxAsOf,
       legs: legDtos,
-      awardSnapshot,
+      awardSnapshot: orderedAwardSnapshot,
       forwarderNames,
     };
   }
