@@ -1,5 +1,5 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import type { Prisma, Quotation } from "@prisma/client";
+import { Prisma, type Quotation } from "@prisma/client";
 import {
   Channel,
   buildQuotationCostLines,
@@ -42,30 +42,85 @@ const STALE_QUOTATION_MESSAGE =
 // manager's — either way the answer is "reload; this one has gone out".
 const NOT_A_DRAFT_MESSAGE = "this quotation is not a draft and can no longer be edited";
 
+/** The scale of `Quotation.marginPct` — `Decimal(5, 2)` in `prisma/schema.prisma`. */
+const MARGIN_SCALE = 2;
+
+/**
+ * S5.9.4 review, MINOR #1 — rounds an incoming margin to the scale the COLUMN can actually store,
+ * using the same rule Postgres itself applies on the cast (`ROUND_HALF_UP` = half away from zero;
+ * verified against the live database: `12.505::numeric(5,2)` → `12.51`, `12.516` → `12.52`).
+ *
+ * `quotationPatchSchema` types `marginPct` as a plain `z.number().min(0).max(100)` and the web
+ * client sends `Number(input.value)` unfiltered, so `12.505` can arrive against a stored `12.51`.
+ * Without this, `Decimal.equals` sees two different numbers, the PATCH becomes a real write, the
+ * clock moves — and an in-flight issue is refused with "this quotation was repriced" even though
+ * Postgres would have stored the identical `12.51`. That is the C11 symptom itself, surviving the
+ * C11 fix, so the value is normalised BEFORE it is compared, priced and persisted. Normalising
+ * before pricing also keeps the response's own totals equal to what any later read recomputes off
+ * the stored (rounded) margin, instead of pricing at a precision the row cannot hold.
+ */
+function quantizeMargin(value: number): number {
+  return new Prisma.Decimal(value).toDecimalPlaces(MARGIN_SCALE, Prisma.Decimal.ROUND_HALF_UP).toNumber();
+}
+
 /**
  * S5.9.4 (register C11) — a stable, key-order-independent serialisation, used to decide whether a
- * PATCH would actually change `draftJson`.
+ * PATCH would actually change `draftJson`. Returns `null` for anything it cannot compare this way,
+ * which `patch()` treats as "changed" (see below).
  *
- * Two properties matter and both are deliberate:
+ * Three properties, all deliberate:
  *
  * 1. **Object keys are sorted**, recursively, so `{a:1,b:2}` and `{b:2,a:1}` compare equal. This is
  *    not hypothetical: the overrides map is a `Record<string, number>` whose key order comes from
  *    whatever the browser happened to send, and Postgres `jsonb` re-orders keys on storage anyway
  *    (length, then bytewise) — so a plain `JSON.stringify` comparison would report "changed" on
  *    almost every genuine no-op.
- * 2. **Array order is preserved.** `draftJson.legs` is an ordered list; a reordering IS a change.
- *
- * Numbers compare by VALUE, not by source formatting: `JSON.stringify` emits the canonical shortest
- * representation of a double, so `1.50` and `1.5` both serialise to `1.5`. Anything that is not
- * exactly the same double still differs, which is the direction to be wrong in — see `patch()`.
+ * 2. **Array order is preserved** — arrays are serialised in place, never sorted. This is a SAFETY
+ *    BIAS, not a behaviour anyone exercises: at the only call site `nextDraft.legs` IS
+ *    `current.draftJson.legs`, by reference, so the two can never differ. Written this way so that
+ *    if a future caller ever does reorder `legs` (an ordered list), that reordering registers as a
+ *    change rather than being silently swallowed.
+ * 3. **It fails closed** (S5.9.4 review, MINOR #2). `Object.entries(new Date(0))` is `[]`, so a
+ *    naive implementation collapses every non-plain object — `Date`, `Decimal`, `Map`, `Set`,
+ *    `Buffer`, any class instance — to `{}` and reports two different ones as EQUAL: the one place
+ *    the "any doubt is a change" bias would have been inverted. Unreachable today (both operands
+ *    are JSON-origin: one parsed from `jsonb`, one built from it plus zod-validated primitives),
+ *    so this is a guard against a future shape, not a live defect. Same for a non-finite number,
+ *    which `JSON.stringify` would otherwise render as `"null"` — indistinguishable from real null.
  */
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+function canonicalJson(value: unknown): string | null {
+  if (value === null) return "null";
+  if (typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+  // A non-finite number stringifies to "null"; refuse it rather than let it alias real null.
+  if (typeof value === "number") return Number.isFinite(value) ? JSON.stringify(value) : null;
+  // undefined / bigint / symbol / function — not JSON, not comparable here.
+  if (typeof value !== "object") return null;
+
+  if (Array.isArray(value)) {
+    const parts: string[] = [];
+    for (const item of value) {
+      const part = canonicalJson(item);
+      if (part === null) return null;
+      parts.push(part);
+    }
+    return `[${parts.join(",")}]`;
+  }
+
+  // Plain objects only (property 3). `Object.create(null)` counts; a `Date` or a class instance
+  // does not, and is reported as incomparable rather than as an empty object.
+  const proto: unknown = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return null;
+
+  const parts: string[] = [];
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, v]) => v !== undefined)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+  for (const [key, item] of entries) {
+    const part = canonicalJson(item);
+    if (part === null) return null;
+    parts.push(`${JSON.stringify(key)}:${part}`);
+  }
+  return `{${parts.join(",")}}`;
 }
 
 // The tokens the seeded `quotation.issued.email` template's subject/body reference (Task 4 fix
@@ -261,9 +316,18 @@ export class QuotationService {
    *  What "changes nothing" means is deliberately the WHOLE of what this method persists — every
    *  one of the four columns in `data` below — and the comparison is biased toward "it changed":
    *  - `marginPct`: `Decimal.equals`, i.e. NUMERIC equality against the stored `Decimal(5,2)`, so
-   *    `12.5` and a stored `12.50` are the same value rather than two different strings.
+   *    `12.5` and a stored `12.50` are the same value rather than two different strings — after
+   *    `quantizeMargin` has rounded the incoming value to the scale the column can actually hold
+   *    (S5.9.4 review MINOR #1; see that function for why sub-cent noise would otherwise reproduce
+   *    the very false 409 this decision exists to remove).
    *  - `draftJson`: `canonicalJson` (see above) — key-order-independent, so a differently-ordered
-   *    overrides map is not a change, while a reordered `legs` array still is.
+   *    overrides map is not a change, while any difference in the ENTRIES is one. This limb is the
+   *    only thing that sees an overrides edit whose money happens not to move: pinning a line at
+   *    exactly the amount the margin formula already produces (a real, UI-reachable state —
+   *    `ChargeEditorTable` commits a typed value as an override even when it equals the formula,
+   *    because a pin is key PRESENCE and is the only way to hold a line steady across a later
+   *    margin change) leaves margin and both totals untouched and moves ONLY this map. Clearing
+   *    such a pin is the mirror case.
    *  - `costTotalUsd`/`clientTotalUsd`: `Decimal.equals` against the freshly-`priceQuotation`d
    *    figures. These are derivable from the three inputs above, so they are strictly redundant —
    *    and included anyway, because a row whose persisted totals have drifted from what the current
@@ -289,18 +353,25 @@ export class QuotationService {
     }
 
     const stored = current.draftJson as unknown as StoredQuotationDraft;
-    const marginPct = body.marginPct ?? Number(current.marginPct);
+    const marginPct = quantizeMargin(body.marginPct ?? Number(current.marginPct));
     const overrides = body.overrides ?? stored.overrides;
     const nextDraft: StoredQuotationDraft = { legs: stored.legs, overrides };
     const priced = priceQuotation(nextDraft.legs, marginPct, overrides);
 
     // C11 (see doc comment) — every column the UPDATE below would write, compared against what is
-    // already stored. All four must match for this to be a no-op; any doubt is a change.
+    // already stored. All four must match for this to be a no-op; any doubt is a change. The
+    // explicit `!== null` checks matter: `canonicalJson` returns `null` for anything it cannot
+    // compare, and `null === null` is TRUE — so without them, two mutually incomparable drafts
+    // would report as identical, inverting the whole bias.
+    const nextDraftJson = canonicalJson(nextDraft);
+    const storedDraftJson = canonicalJson(current.draftJson);
     const unchanged =
       current.marginPct.equals(marginPct) &&
       current.costTotalUsd.equals(priced.costTotalUsd) &&
       current.clientTotalUsd.equals(priced.clientTotalUsd) &&
-      canonicalJson(nextDraft) === canonicalJson(current.draftJson);
+      nextDraftJson !== null &&
+      storedDraftJson !== null &&
+      nextDraftJson === storedDraftJson;
     if (unchanged) return this.toDto(current);
 
     // C10 (see doc comment) — `updateMany` rather than `update` purely because Prisma only accepts

@@ -1518,6 +1518,134 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     expect(t2.getTime()).toBeGreaterThan(t1.getTime());
   });
 
+  // 🔴 S5.9.4 review, IMPORTANT — the `draftJson` limb of the no-op comparison had no test that
+  // could fail: removing ONLY that limb (keeping margin and both totals) left the suite 37/37 green.
+  //
+  // The gap is reachable in a single interaction. A pin is KEY PRESENCE, not a value difference:
+  // `ChargeEditorTable` prefills the input with `String(line.clientUsd)` — the margin formula's own
+  // answer — and deliberately commits a typed value as an override even when it equals that answer
+  // (that is the only way to hold a line steady across a later margin change, and was itself the
+  // subject of an earlier final-review fix). So a manager can pin a line at exactly the formula
+  // value: `marginPct` unmoved, `costTotalUsd` unmoved, `clientTotalUsd` unmoved, and ONLY the
+  // overrides map gains a key. Without the `draftJson` limb that PATCH is a silent 200 no-op — the
+  // pin is discarded, the clock never moves, and the UI's "Pinned" badge disagrees with the row.
+  //
+  // Mutation proof: delete ONLY `nextDraftJson === storedDraftJson` (and its two `!== null` guards)
+  // from `unchanged` in `QuotationService.patch` and both halves of this test redden.
+  it("S5.9.4 (C11) — pinning a line at exactly the margin formula's own value is a real write, even though no total moves", async () => {
+    const { query, leg } = await mkAwardedQuery("c11pin");
+    const getRes = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    const line = getRes.body.pricing.legs[0].groups[0].lines[0];
+    const key = `${leg.id}:${line.id as string}`;
+    expect(line.overridden).toBe(false);
+
+    // Give the row a non-zero margin first, so "the formula's own value" is a number the formula
+    // actually had to compute rather than the cost passed through unchanged.
+    const priced = await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 20 })
+      .expect(200);
+    const formulaValue = priced.body.pricing.legs[0].groups[0].lines[0].clientUsd as number;
+    expect(formulaValue).toBe(120); // round2(100 × 1.20)
+    expect(priced.body.pricing.clientTotalUsd).toBe(120);
+
+    const before = await currentRow(query.id);
+
+    // The pin: the SAME number the formula already produces. Nothing about the money moves —
+    // margin, cost total and client total are all identical before and after — so this write is
+    // visible to the `draftJson` limb of the comparison and to nothing else.
+    const pinned = await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ overrides: { [key]: formulaValue } })
+      .expect(200);
+
+    expect(pinned.body.overrides).toEqual({ [key]: formulaValue });
+    expect(pinned.body.pricing.legs[0].groups[0].lines[0].overridden).toBe(true);
+    // Proof the other three limbs are blind to this edit — they see no difference at all.
+    expect(pinned.body.marginPct).toBe(20);
+    expect(pinned.body.pricing.clientTotalUsd).toBe(120);
+    expect(pinned.body.pricing.costTotalUsd).toBe(100);
+
+    const afterPin = await currentRow(query.id);
+    expect(Number(afterPin.marginPct)).toBe(20);
+    expect(Number(afterPin.clientTotalUsd)).toBe(120);
+    expect(Number(afterPin.costTotalUsd)).toBe(100);
+    // It was WRITTEN: the pin is persisted and the clock moved, so an in-flight issue is correctly
+    // refused rather than sending a letter composed against an un-pinned row.
+    expect((afterPin.draftJson as unknown as { overrides: Record<string, number> }).overrides).toEqual({
+      [key]: formulaValue,
+    });
+    expect(afterPin.updatedAt.getTime()).toBeGreaterThan(before.updatedAt.getTime());
+
+    // The mirror case: RELEASING a pin whose value equals the formula is equally invisible to the
+    // money and equally a real change.
+    const released = await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ overrides: {} })
+      .expect(200);
+    expect(released.body.overrides).toEqual({});
+    expect(released.body.pricing.legs[0].groups[0].lines[0].overridden).toBe(false);
+    expect(released.body.pricing.clientTotalUsd).toBe(120); // still no money movement
+    const afterRelease = await currentRow(query.id);
+    expect((afterRelease.draftJson as unknown as { overrides: Record<string, number> }).overrides).toEqual({});
+    expect(afterRelease.updatedAt.getTime()).toBeGreaterThan(afterPin.updatedAt.getTime());
+  });
+
+  // S5.9.4 review, MINOR #1 — `marginPct` is `z.number().min(0).max(100)` while the column is
+  // `Decimal(5,2)`, and the web client sends `Number(input.value)` unfiltered. A sub-cent margin
+  // therefore failed `Decimal.equals` against a stored value Postgres had already rounded it to,
+  // making a PATCH that CANNOT change the row a real write — the C11 symptom surviving the C11 fix.
+  //
+  // Mutation proof: drop `quantizeMargin(...)` from `patch()` (back to
+  // `body.marginPct ?? Number(current.marginPct)`) and the two sub-scale blocks redden. The final
+  // block is the positive control: a margin that rounds to a DIFFERENT cent must still be a write.
+  it("S5.9.4 (C11) — a margin the column cannot store differently is not a difference, but one that rounds to a different cent is", async () => {
+    const { query } = await mkAwardedQuery("c11scale");
+    await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 12.51 })
+      .expect(200);
+    const t1 = (await currentRow(query.id)).updatedAt;
+    expect(Number((await currentRow(query.id)).marginPct)).toBe(12.51);
+
+    // Both of these are `12.51` the instant Postgres stores them (verified against the live
+    // database: `12.505::numeric(5,2)` = `12.51`, `12.514::numeric(5,2)` = `12.51`).
+    for (const marginPct of [12.505, 12.514]) {
+      const res = await request(app.getHttpServer())
+        .patch(`/api/queries/${query.id}/quotation`)
+        .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+        .send({ marginPct })
+        .expect(200);
+      // Returned at the column's own scale, not at the caller's — the response agrees with what a
+      // later GET will recompute off the stored value.
+      expect(res.body.marginPct).toBe(12.51);
+      expect((await currentRow(query.id)).updatedAt).toEqual(t1);
+    }
+
+    // POSITIVE CONTROL — `12.516::numeric(5,2)` is `12.52`, a genuinely different stored value.
+    const changed = await request(app.getHttpServer())
+      .patch(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ marginPct: 12.516 })
+      .expect(200);
+    expect(changed.body.marginPct).toBe(12.52);
+    const t2 = await currentRow(query.id);
+    expect(Number(t2.marginPct)).toBe(12.52);
+    expect(t2.updatedAt.getTime()).toBeGreaterThan(t1.getTime());
+  });
+
   // Decision N3 — the DRAFT refusal still applies to a no-op. Accepting one silently would report
   // an already-sent quotation as editable. The DRAFT check therefore runs BEFORE the no-op
   // short-circuit; the second half is the positive control that the very same body is a 200 on a
