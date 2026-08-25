@@ -731,6 +731,21 @@ describe("QuotationPage", () => {
     ).toBeInTheDocument();
   });
 
+  // S5.9.3 P6 — the product owner had to ask what "Reset overrides" did; the label alone wasn't
+  // enough. A one-line description now sits beside the button and is wired to it via
+  // `aria-describedby` so an assistive-tech user gets it too, not just a sighted one reading the
+  // paragraph next to the button.
+  it("describes what Reset overrides does, next to the button", async () => {
+    renderPage({ quotation: baseQuotation({ overrides: { "l1:ORIGIN:0": 45 } }) });
+
+    const resetButton = await screen.findByRole("button", { name: /reset overrides/i });
+    const description = screen.getByText(
+      /clears every hand-typed line price.*margin formula/i,
+    );
+    expect(description).toBeInTheDocument();
+    expect(resetButton).toHaveAttribute("aria-describedby", description.id);
+  });
+
   // 🔴 The contract that bites: `overrides` REPLACES the stored map wholesale. Editing one line
   // must PATCH the complete map — every previously pinned line plus the newly changed one — never
   // just the one key that changed, or every other pin is silently released server-side.

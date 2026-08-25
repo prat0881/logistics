@@ -19,11 +19,12 @@ import { QuotingClientPanel } from "./QuotingClientPanel";
 
 /**
  * CompareQuotesPage — the Compare Quotes screen (`/queries/:id/compare`, S5.6 §12). Reuses the
- * Stage-4 executive shell: `StageRail` (active="quotes") + `QueryOverviewHeader` + `RouteDiagram`
- * + a controlled single-open leg accordion, exactly like `rfq-workspace`'s `QueryWorkspaceHub` +
- * `RfqWorkspace` pairing — folded into one component here since this page has no distribution
- * sub-flow of its own (yet). `CompareLegPanel` bodies are placeholders; Task 3 fills them with the
- * (FF × variant) comparison grid.
+ * Stage-4 executive shell: `StageRail` (active="quotation" — S5.9.3 P5 merged the former standalone
+ * "Quotes" rail step into "Quotation", which this screen shares with `QuotationPage`) +
+ * `QueryOverviewHeader` + `RouteDiagram` + a controlled single-open leg accordion, exactly like
+ * `rfq-workspace`'s `QueryWorkspaceHub` + `RfqWorkspace` pairing — folded into one component here
+ * since this page has no distribution sub-flow of its own (yet). `CompareLegPanel` bodies are
+ * placeholders; Task 3 fills them with the (FF × variant) comparison grid.
  */
 export function CompareQuotesPage() {
   const { id } = useParams<{ id: string }>();
@@ -71,10 +72,13 @@ export function CompareQuotesPage() {
       {/* 🔴 Final review CRITICAL #2 — `quotationEnabled` was omitted here, so the Quotation step
           rendered with `to: undefined` and the S5.8 Client Quotation builder had NO entry point
           anywhere in the app: `/queries/:id/quotation` was reachable only by typing the URL. This
-          screen is where the award is frozen, so it is the builder's natural predecessor. */}
+          screen is where the award is frozen, so it is the builder's natural predecessor.
+          S5.9.3 P5 — this screen and `QuotationPage` now BOTH report active="quotation": one rail
+          step, two destinations, resolved inside `StageRail` by which gate (`quotesEnabled` vs
+          `quotationEnabled`) is open. */}
       <StageRail
         queryId={id}
-        active="quotes"
+        active="quotation"
         rfqEnabled={isRfqStageEnabled(q.status)}
         quotesEnabled={isQuotesStageEnabled(q.status)}
         quotationEnabled={isQuotationStageEnabled(q.status)}

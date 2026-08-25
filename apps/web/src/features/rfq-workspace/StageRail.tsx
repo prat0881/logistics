@@ -40,31 +40,49 @@ type StepState = "done" | "current" | "upcoming";
 
 interface StageRailProps {
   queryId: string;
-  active: "create" | "rfq" | "quotes" | "quotation";
+  active: "create" | "rfq" | "quotation" | "award";
   rfqEnabled: boolean;
-  /** Mirrors `rfqEnabled` for the "quotes" step — pass `isQuotesStageEnabled(query.status)`. */
+  /** Gates the "Quotation" step's link to Compare Quotes — pass `isQuotesStageEnabled(query.status)`. */
   quotesEnabled?: boolean;
-  /** Mirrors `rfqEnabled` for the "quotation" step — pass `isQuotationStageEnabled(query.status)`. */
+  /** Gates the "Quotation" step's link to the client-quotation builder — pass
+   *  `isQuotationStageEnabled(query.status)`. Once true it supersedes `quotesEnabled`'s link, per
+   *  S5.9.3 P5 (Compare Quotes and the client quotation are now one rail step). */
   quotationEnabled?: boolean;
 }
 
 // Canonical step order, used to derive each step's state from its index relative to `active`'s
 // index — earlier steps are "done", the active one is "current", later ones are "upcoming". This
 // generalizes what used to be two hand-written ternaries (correct only for active="create"|"rfq")
-// so a step further right — "quotes" — also correctly marks the steps before it as done instead of
-// leaving them stuck on "upcoming".
-const STEP_KEYS = ["create", "rfq", "quotes", "quotation"] as const;
+// so a step further right also correctly marks the steps before it as done instead of leaving them
+// stuck on "upcoming".
+//
+// S5.9.3 P5 — the rail is now Create → RFQ → Quotation → Award. "Quotation" absorbs the former
+// standalone "Quotes" step (Compare Quotes) AND the client-quotation builder: one rail step, two
+// possible destinations, resolved below by which gate is open. "Award" names Stage 6 and is a
+// legitimate label under D5 ONLY because it is a future, disabled stage — no caller may pass
+// active="award" yet, and this component never enables or links it in Stage 5.
+const STEP_KEYS = ["create", "rfq", "quotation", "award"] as const;
 
 export function StageRail({ queryId, active, rfqEnabled, quotesEnabled, quotationEnabled }: StageRailProps) {
   const activeIndex = STEP_KEYS.indexOf(active);
   const stateAt = (index: number): StepState =>
     index === activeIndex ? "current" : index < activeIndex ? "done" : "upcoming";
 
+  // The merged "Quotation" step enables at the earlier of the two gates (RFQ_SENT+, same as the
+  // old "Quotes" step) and links to Compare Quotes until the client-quotation builder itself
+  // becomes reachable, at which point that link takes over.
+  const quotationTo = quotationEnabled
+    ? `/queries/${queryId}/quotation`
+    : quotesEnabled
+      ? `/queries/${queryId}/compare`
+      : undefined;
+
   const steps: Array<{ key: string; label: string; to?: string; state: StepState }> = [
     { key: "create", label: "Create", to: `/queries/${queryId}`, state: stateAt(0) },
     { key: "rfq", label: "RFQ", to: rfqEnabled ? `/queries/${queryId}/workspace` : undefined, state: stateAt(1) },
-    { key: "quotes", label: "Quotes", to: quotesEnabled ? `/queries/${queryId}/compare` : undefined, state: stateAt(2) },
-    { key: "quotation", label: "Quotation", to: quotationEnabled ? `/queries/${queryId}/quotation` : undefined, state: stateAt(3) },
+    { key: "quotation", label: "Quotation", to: quotationTo, state: stateAt(2) },
+    // Always disabled in Stage 5 — no enabling prop exists yet, and nothing sets active="award".
+    { key: "award", label: "Award", to: undefined, state: stateAt(3) },
   ];
 
   return (

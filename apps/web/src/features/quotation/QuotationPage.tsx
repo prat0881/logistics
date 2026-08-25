@@ -30,8 +30,10 @@ const MARGIN_DEBOUNCE_MS = 400;
  * result.
  *
  * Reuses the Stage-4/5 executive shell exactly like `CompareQuotesPage`: `StageRail` (active
- * "quotation") + `QueryOverviewHeader` + `RouteDiagram`, then a sticky margin bar and one
- * `ChargeEditorTable` per priced leg.
+ * "quotation" — S5.9.3 P5 merged the former standalone "Quotes" rail step into "Quotation", so
+ * this screen and `CompareQuotesPage` both report the same active step; `StageRail` resolves which
+ * of the two the step links to) + `QueryOverviewHeader` + `RouteDiagram`, then a sticky margin bar
+ * and one `ChargeEditorTable` per priced leg.
  *
  * Margin edits are debounced (ambiguity resolution #2); a line edit commits on blur. Both PATCH
  * through `usePatchQuotation`. 🔴 `onCommitOverride` always composes the FULL overrides map from
@@ -229,9 +231,23 @@ export function QuotationPage() {
           </div>
 
           {isDraft && (
-            <Button type="button" variant="outline" onClick={onResetOverrides} disabled={patch.isPending}>
-              Reset overrides
-            </Button>
+            <div className="space-y-1">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onResetOverrides}
+                disabled={patch.isPending}
+                aria-describedby="reset-overrides-description"
+              >
+                Reset overrides
+              </Button>
+              {/* S5.9.3 P6 — the product owner had to ask what this button did; the label alone
+                  wasn't enough. */}
+              <p id="reset-overrides-description" className="text-xs text-muted-foreground">
+                Clears every hand-typed line price on this quotation, returning them all to the
+                margin formula.
+              </p>
+            </div>
           )}
         </div>
 

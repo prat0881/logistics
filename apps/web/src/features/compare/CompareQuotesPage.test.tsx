@@ -223,7 +223,7 @@ function renderPage(opts: { role?: string; awardSnapshot?: typeof SNAPSHOT | nul
 }
 
 describe("CompareQuotesPage", () => {
-  it("renders the query header, a collapsed panel per comparison leg, and the Quotes stage as active", async () => {
+  it("renders the query header, a collapsed panel per comparison leg, and the Quotation stage as active", async () => {
     renderPage();
 
     expect(await screen.findByText("YAL26-0001")).toBeInTheDocument();
@@ -233,10 +233,13 @@ describe("CompareQuotesPage", () => {
     expect(screen.getByRole("button", { name: /LEG-2/i })).toBeInTheDocument();
     expect(screen.queryByTestId("leg-body")).not.toBeInTheDocument();
 
-    // StageRail highlights "Quotes" as the current, navigable step (status QUOTED enables it).
-    const quotesLink = screen.getByRole("link", { name: /quotes/i });
-    expect(quotesLink).toHaveAttribute("aria-current", "step");
-    expect(quotesLink).toHaveAttribute("href", "/queries/q1/compare");
+    // S5.9.3 P5 — the former standalone "Quotes" rail step is now "Quotation" (it absorbed both
+    // this screen and the client-quotation builder). It highlights as the current, navigable step
+    // here (status QUOTED opens the earlier gate) and links to THIS screen until the award is
+    // frozen — see the two tests below for the switch-over once it is.
+    const quotationLink = screen.getByRole("link", { name: /quotation/i });
+    expect(quotationLink).toHaveAttribute("aria-current", "step");
+    expect(quotationLink).toHaveAttribute("href", "/queries/q1/compare");
   });
 
   it("opens a leg's body on header click, and keeps the accordion single-open", async () => {
@@ -432,7 +435,9 @@ describe("CompareQuotesPage", () => {
   // the app. `isQuotationStageEnabled` was passed only by `QuotationPage` (the destination itself),
   // so this screen — where the award is frozen, and the builder's natural predecessor — rendered
   // its Quotation step with `to: undefined`. `/queries/:id/quotation` was reachable only by typing
-  // the URL.
+  // the URL. S5.9.3 P5 merged that step with this screen's own "Quotes" step into one "Quotation"
+  // step, but the switch-over this test guards is unchanged: once the award is frozen, the SAME
+  // rail step's link moves from Compare Quotes to the client quotation builder.
   it("links the Quotation step to the client quotation builder once the award is frozen", async () => {
     renderPage({ awardSnapshot: SNAPSHOT });
     await screen.findByText("EXECUTIVE");
@@ -444,13 +449,20 @@ describe("CompareQuotesPage", () => {
     );
   });
 
-  it("leaves the Quotation step non-navigable while no award has been frozen", async () => {
+  // S5.9.3 P5 — before the merge, this scenario (award not frozen) exercised a SECOND, further-out
+  // "Quotation" step that had no link yet. That step no longer exists: the current step IS
+  // "Quotation" now, so it stays linked — to Compare Quotes, i.e. this same screen — rather than
+  // going non-navigable. The "renders the query header…" test above already covers this exact
+  // combination (aria-current + href=/compare); this test adds the `awardSnapshot` field's absence
+  // as an explicit, named negative case for the switch-over above.
+  it("keeps the Quotation step pointed at Compare Quotes while no award has been frozen", async () => {
     renderPage(); // QUERY_DETAIL.status === "QUOTED", awardSnapshot null
     await screen.findByText("EXECUTIVE");
 
     const rail = await screen.findByRole("navigation", { name: /query stages/i });
-    expect(within(rail).queryByRole("link", { name: /quotation/i })).not.toBeInTheDocument();
-    expect(within(rail).getByText("Quotation")).toBeInTheDocument();
+    const quotationLink = within(rail).getByRole("link", { name: /quotation/i });
+    expect(quotationLink).toHaveAttribute("href", "/queries/q1/compare");
+    expect(quotationLink).not.toHaveAttribute("href", "/queries/q1/quotation");
   });
 
   it("shows checker controls only to a MANAGER", async () => {
