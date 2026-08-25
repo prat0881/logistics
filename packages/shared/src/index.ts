@@ -13,6 +13,7 @@ export * from "./cargo";
 export * from "./points";
 export * from "./legs";
 export * from "./route";
+export * from "./route-layering";
 export * from "./timezone";
 export * from "./notifications";
 export * from "./comms";

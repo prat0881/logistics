@@ -143,6 +143,80 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     return { query, leg, ff, quote };
   };
 
+  // S5.9.3 Task 2 (P4) — multi-leg variant: the caller describes a small chain of named points
+  // (so a route can be chained by reusing a label as one leg's `to` and the next leg's `from`, or
+  // left disconnected) and the exact order to freeze into `Query.awardSnapshot.legs` —
+  // independent of the legs' own creation order, so a test can plant a snapshot in a DELIBERATELY
+  // wrong order (the "existing quotation" the product owner was looking at) without needing
+  // `award.service.ts`'s own generate path.
+  const mkAwardedRouteQuery = async (
+    suffix: string,
+    points: Record<string, { type: "PICKUP" | "DELIVERY" | "WAREHOUSE"; city: string; country: string }>,
+    legs: { legCode: string; from: string; to: string }[],
+    snapshotOrderIndexes: number[],
+  ) => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-${suffix}`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+
+    const pointIds: Record<string, string> = {};
+    for (const [label, spec] of Object.entries(points)) {
+      const p = await prisma.point.create({
+        data: { queryId: query.id, type: spec.type, city: spec.city, country: spec.country },
+      });
+      pointIds[label] = p.id;
+    }
+
+    const built: { legId: string; quoteId: string; ffId: string }[] = [];
+    for (let i = 0; i < legs.length; i++) {
+      const spec = legs[i];
+      const originId = pointIds[spec.from];
+      const leg = await prisma.leg.create({
+        data: {
+          queryId: query.id,
+          legCode: spec.legCode,
+          mode: "ROAD",
+          originPointId: originId,
+          destinationPointId: pointIds[spec.to],
+        },
+      });
+      const ff = await mkFf(`FF-${PFX}-${suffix}-${i + 1}`);
+      const quote = await prisma.quote.create({
+        data: {
+          queryId: query.id,
+          legId: leg.id,
+          freightForwarderId: ff.id,
+          status: "APPROVED",
+          submittedAt: new Date(),
+          draftJson: roadDraft(leg.id, originId, "INR", 8320) as unknown as Prisma.InputJsonValue,
+        },
+      });
+      built.push({ legId: leg.id, quoteId: quote.id, ffId: ff.id });
+    }
+
+    const snapshot: QueryAwardSnapshot = {
+      generatedByUserId: randomUUID(),
+      legs: snapshotOrderIndexes.map((i) => ({
+        legId: built[i].legId,
+        winningQuoteId: built[i].quoteId,
+        freightForwarderId: built[i].ffId,
+        variant: "DEDICATED",
+        currency: "INR",
+        unitsPerUsd: 83.2,
+        usdTotal: 100,
+        nativeTotal: 8320,
+        transitDays: 5,
+      })),
+      combinedUsd: built.length * 100,
+    };
+    await prisma.query.update({
+      where: { id: query.id },
+      data: { awardSnapshot: snapshot as unknown as Prisma.InputJsonValue },
+    });
+
+    return { query, legs: built };
+  };
+
   // Task 4's issue() writes a MessageLog keyed by entityId = queryId — a plain field, not a
   // relation (no FK, no cascade) — so it survives a Query delete unless cleaned up explicitly,
   // exactly like ScheduledEvent/MessageLog rows in rfq-distribute-comms.e2e-spec.ts.
@@ -1008,5 +1082,95 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     expect(
       (await prisma.quotation.findUniqueOrThrow({ where: { id: revised.body.id } })).tenantId,
     ).toBe(tenantId);
+  });
+
+  // S5.9.3 Task 2 (P4) — product owner: "Legs sequence should be as per route diagram instead of
+  // showing the order they got approved." The award snapshot below is frozen with legs in
+  // [L2, L1] order (route is L1: p1->p2, then L2: p2->p3) — exactly the arbitrary order
+  // `award.service.ts`'s old, unordered `leg.findMany` could freeze. A fresh GET must still price
+  // (and render) them route-first, L1 then L2.
+  it("S5.9.3 Task 2 (P4) — GET .../quotation prices legs in ROUTE order even when the frozen award snapshot lists them out of order", async () => {
+    const { query, legs } = await mkAwardedRouteQuery(
+      "route1",
+      {
+        origin: { type: "PICKUP", city: "Shanghai", country: "CN" },
+        mid: { type: "WAREHOUSE", city: "Singapore", country: "SG" },
+        dest: { type: "DELIVERY", city: "Dubai", country: "AE" },
+      },
+      [
+        { legCode: "L1", from: "origin", to: "mid" },
+        { legCode: "L2", from: "mid", to: "dest" },
+      ],
+      [1, 0], // freeze the snapshot as [L2, L1] — deliberately wrong (route) order
+    );
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    expect(res.body.pricing.legs.map((l: { legId: string }) => l.legId)).toEqual([
+      legs[0].legId,
+      legs[1].legId,
+    ]);
+  });
+
+  // The case that actually matches the product owner's complaint: they are looking at a
+  // quotation that ALREADY EXISTS (its `draftJson.legs` order already frozen by a first GET,
+  // exactly as `getOrCreateDraft` has always worked) — not a fresh one. Ordering only at
+  // generate/draft-creation time would leave this row's stored order untouched forever; the fix
+  // must re-derive the correct order on every READ, independent of what's persisted. Proven here
+  // by manually flipping the persisted `draftJson.legs` order AFTER the draft was created (as if
+  // this row predates the fix) and confirming a later GET still returns route order.
+  it("S5.9.3 Task 2 (P4) — a quotation whose draftJson was ALREADY frozen in the wrong order (predates this fix) still renders in route order on every later read — no migration needed", async () => {
+    const { query, legs } = await mkAwardedRouteQuery(
+      "route2",
+      {
+        origin: { type: "PICKUP", city: "Shanghai", country: "CN" },
+        mid: { type: "WAREHOUSE", city: "Singapore", country: "SG" },
+        dest: { type: "DELIVERY", city: "Dubai", country: "AE" },
+      },
+      [
+        { legCode: "L1", from: "origin", to: "mid" },
+        { legCode: "L2", from: "mid", to: "dest" },
+      ],
+      [0, 1], // frozen CORRECTLY this time — the corruption below happens to the DRAFT, not the snapshot
+    );
+
+    // First GET creates the DRAFT — already correct at this point (route order).
+    const firstGet = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+    expect(firstGet.body.pricing.legs.map((l: { legId: string }) => l.legId)).toEqual([
+      legs[0].legId,
+      legs[1].legId,
+    ]);
+
+    // Simulate a pre-fix row: reach past the service and flip the persisted draftJson's leg
+    // order directly, the way the OLD `buildInitialDraft` (no reorder) could have frozen it.
+    const row = await prisma.quotation.findFirstOrThrow({ where: { queryId: query.id } });
+    const stored = row.draftJson as { legs: unknown[]; overrides: Record<string, number> };
+    await prisma.quotation.update({
+      where: { id: row.id },
+      data: {
+        draftJson: {
+          legs: [...stored.legs].reverse(),
+          overrides: stored.overrides,
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const after = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    // Still route order (L1, L2) — reconstructed live from the Leg table on every read, not
+    // trusted from whatever order draftJson happens to store.
+    expect(after.body.pricing.legs.map((l: { legId: string }) => l.legId)).toEqual([
+      legs[0].legId,
+      legs[1].legId,
+    ]);
   });
 });

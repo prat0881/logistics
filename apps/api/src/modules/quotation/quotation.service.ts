@@ -4,6 +4,7 @@ import {
   Channel,
   buildQuotationCostLines,
   formatInZone,
+  orderLegsByRoute,
   priceQuotation,
   rateVariantLabel,
   renderTemplate,
@@ -263,7 +264,12 @@ export class QuotationService {
       throw new ConflictException("this quotation has no priced legs to issue");
     }
     const marginPct = Number(current.marginPct);
-    const priced = priceQuotation(stored.legs, marginPct, stored.overrides);
+    // S5.9.3 Task 2 (P4) — route-order the legs BEFORE pricing so the frozen `issuedSnapshot`
+    // (the audit record — see this method's own doc comment) itself stores them in route order,
+    // not whatever order `stored.legs` happened to be in. See `orderLegs`'s doc comment for why
+    // this has to be re-derived here rather than trusted from `draftJson`.
+    const orderedLegs = await this.orderLegs(stored.legs);
+    const priced = priceQuotation(orderedLegs, marginPct, stored.overrides);
 
     // MessageLog.templateKey is NOT NULL — fail clean rather than write a row that can't be
     // attributed to a template if the seed was never run (reference-seed.ts, idempotent).
@@ -482,6 +488,50 @@ export class QuotationService {
     return this.toDto(created);
   }
 
+  /**
+   * S5.9.3 Task 2 (P4) — product owner: "Legs sequence should be as per route diagram instead of
+   * showing the order they got approved." Reorders a stored draft's legs into route-diagram
+   * order using `@svyft/shared`'s `orderLegsByRoute` — the SAME topology sorter
+   * `award.service.ts#generateClientQuote` now uses to freeze `Query.awardSnapshot.legs`, and the
+   * FF-portal's `legOrder.ts` uses for its own leg list — one ordering rule, reused, not a second
+   * one written here.
+   *
+   * Called at RENDER time (`toDto`/`issue`), not just at draft-creation time
+   * (`buildInitialDraft`), because the product owner is looking at a quotation that ALREADY
+   * EXISTS: `Quotation.draftJson.legs` is frozen once, the first time `getOrCreateDraft` creates
+   * the row, and every read after that (`patch`/`issue`/`revise`/a later `GET`) has always reused
+   * that stored order verbatim. Fixing only `buildInitialDraft` (or only the award snapshot it
+   * reads from) would leave every quotation created before this fix shipped wrong forever, with
+   * no migration to run. Re-deriving the order from the live `Leg` table on every call instead
+   * means an already-frozen `draftJson` heals itself the next time anyone reads it — no migration,
+   * and no risk of drifting from `award.service.ts`'s own (also now-fixed) order in the meantime.
+   *
+   * Deterministic tiebreak: `orderLegsByRoute`'s own fallback for a disconnected/ambiguous route
+   * (two legs that don't share a point, so route topology can't order them) is "stable to
+   * whatever order the input array was in" — so legs are pre-sorted by `legCode` first, the same
+   * pattern `award.service.ts` uses, turning that fallback into a fixed, reproducible order
+   * instead of whatever the DB happened to return.
+   *
+   * A leg id with no matching `Leg` row (defensive — should not happen; nothing deletes a Leg out
+   * from under a frozen quotation) resolves to `null`/`null` endpoints, which `orderLegsByRoute`
+   * treats the same as any other endpoint-less leg — sorted alongside the route's start rather
+   * than throwing.
+   */
+  private async orderLegs(legs: StoredQuotationLeg[]): Promise<StoredQuotationLeg[]> {
+    if (legs.length <= 1) return legs;
+    const rows = await this.prisma.leg.findMany({
+      where: { id: { in: legs.map((l) => l.legId) } },
+      select: { id: true, originPointId: true, destinationPointId: true },
+    });
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+    const byLegCode = [...legs].sort((a, b) => a.legCode.localeCompare(b.legCode));
+    return orderLegsByRoute(
+      byLegCode,
+      (l) => rowById.get(l.legId)?.originPointId ?? null,
+      (l) => rowById.get(l.legId)?.destinationPointId ?? null,
+    );
+  }
+
   /** Builds the cached per-leg cost lines for a brand-new draft. One query each for legs,
    *  forwarders and winning quotes — batched over every snapshot leg (`findMany({ where: { id:
    *  { in: [...] } } })`), never one query per leg, so an award with several legs doesn't cost
@@ -524,7 +574,13 @@ export class QuotationService {
       };
     });
 
-    return { legs: stakedLegs, overrides: {} };
+    // S5.9.3 Task 2 (P4) — belt-and-suspenders: even a BRAND-NEW draft's own stored order starts
+    // correct (the award snapshot it read from is itself now route-ordered by
+    // `award.service.ts#generateClientQuote`). Not load-bearing on its own — `toDto` below
+    // re-derives the order on every read regardless — but keeps `Quotation.draftJson` sensible
+    // for any future direct reader, and costs nothing extra: `orderLegs` needs this same Leg
+    // lookup, and `buildInitialDraft` already made one for `legCodeById` above.
+    return { legs: await this.orderLegs(stakedLegs), overrides: {} };
   }
 
   /** T6: for a DRAFT, `previewSubject`/`previewBody` are RENDERED on every read — reusing
@@ -542,7 +598,14 @@ export class QuotationService {
   private async toDto(row: Quotation): Promise<QuotationDto> {
     const stored = row.draftJson as unknown as StoredQuotationDraft;
     const marginPct = Number(row.marginPct);
-    const pricing = priceQuotation(stored.legs, marginPct, stored.overrides);
+    // S5.9.3 Task 2 (P4) — THE fix for the product owner's actual complaint: they are looking at
+    // a quotation that already exists, whose `draftJson.legs` order was frozen the first time
+    // this row's DRAFT was created and has been reused verbatim by every read since. Re-deriving
+    // route order HERE, on every call to `toDto` (the one place every GET/PATCH/issue/revise
+    // response's `pricing` ultimately comes from), means an already-frozen row heals itself on
+    // its very next read — no migration, no re-generate required. See `orderLegs`'s doc comment.
+    const orderedLegs = await this.orderLegs(stored.legs);
+    const pricing = priceQuotation(orderedLegs, marginPct, stored.overrides);
 
     const preview = await this.previewFor(row, pricing, stored);
 

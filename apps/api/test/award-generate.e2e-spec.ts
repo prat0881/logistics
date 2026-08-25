@@ -211,6 +211,70 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
     return { query, legs: legRows };
   }
 
+  // S5.9.3 Task 2 (P4) — like `seedQuery`, but the caller supplies each leg's own
+  // origin/destination Point ids (so a test can chain legs into a real route, or leave them
+  // disconnected) and its own legCode, instead of `seedQuery`'s fixed Shanghai->Dubai-per-leg,
+  // `L${i+1}`-numbered shape. Every leg is APPROVED (decision + quote + leg), same as `seedQuery`'s
+  // "APPROVED" arm — these tests are only about snapshot LEG ORDER, not the A6/A7 approval gates
+  // already covered above.
+  type RouteLegSpec = { legCode: string; originId: string; destinationId: string };
+  async function seedRouteQuery(query: { id: string }, label: string, legs: RouteLegSpec[]) {
+    const legRows: { id: string; legCode: string; quoteId: string }[] = [];
+    for (let i = 0; i < legs.length; i++) {
+      const spec = legs[i];
+      const key = `${label}-${i + 1}`;
+      const leg = await prisma.leg.create({
+        data: {
+          queryId: query.id,
+          legCode: spec.legCode,
+          mode: "ROAD",
+          originPointId: spec.originId,
+          destinationPointId: spec.destinationId,
+          status: "APPROVED" as never,
+        },
+      });
+      const ffRow = await mkFf(`FF-${PREFIX}-${key}`);
+      const rfq = await prisma.rfq.create({
+        data: {
+          queryId: query.id,
+          freightForwarderId: ffRow.id,
+          rfqNumber: `${CODE}-RFQ-${key}`,
+          accessTokenHash: `hash-${PREFIX}-${key}`,
+          submissionDeadline: future(),
+          incoterms: "FOB",
+          currency: "INR",
+          quoteValidityUntil: new Date("2099-01-01T00:00:00.000Z"),
+        },
+      });
+      const quote = await prisma.quote.create({
+        data: {
+          queryId: query.id,
+          legId: leg.id,
+          freightForwarderId: ffRow.id,
+          rfqId: rfq.id,
+          status: "APPROVED" as never,
+          submittedAt: new Date(),
+          draftJson: roadDraft(leg.id, spec.originId, 8320, 5) as unknown as Prisma.InputJsonValue,
+        },
+      });
+      await prisma.legAwardDecision.create({
+        data: {
+          legId: leg.id,
+          queryId: query.id,
+          shortlistedQuoteId: quote.id,
+          shortlistedVariant: "DEDICATED",
+          status: "APPROVED",
+          sentByUserId: randomUUID(),
+          sentForApprovalAt: new Date(),
+          decidedByUserId: randomUUID(),
+          decidedAt: new Date(),
+        },
+      });
+      legRows.push({ id: leg.id, legCode: spec.legCode, quoteId: quote.id });
+    }
+    return legRows;
+  }
+
   const cleanup = async () => {
     const qs = await prisma.query.findMany({
       where: { queryCode: { startsWith: CODE } },
@@ -460,5 +524,90 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
       .set("Cookie", cookieFor(randomUUID(), Role.EXECUTIVE))
       .send()
       .expect(409);
+  });
+
+  // S5.9.3 Task 2 (P4) — the product owner's finding: "legs sequence should be as per route
+  // diagram instead of showing the order they got approved." `generateClientQuote` used to build
+  // `awardSnapshot.legs` straight off `leg.findMany({ where: { queryId } })` with no `orderBy` —
+  // effectively insertion order. Here the route is P1->P2 (leg L1) then P2->P3 (leg L2), but L2 is
+  // CREATED FIRST — so the old, unordered code would freeze [L2, L1] (insertion order) into the
+  // snapshot; the fix must freeze [L1, L2] (route order) regardless of creation order.
+  it("S5.9.3 Task 2 (P4) — the award snapshot freezes legs in ROUTE order, not the order they were created/approved in", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-route1`, priority: "HIGH", incoterms: "FOB" },
+    });
+    const p1 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const p2 = await prisma.point.create({
+      data: { queryId: query.id, type: "WAREHOUSE", city: "Singapore", country: "SG" },
+    });
+    const p3 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+
+    // Created in REVERSE route order: L2 (the second leg on the route) first, L1 second.
+    const [legL2, legL1] = await seedRouteQuery(query, "route1", [
+      { legCode: "L2", originId: p2.id, destinationId: p3.id },
+      { legCode: "L1", originId: p1.id, destinationId: p2.id },
+    ]);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(200);
+
+    // Route order (L1 then L2), NOT creation order (L2 then L1) and NOT a coincidence of `.sort()`
+    // on ids — an exact array equality on the id sequence.
+    expect(res.body.awardSnapshot.legs.map((l: { legId: string }) => l.legId)).toEqual([
+      legL1.id,
+      legL2.id,
+    ]);
+
+    const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    const snapshot = updated.awardSnapshot as unknown as Snapshot;
+    expect(snapshot.legs.map((l) => l.legId)).toEqual([legL1.id, legL2.id]);
+  });
+
+  // The case the brief calls out as "the one most likely to be wrong": when the route itself
+  // can't order two legs (they don't share a point — a disconnected/ambiguous route, which real
+  // data does contain), the result must still be deterministic — leg code, not whatever order the
+  // database happened to return. Both legs are 1-hop and share no point, so route topology places
+  // them in the SAME column pair and cannot break the tie; legZ is created FIRST (so insertion
+  // order would put it first) but legCode "A1" must still sort before "Z9".
+  it("S5.9.3 Task 2 (P4) — a disconnected/ambiguous route falls back to a deterministic LEG-CODE tiebreak, not DB/insertion order", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-route2`, priority: "HIGH", incoterms: "FOB" },
+    });
+    const pz1 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const pz2 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    const pa1 = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Mumbai", country: "IN" },
+    });
+    const pa2 = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Doha", country: "QA" },
+    });
+
+    // legZ ("Z9") created FIRST — insertion order would put it before legA ("A1").
+    const [legZ, legA] = await seedRouteQuery(query, "route2", [
+      { legCode: "Z9", originId: pz1.id, destinationId: pz2.id },
+      { legCode: "A1", originId: pa1.id, destinationId: pa2.id },
+    ]);
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(200);
+
+    expect(res.body.awardSnapshot.legs.map((l: { legId: string }) => l.legId)).toEqual([
+      legA.id,
+      legZ.id,
+    ]);
   });
 });

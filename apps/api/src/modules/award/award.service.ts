@@ -18,6 +18,7 @@ import {
   Role,
   computeQuoteTotals,
   latestRateByCurrency,
+  orderLegsByRoute,
   rollupLegTarget,
   toUsd,
   transitKeyForVariant,
@@ -1016,10 +1017,29 @@ export class AwardService {
     const query = await this.prisma.query.findUnique({ where: { id: queryId }, select: { id: true } });
     if (!query) throw new NotFoundException("Query not found");
 
-    const legs = await this.prisma.leg.findMany({ where: { queryId }, select: { id: true } });
-    if (legs.length === 0) {
+    const legRows = await this.prisma.leg.findMany({
+      where: { queryId },
+      select: { id: true, legCode: true, originPointId: true, destinationPointId: true },
+    });
+    if (legRows.length === 0) {
       throw new ConflictException("This query has no legs to generate a client quote for");
     }
+
+    // S5.9.3 Task 2 (P4) — product owner: "Legs sequence should be as per route diagram instead
+    // of showing the order they got approved." `leg.findMany` above carries no `orderBy`, so
+    // without this the winners below (and the frozen `awardSnapshot.legs`) would freeze whatever
+    // order Postgres happened to return — effectively insertion order, which tracks WHEN a leg
+    // was created, not WHERE it sits on the route. `orderLegsByRoute` is the SAME topology sorter
+    // the FF-portal's `legOrder.ts` uses (lifted into `@svyft/shared` for this reuse) — one
+    // ordering rule, not a second one. Pre-sorting by `legCode` before handing legs to it turns
+    // its "stable to input order" fallback into a fully DETERMINISTIC leg-code tiebreak for a
+    // disconnected/ambiguous route (two legs that don't share a point, so the route itself can't
+    // order them) — real award data does contain that case.
+    const legs = orderLegsByRoute(
+      [...legRows].sort((a, b) => a.legCode.localeCompare(b.legCode)),
+      (l) => l.originPointId,
+      (l) => l.destinationPointId,
+    );
 
     // A6 — every leg must have a decision AND that decision must be APPROVED with a shortlisted
     // winner still on it. A leg with no decision at all (never shortlisted), a leg whose
