@@ -48,16 +48,6 @@ enum MasterStatus {
   INACTIVE
 }
 
-enum VesselType {
-  CONTAINER
-  BULK_CARRIER
-  TANKER
-  RORO
-  GENERAL_CARGO
-  REEFER
-  OTHER
-}
-
 enum FreightMode {
   ROAD
   AIR
@@ -105,9 +95,9 @@ model Vessel {
   tenantId     String?      @db.Uuid
   vesselCode   String       @unique
   name         String
-  imoNumber    String?      @unique
-  shippingLine String?
-  vesselType   VesselType
+  imoNumber    String   @unique
+  shippingLine String
+  vesselType   String
   status       MasterStatus @default(ACTIVE)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt

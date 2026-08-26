@@ -26,7 +26,7 @@ function renderForm() {
 }
 
 describe("VesselFormPage (create)", () => {
-  it("submits a new vessel with a blank (optional) IMO and navigates to the list", async () => {
+  it("submits a new vessel with the required IMO, shipping line and type, and navigates to the list", async () => {
     const calls: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -56,6 +56,9 @@ describe("VesselFormPage (create)", () => {
     );
     renderForm();
     await userEvent.type(await screen.findByLabelText(/^name$/i), "MV NewCo");
+    await userEvent.type(screen.getByLabelText(/imo number/i), "1234567");
+    await userEvent.type(screen.getByLabelText(/shipping line/i), "Maersk");
+    await userEvent.type(screen.getByLabelText(/vessel type/i), "Container Vessel");
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(screen.getByText("vessels list")).toBeInTheDocument());
     expect(calls).toContain("create");

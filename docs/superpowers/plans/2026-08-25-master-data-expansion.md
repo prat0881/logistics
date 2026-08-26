@@ -2646,4 +2646,12 @@ git commit -m "feat(masters): assign warehouses to forwarders and clients"
 
 ## Backfill log
 
-Filled in by Task 3, Step 6.
+Task 3 (vessel master), Step 6. Migration
+`prisma/migrations/20260826091000_vessel_required_fields/migration.sql` was applied to the
+local dev DB (`svyft-postgres-task4`, port 5433) via `prisma migrate deploy`.
+
+The `"Vessel"` table had **zero rows** at migration time (`SELECT count(*) FROM "Vessel"` → 0),
+so the backfill `DO $$` block's `FOR v IN SELECT ... WHERE "imoNumber" IS NULL` loop had nothing
+to iterate over and produced **no `RAISE NOTICE` lines**. This is the correct, expected outcome
+for an empty table, not a missed step — there were no vessels needing a generated IMO in this
+environment. Nothing was backfilled because nothing needed it; this log has no entries to list.

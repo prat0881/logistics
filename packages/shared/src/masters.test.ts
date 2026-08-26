@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clientCreateSchema, vesselCreateSchema, VESSEL_TYPES, MASTER_STATUSES, contactCreateSchema, freightForwarderCreateSchema } from "./masters";
+import { clientCreateSchema, vesselCreateSchema, MASTER_STATUSES, contactCreateSchema, freightForwarderCreateSchema } from "./masters";
 
 describe("masters schemas", () => {
   it("accepts a valid client (no code — server-minted)", () => {
@@ -14,6 +14,7 @@ describe("masters schemas", () => {
         name: "MV Test",
         vesselType: "CONTAINER",
         imoNumber: "1234567",
+        shippingLine: "Maersk",
       }).success,
     ).toBe(true);
   });
@@ -23,13 +24,17 @@ describe("masters schemas", () => {
         .success,
     ).toBe(false);
   });
-  it("rejects an unknown vessel type", () => {
-    expect(vesselCreateSchema.safeParse({ name: "X", vesselType: "SUBMARINE" }).success).toBe(
-      false,
-    );
+  it("accepts an arbitrary vessel type string (no longer a fixed enum)", () => {
+    expect(
+      vesselCreateSchema.safeParse({
+        name: "X",
+        vesselType: "SUBMARINE",
+        imoNumber: "1234567",
+        shippingLine: "Maersk",
+      }).success,
+    ).toBe(true);
   });
   it("exposes the enum value lists", () => {
-    expect(VESSEL_TYPES).toContain("CONTAINER");
     expect(MASTER_STATUSES).toEqual(["ACTIVE", "INACTIVE"]);
   });
 });

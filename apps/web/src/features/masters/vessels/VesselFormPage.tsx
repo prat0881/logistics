@@ -2,7 +2,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect } from "react";
-import { vesselCreateSchema, VESSEL_TYPES, type VesselCreateInput } from "@svyft/shared";
+import { vesselCreateSchema, type VesselCreateInput } from "@svyft/shared";
 import { postJson, patchJson } from "@/lib/api";
 import { useVessel } from "../useMasters";
 import { Button } from "@/components/ui/button";
@@ -76,21 +76,9 @@ export function VesselFormPage() {
       </div>
       <div className="space-y-1">
         <Label htmlFor="vesselType">Vessel type</Label>
-        <select
-          id="vesselType"
-          {...register("vesselType")}
-          className="h-10 w-full rounded-md border border-border bg-card px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-        >
-          {VESSEL_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+        <Input id="vesselType" placeholder="Container Vessel" {...register("vesselType")} />
         {errors.vesselType && (
-          <p role="alert" className="text-sm text-destructive">
-            {errors.vesselType.message}
-          </p>
+          <p role="alert" className="text-sm text-destructive">{errors.vesselType.message}</p>
         )}
       </div>
       <Button type="submit" disabled={isSubmitting}>
