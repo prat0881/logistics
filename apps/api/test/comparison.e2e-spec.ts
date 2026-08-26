@@ -749,11 +749,12 @@ describe("GET /queries/:id/comparison (e2e)", () => {
 
     const ffWin = await mkFf(`FF-${PREFIX}-APPRW`);
     const ffLose = await mkFf(`FF-${PREFIX}-APPRL`);
-    // FIX ROUND 1, FINDING 3 — a third forwarder left at RFQ_SENT. Without it BOTH quotes on this
-    // leg are comparable, `pendingForwarders` is `[]` outright, and the `not.toContain` below
-    // asserts against a hard-coded empty array — it could not fail for any reason. This forwarder
-    // makes the list genuinely non-empty, so `not.toContain(winnerFfId)` is a real exclusion and
-    // `toContain(ffPending.id)` is its positive control.
+    // FIX ROUND 1/2, FINDING 3 — a third forwarder left at RFQ_SENT, so `pendingForwarders` is
+    // genuinely populated on this leg instead of `[]` outright. It carries the `toContain` control
+    // at the bottom of this test (drop RFQ_SENT from PENDING_STATUSES and that line reddens). Round
+    // 1 also added a `not.toContain(winnerFfId)` alongside it; round 2 DELETED that line as
+    // unprovable — see the note at the assertions for why, and for where the subtraction it was
+    // reaching for is actually covered.
     const ffPending = await mkFf(`FF-${PREFIX}-APPRP`);
     const rfqWin = await mkRfq(query.id, ffWin.id, "APPRW", "INR");
     const rfqLose = await mkRfq(query.id, ffLose.id, "APPRL", "INR");
@@ -836,23 +837,30 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     // `variantsForMode("ROAD")` is [DEDICATED, GROUPAGE] and only DEDICATED is priced in
     // `roadDraft`, so `approved[0]` is the priced one.
     expect(approved[0].priced).toBe(true);
-    // and it must NOT also appear as a pending forwarder.
+    // NO `expect(pendingIds).not.toContain(winnerFfId)` HERE, deliberately (fix round 2). It looks
+    // like the obvious companion assertion and it is not: no SINGLE fault can put an APPROVED
+    // forwarder into both lists, so the line could never redden, and this project requires every
+    // absence assertion to be mutation-provable.
+    //   * APPROVED is not in PENDING_STATUSES, so dropping `!offeredQuoteIds.has(q.id)` from
+    //     `buildLeg`'s pendingForwarders filter removes nothing — there is nothing there to remove.
+    //   * Adding APPROVED to PENDING_STATUSES does not do it either — `offeredQuoteIds` already
+    //     holds that quote id, so the subtraction blocks it.
+    // Only both faults at once would show up here.
     //
-    // HONEST NOTE, revised in fix round 1 (finding 3). `pendingForwarders` is now genuinely
-    // non-empty — `ffPending` sits in it — so this is a real exclusion from a real list rather
-    // than an assertion against `[]`, and `toContain(ffPending.id)` is the positive control that
-    // keeps it that way if the fixture is ever edited.
+    // The `!offeredQuoteIds.has(q.id)` subtraction that such an assertion would be reaching for IS
+    // covered, one test down, by "S5.9.5 (D4) — an EXPIRED quote that still carries a price
+    // produces an offer; one that does not, does not". EXPIRED is genuinely in BOTH
+    // COMPARABLE_STATUSES and PENDING_STATUSES, so there the subtraction is the only thing
+    // standing between one forwarder and two rendered cells, and removing it reddens that test
+    // (mutation 2 in the task report). Look there rather than re-adding a line here.
     //
-    // What it still is NOT: a proof of the `!offeredQuoteIds.has(q.id)` subtraction. APPROVED is
-    // not in PENDING_STATUSES, so removing that subtraction cannot redden this line — the EXPIRED
-    // test below is the one that proves it (mutation 2 in the task report). This assertion guards
-    // the weaker but real invariant "an offer must never double-render as a Not-quoted cell",
-    // whatever the status lists say today.
+    // `toContain(ffPending.id)` below is kept on its own merits: it is a real, mutation-proven
+    // control (drop RFQ_SENT from PENDING_STATUSES and it reddens) that the RFQ_SENT forwarder
+    // reaches `pendingForwarders` at all.
     const pendingIds = (legDto.pendingForwarders as { freightForwarderId: string }[]).map(
       (p) => p.freightForwarderId,
     );
     expect(pendingIds).toContain(ffPending.id);
-    expect(pendingIds).not.toContain(winnerFfId);
   });
 
   // D4's two EXPIRED scenarios, side by side on one leg. Both halves are in ONE test on purpose:
