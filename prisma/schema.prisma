@@ -74,6 +74,8 @@ model Client {
   status      MasterStatus    @default(ACTIVE)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
+  createdById String?         @db.Uuid
+  updatedById String?         @db.Uuid
   contacts    ClientContact[]
   queries     Query[]
 
@@ -92,6 +94,8 @@ model ClientContact {
   isPrimary   Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  createdById String?  @db.Uuid
+  updatedById String?  @db.Uuid
 
   @@index([clientId])
 }
@@ -107,6 +111,8 @@ model Vessel {
   status       MasterStatus @default(ACTIVE)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+  createdById  String?      @db.Uuid
+  updatedById  String?      @db.Uuid
   queries      Query[]
 
   @@index([tenantId])
@@ -135,6 +141,8 @@ model FreightForwarder {
   status               MasterStatus  @default(ACTIVE)
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
+  createdById          String?       @db.Uuid
+  updatedById          String?       @db.Uuid
 
   rfqs   Rfq[]
   quotes Quote[]
@@ -333,18 +341,20 @@ model WarehouseStagingLine {
 }
 
 model ChargeLineDefinition {
-  id         String              @id @default(uuid()) @db.Uuid
-  key        String              @unique
-  mode       FreightMode
-  role       ChargeLineRole
-  inputType  ChargeLineInputType @default(PLAIN)
-  zone       ChargeZone?
-  tagKey     String?
-  label      String
-  sortOrder  Int                 @default(0)
-  isActive   Boolean             @default(true)
-  createdAt  DateTime            @default(now())
-  updatedAt  DateTime            @updatedAt
+  id          String              @id @default(uuid()) @db.Uuid
+  key         String              @unique
+  mode        FreightMode
+  role        ChargeLineRole
+  inputType   ChargeLineInputType @default(PLAIN)
+  zone        ChargeZone?
+  tagKey      String?
+  label       String
+  sortOrder   Int                 @default(0)
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  createdById String?             @db.Uuid
+  updatedById String?             @db.Uuid
 
   selections LegChargeLineSelection[]
 

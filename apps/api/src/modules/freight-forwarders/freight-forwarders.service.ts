@@ -4,6 +4,8 @@ import type { FreightForwarder, FreightMode } from "@prisma/client";
 import type { FreightForwarderCreateInput, FreightForwarderUpdateInput, Paginated } from "@svyft/shared";
 import { resolveCountryCode } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
+import { auditCreate, auditUpdate } from "../../common/audit";
+import type { RequestUser } from "../auth/types";
 
 @Injectable()
 export class FreightForwardersService {
@@ -41,7 +43,7 @@ export class FreightForwardersService {
     return ff;
   }
 
-  async create(input: FreightForwarderCreateInput) {
+  async create(input: FreightForwarderCreateInput, user?: RequestUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const row = await tx.codeSequence.upsert({
@@ -50,17 +52,22 @@ export class FreightForwardersService {
           update: { lastNumber: { increment: 1 } },
         });
         const freightForwarderCode = `FF-${String(row.lastNumber).padStart(4, "0")}`;
-        return tx.freightForwarder.create({ data: { freightForwarderCode, ...input } });
+        return tx.freightForwarder.create({
+          data: { freightForwarderCode, ...input, ...auditCreate(user) },
+        });
       });
     } catch (e) {
       throw this.mapUnique(e);
     }
   }
 
-  async update(id: string, input: FreightForwarderUpdateInput) {
+  async update(id: string, input: FreightForwarderUpdateInput, user?: RequestUser) {
     await this.get(id);
     try {
-      return await this.prisma.freightForwarder.update({ where: { id }, data: input });
+      return await this.prisma.freightForwarder.update({
+        where: { id },
+        data: { ...input, ...auditUpdate(user) },
+      });
     } catch (e) {
       throw this.mapUnique(e);
     }

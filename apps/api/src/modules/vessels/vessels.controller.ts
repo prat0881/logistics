@@ -2,7 +2,9 @@ import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common
 import { Role, vesselCreateSchema, vesselUpdateSchema } from "@svyft/shared";
 import type { VesselCreateInput, VesselUpdateInput } from "@svyft/shared";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
+import type { RequestUser } from "../auth/types";
 import { VesselsService } from "./vessels.service";
 
 @Controller("vessels")
@@ -31,8 +33,11 @@ export class VesselsController {
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
   @Post()
-  create(@Body(new ZodValidationPipe(vesselCreateSchema)) body: VesselCreateInput) {
-    return this.vessels.create(body);
+  create(
+    @Body(new ZodValidationPipe(vesselCreateSchema)) body: VesselCreateInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.vessels.create(body, user);
   }
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
@@ -40,7 +45,8 @@ export class VesselsController {
   update(
     @Param("id") id: string,
     @Body(new ZodValidationPipe(vesselUpdateSchema)) body: VesselUpdateInput,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.vessels.update(id, body);
+    return this.vessels.update(id, body, user);
   }
 }

@@ -12,7 +12,9 @@ import type {
   ContactUpdateInput,
 } from "@svyft/shared";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
+import type { RequestUser } from "../auth/types";
 import { Role } from "@svyft/shared";
 import { ClientsService } from "./clients.service";
 
@@ -42,8 +44,11 @@ export class ClientsController {
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
   @Post()
-  create(@Body(new ZodValidationPipe(clientCreateSchema)) body: ClientCreateInput) {
-    return this.clients.create(body);
+  create(
+    @Body(new ZodValidationPipe(clientCreateSchema)) body: ClientCreateInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.clients.create(body, user);
   }
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
@@ -51,8 +56,9 @@ export class ClientsController {
   update(
     @Param("id") id: string,
     @Body(new ZodValidationPipe(clientUpdateSchema)) body: ClientUpdateInput,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.clients.update(id, body);
+    return this.clients.update(id, body, user);
   }
 
   @Get(":id/contacts")
@@ -65,8 +71,9 @@ export class ClientsController {
   addContact(
     @Param("id") id: string,
     @Body(new ZodValidationPipe(contactCreateSchema)) body: ContactCreateInput,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.clients.addContact(id, body);
+    return this.clients.addContact(id, body, user);
   }
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
@@ -75,8 +82,9 @@ export class ClientsController {
     @Param("id") id: string,
     @Param("contactId") contactId: string,
     @Body(new ZodValidationPipe(contactUpdateSchema)) body: ContactUpdateInput,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.clients.updateContact(id, contactId, body);
+    return this.clients.updateContact(id, contactId, body, user);
   }
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)

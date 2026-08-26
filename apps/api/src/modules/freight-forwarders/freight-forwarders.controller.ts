@@ -2,7 +2,9 @@ import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common
 import { Role, freightForwarderCreateSchema, freightForwarderUpdateSchema } from "@svyft/shared";
 import type { FreightForwarderCreateInput, FreightForwarderUpdateInput } from "@svyft/shared";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
+import type { RequestUser } from "../auth/types";
 import { FreightForwardersService } from "./freight-forwarders.service";
 
 @Controller("freight-forwarders")
@@ -31,8 +33,11 @@ export class FreightForwardersController {
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
   @Post()
-  create(@Body(new ZodValidationPipe(freightForwarderCreateSchema)) body: FreightForwarderCreateInput) {
-    return this.ffs.create(body);
+  create(
+    @Body(new ZodValidationPipe(freightForwarderCreateSchema)) body: FreightForwarderCreateInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.ffs.create(body, user);
   }
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
@@ -40,7 +45,8 @@ export class FreightForwardersController {
   update(
     @Param("id") id: string,
     @Body(new ZodValidationPipe(freightForwarderUpdateSchema)) body: FreightForwarderUpdateInput,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.ffs.update(id, body);
+    return this.ffs.update(id, body, user);
   }
 }

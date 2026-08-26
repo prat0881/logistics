@@ -8,6 +8,8 @@ import type {
   Paginated,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
+import { auditCreate, auditUpdate } from "../../common/audit";
+import type { RequestUser } from "../auth/types";
 
 @Injectable()
 export class ClientsService {
@@ -52,7 +54,7 @@ export class ClientsService {
     return client;
   }
 
-  async create(input: ClientCreateInput) {
+  async create(input: ClientCreateInput, user?: RequestUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const row = await tx.codeSequence.upsert({
@@ -61,17 +63,20 @@ export class ClientsService {
           update: { lastNumber: { increment: 1 } },
         });
         const clientCode = `CL-${String(row.lastNumber).padStart(4, "0")}`;
-        return tx.client.create({ data: { clientCode, ...input } });
+        return tx.client.create({ data: { clientCode, ...input, ...auditCreate(user) } });
       });
     } catch (e) {
       throw this.mapUnique(e, "A client with that company name already exists");
     }
   }
 
-  async update(id: string, input: ClientUpdateInput) {
+  async update(id: string, input: ClientUpdateInput, user?: RequestUser) {
     await this.get(id);
     try {
-      return await this.prisma.client.update({ where: { id }, data: input });
+      return await this.prisma.client.update({
+        where: { id },
+        data: { ...input, ...auditUpdate(user) },
+      });
     } catch (e) {
       throw this.mapUnique(e, "A client with that company name already exists");
     }
@@ -85,7 +90,7 @@ export class ClientsService {
     });
   }
 
-  async addContact(clientId: string, input: ContactCreateInput) {
+  async addContact(clientId: string, input: ContactCreateInput, user?: RequestUser) {
     await this.get(clientId);
     return this.prisma.$transaction(async (tx) => {
       if (input.isPrimary) {
@@ -94,11 +99,18 @@ export class ClientsService {
           data: { isPrimary: false },
         });
       }
-      return tx.clientContact.create({ data: { clientId, ...input } });
+      return tx.clientContact.create({
+        data: { clientId, ...input, ...auditCreate(user) },
+      });
     });
   }
 
-  async updateContact(clientId: string, contactId: string, input: ContactUpdateInput) {
+  async updateContact(
+    clientId: string,
+    contactId: string,
+    input: ContactUpdateInput,
+    user?: RequestUser,
+  ) {
     const existing = await this.prisma.clientContact.findFirst({
       where: { id: contactId, clientId },
     });
@@ -110,7 +122,10 @@ export class ClientsService {
           data: { isPrimary: false },
         });
       }
-      return tx.clientContact.update({ where: { id: contactId }, data: input });
+      return tx.clientContact.update({
+        where: { id: contactId },
+        data: { ...input, ...auditUpdate(user) },
+      });
     });
   }
 
