@@ -817,24 +817,42 @@ describe("ComparisonGrid — pending forwarders and the approved mark (S5.9.5 D7
     },
   };
 
-  it("S5.9.5 (D7) — a forwarder who never quoted renders IN the table, not in a list below it", () => {
-    render(<ComparisonGrid leg={legWithOnePending} />);
-    // Positive controls FIRST, so the absence assertion below cannot pass by the grid failing to
-    // render — and so a mutation that restores the deleted list reddens on the absence itself
-    // rather than tripping over an earlier assertion (mutation 2, task-9-report.md).
-    expect(screen.getByTestId("comparison-grid")).toBeInTheDocument();
-    expect(screen.getByTestId(`pending-cell-${pendingKey(PENDING_FF_ID)}`)).toHaveTextContent(
-      NOT_QUOTED_LABEL,
-    );
-    // The forwarder is named on screen — measured: exactly ONE node in the columns view, its
-    // group header. `getAllByText` rather than `getByText` is deliberate and is about the MUTATION,
-    // not about the current DOM: restoring the deleted list puts a second copy of the name on the
-    // page, and `getByText` would then throw "found multiple elements" HERE, one line before the
-    // assertion that mutation is supposed to redden. `getAllByText` keeps this line green under
-    // that mutation so the failure lands on the `pending-forwarders` absence below, where it
-    // belongs (mutation 2, task-9-report.md).
-    expect(screen.getAllByText(PENDING_FF_NAME).length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("pending-forwarders")).not.toBeInTheDocument();
+  // Review round 1, IMPORTANT 1 — this test used to render with no `viewMode`, which
+  // `ComparisonGrid.tsx` defaults to `"columns"`, so the ROWS orientation's pending cell had zero
+  // coverage: renaming its testid, blanking its label, or dropping its status badge each left the
+  // full web suite at 902/902. It loops both orientations now, like the D8 test below, which is
+  // what `OfferMarks`'s own rationale ("a fourth copy of the addition is where the two
+  // orientations drift") demands of the D7 path too.
+  it("S5.9.5 (D7) — a forwarder who never quoted renders IN the table, not in a list below it, in BOTH orientations", () => {
+    for (const viewMode of ["columns", "rows"] as const) {
+      const { unmount } = render(<ComparisonGrid leg={legWithOnePending} viewMode={viewMode} />);
+      // THIS is the load-bearing positive control (review round 1, MINOR 4): it names the pending
+      // cell itself, so it cannot pass unless the D7 path really rendered. The
+      // `comparison-grid` assertion below is a weaker companion — that testid sits on the
+      // outermost wrapper `<div>`, which renders unconditionally (the empty-state branch included)
+      // — so it is kept only to show the component mounted at all, and must not be mistaken for
+      // the guarantee.
+      expect(screen.getByTestId(`pending-cell-${pendingKey(PENDING_FF_ID)}`)).toHaveTextContent(
+        NOT_QUOTED_LABEL,
+      );
+      expect(screen.getByTestId("comparison-grid")).toBeInTheDocument();
+      // The forwarder's own precise status still reads, now from the cell's Status slot rather
+      // than the deleted list's badge. This is the half of the D7 contract that lets
+      // `NOT_QUOTED_LABEL` avoid being a status name (see its doc comment).
+      expect(screen.getByTestId(`offer-status-${pendingKey(PENDING_FF_ID)}`)).toHaveTextContent(
+        "RFQ Sent",
+      );
+      // The forwarder is named on screen. `getAllByText` rather than `getByText` is deliberate and
+      // is about the MUTATION, not about the current DOM (measured: exactly one node per
+      // orientation): restoring the deleted list puts a second copy of the name on the page, and
+      // `getByText` would then throw "found multiple elements" HERE, one line before the assertion
+      // that mutation is supposed to redden. `getAllByText` keeps this line green under that
+      // mutation so the failure lands on the `pending-forwarders` absence below, where it belongs
+      // (mutation 2, task-9-report.md).
+      expect(screen.getAllByText(PENDING_FF_NAME).length).toBeGreaterThan(0);
+      expect(screen.queryByTestId("pending-forwarders")).not.toBeInTheDocument();
+      unmount();
+    }
   });
 
   it("S5.9.5 (D8) — the approved offer carries its mark and its footnote, in BOTH orientations", () => {
@@ -846,6 +864,42 @@ describe("ComparisonGrid — pending forwarders and the approved mark (S5.9.5 D7
         screen.getByTestId(`offer-approved-${offerKey(WINNER_QUOTE, "DEDICATED")}`),
       ).toBeInTheDocument();
       expect(screen.getByTestId("comparison-footnote")).toHaveTextContent(APPROVED_FOOTNOTE);
+      unmount();
+    }
+  });
+
+  // Review round 1, IMPORTANT 2 — `APPROVED_TINT` was unasserted ENTIRELY: replacing it with `""`
+  // at all four application sites left this file at 100/100. Deferring it to Task 10 was not
+  // viable (Task 10 does not open the grid files), so it is closed here.
+  //
+  // `legWithApprovedDecision` produces a cell that is BOTH recommended and approved — PARITY_LEG's
+  // `recommendation` names q1::DEDICATED and the decision's snapshot names the same offer — which
+  // is exactly the cell the precedence rule exists for. `offer-usd-<key>` is the assertion site
+  // because it carries the tints in BOTH orientations (a metric row's cell in the columns view, a
+  // metric column's cell in the rows view).
+  //
+  // The counter-example that keeps this from passing vacuously is already in this file: the
+  // "keeps the recommended offer visually tinted" parity test asserts `bg-emerald-500/10` on this
+  // SAME testid off `PARITY_LEG`, whose decision is null — so emerald really is what a
+  // recommended-but-not-approved cell gets, and `bg-primary/10` here is the approval displacing it
+  // rather than a tint that was never emerald to begin with.
+  it("S5.9.5 (D8) — the approved offer is tinted, and the approval outranks the recommendation on a cell that is both", () => {
+    for (const viewMode of ["columns", "rows"] as const) {
+      const { unmount } = render(
+        <ComparisonGrid leg={legWithApprovedDecision} viewMode={viewMode} />,
+      );
+      const key = offerKey(WINNER_QUOTE, "DEDICATED");
+      // Precondition — this cell really does carry both marks, so the precedence assertion below
+      // is about a genuine conflict and not a cell that only ever had one tint to apply.
+      expect(screen.getByTestId(`offer-recommended-${key}`)).toBeInTheDocument();
+      expect(screen.getByTestId(`offer-approved-${key}`)).toBeInTheDocument();
+
+      const metricCell = screen.getByTestId(`offer-usd-${key}`);
+      expect(metricCell).toHaveClass("bg-primary/10");
+      // `cn`'s tailwind-merge resolves the background conflict in favour of whichever tint is
+      // listed LAST, and `APPROVED_TINT` is listed after `RECOMMENDED_TINT` at every site — the
+      // checker's decision outranks the engine's opinion. Swapping that order reddens this line.
+      expect(metricCell).not.toHaveClass("bg-emerald-500/10");
       unmount();
     }
   });

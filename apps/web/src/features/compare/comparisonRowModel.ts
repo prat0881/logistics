@@ -26,10 +26,15 @@ export const STALE_OFFER_LABEL = "Re-quote requested";
 /** S5.9.5 (D4) — `STALE_OFFER_LABEL`'s sibling for the other stale cause. `stale` (below) now also
  *  covers `EXPIRED`: since S5.9.5 Task 2, an expired quote that still carries a price is comparable
  *  and sendable, but it is stale one step further along than a `REQUOTED` offer — the re-quote was
- *  asked for and the deadline passed with no answer. Same three consumers as `STALE_OFFER_LABEL`
- *  (`ComparisonGridColumns`, `ComparisonGridRows`, `SendForApprovalDialog`) will need to pick
- *  between the two off `offer.quoteStatus`, once those files are updated to narrow `GridCell`
- *  (S5.9.5 Task 9/10 — not this one).
+ *  asked for and the deadline passed with no answer.
+ *
+ *  **Still unconsumed — `SendForApprovalDialog.tsx` is the one place that needs it (Task 10).**
+ *  This pointer used to name "S5.9.5 Task 9/10" and the two grid components as well. Task 9 has
+ *  since run: it narrowed both grids to `GridCell`, and in doing so established that neither grid
+ *  can consume this label at all — S5.9.2 Q4 deleted their second stale badge outright, so each
+ *  now renders exactly one `ForwarderStatusBadge` per cell and that badge names the status by
+ *  itself. That leaves `SendForApprovalDialog` as the sole consumer, where the label has to be
+ *  picked off `offer.quoteStatus` rather than off `cell.stale` (which spans both causes since D4).
  *
  *  **Wording (S5.9.5 Task 9, product owner's ruling).** Task 8 first shipped this as "Forwarder
  *  unresponsive", on the stated premise that "nobody asked this forwarder for a new number". That
