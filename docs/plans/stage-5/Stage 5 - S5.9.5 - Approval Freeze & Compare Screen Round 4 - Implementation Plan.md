@@ -374,6 +374,65 @@ throw new ConflictException(
 );
 ```
 
+- [ ] **Step 5b: Make a priced-EXPIRED offer actually sendable (ADDED after Task 1's review — see below)**
+
+**Why this step exists.** Task 1's review found that design D4 promises a priced-EXPIRED offer is
+"rankable **and approvable**", and Task 1 delivered only the first half. As the code stands:
+
+- `award.module.ts:60` registers exactly one `SEND_FOR_APPROVAL` source — `QUOTED → PENDING_APPROVAL`.
+- `award.service.ts:426` refuses any named offer that is not `QUOTED` **right now**, with
+  *"The named offer is no longer QUOTED — refresh the comparison and pick again"* — advice that
+  cannot help, because refreshing leaves it `EXPIRED`.
+- `comparisonRowModel.ts`'s `stale` flag covers `REQUOTED` only, so `SendForApprovalDialog` renders
+  an expired offer as an **enabled** radio with no warning.
+- Worst: because Task 1 made `EXPIRED` rankable, the `★` can land on the expired offer, so
+  `overrideRequired = selectedKey !== recommendedKey` is **false** for it. The maker gets zero
+  friction on the way to a 409, and must write an override reason to pick the *live* `QUOTED` offer.
+
+This is the same shape the S5.9 whole-branch review already ruled against for `REQUOTED`,
+reintroduced for a new status. Close it here, in the task that owns `EXPIRED`'s semantics.
+
+Add the machine edge:
+
+```ts
+// S5.9.5 (D4) — an EXPIRED offer that still carries a price is approvable, not merely visible.
+// D4's whole point is that the forwarder's silence must not cost us a price we would have
+// accepted; a price nobody can act on would deliver half of that.
+{ from: QuoteStatus.EXPIRED, on: QuoteEvent.SEND_FOR_APPROVAL, to: QuoteStatus.PENDING_APPROVAL, kind: "forward" },
+```
+
+Then widen `award.service.ts`'s named-offer guard (around `:415-430`) from "is it `QUOTED`" to "is it
+in `SENDABLE_STATUSES = [QUOTED, EXPIRED]`", and fix its 409 message so it stops telling the maker
+to refresh — name the actual reason the offer cannot be sent.
+
+Write a test in `apps/api/test/award-workflow-maker.e2e-spec.ts`:
+
+```ts
+it("S5.9.5 (D4) — a priced EXPIRED offer can be sent for approval; an unpriced EXPIRED one cannot", async () => {
+  await request(app.getHttpServer())
+    .post(`/api/queries/${queryId}/legs/${legId}/send-for-approval`)
+    .set("Cookie", execCookie)
+    .send({ quoteId: expiredWithPriceQuoteId, variant: "FCL" })
+    .expect(201);
+  expect((await prisma.quote.findUniqueOrThrow({ where: { id: expiredWithPriceQuoteId } })).status)
+    .toBe("PENDING_APPROVAL");
+
+  // Positive control in the same test: the never-submitted EXPIRED quote on the same leg is still
+  // refused, so a bug that accepts every status cannot pass this.
+  await request(app.getHttpServer())
+    .post(`/api/queries/${queryId}/legs/${legId}/send-for-approval`)
+    .set("Cookie", execCookie)
+    .send({ quoteId: expiredNoPriceQuoteId, variant: "FCL" })
+    .expect(409);
+});
+```
+
+Mutation-prove: remove `EXPIRED` from `SENDABLE_STATUSES` → the 201 half reddens, the 409 half stays
+green. Revert.
+
+**The `stale` half of this finding belongs to Task 8**, not here — see the note appended to Task 8's
+interface block.
+
 - [ ] **Step 6: Run and confirm the tests pass**
 
 ```bash
@@ -996,6 +1055,14 @@ export const APPROVED_FOOTNOTE: string;
 export const APPROVED_TINT: string;
 export const NOT_QUOTED_LABEL: string;
 ```
+
+**ADDED after Task 1's review:** `stale` currently means `quoteStatus === "REQUOTED"` and drives
+`SendForApprovalDialog`'s per-offer warning. After Task 2, `EXPIRED` can also carry a price a maker
+can send, and it is equally stale — an offer whose forwarder stopped answering. Widen `stale` to
+`quoteStatus === "REQUOTED" || quoteStatus === "EXPIRED"`, and give `STALE_OFFER_LABEL` a sibling so
+the dialog can say which of the two it is; a single label reading "Re-quote requested" would be
+false for an expired offer. Cover both in `comparisonRowModel.test.ts`, each with the other as its
+positive control.
 
 `ForwarderGroup.cells` and `ComparisonRowModel.cells` both become `GridCell[]`. `OfferCell` keeps its name so `METRICS[].render(c: OfferCell)` and `onOpenBreakdown(cell: OfferCell)` stay typed to real offers only — a pending cell can never reach either.
 
