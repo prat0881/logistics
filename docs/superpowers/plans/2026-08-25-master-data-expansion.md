@@ -1692,7 +1692,7 @@ Create `packages/shared/src/masters/charge-catalogue.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { chargeLineCreateSchema, categoriesForMode, deriveRole, deriveZone, variantsForMode } from "./charge-catalogue";
+import { chargeLineCreateSchema, categoriesForMode, deriveRole, deriveZone, chargeVariantsForMode } from "./charge-catalogue";
 
 describe("deriveZone", () => {
   it("maps the three positional categories onto the existing zones for Air and Sea", () => {
@@ -1742,9 +1742,9 @@ describe("mode-scoped options", () => {
   });
 
   it("scopes variants to the mode", () => {
-    expect(variantsForMode("ROAD")).toEqual(["DEDICATED", "GROUPAGE", "BOTH"]);
-    expect(variantsForMode("AIR")).toEqual(["DIRECT", "INDIRECT", "BOTH"]);
-    expect(variantsForMode("SEA")).toEqual(["FCL", "LCL", "BOTH"]);
+    expect(chargeVariantsForMode("ROAD")).toEqual(["DEDICATED", "GROUPAGE", "BOTH"]);
+    expect(chargeVariantsForMode("AIR")).toEqual(["DIRECT", "INDIRECT", "BOTH"]);
+    expect(chargeVariantsForMode("SEA")).toEqual(["FCL", "LCL", "BOTH"]);
   });
 });
 
@@ -1800,7 +1800,7 @@ const CATEGORIES_BY_MODE: Record<FreightMode, ChargeCategory[]> = {
   SEA: ["ORIGIN", "FREIGHT", "DESTINATION", "ADDITIONAL"],
 };
 
-export const variantsForMode = (mode: FreightMode): ChargeVariant[] => VARIANTS_BY_MODE[mode];
+export const chargeVariantsForMode = (mode: FreightMode): ChargeVariant[] => VARIANTS_BY_MODE[mode];
 export const categoriesForMode = (mode: FreightMode): ChargeCategory[] => CATEGORIES_BY_MODE[mode];
 
 /**
@@ -1845,7 +1845,7 @@ const baseChargeLine = z.object({
 });
 
 export const chargeLineCreateSchema = baseChargeLine.superRefine((v, ctx) => {
-  if (!variantsForMode(v.mode).includes(v.variant)) {
+  if (!chargeVariantsForMode(v.mode).includes(v.variant)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["variant"],
