@@ -1684,7 +1684,7 @@ The two pure functions that keep the old columns correct. Everything in Tasks 10
 - Modify: `packages/shared/src/masters/index.ts`
 
 **Interfaces:**
-- Produces: `CHARGE_CATEGORIES`, `CHARGE_VARIANTS`, `variantsForMode(mode)`, `categoriesForMode(mode)`, `deriveZone(category, mode)`, `deriveRole(isAdditional, tagKey)`, `chargeLineCreateSchema`, `chargeLineUpdateSchema`, `ChargeLineDefinitionAdminDto`.
+- Produces: `CHARGE_CATEGORIES`, `CHARGE_VARIANTS`, `chargeVariantsForMode(mode)`, `categoriesForMode(mode)`, `deriveZone(category, mode)`, `deriveRole(isAdditional, tagKey)`, `chargeLineCreateSchema`, `chargeLineUpdateSchema`, `ChargeLineDefinitionAdminDto`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2416,7 +2416,7 @@ Create `ChargeLineFormPage.tsx`. The mode-dependent selects read from the shared
       </div>
 ```
 
-with the same shape for Variant (using `variantsForMode(mode)`, not disabled) and a disabled-when-editing checkbox for `isAdditional` labelled "Additional charge". Show the generated key read-only when editing.
+with the same shape for Variant (using `chargeVariantsForMode(mode)`, not disabled) and a disabled-when-editing checkbox for `isAdditional` labelled "Additional charge". Show the generated key read-only when editing.
 
 - [ ] **Step 4: List page and routes**
 
