@@ -5,8 +5,10 @@ import {
   deriveRole,
   deriveZone,
   type ChargeLineCreateInput,
+  type ChargeLineDefinitionAdminDto,
   type ChargeLineDefinitionDto,
   type ChargeLineUpdateInput,
+  type ReferenceTag,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { auditCreate, auditUpdate } from "../../common/audit";
@@ -24,6 +26,23 @@ export class ChargeCatalogueService {
     return rows.map((r) => ({
       id: r.id, key: r.key, mode: r.mode, role: r.role, inputType: r.inputType,
       zone: r.zone, tagKey: r.tagKey, label: r.label, sortOrder: r.sortOrder, isActive: r.isActive,
+    }));
+  }
+
+  // Additive counterpart to list(): every row (active and inactive) in the editable admin
+  // shape (category/variant/isAdditional), never the role/zone shape list() serves to the RFQ
+  // workspace. Ordered mode → category → sortOrder so the admin screen's default view is
+  // stable; list() itself is intentionally left with no orderBy change.
+  async listAdmin(): Promise<ChargeLineDefinitionAdminDto[]> {
+    const rows = await this.prisma.chargeLineDefinition.findMany({
+      orderBy: [{ mode: "asc" }, { category: "asc" }, { sortOrder: "asc" }],
+    });
+    return rows.map((r) => ({
+      id: r.id, key: r.key, mode: r.mode, variant: r.variant, category: r.category,
+      label: r.label, isAdditional: r.isAdditional,
+      tagKey: r.tagKey as ReferenceTag | null, // consistent with the cast convention used
+      // elsewhere for this same Prisma string → ReferenceTag narrowing (e.g. cargo-shape.ts)
+      inputType: r.inputType, sortOrder: r.sortOrder, isActive: r.isActive,
     }));
   }
 

@@ -126,7 +126,10 @@ export interface ChargeLineDefinitionAdminDto {
   key: string;
   mode: FreightMode;
   variant: ChargeVariant;
-  category: ChargeCategory;
+  // Nullable: ROAD_WH_HANDLING has no category while warehousing is deferred (see
+  // ChargeLineDefinition.category in schema.prisma, which is @db-nullable for the same reason).
+  // Admin consumers should filter rows with a null category out of any category-keyed view.
+  category: ChargeCategory | null;
   label: string;
   isAdditional: boolean;
   tagKey: ReferenceTag | null;
