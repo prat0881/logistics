@@ -22,6 +22,7 @@ type OfferBody = {
   variant: string | null;
   usdTotal: number | null;
   quoteStatus: string;
+  priced: boolean; // S5.9.5 — D4/D8 assert on it directly (an EXPIRED offer must still read priced)
 };
 
 describe("GET /queries/:id/comparison (e2e)", () => {
@@ -32,6 +33,14 @@ describe("GET /queries/:id/comparison (e2e)", () => {
   // Any authenticated role works — the route carries no @Roles (auth-only, Executive+).
   const cookie = () =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: randomUUID(), role: Role.EXECUTIVE, tenantId: null })}`;
+
+  // S5.9.5 — the D8 test drives the REAL maker+checker endpoints, which need a named actor and a
+  // MANAGER role: `approve` carries `@Roles(ADMINISTRATOR, MANAGER)` and `AwardService` enforces
+  // four-eyes (the sender may not decide their own send), so the two calls need DIFFERENT `sub`s.
+  // `sub` MUST be a real UUID — the actor columns are `@db.Uuid` (same note as
+  // award-workflow-checker.e2e-spec.ts's own `cookieFor`).
+  const cookieFor = (userId: string, role: Role) =>
+    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role, tenantId: null })}`;
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
@@ -470,7 +479,13 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     expect(resNoSnapshot.body.awardSnapshot).toBeNull();
   });
 
-  it("names an APPROVED (snapshot-winner) forwarder in forwarderNames even though it's excluded from offers/pendingForwarders (S5.6 Task 6 review-round-1 fix)", async () => {
+  // S5.9.5 (D8) — RE-AIMED, not deleted. This test was written for the S5.6 review-round-1 fix
+  // and its original control asserted `offers`/`pendingForwarders` were BOTH empty for an APPROVED
+  // quote, which is exactly what D8 changes: APPROVED is now in COMPARABLE_STATUSES, so an
+  // approved winner carrying a `draftJson` renders as a real offer on its own leg. The control is
+  // updated to the new truth; the `forwarderNames` assertion — the thing this test exists for — is
+  // untouched, and still guards the query-wide, status-unfiltered map `QuotingClientPanel` needs.
+  it("names an APPROVED (snapshot-winner) forwarder in forwarderNames, and (S5.9.5 D8) surfaces its offer on its own leg", async () => {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-5`, priority: "MEDIUM", incoterms: "FOB" },
     });
@@ -494,8 +509,8 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     const rfq = await mkRfq(query.id, ffWinner.id, "WIN", "INR");
     // status: APPROVED directly (mirrors this file's existing direct-status-write convention for
     // REQUOTED/RFQ_SENT/etc above) — this is the exact state `generateClientQuote` leaves a
-    // winning quote in once approve() has fired it (award.service.ts), and it's what
-    // COMPARABLE_STATUSES/PENDING_STATUSES both exclude.
+    // winning quote in once approve() has fired it (award.service.ts). S5.9.5 (D8) put APPROVED in
+    // COMPARABLE_STATUSES; PENDING_STATUSES still excludes it.
     await prisma.quote.create({
       data: {
         queryId: query.id,
@@ -513,11 +528,15 @@ describe("GET /queries/:id/comparison (e2e)", () => {
       .set("Cookie", cookie())
       .expect(200);
 
-    // Confirms the exclusion really is in effect for this fixture (otherwise the assertion below
-    // would be trivially true for the wrong reason).
-    expect(res.body.legs[0].offers).toEqual([]);
+    // S5.9.5 (D8) — the APPROVED winner now DOES produce an offer on its own leg (this replaces
+    // the pre-S5.9.5 `offers).toEqual([])` control). It is still never a "pending" forwarder.
+    expect(
+      (res.body.legs[0].offers as OfferBody[]).some(
+        (o) => o.freightForwarderId === ffWinner.id && o.quoteStatus === "APPROVED",
+      ),
+    ).toBe(true);
     expect(res.body.legs[0].pendingForwarders).toEqual([]);
-    // ...yet forwarderNames still carries its name — the whole point of the fix.
+    // ...and forwarderNames carries its name — the whole point of the fix.
     expect(res.body.forwarderNames[ffWinner.id]).toBe(ffWinner.companyName);
   });
 
@@ -661,5 +680,273 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     expect(snapshotOrder).toEqual([firstHop.id, secondHop.id]);
     // …and therefore the two lists on that one screen agree.
     expect(legOrder).toEqual(snapshotOrder);
+  });
+
+  // ── S5.9.5 — APPROVED and priced-EXPIRED quotes are comparable (design D8 / D4) ──────────
+
+  // Setup is driven through the REAL maker+checker endpoints (send-for-approval, then approve by
+  // a DIFFERENT manager) rather than writing `status: "APPROVED"` directly the way the
+  // forwarderNames fixture above does, so the state under test is one the live workflow actually
+  // produces — including the quote's own APPROVED status, which `approve()` fires post-commit.
+  it("S5.9.5 (D8) — an APPROVED quote still produces an offer on its own leg", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-appr`, priority: "HIGH", incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    // FULLY_QUOTED so send-for-approval's A3 guard passes on its ordinary arm (the same fixture
+    // shape award-workflow-checker.e2e-spec.ts's `seedLeg` uses).
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        status: "FULLY_QUOTED" as never,
+      },
+    });
+    await prisma.fxRate.create({
+      data: { currency: "INR", unitsPerUsd: 83.2, note: `${PREFIX} appr` },
+    });
+
+    const ffWin = await mkFf(`FF-${PREFIX}-APPRW`);
+    const ffLose = await mkFf(`FF-${PREFIX}-APPRL`);
+    const rfqWin = await mkRfq(query.id, ffWin.id, "APPRW", "INR");
+    const rfqLose = await mkRfq(query.id, ffLose.id, "APPRL", "INR");
+    await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffWin.id,
+        rfqId: rfqWin.id,
+        status: "QUOTED",
+        submittedAt: new Date(),
+        // 2-day transit — HIGH priority ranks speed first, so this is the recommended offer.
+        draftJson: roadDraft(leg.id, origin.id, "INR", 83200, 2) as unknown as Prisma.InputJsonValue,
+      },
+    });
+    await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffLose.id,
+        rfqId: rfqLose.id,
+        status: "QUOTED",
+        submittedAt: new Date(),
+        draftJson: roadDraft(leg.id, origin.id, "INR", 90000, 5) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // Name the RECOMMENDED offer so A2's override-reason requirement never fires (same tactic as
+    // award-workflow-checker.e2e-spec.ts's `seedPendingApproval`).
+    const before = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+    const legBefore = before.body.legs.find((l: { legId: string }) => l.legId === leg.id);
+    const rec = legBefore.recommendation as { quoteId: string; variant: string | null };
+    expect(rec).not.toBeNull();
+    const winnerFfId = (legBefore.offers as OfferBody[]).find(
+      (o) => o.quoteId === rec.quoteId && o.variant === rec.variant,
+    )!.freightForwarderId;
+    expect(winnerFfId).toBe(ffWin.id);
+
+    const maker = randomUUID();
+    const checker = randomUUID();
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(maker, Role.MANAGER))
+      .send({ quoteId: rec.quoteId, variant: rec.variant })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+      .set("Cookie", cookieFor(checker, Role.MANAGER))
+      .expect(200);
+    // Sanity: APPROVED was reached by the workflow, not written by this test. Without this the
+    // assertions below could pass against a quote the endpoints left at PENDING_APPROVAL (which
+    // COMPARABLE_STATUSES already admitted before S5.9.5).
+    const winnerQuote = await prisma.quote.findUniqueOrThrow({ where: { id: rec.quoteId } });
+    expect(winnerQuote.status).toBe("APPROVED");
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+    const legDto = res.body.legs.find((l: { legId: string }) => l.legId === leg.id);
+    const approved = (legDto.offers as OfferBody[]).filter((o) => o.quoteStatus === "APPROVED");
+    expect(approved.length).toBeGreaterThan(0);
+    expect(approved[0].freightForwarderId).toBe(winnerFfId);
+    // `variantsForMode("ROAD")` is [DEDICATED, GROUPAGE] and only DEDICATED is priced in
+    // `roadDraft`, so `approved[0]` is the priced one.
+    expect(approved[0].priced).toBe(true);
+    // and it must NOT also appear as a pending forwarder.
+    //
+    // HONEST NOTE (mutation 2, task report): this assertion is a SAFETY BIAS, not exercised
+    // behaviour. APPROVED is not in PENDING_STATUSES, so removing the `!offeredQuoteIds.has(q.id)`
+    // subtraction from `pendingForwarders` cannot redden it — the EXPIRED test below is the one
+    // that proves that subtraction. It is kept because "an offer must never double-render as a
+    // Not-quoted cell" is the invariant the grid depends on, whatever the status list says today.
+    expect(
+      (legDto.pendingForwarders as { freightForwarderId: string }[]).map((p) => p.freightForwarderId),
+    ).not.toContain(winnerFfId);
+  });
+
+  // D4's two EXPIRED scenarios, side by side on one leg. Both halves are in ONE test on purpose:
+  // they are the positive and negative control for the same `draftJson` condition, so no bug that
+  // collapses them (e.g. dropping the `if (!draftJson) continue` skip in `buildLeg`) can satisfy
+  // both.
+  //
+  // WHY THE STATUSES ARE SEEDED DIRECTLY rather than driven through the real expiry sweep: the
+  // sweep (`rfq-schedule.listener.ts#onExpiry`) still nulls `draftJson` for EVERY quote it
+  // sweeps, REQUOTED included — teaching it to keep a REQUOTED quote's submitted price is Task 2
+  // of this sub-build, not this one. Task 1 owns only the READ MODEL, whose contract is
+  // "EXPIRED + a draft ⇒ an offer; EXPIRED + no draft ⇒ a pending forwarder". These fixtures are
+  // exactly the two end states D4's table (scenarios B and A) describes; Task 2 adds its own e2e
+  // proving the sweep produces the first of them.
+  it("S5.9.5 (D4) — an EXPIRED quote that still carries a price produces an offer; one that does not, does not", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-exp`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+      },
+    });
+    await prisma.fxRate.create({
+      data: { currency: "INR", unitsPerUsd: 83.2, note: `${PREFIX} exp` },
+    });
+
+    const ffWithPrice = await mkFf(`FF-${PREFIX}-EXPP`);
+    const ffNoPrice = await mkFf(`FF-${PREFIX}-EXPN`);
+    const rfqWithPrice = await mkRfq(query.id, ffWithPrice.id, "EXPP", "INR");
+    const rfqNoPrice = await mkRfq(query.id, ffNoPrice.id, "EXPN", "INR");
+    // Scenario B — QUOTED -> (request-requote) -> REQUOTED -> expiry sweep -> EXPIRED with the
+    // forwarder's already-submitted earlier price still on `draftJson`.
+    await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffWithPrice.id,
+        rfqId: rfqWithPrice.id,
+        status: "EXPIRED",
+        submittedAt: new Date(),
+        draftJson: roadDraft(leg.id, origin.id, "INR", 41600, 4) as unknown as Prisma.InputJsonValue,
+      },
+    });
+    // Scenario A — RFQ_SENT -> expiry sweep -> EXPIRED, never submitted, no draft to keep.
+    await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffNoPrice.id,
+        rfqId: rfqNoPrice.id,
+        status: "EXPIRED",
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+    const legDto = res.body.legs.find((l: { legId: string }) => l.legId === leg.id);
+    const pendingIds = (legDto.pendingForwarders as { freightForwarderId: string }[]).map(
+      (p) => p.freightForwarderId,
+    );
+
+    const priced = (legDto.offers as OfferBody[]).find(
+      (o) => o.freightForwarderId === ffWithPrice.id && o.variant === "DEDICATED",
+    );
+    expect(priced).toBeDefined();
+    expect(priced!.quoteStatus).toBe("EXPIRED");
+    expect(priced!.priced).toBe(true);
+    // EXPIRED is in BOTH status lists, so this is what the `offeredQuoteIds` subtraction buys:
+    // without it this forwarder renders twice, once priced and once as "Not quoted".
+    expect(pendingIds).not.toContain(ffWithPrice.id);
+
+    expect(
+      (legDto.offers as OfferBody[]).find((o) => o.freightForwarderId === ffNoPrice.id),
+    ).toBeUndefined();
+    expect(pendingIds).toContain(ffNoPrice.id);
+  });
+
+  // The ranking half of D4, on ONE forwarder so nothing else can win: the same priced offer must
+  // be unrankable while REQUOTED (we are still waiting for a better price) and rankable once the
+  // window has closed (the silence IS their final answer). Seeded directly for the same reason as
+  // the test above — Task 2 owns the sweep.
+  it("S5.9.5 (D4) — an EXPIRED offer carrying a price is rankable; a REQUOTED one is not", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-rank`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+      },
+    });
+    await prisma.fxRate.create({
+      data: { currency: "INR", unitsPerUsd: 83.2, note: `${PREFIX} rank` },
+    });
+
+    const ff = await mkFf(`FF-${PREFIX}-RANK`);
+    const rfq = await mkRfq(query.id, ff.id, "RANK", "INR");
+    const quote = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ff.id,
+        rfqId: rfq.id,
+        status: "REQUOTED",
+        submittedAt: new Date(),
+        draftJson: roadDraft(leg.id, origin.id, "INR", 24960, 6) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const whileRequoted = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+    const legWhileRequoted = whileRequoted.body.legs.find(
+      (l: { legId: string }) => l.legId === leg.id,
+    );
+    // Positive control that the offer is genuinely IN the pool and only its status keeps it out —
+    // otherwise a null recommendation here would prove nothing.
+    expect((legWhileRequoted.offers as OfferBody[]).some((o) => o.quoteId === quote.id)).toBe(true);
+    expect(legWhileRequoted.recommendation).toBeNull();
+
+    await prisma.quote.update({ where: { id: quote.id }, data: { status: "EXPIRED" } });
+
+    const afterExpiry = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+    const legAfterExpiry = afterExpiry.body.legs.find((l: { legId: string }) => l.legId === leg.id);
+    // Asserted separately so dropping EXPIRED from the ranking filter reddens with a readable
+    // "expected null not to be null" rather than a TypeError on the line below.
+    expect(legAfterExpiry.recommendation).not.toBeNull();
+    expect(legAfterExpiry.recommendation.quoteId).toBe(quote.id);
   });
 });

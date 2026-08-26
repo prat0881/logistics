@@ -102,10 +102,15 @@ export interface ComparisonDto {
   awardSnapshot: QueryAwardSnapshot | null;
   // S5.6 Task 6 (review round 1 fix) — freightForwarderId -> companyName for EVERY forwarder
   // quoted anywhere on this query, regardless of quote status. `QueryAwardSnapshotLeg` stores only
-  // ids, and a winner's own quote is always APPROVED by the time a snapshot exists — a status
-  // `COMPARABLE_STATUSES` (comparison.service.ts) deliberately excludes from `offers`/
-  // `pendingForwarders`, so those two lists alone can never name a winner on its own leg. This map
-  // is the SAME query-wide, status-unfiltered lookup `ComparisonService.getComparison` already
+  // ids, and a winner's own quote is always APPROVED by the time a snapshot exists.
+  //
+  // S5.9.5 (D8) CORRECTION — this used to say `COMPARABLE_STATUSES` (comparison.service.ts)
+  // excludes APPROVED, so `offers`/`pendingForwarders` could never name a winner on its own leg.
+  // APPROVED is now IN that list, so an approved winner carrying a `draftJson` does appear in its
+  // leg's `offers`. This map is kept, and is still the right lookup, for the reason below rather
+  // than that one: it is status-unfiltered BY CONSTRUCTION, so resolving a snapshot's
+  // `freightForwarderId` never depends on which statuses those two lists happen to admit today.
+  // This map is the SAME query-wide, status-unfiltered lookup `ComparisonService.getComparison` already
   // builds (off `prisma.quote.findMany({ where: { queryId } })`, no status predicate) to label
   // `offers[].freightForwarderName`/`pendingForwarders[].freightForwarderName` — just exposed
   // directly so `QuotingClientPanel` can resolve `QueryAwardSnapshotLeg.freightForwarderId`
@@ -130,9 +135,13 @@ export type RejectInput = z.infer<typeof rejectSchema>;
 
 // ── Stage 5 (S5.4 Task 4) — the frozen award snapshot ───────────────────────────
 // Persisted verbatim onto `Query.awardSnapshot` (Json?) by AwardService.generateClientQuote:
-// one row per leg's winning (APPROVED) offer, priced directly from its own submitted
-// `draftJson` (comparison.service.ts's COMPARABLE_STATUSES deliberately excludes APPROVED, so
-// getComparison can't be reused once every leg has an awarded winner). Presence
+// one row per leg's winning (APPROVED) offer, priced directly from its own submitted `draftJson`
+// — `generateClientQuote` loads each winning quote and runs `computeQuoteTotals(draft)` itself,
+// never reading back through `getComparison`. (S5.9.5 D8 CORRECTION: the reason once given here
+// for that — "COMPARABLE_STATUSES deliberately excludes APPROVED, so getComparison can't be
+// reused once every leg has an awarded winner" — is no longer true; APPROVED is comparable now.
+// The direct-from-draft pricing is unchanged, and is stated here as what the code does, not as a
+// consequence of any status list.) Presence
 // (`awardSnapshot != null`) IS the `quotingClient` milestone signal query-status.projector.ts
 // reads to roll the query up to QUOTING_CLIENT — this type is the contract S5.6 (the
 // client-facing quote) reads back.

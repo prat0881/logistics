@@ -68,19 +68,27 @@ type AwardDecisionEventRow = AwardDecisionEvent;
 // A quote is "comparable" (produces `OfferDto` rows, design §7/§11) once it has been submitted
 // and carries a priceable draft. QUOTED is the normal, rankable case. REQUOTED is the DURABLE
 // "awaiting a revised quote" state (a change-order re-ask): the FF's EARLIER price stays visible
-// here (so the Executive keeps context) but is excluded from ranking — see buildRecommendation's
-// QUOTED-only filter and `awaitingReQuote` below. PENDING_APPROVAL (S5.9 §4.4) is a QUOTED offer
-// under review, not a different price — without it here the selected offer would vanish from the
-// grid the instant it's sent for approval, exactly as APPROVED once did before this fix.
+// here but is excluded from RANKING — see buildRecommendation's filter and `awaitingReQuote`.
+// PENDING_APPROVAL (S5.9 §4.4) is a QUOTED offer under review, not a different price.
+// APPROVED and EXPIRED are S5.9.5 (design D8/D4):
+//   APPROVED — the winning offer must not vanish from the grid the moment a checker approves it.
+//     This is the same defect this list already fixed once for PENDING_APPROVAL.
+//   EXPIRED  — after D4 the expiry sweep no longer discards a REQUOTED quote's `draftJson`, so an
+//     EXPIRED quote can now carry a real, submitted price. Admitting EXPIRED here is SELF-LIMITING:
+//     `buildLeg` below skips any quote with no `draftJson`, so an ordinary forwarder who never
+//     submitted still produces no offer. Only one holding a real price does.
 const COMPARABLE_STATUSES: readonly QuoteStatus[] = [
   QuoteStatus.QUOTED,
   QuoteStatus.REQUOTED,
   QuoteStatus.PENDING_APPROVAL,
+  QuoteStatus.APPROVED,
+  QuoteStatus.EXPIRED,
 ];
-// FFs with NO comparable price at all (not even a stale one) — surfaced as "awaiting" in
-// pendingForwarders rather than in `offers`. REQUOTED is deliberately NOT here: a REQUOTED quote
-// always has an `offers` entry (its last submitted price, shown but unranked — flagged instead via
-// `awaitingReQuote`). SELECT (not yet sent) and APPROVED (already awarded) appear in neither list.
+// FFs with NO comparable price at all — surfaced as "awaiting" in `pendingForwarders`. REQUOTED is
+// deliberately NOT here (it always has an offer). EXPIRED IS in BOTH lists after S5.9.5, which is
+// why `pendingForwarders` below subtracts the quotes that actually produced an offer rather than
+// filtering on status alone — without that subtraction the same forwarder renders twice, once as a
+// priced cell and once as a "Not quoted" cell.
 const PENDING_STATUSES: readonly QuoteStatus[] = [
   QuoteStatus.RFQ_SENT,
   QuoteStatus.EXPIRED,
@@ -336,8 +344,11 @@ export class ComparisonService {
       }
     }
 
+    // S5.9.5 — a quote id lands here only if it actually emitted at least one OfferDto above.
+    // `offers` is (FF × variant), so one quote can contribute several entries; a Set collapses them.
+    const offeredQuoteIds = new Set(offers.map((o) => o.quoteId));
     const pendingForwarders: PendingForwarderDto[] = legQuotes
-      .filter((q) => PENDING_STATUSES.includes(q.status))
+      .filter((q) => PENDING_STATUSES.includes(q.status) && !offeredQuoteIds.has(q.id))
       .map((q) => ({
         freightForwarderId: q.freightForwarderId,
         freightForwarderName: ffNameById.get(q.freightForwarderId) ?? "",
@@ -393,10 +404,22 @@ export class ComparisonService {
     priority: Priority,
   ): RecommendationDto | null {
     const candidates: RecommendOffer[] = offers
-      // REQUOTED offers stay visible (see COMPARABLE_STATUSES) but are stale-by-definition — the
-      // confirmed product model excludes them from ranking/auto-decision entirely; only a live
-      // QUOTED price is ever recommendable.
-      .filter((o) => o.priced && o.quoteStatus === QuoteStatus.QUOTED)
+      // REQUOTED offers stay visible but are excluded from ranking: we have asked the forwarder to
+      // replace this price and are still waiting, so recommending it now would be premature (design
+      // §10.1). EXPIRED is admitted (S5.9.5 D4) for the mirror-image reason — the waiting is OVER and
+      // the forwarder did not answer, so this IS their final price and it should be ranked.
+      //
+      // Consequence, accepted in the design and not a bug: the `★` can leave a forwarder when you
+      // negotiate and return if they go silent. It only oscillates before a decision exists — once a
+      // leg is sent for approval the mark reads the decision's frozen snapshot, not this function.
+      //
+      // APPROVED is still NOT ranked. An approved leg's recommendation is a matter of record, read
+      // from the decision snapshot by the frontend row model, not re-derived live.
+      .filter(
+        (o) =>
+          o.priced &&
+          (o.quoteStatus === QuoteStatus.QUOTED || o.quoteStatus === QuoteStatus.EXPIRED),
+      )
       .map((o) => ({
         quoteId: o.quoteId,
         variant: o.variant,
