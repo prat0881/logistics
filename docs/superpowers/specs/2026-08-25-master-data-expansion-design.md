@@ -25,13 +25,65 @@ new one. Three specific collisions were found and contained:
 | Master change | Stage-4 consumer | Containment |
 |---|---|---|
 | FF contacts move to a child table | `rfq.service.ts:228` snapshots `pic`, `contactNumber`, `email`, `whLocation` into the RFQ payload | The four columns stay, synced from the primary contact |
-| `zone` → `category`, `role` → `isAdditional` | `RfqPrintView.tsx:404`, `ChargeMatrix.tsx:62`, `LegSection.tsx:221`, `resolveChargeConfig` | New columns added alongside; `zone` and `role` stay populated in sync |
+| `zone` → `category`, `role` → `isAdditional` | `resolveChargeConfig`, called once from `charge-config.snapshot.ts:35` | New columns added alongside; `zone` and `role` stay populated in sync |
 | Removing the tag two-gate | `resolveChargeConfig` and the executive's selection UI | Deferred — `tagKey` and the two-gate keep working |
 
 Verified clean, with no consumer outside the masters modules: `vesselType`, and every Client,
 Warehouse and audit-column change.
 
-### 2.2 In
+**The catalogue is read at one moment, not continuously.** `resolveChargeConfig` runs at
+distribute and freezes its result onto the quote: `ChargeLine` carries its own `zone`, `label`,
+`definitionKey`, `sortOrder` and `rateVariant`. Everything downstream reads those frozen rows —
+`RfqPrintView` reads `c.zone` off a `ChargeLine`, and `LegSection` shape-fills `role: "CORE"`
+with the comment that it is unused. Likewise `FreightForwarderDto` in `rfq.service.ts` is a
+transient read model rebuilt per request, never persisted. So the surface to protect is one
+function at one moment, plus one DTO shape.
+
+### 2.2 How the parallel change works
+
+Three phases. Only the first is in this build.
+
+**Phase 1 — expand (here).** Add the new columns and backfill them from the old. The admin
+screen writes the new ones; the service derives the old ones in the same transaction.
+`resolveChargeConfig` is untouched, so distribute produces identical snapshots and no frozen
+data moves. Same shape for the forwarder: the contact table becomes the source of truth while
+the four columns are rewritten from the primary contact on every contact write.
+
+**Phase 2 — migrate reads (the Stage-4 pass).** Point `resolveChargeConfig` at `category` and
+`isAdditional`, and `rfq.service.ts` at the contact table. Equivalence is proven here rather
+than assumed: for every row in the catalogue, the old and new logic must produce the same
+snapshot — a property assertable over the whole table.
+
+**Phase 3 — contract.** Drop `zone`, `role`, `tagKey` and the four FF columns. Frozen
+`ChargeLine.zone` is a different column on a different table and is untouched, so historical
+quotes keep rendering.
+
+**What prevents the two copies drifting** is one shared function, not discipline. The
+derivations live in `packages/shared` and both writers — the seed and the catalogue service —
+call them:
+
+```
+category     → zone   Origin → ORIGIN · Freight → MAIN_FREIGHT · Destination → DESTINATION · Additional → null
+isAdditional → role   false → CORE · true with a tag → TAG_DRIVEN · true without → STANDARD
+```
+
+Both are pure and total, and an invariant test asserts `zone === deriveZone(category)` and
+`role === deriveRole(isAdditional, tagKey)` across every row, so drift fails CI.
+
+**Data can still change behaviour where code does not**, since data flows through unchanged
+code. Two such paths exist and both are closed in this build:
+
+- Three of the new lines are always-included, so they would price on every future Air and Sea
+  RFQ the moment the seed ran. They seed **inactive** instead (D17).
+- Editing a line's Category changes what future quotes freeze — moving an Air tag line to
+  Additional derives `zone` to null, and the print view would render "—" instead of
+  "Destination". Category and Additional are therefore **set on create and immutable
+  afterwards** in this build (D18).
+
+Together these give the build's acceptance criterion: **distribute must produce byte-identical
+snapshots before and after.**
+
+### 2.3 In
 
 1. Client master — address fields, contact channels, contact lifecycle.
 2. Freight Forwarder master — mandatory address, enumerated payment terms, numeric lead time,
@@ -43,7 +95,7 @@ Warehouse and audit-column change.
    workbook names that have no definition today.
 6. Audit columns (`createdById`, `updatedById`) on the master tables.
 
-### 2.3 Out, and why
+### 2.4 Out, and why
 
 - **FX Rate master.** Already built on the Stage-5 branch as `FxRate`, with fields identical to
   the workbook's (`currency`, `unitsPerUsd`, `effectiveFrom`, `note`). Building a second one
@@ -78,6 +130,8 @@ Warehouse and audit-column change.
 | D14 | No Stage-4 or Stage-5 file is edited | The governing constraint — see §2.1 |
 | D15 | FF's four snapshot columns stay, synced from the primary contact | The same contact is stored twice until the Stage-4 pass retires the columns |
 | D16 | The charge catalogue gains new columns beside the old, not instead of them | `zone` and `role` stay populated so the quote layer is untouched |
+| D17 | The three new always-included lines seed **inactive** | Air Insurance, Sea Container Transport, Sea LSS would otherwise price on every future Air and Sea RFQ the moment the seed ran. The other 16 new lines are executive-selected, so they ship active — they only appear in the selection list |
+| D18 | Category and Additional are set on create and immutable afterwards | Both derive `zone` and `role`, which get frozen onto quotes. Unlocked once Phase 2 has repointed the reads and there is only one representation to change |
 
 ## 4. Data model
 
@@ -225,9 +279,14 @@ references them, which §2.1 forbids. Only new lines use the new key pattern. Th
   (Additional).
 - Road: Bonded Licence Fee (Additional).
 
-Container Cleaning and Devanning seed as `FCL`; everything else as `BOTH`. New Origin lines are
-always-included; new Destination lines are `isAdditional`, following the convention already in
-the seed rather than the workbook's "always included" header — see §10.
+Container Cleaning and Devanning seed as `FCL`; everything else as `BOTH`. New Destination lines
+are `isAdditional`, following the convention already in the seed rather than the workbook's
+"always included" header — see §10.
+
+The three new always-included lines — Air Insurance, Sea Container Transport, Sea LSS — seed
+with `isActive: false` (D17), so they exist in the catalogue and price nothing until someone
+switches them on from the screen. The other 16 ship active: being executive-selected, they only
+add an option to the selection list.
 
 ## 5. Code layout
 
@@ -267,6 +326,12 @@ lines; and the refusal path when deleting a charge line that a quote references.
 
 **Regression guard:** the existing Stage-4 suites must pass untouched. If a change requires
 editing one of their tests, that change belongs to the later pass, not this build.
+
+**Acceptance criterion.** Distribute must produce byte-identical snapshots before and after this
+build. The test captures `resolveChargeConfig`'s output for a representative leg against the
+pre-change catalogue, then asserts the post-change catalogue yields the same result — which
+holds precisely because the three new always-included lines are inactive (D17) and no existing
+line's `category` can move (D18). A diff here means the containment has failed somewhere.
 
 ## 8. Sequencing
 
