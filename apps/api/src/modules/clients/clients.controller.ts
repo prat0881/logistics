@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query } from "@nestjs/common";
+import { z } from "zod";
 import {
   clientCreateSchema,
   clientUpdateSchema,
@@ -92,5 +93,21 @@ export class ClientsController {
   @HttpCode(204)
   async removeContact(@Param("id") id: string, @Param("contactId") contactId: string) {
     await this.clients.removeContact(id, contactId);
+  }
+
+  @Get(":id/warehouses")
+  listWarehouses(@Param("id") id: string) {
+    return this.clients.listWarehouses(id);
+  }
+
+  @Roles(Role.ADMINISTRATOR, Role.MANAGER)
+  @Put(":id/warehouses")
+  setWarehouses(
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(z.object({ warehouseIds: z.array(z.string().uuid()) })))
+    body: { warehouseIds: string[] },
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.clients.setWarehouses(id, body.warehouseIds, user);
   }
 }

@@ -129,6 +129,48 @@ export class ClientsService {
     await this.prisma.clientContact.delete({ where: { id: contactId } });
   }
 
+  async listWarehouses(clientId: string) {
+    await this.get(clientId);
+    return this.prisma.warehouse.findMany({
+      where: { clientId },
+      orderBy: { name: "asc" },
+    });
+  }
+
+  /**
+   * Mirrors FreightForwardersService.setWarehouses: one transaction so a warehouse is never
+   * momentarily owned by two parents, contested against a *different* client or against any
+   * forwarder, and re-assignment to the same client is not a conflict. Client has no
+   * whLocation-equivalent column for rfq.service.ts to read, so there is no snapshot to
+   * keep in sync here.
+   */
+  async setWarehouses(clientId: string, warehouseIds: string[], user?: RequestUser) {
+    await this.get(clientId);
+    return this.prisma.$transaction(async (tx) => {
+      const contested = await tx.warehouse.findFirst({
+        where: {
+          id: { in: warehouseIds },
+          OR: [
+            { clientId: { not: null, notIn: [clientId] } },
+            { freightForwarderId: { not: null } },
+          ],
+        },
+      });
+      if (contested) {
+        throw new ConflictException(`${contested.name} is already assigned to another record`);
+      }
+      await tx.warehouse.updateMany({
+        where: { clientId, id: { notIn: warehouseIds } },
+        data: { clientId: null, ...auditUpdate(user) },
+      });
+      await tx.warehouse.updateMany({
+        where: { id: { in: warehouseIds } },
+        data: { clientId, ...auditUpdate(user) },
+      });
+      return tx.warehouse.findMany({ where: { clientId }, orderBy: { name: "asc" } });
+    });
+  }
+
   private mapUnique(e: unknown, fallback: string) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
       // ClientContact_one_primary is a raw-SQL partial unique index (Prisma can't declare

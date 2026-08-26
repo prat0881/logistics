@@ -83,6 +83,20 @@ export function useWarehouse(id: string | undefined) {
 }
 
 /**
+ * The warehouses currently assigned to a freight forwarder or client — the `assigned` half of
+ * WarehousePicker's data (the other half, unassigned warehouses, is fetched by the picker
+ * itself via `?unassigned=true`). Keyed the same way ContactList keys its owner-scoped list, so
+ * a save that invalidates `[ownerPath, ownerId, "warehouses"]` refetches this.
+ */
+export function useOwnerWarehouses(ownerPath: "freight-forwarders" | "clients", ownerId: string | undefined) {
+  return useQuery({
+    queryKey: [ownerPath, ownerId, "warehouses"],
+    queryFn: () => fetchJson<WarehouseDto[]>(`/api/${ownerPath}/${ownerId}/warehouses`),
+    enabled: Boolean(ownerId),
+  });
+}
+
+/**
  * `charge-catalogue-admin` is a deliberately distinct query key from the RFQ workspace's
  * `charge-catalogue` (apps/web/src/features/rfq-workspace/useChargeConfig.ts, a do-not-touch
  * file) — that hook fetches the pre-existing `GET /api/charge-line-definitions` (active-only,

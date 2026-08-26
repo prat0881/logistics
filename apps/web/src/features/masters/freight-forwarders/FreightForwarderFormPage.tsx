@@ -14,8 +14,9 @@ import {
   type CurrencyCode,
 } from "@svyft/shared";
 import { postJson, patchJson } from "@/lib/api";
-import { useFreightForwarder } from "../useMasters";
+import { useFreightForwarder, useOwnerWarehouses } from "../useMasters";
 import { ContactList } from "../ContactList";
+import { WarehousePicker } from "../WarehousePicker";
 import { MultiSelectCombobox } from "@/components/MultiSelectCombobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +31,7 @@ export function FreightForwarderFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const existing = useFreightForwarder(id);
+  const ownedWarehouses = useOwnerWarehouses("freight-forwarders", id);
   const {
     register,
     control,
@@ -246,6 +248,7 @@ export function FreightForwarderFormPage() {
         </Button>
       </form>
       <ContactList ownerPath="freight-forwarders" ownerId={id} />
+      <WarehousePicker ownerPath="freight-forwarders" ownerId={id} assigned={ownedWarehouses.data ?? []} />
     </div>
   );
 }

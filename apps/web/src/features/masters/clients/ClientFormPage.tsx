@@ -4,8 +4,9 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useEffect } from "react";
 import { clientCreateSchema, type ClientCreateInput } from "@svyft/shared";
 import { postJson, patchJson } from "@/lib/api";
-import { useClient } from "../useMasters";
+import { useClient, useOwnerWarehouses } from "../useMasters";
 import { ContactList } from "../ContactList";
+import { WarehousePicker } from "../WarehousePicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +15,7 @@ export function ClientFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const existing = useClient(id);
+  const ownedWarehouses = useOwnerWarehouses("clients", id);
   const {
     register,
     handleSubmit,
@@ -97,6 +99,7 @@ export function ClientFormPage() {
         </Button>
       </form>
       <ContactList ownerPath="clients" ownerId={id} />
+      <WarehousePicker ownerPath="clients" ownerId={id} assigned={ownedWarehouses.data ?? []} />
     </div>
   );
 }

@@ -112,6 +112,66 @@ export class FreightForwardersService {
     });
   }
 
+  async listWarehouses(freightForwarderId: string) {
+    await this.get(freightForwarderId);
+    return this.prisma.warehouse.findMany({
+      where: { freightForwarderId },
+      orderBy: { name: "asc" },
+    });
+  }
+
+  /**
+   * Sets this forwarder's warehouses to exactly `warehouseIds`. One transaction, so a warehouse
+   * can never be momentarily owned by two forwarders, and the contested check sees a consistent
+   * view. Ownership lives on Warehouse rather than a join table because a join table would
+   * permit the many-to-many the requirement rules out.
+   *
+   * The contested check's `OR` covers two conflict shapes: a warehouse already owned by a
+   * *different* forwarder (`notIn: [ffId]` lets re-assigning to the same forwarder through, so
+   * this call is idempotent), or a warehouse owned by any client. A warehouse this forwarder
+   * already owns, or one owned by nobody, is never contested.
+   */
+  async setWarehouses(ffId: string, warehouseIds: string[], user?: RequestUser) {
+    await this.get(ffId);
+    return this.prisma.$transaction(async (tx) => {
+      const contested = await tx.warehouse.findFirst({
+        where: {
+          id: { in: warehouseIds },
+          OR: [
+            { freightForwarderId: { not: null, notIn: [ffId] } },
+            { clientId: { not: null } },
+          ],
+        },
+      });
+      if (contested) {
+        throw new ConflictException(`${contested.name} is already assigned to another record`);
+      }
+      await tx.warehouse.updateMany({
+        where: { freightForwarderId: ffId, id: { notIn: warehouseIds } },
+        data: { freightForwarderId: null, ...auditUpdate(user) },
+      });
+      await tx.warehouse.updateMany({
+        where: { id: { in: warehouseIds } },
+        data: { freightForwarderId: ffId, ...auditUpdate(user) },
+      });
+      const assigned = await tx.warehouse.findMany({
+        where: { freightForwarderId: ffId },
+        orderBy: { name: "asc" },
+      });
+      // Phase 1 dual-write, the counterpart to syncPrimaryContactColumns: rfq.service.ts
+      // snapshots whLocation into the RFQ payload, so it tracks the assigned warehouses until
+      // the Stage-4 pass repoints that read at this relation. Retired with it.
+      await tx.freightForwarder.update({
+        where: { id: ffId },
+        data: {
+          whLocation: assigned.map((w) => w.name).join(", ") || null,
+          ...auditUpdate(user),
+        },
+      });
+      return assigned;
+    });
+  }
+
   /**
    * Keeps the three columns rfq.service.ts snapshots — pic, contactNumber, email — aligned
    * with the primary contact. `whLocation` is a fourth column rfq.service.ts also reads, but
