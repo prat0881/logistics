@@ -96,7 +96,7 @@ export class ClientsService {
       if (input.isPrimary) {
         await tx.clientContact.updateMany({
           where: { clientId, isPrimary: true },
-          data: { isPrimary: false },
+          data: { isPrimary: false, ...auditUpdate(user) },
         });
       }
       return tx.clientContact.create({
@@ -119,7 +119,7 @@ export class ClientsService {
       if (input.isPrimary) {
         await tx.clientContact.updateMany({
           where: { clientId, isPrimary: true, NOT: { id: contactId } },
-          data: { isPrimary: false },
+          data: { isPrimary: false, ...auditUpdate(user) },
         });
       }
       return tx.clientContact.update({
