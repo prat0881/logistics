@@ -40,7 +40,15 @@ function contact(overrides: Partial<ContactDto> = {}): ContactDto {
   };
 }
 
+/**
+ * The backing store behind the stateful mocks below. A real PATCH/DELETE mutates
+ * this array so the *next* GET reflects it — letting tests assert what a user
+ * actually sees after a mutation completes (row updated, row gone), not just the
+ * shape of the outgoing request. `getUrls` records every GET URL requested so a
+ * wrong-endpoint bug in the `useQuery` fetch doesn't go unnoticed.
+ */
 let contactsFixture: ContactDto[] = [];
+let getUrls: string[] = [];
 
 /**
  * Renders ContactList with a given contact list already loaded. The cache is
@@ -49,6 +57,7 @@ let contactsFixture: ContactDto[] = [];
  */
 function renderList({ ownerId, contacts = [] }: { ownerId?: string; contacts?: ContactDto[] }) {
   contactsFixture = contacts;
+  getUrls = [];
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (ownerId) qc.setQueryData(["clients", ownerId, "contacts"], contacts);
   return render(
@@ -59,9 +68,10 @@ function renderList({ ownerId, contacts = [] }: { ownerId?: string; contacts?: C
 }
 
 /**
- * Stubs fetch so GET serves the fixture list and any mutating request (PATCH/DELETE)
- * is captured instead of actually handled. Returns the capture target — undefined
- * fields mean no mutating request has been sent yet.
+ * Stubs fetch with a stateful contact store: GET serves (and records the URL of)
+ * the current store, PATCH merges the sent fields into the matching contact, and
+ * DELETE removes it — so a later GET (triggered by cache invalidation) reflects
+ * the mutation. Also captures the method/url/body of the last mutating request.
  */
 function captureRequest() {
   const captured: { method?: string; url?: string; body?: Record<string, unknown> } = {};
@@ -69,24 +79,39 @@ function captureRequest() {
     "fetch",
     mockFetch((url, init) => {
       const method = init?.method;
-      if (method && method !== "GET") {
-        captured.method = method;
-        captured.url = url;
-        captured.body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined;
-        return { status: method === "DELETE" ? 204 : 200, body: method === "DELETE" ? undefined : captured.body };
+      if (!method || method === "GET") {
+        getUrls.push(url);
+        return { status: 200, body: contactsFixture };
       }
-      return { status: 200, body: contactsFixture };
+      captured.method = method;
+      captured.url = url;
+      captured.body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined;
+      const id = url.split("/").pop();
+      if (method === "PATCH") {
+        contactsFixture = contactsFixture.map((c) => (c.id === id ? { ...c, ...captured.body } : c));
+        return { status: 200, body: contactsFixture.find((c) => c.id === id) };
+      }
+      if (method === "DELETE") {
+        contactsFixture = contactsFixture.filter((c) => c.id !== id);
+        return { status: 204 };
+      }
+      return { status: 404 };
     }),
   );
   return captured;
 }
 
-/** Stubs fetch so GET serves the fixture list and any mutating request gets this response. */
+/**
+ * Stubs fetch so GET serves (and records the URL of) the current store, and any
+ * mutating request unconditionally gets this error response instead of touching
+ * the store — for asserting how a failed mutation is surfaced.
+ */
 function mockResponse(status: number, body: unknown) {
   vi.stubGlobal(
     "fetch",
     mockFetch((url, init) => {
       if (init?.method && init.method !== "GET") return { status, body };
+      getUrls.push(url);
       return { status: 200, body: contactsFixture };
     }),
   );
@@ -160,6 +185,16 @@ describe("ContactList", () => {
     await waitFor(() => expect(captured.method).toBe("PATCH"));
     expect(captured.url).toBe("/api/clients/c1/contacts/k1");
     expect(captured.body).toEqual({ pocLevel: "PRIMARY" });
+
+    // Cache invalidation refetches the list, so the row reflects the saved change
+    // and the edit form has closed — this only happens if the mutation was
+    // actually invalidated, not merely POSTed.
+    await waitFor(() => expect(screen.queryByRole("button", { name: /save contact/i })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /edit asha menon/i })).toBeInTheDocument();
+    // Scoped to the row itself — the Add form's own POC-level <option value="PRIMARY">
+    // text would otherwise make an unscoped getByText("PRIMARY") ambiguous.
+    expect(screen.getByText(/asha menon/i).closest("li")).toHaveTextContent(/primary/i);
+    expect(getUrls).toContain("/api/clients/c1/contacts");
   });
 
   it("surfaces the 409 when promoting a second contact, naming what to do about it", async () => {
@@ -174,6 +209,19 @@ describe("ContactList", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/demote/i);
   });
 
+  it("shows the server's message without the promotion hint when the save fails for a reason other than a 409", async () => {
+    mockResponse(500, { message: "Something went wrong on our end" });
+    renderList({ ownerId: "c1", contacts: [contact({ id: "k5", name: "Sam Osei", pocLevel: "NONE" })] });
+
+    await userEvent.click(screen.getByRole("button", { name: /edit sam osei/i }));
+    await userEvent.selectOptions(screen.getByLabelText(/poc level/i), "PRIMARY");
+    await userEvent.click(screen.getByRole("button", { name: /save contact/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Something went wrong on our end");
+    expect(alert).not.toHaveTextContent(/demote/i);
+  });
+
   it("asks before deleting, and does not call the API when cancelled", async () => {
     const captured = captureRequest();
     renderList({ ownerId: "c1", contacts: [contact({ id: "k3", name: "Mei Lin" })] });
@@ -186,5 +234,10 @@ describe("ContactList", () => {
     await userEvent.click(screen.getByRole("button", { name: /^remove$/i }));
     await waitFor(() => expect(captured.method).toBe("DELETE"));
     expect(captured.url).toBe("/api/clients/c1/contacts/k3");
+
+    // Cache invalidation refetches the list, so the removed contact's row is
+    // actually gone — not just that a DELETE was sent.
+    await waitFor(() => expect(screen.queryByText(/mei lin/i)).not.toBeInTheDocument());
+    expect(getUrls).toContain("/api/clients/c1/contacts");
   });
 });
