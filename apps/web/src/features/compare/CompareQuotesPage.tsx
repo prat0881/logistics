@@ -40,13 +40,26 @@ export function CompareQuotesPage() {
   // had seeded with at page load (final review IMPORTANT #1).
   const [viewMode, setViewMode] = useViewMode();
 
-  if (!id) return <p role="alert" className="text-sm text-destructive">Missing query id.</p>;
+  if (!id)
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        Missing query id.
+      </p>
+    );
   if (query.isLoading || comparison.isLoading)
     return <p className="text-sm text-muted-foreground">Loading comparison…</p>;
   if (query.isError || !query.data)
-    return <p role="alert" className="text-sm text-destructive">Failed to load the query.</p>;
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        Failed to load the query.
+      </p>
+    );
   if (comparison.isError || !comparison.data)
-    return <p role="alert" className="text-sm text-destructive">Failed to load the comparison.</p>;
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        Failed to load the comparison.
+      </p>
+    );
 
   const q = query.data;
   const legs = comparison.data.legs;

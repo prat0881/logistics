@@ -113,7 +113,10 @@ function Harness({ leg }: { leg: LegComparisonDto }) {
 }
 
 function renderMaker(leg: LegComparisonDto) {
-  vi.stubGlobal("fetch", mockFetch(() => ({ status: 404 })));
+  vi.stubGlobal(
+    "fetch",
+    mockFetch(() => ({ status: 404 })),
+  );
   return renderWithProviders(<Harness leg={leg} />, {
     user: { id: "u1", name: "Exec", email: "e@x.com", role: "EXECUTIVE" },
   });
@@ -134,7 +137,10 @@ function AuthProbe() {
 }
 
 function renderMakerAfterAuthSettles(leg: LegComparisonDto) {
-  vi.stubGlobal("fetch", mockFetch(() => ({ status: 404 })));
+  vi.stubGlobal(
+    "fetch",
+    mockFetch(() => ({ status: 404 })),
+  );
   renderWithProviders(
     <>
       <AuthProbe />

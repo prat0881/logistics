@@ -268,7 +268,9 @@ function renderDialog(
   );
 }
 
-function renderNegotiate(opts: { fetchFn?: ReturnType<typeof vi.fn>; onOpenChange?: (v: boolean) => void } = {}) {
+function renderNegotiate(
+  opts: { fetchFn?: ReturnType<typeof vi.fn>; onOpenChange?: (v: boolean) => void } = {},
+) {
   const onOpenChange = opts.onOpenChange ?? vi.fn();
   if (opts.fetchFn) vi.stubGlobal("fetch", opts.fetchFn);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -296,7 +298,9 @@ describe("NegotiateDialog", () => {
     renderDialog(qc, { onOpenChange: vi.fn(), leg: LEG_WITH_PENDING_APPROVAL });
 
     expect(await screen.findByRole("checkbox", { name: /harbor/i })).toBeDisabled();
-    expect(screen.getByText(/this leg is pending approval — reject it first\./i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/this leg is pending approval — reject it first\./i),
+    ).toBeInTheDocument();
     // Distinct from REQUOTED's reason — proves the two ineligible states aren't conflated.
     expect(screen.getByText(/already awaiting a revised quote/i)).toBeInTheDocument();
   });
@@ -386,9 +390,7 @@ describe("NegotiateDialog", () => {
     renderNegotiate();
 
     await screen.findByRole("checkbox", { name: /bridge/i }); // positive control — list has rendered
-    expect(
-      screen.queryByRole("checkbox", { name: /separate note/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /separate note/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/note for bridge/i)).not.toBeInTheDocument();
   });
 
@@ -438,7 +440,9 @@ describe("NegotiateDialog", () => {
     await user.type(screen.getByLabelText(/^note$/i), "please revise");
     await user.click(screen.getByRole("button", { name: /send to 2 forwarders/i }));
 
-    expect(await screen.findByText(/bridge/i, { selector: "[data-result='ok']" })).toBeInTheDocument();
+    expect(
+      await screen.findByText(/bridge/i, { selector: "[data-result='ok']" }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/not in a re-quotable state/i)).toBeInTheDocument();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
 
@@ -478,9 +482,7 @@ describe("NegotiateDialog", () => {
     await user.type(screen.getByLabelText(/^note$/i), "please revise");
     await user.click(screen.getByRole("button", { name: /send to 1 forwarder/i }));
 
-    await waitFor(() =>
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["query", "q1"] }),
-    );
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["query", "q1"] }));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["comparison", "q1"] });
   });
 
@@ -492,7 +494,13 @@ describe("NegotiateDialog", () => {
     const onOpenChange = vi.fn();
     const { rerender } = render(
       <QueryClientProvider client={qc}>
-        <NegotiateDialog open={false} onOpenChange={onOpenChange} queryId="q1" legId="leg-1" leg={LEG} />
+        <NegotiateDialog
+          open={false}
+          onOpenChange={onOpenChange}
+          queryId="q1"
+          legId="leg-1"
+          leg={LEG}
+        />
       </QueryClientProvider>,
     );
 
@@ -506,7 +514,13 @@ describe("NegotiateDialog", () => {
 
     rerender(
       <QueryClientProvider client={qc}>
-        <NegotiateDialog open={false} onOpenChange={onOpenChange} queryId="q1" legId="leg-1" leg={LEG} />
+        <NegotiateDialog
+          open={false}
+          onOpenChange={onOpenChange}
+          queryId="q1"
+          legId="leg-1"
+          leg={LEG}
+        />
       </QueryClientProvider>,
     );
     rerender(

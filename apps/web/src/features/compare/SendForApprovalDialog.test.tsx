@@ -126,7 +126,11 @@ const LEG: LegComparisonDto = {
   offers: [BRIDGE_DEDICATED, OCEANIC_GROUPAGE, FALCON_STALE, GLOBEX_UNPRICED],
   pendingForwarders: [],
   awaitingReQuote: false,
-  recommendation: { quoteId: recommendedQuoteId, variant: "DEDICATED", reason: "cheapest landed cost" },
+  recommendation: {
+    quoteId: recommendedQuoteId,
+    variant: "DEDICATED",
+    reason: "cheapest landed cost",
+  },
   decision: {
     legId: "leg-1",
     status: "DRAFT",
@@ -307,7 +311,10 @@ describe("SendForApprovalDialog", () => {
   it("sends a voluntary reason typed on the recommended path", async () => {
     renderDialog();
     await userEvent.click(screen.getByLabelText(/Bridge Logistics — Dedicated/)); // recommended
-    await userEvent.type(screen.getByLabelText(/reason \(optional\)/i), "Prefer this forwarder's SLA.");
+    await userEvent.type(
+      screen.getByLabelText(/reason \(optional\)/i),
+      "Prefer this forwarder's SLA.",
+    );
     await userEvent.click(screen.getByRole("button", { name: /send for approval/i }));
     await waitFor(() => expect(postJson).toHaveBeenCalledTimes(1));
     expect(postJsonMock.mock.calls[0][0]).toBe(SEND_URL);

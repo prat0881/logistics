@@ -242,15 +242,19 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
     }
   }, [open]);
 
-  const allEligibleSelected = eligible.length > 0 && eligible.every((c) => selected.has(c.freightForwarderId));
-  const selectedCandidates = candidates.filter((c) => c.eligible && selected.has(c.freightForwarderId));
+  const allEligibleSelected =
+    eligible.length > 0 && eligible.every((c) => selected.has(c.freightForwarderId));
+  const selectedCandidates = candidates.filter(
+    (c) => c.eligible && selected.has(c.freightForwarderId),
+  );
   const n = selectedCandidates.length;
 
   // Same rule `requestRequoteSchema` enforces server-side — non-empty AND no more than
   // `NOTE_MAX_LENGTH`. One shared note applies to every selected forwarder (S5.9.2 product item 1
   // — an exec wanting different wording per forwarder selects one at a time instead), so there is
   // only ever one note to validate.
-  const hasInvalidNote = n > 0 && (sharedNote.trim().length === 0 || sharedNote.trim().length > NOTE_MAX_LENGTH);
+  const hasInvalidNote =
+    n > 0 && (sharedNote.trim().length === 0 || sharedNote.trim().length > NOTE_MAX_LENGTH);
   const canSubmit = n > 0 && !hasInvalidNote && !batch.isPending;
 
   function toggleForwarder(id: string, checked: boolean) {
@@ -286,7 +290,12 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
     // Narrow the selection to just the forwarders that failed, so the notes stay filled in and a
     // second click of Send retries only those — the ones that already succeeded don't need it.
     setSelected(
-      new Set(outcome.filter((r) => !r.ok).map((r) => idByQuoteId.get(r.quoteId)).filter((id): id is string => !!id)),
+      new Set(
+        outcome
+          .filter((r) => !r.ok)
+          .map((r) => idByQuoteId.get(r.quoteId))
+          .filter((id): id is string => !!id),
+      ),
     );
   }
 
@@ -343,14 +352,10 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
                   >
                     {c.prices.length === 0
                       ? "No price yet"
-                      : c.prices
-                          .map((p) => `${p.variantLabel} ${fmtUsd(p.usdTotal)}`)
-                          .join(" · ")}
+                      : c.prices.map((p) => `${p.variantLabel} ${fmtUsd(p.usdTotal)}`).join(" · ")}
                   </span>
                 </label>
-                {!c.eligible && (
-                  <p className="pl-6 text-xs text-muted-foreground">{c.reason}</p>
-                )}
+                {!c.eligible && <p className="pl-6 text-xs text-muted-foreground">{c.reason}</p>}
               </li>
             ))}
           </ul>
