@@ -375,9 +375,10 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(quoteB.status).toBe("RFQ_SENT");
 
     // Flip quoteB to REQUOTED with a retained draft (same direct-seed convention as the submit
-    // test above). On a REQUOTED quote this stands for the forwarder's ALREADY SUBMITTED earlier
-    // price, which S5.9.5 D4 now preserves through the sweep — the assertions below check it by
-    // identity, so an arbitrary placeholder object is still all this test needs.
+    // test above). On a REQUOTED quote this stands for the forwarder's LAST SAVED state — usually
+    // their earlier submitted price, but see rfq-schedule.listener.ts for why the sweep cannot
+    // prove that. S5.9.5 D4 preserves it either way, and the assertions below check it by
+    // identity, so an arbitrary placeholder object is all this test needs.
     await prisma.quote.update({
       where: { id: quoteB.id },
       data: {

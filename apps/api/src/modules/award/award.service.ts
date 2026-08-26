@@ -52,10 +52,13 @@ const OUTSTANDING_QUOTE_STATUSES: readonly QuoteStatus[] = [
 // (award.module.ts): QUOTED and EXPIRED. They are two independent gates — this one produces the
 // 409 below BEFORE anything is written, the machine would otherwise throw
 // `IllegalTransitionError` out of the POST-COMMIT fire, leaving a wedged decision (see step 2).
-// EXPIRED is here because D4 preserves a re-quoted forwarder's submitted price through the expiry
-// sweep and promises it stays approvable, not merely visible; it is self-limiting the same way the
-// comparison is — an EXPIRED quote with no `draftJson` produces no offer at all, so it never
-// reaches this guard (the pre-transaction `o.priced` check 400s first).
+// EXPIRED is here because D4 preserves a re-quoted forwarder's retained price through the expiry
+// sweep (rfq-schedule.listener.ts — read its note on what that price is and is not) and promises it
+// stays approvable, not merely visible. It is self-limiting the same way the comparison is: an
+// EXPIRED quote with no `draftJson` never reaches this guard at all. CORRECTED (review round 1) —
+// the reason is NOT that `o.priced` evaluates false. `buildLeg` skips any quote with no
+// `draftJson` (comparison.service.ts), so no offer row is emitted for it in the first place and
+// the pre-transaction `!offer` check 400s (see the `getComparison` block below).
 const SENDABLE_STATUSES: readonly QuoteStatus[] = [QuoteStatus.QUOTED, QuoteStatus.EXPIRED];
 
 // S5.9 Task 4 review round — IMPORTANT 2. lockLeg's raw SQL casts both ids to `::uuid` directly

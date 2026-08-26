@@ -109,13 +109,33 @@ export class RfqScheduleListener {
       for (const q of openQuotes) {
         try {
           // S5.9.5 (D4, register A4) — discard the draft ONLY for a quote that was still RFQ_SENT.
-          // For a REQUOTED quote `draftJson` is NOT an unsubmitted draft: it is the forwarder's ALREADY
-          // SUBMITTED earlier price, retained on purpose by `requestRequote` (negotiation.service.ts, which
-          // fires the status change with no effect precisely so the price survives) and it is the only
-          // thing keeping that offer on the compare screen. Nulling it here destroyed a real, acceptable
-          // price as a direct consequence of asking for a better one — doing nothing would have kept it.
-          // The quote still EXPIRES: the window really did close and the forwarder's silence must be
-          // visible rather than reading as still-pending forever (design D4).
+          // For RFQ_SENT it is unambiguously a never-submitted draft; for REQUOTED it is not, and
+          // nulling it destroyed a real, acceptable price as a direct consequence of asking for a
+          // better one — doing nothing would have kept it. `requestRequote` deliberately retains it
+          // (negotiation.service.ts fires the status change with no `effect` precisely so it
+          // survives), and it is the only thing keeping that offer on the compare screen.
+          //
+          // WHAT IS AND IS NOT GUARANTEED (review round 1) — on a REQUOTED quote `draftJson` is the
+          // forwarder's LAST SAVED STATE, which equals their already-submitted earlier price ONLY
+          // if they have not touched the reopened portal since. Nothing enforces that:
+          // `FfPortalService.saveDraft` writes `draftJson` verbatim with NO status guard
+          // (`quoteForLeg` checks leg membership only, and `resolveByToken` scopes on
+          // `NOT status: SELECT`, so a REQUOTED quote is in scope), `quoteDraftSchema` accepts
+          // blanks on purpose, and the portal offers Save-draft as an explicit control pre-filled
+          // from the retained price (web LegSection.tsx). Contrast `submit`, which DOES gate on
+          // status and on a stale-page version hash — Save-draft has neither. So: negotiate → the
+          // FF edits the reopened portal → Save draft → goes silent → this sweep, and what we keep
+          // is a partially-typed, MODIFIED, never-submitted bid.
+          //
+          // Retaining it anyway is a deliberate BIAS toward keeping a price over losing one, not a
+          // claim of provenance. Anything downstream that needs "this is what they actually
+          // submitted" must establish that itself. The real repair is to snapshot the submitted
+          // price at `requestRequote` time, or to key retention on whether the draft was touched
+          // since the request — both need a schema change and are registered for the human, not
+          // decided here.
+          //
+          // The quote still EXPIRES either way: the window really did close and the forwarder's
+          // silence must be visible rather than reading as still-pending forever (design D4).
           // (Discard is permanent, spec S8/E3; the EXPIRE fire is the one door, after the write.)
           if (q.status === QuoteStatus.RFQ_SENT) {
             await this.prisma.quote.update({ where: { id: q.id }, data: { draftJson: Prisma.DbNull } });

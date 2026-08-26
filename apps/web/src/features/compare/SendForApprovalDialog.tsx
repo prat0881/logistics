@@ -55,10 +55,13 @@ export interface SendForApprovalDialogProps {
  * and never selectable (S5.9 final whole-branch review, IMPORTANT 1). This dialog originally
  * ported `ShortlistDialog`'s pre-Task-3 "stays selectable" behaviour, which the server has refused
  * unconditionally since Task 3: `award.service.ts`'s in-transaction A1 refresh requires the NAMED
- * quote to be `QUOTED` right now, so picking a stale offer cost the maker a written override
- * reason, a ticked proceed-without-waiting box and a Send press to earn *"The named offer is no
- * longer QUOTED — refresh the comparison and pick again"* — advice that cannot help, because
- * refreshing leaves it `REQUOTED`. Note this is a DIFFERENT rule from A9, which is about some
+ * quote to be in `SENDABLE_STATUSES` right now — `QUOTED` or, since S5.9.5 D4, `EXPIRED`
+ * (CORRECTED review round 1: this used to say "`QUOTED` right now", which stopped being the rule
+ * when S5.9.5 Task 2 widened the guard). `REQUOTED` is in neither, so the conclusion below is
+ * unchanged: picking a stale offer cost the maker a written override reason, a ticked
+ * proceed-without-waiting box and a Send press to earn a 409 — *"Only a live or expired offer can
+ * be sent for approval…"* — which cannot help, because refreshing leaves it `REQUOTED`.
+ * Note this is a DIFFERENT rule from A9, which is about some
  * OTHER quote on the leg being re-quoted: A9 is proceedable-past with a reason, this is not
  * proceedable at all. Same shape `NegotiateDialog` uses for an ineligible forwarder in this
  * folder — disabled control, reason text beside it — so an unavailable option is always visible
