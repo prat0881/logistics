@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { buildComparisonRowModel, METRICS, offerKey } from "./comparisonRowModel";
-import type { LegComparisonDto, OfferDto } from "@svyft/shared";
+import {
+  buildComparisonRowModel,
+  METRICS,
+  offerKey,
+  pendingKey,
+  type GridCell,
+  type OfferCell,
+} from "./comparisonRowModel";
+import type { LegComparisonDto, OfferDto, PendingForwarderDto } from "@svyft/shared";
+
+// GridCell is a discriminated union (S5.9.5 D7) so every existing test written before Task 8 —
+// which only ever built offer cells — must narrow before touching an `OfferCell`-only field.
+// Throwing rather than silently widening the return type keeps a genuinely mis-typed fixture
+// (a pending cell where a test expected an offer) loud instead of producing `undefined` reads.
+function asOffer(cell: GridCell): OfferCell {
+  if (cell.kind !== "offer") throw new Error(`expected an offer cell, got "${cell.kind}"`);
+  return cell;
+}
 
 const offer = (o: Partial<OfferDto>): OfferDto => ({
   quoteId: "q1",
@@ -60,7 +76,7 @@ describe("buildComparisonRowModel", () => {
       false,
     );
     expect(withRec.recommendedKey).toBe(offerKey("q1", "DEDICATED"));
-    expect(withRec.cells[0].recommended).toBe(true);
+    expect(asOffer(withRec.cells[0]).recommended).toBe(true);
   });
 
   it("suppresses the recommendation entirely when locked", () => {
@@ -69,7 +85,7 @@ describe("buildComparisonRowModel", () => {
       true,
     );
     expect(m.recommendedKey).toBeNull();
-    expect(m.cells[0].recommended).toBe(false);
+    expect(asOffer(m.cells[0]).recommended).toBe(false);
   });
 
   // ── S5.9.1 R1 — the recommendation OF RECORD. S5.9 T9 suppressed the `★` entirely the moment a
@@ -123,7 +139,9 @@ describe("buildComparisonRowModel", () => {
         false,
       );
       expect(m.recommendedKey).toBe(offerKey("q1", "DEDICATED"));
-      expect(m.cells.find((c) => c.key === offerKey("q2", "GROUPAGE"))!.recommended).toBe(false);
+      expect(asOffer(m.cells.find((c) => c.key === offerKey("q2", "GROUPAGE"))!).recommended).toBe(
+        false,
+      );
     });
 
     it("falls back to the live recommendation when no decision exists yet", () => {
@@ -174,7 +192,7 @@ describe("buildComparisonRowModel", () => {
         true,
       );
       expect(m.recommendedKey).toBeNull();
-      expect(m.cells[0].recommended).toBe(false);
+      expect(asOffer(m.cells[0]).recommended).toBe(false);
     });
 
     it("says nothing when a decision exists but snapshotted no recommendation", () => {
@@ -192,7 +210,7 @@ describe("buildComparisonRowModel", () => {
         false,
       );
       expect(m.recommendedKey).toBeNull();
-      expect(m.cells[0].recommended).toBe(false);
+      expect(asOffer(m.cells[0]).recommended).toBe(false);
     });
   });
 
@@ -233,9 +251,9 @@ describe("buildComparisonRowModel", () => {
         },
         false,
       );
-      expect(m.cells.find((c) => c.key === offerKey("q1", "DEDICATED"))!.sentForApproval).toBe(
-        true,
-      );
+      expect(
+        asOffer(m.cells.find((c) => c.key === offerKey("q1", "DEDICATED"))!).sentForApproval,
+      ).toBe(true);
     });
 
     it("marks no offer other than the one the decision names", () => {
@@ -249,9 +267,9 @@ describe("buildComparisonRowModel", () => {
         },
         false,
       );
-      expect(m.cells.find((c) => c.key === offerKey("q2", "GROUPAGE"))!.sentForApproval).toBe(
-        false,
-      );
+      expect(
+        asOffer(m.cells.find((c) => c.key === offerKey("q2", "GROUPAGE"))!).sentForApproval,
+      ).toBe(false);
     });
 
     // ── THE test that matters most — the drift case observed live. A naive implementation that
@@ -267,8 +285,8 @@ describe("buildComparisonRowModel", () => {
         },
         false,
       );
-      expect(m.cells[0].offer.quoteStatus).toBe("QUOTED"); // sanity: the drift precondition holds
-      expect(m.cells[0].sentForApproval).toBe(true);
+      expect(asOffer(m.cells[0]).offer.quoteStatus).toBe("QUOTED"); // sanity: the drift precondition holds
+      expect(asOffer(m.cells[0]).sentForApproval).toBe(true);
     });
 
     it("reads as both when the same offer is also the recommendation of record", () => {
@@ -284,13 +302,13 @@ describe("buildComparisonRowModel", () => {
         },
         false,
       );
-      expect(m.cells[0].recommended).toBe(true);
-      expect(m.cells[0].sentForApproval).toBe(true);
+      expect(asOffer(m.cells[0]).recommended).toBe(true);
+      expect(asOffer(m.cells[0]).sentForApproval).toBe(true);
     });
 
     it("marks nothing when there is no decision yet", () => {
       const m = buildComparisonRowModel(leg([offer({})]), false);
-      expect(m.cells[0].sentForApproval).toBe(false);
+      expect(asOffer(m.cells[0]).sentForApproval).toBe(false);
     });
 
     it("marks nothing when a decision exists but names no shortlist", () => {
@@ -301,7 +319,7 @@ describe("buildComparisonRowModel", () => {
         },
         false,
       );
-      expect(m.cells[0].sentForApproval).toBe(false);
+      expect(asOffer(m.cells[0]).sentForApproval).toBe(false);
     });
 
     it("suppresses the mark once locked, consistently with the recommendation", () => {
@@ -312,7 +330,7 @@ describe("buildComparisonRowModel", () => {
         },
         true,
       );
-      expect(m.cells[0].sentForApproval).toBe(false);
+      expect(asOffer(m.cells[0]).sentForApproval).toBe(false);
     });
 
     // ── Final whole-branch review, C1 — the one cell of the matrix neither Task 1's nor Task 5's
@@ -340,7 +358,7 @@ describe("buildComparisonRowModel", () => {
         },
         false,
       );
-      expect(m.cells[0].sentForApproval).toBe(false);
+      expect(asOffer(m.cells[0]).sentForApproval).toBe(false);
     });
 
     // The other half of the same fix: the `★` and the `⚑` are NOT interchangeable. `★`'s copy is
@@ -364,8 +382,8 @@ describe("buildComparisonRowModel", () => {
         },
         false,
       );
-      expect(m.cells[0].recommended).toBe(true);
-      expect(m.cells[0].sentForApproval).toBe(false);
+      expect(asOffer(m.cells[0]).recommended).toBe(true);
+      expect(asOffer(m.cells[0]).sentForApproval).toBe(false);
     });
 
     // APPROVED is the other status that survives with a shortlist still on the row (approve()
@@ -387,7 +405,7 @@ describe("buildComparisonRowModel", () => {
         },
         false,
       );
-      expect(m.cells[0].sentForApproval).toBe(false);
+      expect(asOffer(m.cells[0]).sentForApproval).toBe(false);
     });
 
     // `AwardDecisionDto.status`'s union allows REJECTED even though `reject()` writes straight to
@@ -406,7 +424,7 @@ describe("buildComparisonRowModel", () => {
         },
         false,
       );
-      expect(m.cells[0].sentForApproval).toBe(false);
+      expect(asOffer(m.cells[0]).sentForApproval).toBe(false);
     });
   });
 
@@ -458,14 +476,149 @@ describe("buildComparisonRowModel", () => {
     });
   });
 
+  // ── S5.9.5 (design D7/D8) — pending cells IN the grid, and the approved offer's own mark.
+  describe("S5.9.5 — pending cells and the approved mark", () => {
+    const PENDING_FF_ID = "ff-pending";
+    const FF_ID = "ff1"; // matches offer()'s default freightForwarderId
+    const WINNER_QUOTE = "q-winner";
+
+    const pendingForwarder = (o: Partial<PendingForwarderDto> = {}): PendingForwarderDto => ({
+      freightForwarderId: PENDING_FF_ID,
+      freightForwarderName: "Waiting Co",
+      quoteStatus: "RFQ_SENT",
+      ...o,
+    });
+
+    const decision = (
+      overrides: Partial<NonNullable<LegComparisonDto["decision"]>> = {},
+    ): NonNullable<LegComparisonDto["decision"]> => ({
+      legId: "l1",
+      status: "PENDING_APPROVAL",
+      shortlistedQuoteId: null,
+      shortlistedVariant: null,
+      recommendedQuoteId: null,
+      recommendedVariant: null,
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: "u1",
+      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+      decidedByUserId: null,
+      decidedAt: null,
+      ...overrides,
+    });
+
+    const legWithOneOfferAndOnePending: LegComparisonDto = {
+      ...leg([offer({})]),
+      pendingForwarders: [pendingForwarder()],
+    };
+
+    // Defensive fixture only — Task 1's server-side subtraction of any quote that produced an
+    // offer from `pendingForwarders` should make this payload shape unreachable in production.
+    // It is built anyway because the model must not double-render a forwarder if a stale or
+    // hand-built payload ever carries both.
+    const legWhereFfAppearsInBothLists: LegComparisonDto = {
+      ...leg([offer({ freightForwarderId: FF_ID, freightForwarderName: "Bridge" })]),
+      pendingForwarders: [
+        pendingForwarder({ freightForwarderId: FF_ID, freightForwarderName: "Bridge" }),
+      ],
+    };
+
+    const legWithApprovedDecision: LegComparisonDto = {
+      ...leg([offer({ quoteId: WINNER_QUOTE, variant: "FCL", variantLabel: "FCL" })]),
+      decision: decision({
+        status: "APPROVED",
+        shortlistedQuoteId: WINNER_QUOTE,
+        shortlistedVariant: "FCL",
+        decidedByUserId: "u2",
+        decidedAt: "2026-08-15T09:00:00.000Z",
+      }),
+    };
+
+    const legWithPendingDecision: LegComparisonDto = {
+      ...leg([offer({ quoteId: WINNER_QUOTE, variant: "FCL", variantLabel: "FCL" })]),
+      decision: decision({
+        status: "PENDING_APPROVAL",
+        shortlistedQuoteId: WINNER_QUOTE,
+        shortlistedVariant: "FCL",
+      }),
+    };
+
+    it("S5.9.5 — a pendingForwarder becomes its own group with one pending cell", () => {
+      const model = buildComparisonRowModel(legWithOneOfferAndOnePending, false);
+      expect(model.groups).toHaveLength(2);
+      const pendingGroup = model.groups.find((g) => g.freightForwarderId === PENDING_FF_ID)!;
+      expect(pendingGroup.cells).toHaveLength(1);
+      expect(pendingGroup.cells[0]!.kind).toBe("pending");
+      expect(pendingGroup.cells[0]!.key).toBe(pendingKey(PENDING_FF_ID));
+      expect(model.cells.filter((c) => c.kind === "offer")).toHaveLength(1);
+    });
+
+    it("S5.9.5 — a forwarder that already has an offer never gains a second, pending group", () => {
+      // Defensive: Task 1's server-side subtraction should make this impossible, but the model
+      // must not double-render if a stale payload ever carries both.
+      const model = buildComparisonRowModel(legWhereFfAppearsInBothLists, false);
+      expect(model.groups.filter((g) => g.freightForwarderId === FF_ID)).toHaveLength(1);
+    });
+
+    it("S5.9.5 — the approved offer is marked, and the sent-for-approval flag is not", () => {
+      const model = buildComparisonRowModel(legWithApprovedDecision, false);
+      const cell = asOffer(model.cells.find((c) => c.key === offerKey(WINNER_QUOTE, "FCL"))!);
+      expect(cell.approved).toBe(true);
+      expect(cell.sentForApproval).toBe(false);
+    });
+
+    it("S5.9.5 — approved and sentForApproval can never both be true", () => {
+      // Positive control: the PENDING_APPROVAL fixture must produce the mirror image.
+      const pending = buildComparisonRowModel(legWithPendingDecision, false);
+      const cell = asOffer(pending.cells.find((c) => c.key === offerKey(WINNER_QUOTE, "FCL"))!);
+      expect(cell.sentForApproval).toBe(true);
+      expect(cell.approved).toBe(false);
+    });
+
+    it("S5.9.5 — `locked` suppresses the star and the flag but NOT the approved mark", () => {
+      const model = buildComparisonRowModel(legWithApprovedDecision, true);
+      const cell = asOffer(model.cells.find((c) => c.key === offerKey(WINNER_QUOTE, "FCL"))!);
+      expect(cell.approved).toBe(true);
+      expect(cell.recommended).toBe(false);
+      expect(cell.sentForApproval).toBe(false);
+      expect(model.recommendedKey).toBeNull();
+    });
+  });
+
+  // ── S5.9.5 (D4, ADDED after Task 1's review) — `stale` widens to cover a price-carrying
+  // EXPIRED offer, not only REQUOTED. Both are proven together, each acting as the other's
+  // positive control: a fix that only widened one status (or that broadened `stale` to "anything
+  // that isn't QUOTED") would still pass a test built around a single status.
+  describe("stale — widened to REQUOTED || EXPIRED (S5.9.5 D4)", () => {
+    it("marks a REQUOTED offer and a price-carrying EXPIRED offer both stale; a QUOTED offer stays live", () => {
+      const m = buildComparisonRowModel(
+        leg([
+          offer({ quoteId: "q-requoted", quoteStatus: "REQUOTED" }),
+          offer({ quoteId: "q-expired", quoteStatus: "EXPIRED" }),
+          offer({ quoteId: "q-live", quoteStatus: "QUOTED" }),
+        ]),
+        false,
+      );
+      expect(
+        asOffer(m.cells.find((c) => c.key === offerKey("q-requoted", "DEDICATED"))!).stale,
+      ).toBe(true);
+      expect(
+        asOffer(m.cells.find((c) => c.key === offerKey("q-expired", "DEDICATED"))!).stale,
+      ).toBe(true);
+      expect(asOffer(m.cells.find((c) => c.key === offerKey("q-live", "DEDICATED"))!).stale).toBe(
+        false,
+      );
+    });
+  });
+
   it("renders the conversion rate metric, and an em-dash when absent", () => {
     const rate = METRICS.find((x) => x.id === "rate")!;
     const m = buildComparisonRowModel(
       leg([offer({}), offer({ quoteId: "q2", unitsPerUsd: null, variant: "GROUPAGE" })]),
       false,
     );
-    expect(rate.render(m.cells[0])).toBe("3.67250");
-    expect(rate.render(m.cells[1])).toBe("—");
+    expect(rate.render(asOffer(m.cells[0]))).toBe("3.67250");
+    expect(rate.render(asOffer(m.cells[1]))).toBe("—");
   });
 
   it("never renders a money figure for an unpriced offer", () => {
@@ -474,8 +627,8 @@ describe("buildComparisonRowModel", () => {
       leg([offer({ priced: false, usdTotal: null, nativeTotal: 0 })]),
       false,
     );
-    expect(usd.render(m.cells[0])).toBe("—");
-    expect(usd.render(m.cells[0])).not.toContain("$0");
+    expect(usd.render(asOffer(m.cells[0]))).toBe("—");
+    expect(usd.render(asOffer(m.cells[0]))).not.toContain("$0");
   });
 
   // ── S5.9 T8, product item 1 — the product owner's exact column order. Both grid orientations

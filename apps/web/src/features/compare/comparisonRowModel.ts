@@ -1,4 +1,4 @@
-import type { LegComparisonDto, OfferDto } from "@svyft/shared";
+import type { LegComparisonDto, OfferDto, PendingForwarderDto } from "@svyft/shared";
 import { formatDate } from "@/lib/dates";
 import { fmtNative, fmtUsd } from "./money";
 
@@ -23,7 +23,18 @@ export function offerKey(quoteId: string, variant: string | null): string {
  *  `ComparisonGrid.test.tsx` imports it. */
 export const STALE_OFFER_LABEL = "Re-quote requested";
 
+/** S5.9.5 (D4) — `STALE_OFFER_LABEL`'s sibling for the other stale cause. `stale` (below) now also
+ *  covers `EXPIRED`: since S5.9.5 Task 2, an expired quote that still carries a price is comparable
+ *  and sendable, but it is stale for a DIFFERENT reason than a `REQUOTED` offer — nobody asked this
+ *  forwarder for a new number, they simply stopped answering before the RFQ deadline. Reusing
+ *  `STALE_OFFER_LABEL`'s "Re-quote requested" text on it would claim an action nobody took. Same
+ *  three consumers as `STALE_OFFER_LABEL` (`ComparisonGridColumns`, `ComparisonGridRows`,
+ *  `SendForApprovalDialog`) will need to pick between the two off `offer.quoteStatus`, once those
+ *  files are updated to narrow `GridCell` (S5.9.5 Task 9/10 — not this one). */
+export const EXPIRED_OFFER_LABEL = "Forwarder unresponsive";
+
 export interface OfferCell {
+  kind: "offer";
   key: string; // offerKey(quoteId, variant)
   offer: OfferDto;
   recommended: boolean; // this is the recommendation OF RECORD (S5.9.1 R1) — true both before and
@@ -55,18 +66,53 @@ export interface OfferCell {
    *  the DTO's union allows but `reject()` never persists. `locked` still suppresses it too,
    *  consistently with `recommended`. */
   sentForApproval: boolean;
-  stale: boolean; // quoteStatus === "REQUOTED"
+  /** S5.9.5 (design D8) — the approved offer's own mark. Reads the DECISION, exactly like
+   *  `sentForApprovalKey` above and for the same traced reason (see this field's sibling
+   *  `sentForApproval`'s doc comment: `offer.quoteStatus` is a second-hand signal that has been
+   *  observed to drift from the decision record). The two are mutually exclusive BY CONSTRUCTION —
+   *  one requires `status === "PENDING_APPROVAL"`, the other `status === "APPROVED"` — so no
+   *  precedence rule is needed and the product owner's "approved replaces the flag" falls out of
+   *  the gate itself.
+   *
+   *  `locked` deliberately does NOT suppress this one, unlike `recommended` and `sentForApproval`.
+   *  Those two are suppressed because they would CONTRADICT the frozen award panel below the grid
+   *  (the live ranking re-ranks the losers; "currently under checker review" is false once frozen).
+   *  The approved mark AGREES with that panel — it names the same winner the snapshot froze — so
+   *  suppressing it would remove the one mark that is still true. */
+  approved: boolean;
+  stale: boolean; // quoteStatus === "REQUOTED" || quoteStatus === "EXPIRED" — see EXPIRED_OFFER_LABEL
+}
+
+/** S5.9.5 (D7) — a forwarder sent an RFQ who has priced nothing comparable yet. Lives IN the grid
+ *  now, not in a list below it (design D7); `pendingKey` gives it its own namespace so it can never
+ *  collide with an `offerKey`. */
+export interface PendingCell {
+  kind: "pending";
+  key: string; // pendingKey(freightForwarderId)
+  forwarder: PendingForwarderDto;
+}
+
+/** S5.9.5 (D7) — a discriminated union rather than a nullable `offer` field on `OfferCell`, so
+ *  TypeScript forces every consumer that iterates cells to handle the new kind instead of letting a
+ *  missed site compile and render `undefined`. `METRICS[].render` and `onOpenBreakdown` both stay
+ *  typed to `OfferCell` alone (never `GridCell`) — a pending cell can never reach either. */
+export type GridCell = OfferCell | PendingCell;
+
+/** The pending cell's key. A separate namespace from `offerKey` on purpose — a pending forwarder
+ *  has no quote id to key on, and the two must never collide in a `key` prop or a `data-testid`. */
+export function pendingKey(freightForwarderId: string): string {
+  return `pending::${freightForwarderId}`;
 }
 
 export interface ForwarderGroup {
   freightForwarderId: string;
   freightForwarderName: string;
-  cells: OfferCell[];
+  cells: GridCell[];
 }
 
 export interface ComparisonRowModel {
   groups: ForwarderGroup[];
-  cells: OfferCell[]; // flat, same order as groups flattened
+  cells: GridCell[]; // flat, same order as groups flattened
   recommendedKey: string | null;
   /** The `★` mark's accessible-name text (S5.9.1 R1, Step 4) — `null` exactly when
    *  `recommendedKey` is `null`. Resolved here, alongside `recommendedKey`, rather than left for
@@ -90,14 +136,18 @@ export const RECOMMENDED_REASON_ON_RECORD =
  * Builds the leg's (FF × variant) row model, grouped by forwarder in first-seen order (design
  * §12 — Dedicated/Groupage or FCL/LCL of the same FF read as a pair).
  *
- * **The recommendation OF RECORD (S5.9.1 R1).** `locked` still suppresses it entirely — once the
- * client quote is generated the winning quote is `APPROVED` and excluded from `offers`, so the
- * live recommendation would re-rank the losers (S5.6 final review M1) — but that is now the ONLY
- * hard suppression. S5.9 T9 additionally suppressed the mark the moment `leg.decision.status` left
- * `DRAFT`, because `buildRecommendation` (comparison.service.ts) ranks only `QUOTED` offers: the
- * very act of sending an offer for approval flips ITS OWN quote to `PENDING_APPROVAL`, which drops
- * it out of that ranking on the next fetch, so the LIVE `leg.recommendation` can start naming a
- * DIFFERENT forwarder than the one actually under review — exactly while a checker is looking at
+ * **The recommendation OF RECORD (S5.9.1 R1).** `locked` still suppresses it entirely. **CORRECTED
+ * (S5.9.5 D8)** — this used to say the winning quote is excluded from `offers` once the client
+ * quote is generated, so the live recommendation would re-rank the losers; that cause is now FALSE
+ * (`APPROVED` joined `COMPARABLE_STATUSES`, so the winner IS in `offers`). The conclusion still
+ * holds for a different reason: `buildRecommendation` (comparison.service.ts) still never ranks
+ * `APPROVED` (design D8), so the live recommendation would still name a loser (S5.6 final review
+ * M1) — but that is now the ONLY hard suppression. S5.9 T9 additionally suppressed the mark the
+ * moment `leg.decision.status` left `DRAFT`, because `buildRecommendation` ranks only `QUOTED`
+ * (and now `EXPIRED`, D4/D8) offers: the very act of sending an offer for approval flips ITS OWN
+ * quote to `PENDING_APPROVAL`, which drops it out of that ranking on the next fetch, so the LIVE
+ * `leg.recommendation` can start naming a DIFFERENT forwarder than the one actually under review
+ * — exactly while a checker is looking at
  * this same grid. That suppression traded a wrong answer for no answer, which a product review
  * caught (a checker reviewing a sent leg saw no recommendation at all). The actual fix: once a
  * `LegAwardDecision` row exists, it already snapshots `recommendedQuoteId`/`recommendedVariant` at
@@ -147,6 +197,23 @@ export function buildComparisonRowModel(
       ? offerKey(leg.decision.shortlistedQuoteId, leg.decision.shortlistedVariant)
       : null;
 
+  // S5.9.5 (design D8) — the approved offer's own mark. Reads the DECISION, exactly like
+  // `sentForApprovalKey` above and for the same traced reason (see `OfferCell.sentForApproval`'s
+  // doc comment: `offer.quoteStatus` is a second-hand signal that has been observed to drift from
+  // the decision record). The two are mutually exclusive BY CONSTRUCTION — one requires
+  // `status === "PENDING_APPROVAL"`, the other `status === "APPROVED"` — so no precedence rule is
+  // needed and the product owner's "approved replaces the flag" falls out of the gate itself.
+  //
+  // `locked` deliberately does NOT suppress this one, unlike `recKey` and `sentForApprovalKey`.
+  // Those two are suppressed because they would CONTRADICT the frozen award panel below the grid
+  // (the live ranking re-ranks the losers; "currently under checker review" is false once frozen).
+  // The approved mark AGREES with that panel — it names the same winner the snapshot froze — so
+  // suppressing it would remove the one mark that is still true.
+  const approvedKey =
+    leg.decision?.status === "APPROVED" && leg.decision.shortlistedQuoteId
+      ? offerKey(leg.decision.shortlistedQuoteId, leg.decision.shortlistedVariant)
+      : null;
+
   // The reason text follows the SAME branch recKey just took — live reason only in the live
   // branch (where it's guaranteed to describe recKey, since recKey IS liveKey there), the generic
   // on-record sentence for a snapshot (which has no stored reason of its own), null wherever recKey
@@ -162,11 +229,13 @@ export function buildComparisonRowModel(
   for (const offer of leg.offers) {
     const key = offerKey(offer.quoteId, offer.variant);
     const cell: OfferCell = {
+      kind: "offer",
       key,
       offer,
       recommended: recKey != null && key === recKey,
       sentForApproval: sentForApprovalKey != null && key === sentForApprovalKey,
-      stale: offer.quoteStatus === "REQUOTED",
+      approved: approvedKey != null && key === approvedKey,
+      stale: offer.quoteStatus === "REQUOTED" || offer.quoteStatus === "EXPIRED",
     };
     const existing = groups.find((g) => g.freightForwarderId === offer.freightForwarderId);
     if (existing) existing.cells.push(cell);
@@ -177,6 +246,30 @@ export function buildComparisonRowModel(
         cells: [cell],
       });
   }
+
+  // S5.9.5 (design D7) — every forwarder at RFQ_SENT and beyond belongs IN the table, not in a list
+  // below it. Appended after the offering forwarders rather than interleaved: the priced columns
+  // are what the Executive is comparing, and a run of empty ones between them would break that
+  // reading. The `existing` branch is defensive, not exercised: Task 1 subtracts any quote that
+  // produced an offer from `pendingForwarders`, so a forwarder cannot legitimately be in both
+  // lists. It is here so a stale or hand-built payload degrades to one group rather than rendering
+  // the forwarder twice.
+  for (const pf of leg.pendingForwarders) {
+    const cell: PendingCell = {
+      kind: "pending",
+      key: pendingKey(pf.freightForwarderId),
+      forwarder: pf,
+    };
+    const existing = groups.find((g) => g.freightForwarderId === pf.freightForwarderId);
+    if (existing) existing.cells.push(cell);
+    else
+      groups.push({
+        freightForwarderId: pf.freightForwarderId,
+        freightForwarderName: pf.freightForwarderName,
+        cells: [cell],
+      });
+  }
+
   return {
     groups,
     cells: groups.flatMap((g) => g.cells),
@@ -290,3 +383,18 @@ export const SENT_FOR_APPROVAL_MARK = "⚑";
 export const SENT_FOR_APPROVAL_ACCESSIBLE_NAME = "Sent for approval";
 export const SENT_FOR_APPROVAL_FOOTNOTE =
   "⚑ Sent for approval — the offer currently under checker review.";
+
+/** S5.9.5 (D8) — the approved offer's mark. A checkmark, which `SENT_FOR_APPROVAL_MARK`'s own doc
+ *  comment deliberately avoided precisely because "a checkmark reads as approved" — here that
+ *  reading is the correct one. Its tint is the app's `primary`, distinct from the star's emerald,
+ *  and the two can coexist on one cell (an offer can be both recommended and approved). */
+export const APPROVED_MARK = "✔";
+export const APPROVED_ACCESSIBLE_NAME = "Approved";
+export const APPROVED_FOOTNOTE = "✔ Approved — the forwarder selected for this leg.";
+export const APPROVED_TINT = "bg-primary/10";
+
+/** S5.9.5 (D7) — what a forwarder who has not priced anything reads as in the grid. Deliberately
+ *  NOT a status name: `ForwarderStatusBadge` in the same cell already gives the precise status
+ *  (RFQ Sent / Expired / Invalid), and this is the variant slot, where every other cell names what
+ *  was priced. */
+export const NOT_QUOTED_LABEL = "Not quoted";

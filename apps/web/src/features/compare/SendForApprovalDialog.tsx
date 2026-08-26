@@ -17,7 +17,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { buildComparisonRowModel, STALE_OFFER_LABEL } from "./comparisonRowModel";
+import { buildComparisonRowModel, STALE_OFFER_LABEL, type OfferCell } from "./comparisonRowModel";
 import { useSendForApproval } from "./useAwardActions";
 import { errorMessage } from "./errorMessage";
 import { fmtUsd } from "./money";
@@ -91,12 +91,20 @@ export function SendForApprovalDialog({
   // (`CompareLegPanel` withholds the trigger otherwise); the A2 override rule is about the live
   // engine recommendation, which `locked` only ever SUPPRESSES for display.
   const model = buildComparisonRowModel(leg, false);
+  // S5.9.5 (D7) — `model.cells`/`group.cells` are now `GridCell[]` (offer cells + pending
+  // forwarders, Task 8). This dialog only ever sends a real, priced OFFER for approval — a
+  // pending forwarder has nothing to send — so the existing `.priced` filter below is widened
+  // into a type guard that also narrows out `PendingCell`, rather than this dialog growing any
+  // pending-cell UI of its own (that's the grid's job, not this one's).
   const groups = model.groups
-    .map((g) => ({ ...g, cells: g.cells.filter((c) => c.offer.priced) }))
+    .map((g) => ({
+      ...g,
+      cells: g.cells.filter((c): c is OfferCell => c.kind === "offer" && c.offer.priced),
+    }))
     .filter((g) => g.cells.length > 0);
 
   const [selectedKey, setSelectedKey] = useState<string | undefined>(undefined);
-  const selectedCell = model.cells.find((c) => c.key === selectedKey);
+  const selectedCell = groups.flatMap((g) => g.cells).find((c) => c.key === selectedKey);
   const overrideRequired = selectedKey != null && selectedKey !== model.recommendedKey;
 
   const form = useForm<{ overrideReason?: string }>({
@@ -260,7 +268,9 @@ export function SendForApprovalDialog({
               `overrideRequired`. Only the REQUIREDNESS (enforced in `handleSend` above) and the
               label/help text below it change with the pick; the field itself never disappears. */}
           <div className="space-y-1">
-            <Label htmlFor={overrideId}>{overrideRequired ? "Override reason" : "Reason (optional)"}</Label>
+            <Label htmlFor={overrideId}>
+              {overrideRequired ? "Override reason" : "Reason (optional)"}
+            </Label>
             <Textarea
               id={overrideId}
               {...form.register("overrideReason", {
