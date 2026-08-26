@@ -2033,7 +2033,7 @@ git commit -m "feat(masters): charge catalogue category, variant and isAdditiona
 
 **Interfaces:**
 - Consumes: `chargeLineCreateSchema`, `chargeLineUpdateSchema`, `chargeLineKey`, `deriveZone`, `deriveRole`.
-- Produces: `POST /api/config/charge-catalogue`, `PATCH /api/config/charge-catalogue/:id`, `DELETE /api/config/charge-catalogue/:id`.
+- Produces: `POST /api/charge-line-definitions`, `PATCH /api/charge-line-definitions/:id`, `DELETE /api/charge-line-definitions/:id`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2047,7 +2047,7 @@ const line = {
 
 it("writes the derived zone and role alongside the new columns", async () => {
   const res = await request(app.getHttpServer())
-    .post("/api/config/charge-catalogue").set("Cookie", cookie(Role.ADMINISTRATOR))
+    .post("/api/charge-line-definitions").set("Cookie", cookie(Role.ADMINISTRATOR))
     .send(line).expect(201);
 
   const row = await prisma.chargeLineDefinition.findUnique({ where: { id: res.body.id } });
@@ -2059,28 +2059,28 @@ it("writes the derived zone and role alongside the new columns", async () => {
 
 it("refuses to change category after creation", async () => {
   const res = await request(app.getHttpServer())
-    .post("/api/config/charge-catalogue").set("Cookie", cookie(Role.ADMINISTRATOR))
+    .post("/api/charge-line-definitions").set("Cookie", cookie(Role.ADMINISTRATOR))
     .send({ ...line, label: "Catalogue E2E Immutable" }).expect(201);
 
   await request(app.getHttpServer())
-    .patch(`/api/config/charge-catalogue/${res.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
+    .patch(`/api/charge-line-definitions/${res.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
     .send({ category: "ORIGIN" }).expect(400);
 });
 
 it("deletes a definition nothing references", async () => {
   const res = await request(app.getHttpServer())
-    .post("/api/config/charge-catalogue").set("Cookie", cookie(Role.ADMINISTRATOR))
+    .post("/api/charge-line-definitions").set("Cookie", cookie(Role.ADMINISTRATOR))
     .send({ ...line, label: "Catalogue E2E Unused" }).expect(201);
 
   await request(app.getHttpServer())
-    .delete(`/api/config/charge-catalogue/${res.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
+    .delete(`/api/charge-line-definitions/${res.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
     .expect(200);
   expect(await prisma.chargeLineDefinition.findUnique({ where: { id: res.body.id } })).toBeNull();
 });
 
 it("refuses to delete a definition a leg references", async () => {
   const res = await request(app.getHttpServer())
-    .post("/api/config/charge-catalogue").set("Cookie", cookie(Role.ADMINISTRATOR))
+    .post("/api/charge-line-definitions").set("Cookie", cookie(Role.ADMINISTRATOR))
     .send({ ...line, label: "Catalogue E2E In Use" }).expect(201);
 
   // Build the reference rather than hunting for one: a database with no distributed quote
@@ -2093,7 +2093,7 @@ it("refuses to delete a definition a leg references", async () => {
   });
 
   const refused = await request(app.getHttpServer())
-    .delete(`/api/config/charge-catalogue/${res.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
+    .delete(`/api/charge-line-definitions/${res.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
     .expect(409);
   expect(refused.body.message).toMatch(/in use on 1 leg/i);
   expect(await prisma.chargeLineDefinition.findUnique({ where: { id: res.body.id } })).not.toBeNull();
@@ -2101,7 +2101,7 @@ it("refuses to delete a definition a leg references", async () => {
 
 it("refuses writes from an executive", async () => {
   await request(app.getHttpServer())
-    .post("/api/config/charge-catalogue").set("Cookie", cookie(Role.EXECUTIVE))
+    .post("/api/charge-line-definitions").set("Cookie", cookie(Role.EXECUTIVE))
     .send({ ...line, label: "Catalogue E2E RBAC" }).expect(403);
 });
 ```
@@ -2425,7 +2425,7 @@ Create `ChargeCatalogueListPage.tsx` with columns Label (key beneath in `font-mo
 ```tsx
   async function onDelete(lineId: string) {
     try {
-      await deleteJson(`/api/config/charge-catalogue/${lineId}`);
+      await deleteJson(`/api/charge-line-definitions/${lineId}`);
       await qc.invalidateQueries({ queryKey: ["charge-catalogue"] });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not delete this charge line");
