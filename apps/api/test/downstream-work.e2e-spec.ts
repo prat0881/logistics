@@ -9,10 +9,18 @@ import { ScopeResolver } from "../src/modules/changes/scope.resolver";
 const PFX = "p9-downstream-work-";
 
 // SB6 (Task 3): downstreamWork(scope) arms the change-order fork (design doc §7.3/§11.2) —
-// TRUE iff a Quote on a scope-leg is "live" (distributed: RFQ_SENT or QUOTED). A pre-RFQ
-// SELECT quote, or one that's gone stale (EXPIRED/INVALID), does NOT count. Task 2 already
-// guarantees the classifier only ever emits leg-typed scope for downstream-bearing entities,
-// but the resolver must not assume that — it filters for type === "leg" on its own.
+// TRUE iff a Quote on a scope-leg is "live" (`LIVE_QUOTE_WHERE`, changes/live-quotes.ts). A
+// pre-RFQ SELECT quote, or an already-invalidated INVALID one, does NOT count.
+//
+// CORRECTED (S5.9.5 final whole-branch review, CRITICAL 1) — this used to say EXPIRED does not
+// count either, full stop. That is only true of an expired quote with NO `draftJson`. Since D4
+// the deadline sweep KEEPS the draft of a quote expiring out of REQUOTED, and such an offer is
+// comparable, rankable, sendable and approvable, so it IS live. Both directions are pinned
+// below, and the change-order cascade end of the same distinction is pinned by
+// `change-order-apply.e2e-spec.ts`.
+//
+// Task 2 already guarantees the classifier only ever emits leg-typed scope for downstream-bearing
+// entities, but the resolver must not assume that — it filters for type === "leg" on its own.
 describe("ScopeResolver.downstreamWork (e2e)", () => {
   let moduleRef: TestingModule;
   let prisma: PrismaService;
@@ -22,6 +30,7 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
   let legSentId: string;
   let legQuotedId: string;
   let legStaleId: string;
+  let legExpiredPricedId: string;
   const ffIds: string[] = [];
 
   async function mkFf(code: string) {
@@ -58,6 +67,7 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
     legSentId = (await prisma.leg.create({ data: { queryId, legCode: "L-SENT" } })).id;
     legQuotedId = (await prisma.leg.create({ data: { queryId, legCode: "L-QUOTED" } })).id;
     legStaleId = (await prisma.leg.create({ data: { queryId, legCode: "L-STALE" } })).id;
+    legExpiredPricedId = (await prisma.leg.create({ data: { queryId, legCode: "L-EXP-PRICED" } })).id;
 
     // A quote requires a real FreightForwarder (hard FK, onDelete: Restrict) and the
     // (legId, freightForwarderId) pair is unique, so each quote below gets its own FF.
@@ -66,6 +76,7 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
     const ffSelect = await mkFf(`${PFX}ff-select`);
     const ffExpired = await mkFf(`${PFX}ff-expired`);
     const ffInvalid = await mkFf(`${PFX}ff-invalid`);
+    const ffExpiredPriced = await mkFf(`${PFX}ff-exp-priced`);
 
     await prisma.quote.create({
       data: { queryId, legId: legSentId, freightForwarderId: ffSent.id, status: QuoteStatus.RFQ_SENT },
@@ -84,6 +95,17 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
     await prisma.quote.create({
       data: { queryId, legId: legStaleId, freightForwarderId: ffInvalid.id, status: QuoteStatus.INVALID },
     });
+    // S5.9.5 D4's scenario B: quoted -> negotiated -> silent -> swept, with the submitted price
+    // KEPT. Same status as legStaleId's expired quote; the ONLY difference is the draft.
+    await prisma.quote.create({
+      data: {
+        queryId,
+        legId: legExpiredPricedId,
+        freightForwarderId: ffExpiredPriced.id,
+        status: QuoteStatus.EXPIRED,
+        draftJson: { legId: legExpiredPricedId, chargedWeightKg: 500 },
+      },
+    });
   });
 
   afterAll(async () => {
@@ -101,8 +123,18 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
     await expect(resolver.downstreamWork([{ type: "leg", id: legQuotedId }])).resolves.toBe(true);
   });
 
-  it("is false when the scope leg's quotes are only SELECT/EXPIRED/INVALID", async () => {
+  it("is false when the scope leg's quotes are only SELECT / unpriced-EXPIRED / INVALID", async () => {
     await expect(resolver.downstreamWork([{ type: "leg", id: legStaleId }])).resolves.toBe(false);
+  });
+
+  // S5.9.5 CRITICAL 1 — the two halves of the EXPIRED distinction, side by side. The fixtures
+  // differ in exactly one column (`draftJson`), so neither assertion can pass for the other's
+  // reason, and dropping the `draftJson` term from LIVE_QUOTE_WHERE reddens the one above while
+  // dropping the EXPIRED arm altogether reddens the one below.
+  it("is TRUE when the scope leg's only quote is an EXPIRED one that still carries a submitted price", async () => {
+    await expect(resolver.downstreamWork([{ type: "leg", id: legExpiredPricedId }])).resolves.toBe(
+      true,
+    );
   });
 
   it("is false for a non-leg scope, even carrying the id of a live-quoted leg", async () => {

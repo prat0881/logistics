@@ -31,6 +31,7 @@ const PFX = "chg-order-apply-";
 const CODE = `${PFX}query`; // single-leg cargo scenario
 const CODE2 = `${PFX}query2`; // query-wide (incoterms) multi-leg scenario
 const CODE3 = `${PFX}query3`; // minimal-blast-radius: 1 distributed + 1 DRAFT leg
+const CODE4 = `${PFX}query4`; // S5.9.5 CRITICAL 1: priced-EXPIRED vs unpriced-EXPIRED
 const FF_PREFIX = `FF-${PFX}`;
 const FF_A_CODE = `${FF_PREFIX}A-QUOTED`;
 const FF_B_CODE = `${FF_PREFIX}B-SENT`;
@@ -48,6 +49,7 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
   const execId = randomUUID();
   const execId2 = randomUUID();
   const execId3 = randomUUID();
+  const execId4 = randomUUID();
 
   // Self-contained cleanup, FK-safe: quotes first (cascades their pricing children incl.
   // QuoteCargoLine, and frees the CargoItem/FF from Restrict FKs) → notification/messageLog/
@@ -69,6 +71,7 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     await cleanupQuery(CODE, execId);
     await cleanupQuery(CODE2, execId2);
     await cleanupQuery(CODE3, execId3);
+    await cleanupQuery(CODE4, execId4);
     await prisma.freightForwarder.deleteMany({
       where: { freightForwarderCode: { startsWith: FF_PREFIX } },
     });
@@ -617,5 +620,183 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       },
     });
     expect(msg).not.toBeNull();
+  });
+  // ── S5.9.5 final whole-branch review, CRITICAL 1 ────────────────────────────────────────────
+  it("a PRICED expired offer makes a cargo edit a change-order and is invalidated, while an UNPRICED expired one still free-paths", async () => {
+    // WHY THIS EXISTS. `downstreamWork` (scope.resolver.ts) counted only RFQ_SENT/QUOTED/
+    // PENDING_APPROVAL/APPROVED as live, with EXPIRED excluded as "gone stale". That was safe for
+    // the whole life of that exclusion BECAUSE an expired quote never carried a price — the
+    // deadline sweep nulled `draftJson` on its way past. S5.9.5 D4 changed exactly that (the sweep
+    // now KEEPS the draft for a quote expiring out of REQUOTED) and D8 then made such an offer
+    // comparable, rankable, sendable and approvable. So a cargo edit on a leg whose only quote was
+    // a priced EXPIRED offer took the FREE path: no invalidation, no change order, no reopen — and
+    // the offer stayed on the grid, ★-ranked and selectable, to be approved and priced into the
+    // client letter straight off a `draftJson` written against superseded cargo.
+    //
+    // The two halves below are ONE test on purpose: the fix is a DISTINCTION, and each half is the
+    // other's control. Widening the live set to all of EXPIRED (dropping the `draftJson` term)
+    // reddens the second half — an ordinary never-answered expiry would start demanding a reason
+    // and raising change orders where the product has always free-pathed. Leaving EXPIRED out
+    // altogether reddens the first.
+    const query = await prisma.query.create({
+      data: { queryCode: CODE4, assignedUserId: execId4, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", name: "Chennai", city: "Chennai", country: "IN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", name: "Jebel Ali", city: "Dubai", country: "AE" },
+    });
+
+    // Each leg gets its OWN package, so a `package.grossWt` edit fans to exactly one of them and
+    // the two halves cannot contaminate each other through a shared cargo scope.
+    const mkLeg = async (legCode: string) => {
+      const { packageIds } = await createCargoWithPackages(prisma, {
+        queryId: query.id,
+        packages: [{ dimL: 10, dimW: 10, dimH: 10, grossWt: OLD_GROSS_WT }],
+      });
+      const leg = await prisma.leg.create({
+        data: {
+          queryId: query.id,
+          legCode,
+          mode: "AIR",
+          // Where the rollup actually leaves a leg once its only quote has expired: nothing
+          // comparable is left, so we are waiting on a forwarder again. REOPEN has an edge from
+          // here, which is what the cascade needs on the priced half.
+          status: "RFQ_SENT",
+          originPointId: origin.id,
+          destinationPointId: dest.id,
+        },
+      });
+      await assignPackagesToLeg(prisma, leg.id, packageIds);
+      return { leg, packageId: packageIds[0] };
+    };
+
+    const priced = await mkLeg("EXPPRICED");
+    const unpriced = await mkLeg("EXPEMPTY");
+
+    const ffPriced = await mkFf(`${FF_PREFIX}E-PRICED`);
+    const ffUnpriced = await mkFf(`${FF_PREFIX}E-EMPTY`);
+
+    const rfqPriced = await prisma.rfq.create({
+      data: {
+        queryId: query.id,
+        freightForwarderId: ffPriced.id,
+        rfqNumber: `${CODE4}-RFQ001`,
+        accessTokenHash: createHash("sha256").update(randomUUID()).digest("hex"),
+        submissionDeadline: new Date(Date.now() + 86400000),
+        currency: "USD",
+      },
+    });
+
+    // Scenario B of the design's "Where Expired appears" table: quoted → negotiated → silent →
+    // swept. `draftJson` survived the sweep, so this row is a real, acceptable, actionable price.
+    const quotePriced = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: priced.leg.id,
+        freightForwarderId: ffPriced.id,
+        rfqId: rfqPriced.id,
+        status: QuoteStatus.EXPIRED,
+        grandTotal: FF_A_GRAND_TOTAL,
+        totalChargeableWeightT: 1.5,
+        draftJson: { legId: priced.leg.id, chargedWeightKg: 500 } as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: oldSnapshot(priced.leg.id, priced.packageId) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    // Scenario A: RFQ sent, forwarder never submitted, deadline passed, draft discarded. No price,
+    // no commitment — and the overwhelming majority of expired rows in production.
+    const quoteUnpriced = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: unpriced.leg.id,
+        freightForwarderId: ffUnpriced.id,
+        status: QuoteStatus.EXPIRED,
+        manifestSnapshot: oldSnapshot(unpriced.leg.id, unpriced.packageId) as unknown as Prisma.InputJsonValue,
+      },
+    });
+    expect(quoteUnpriced.draftJson).toBeNull(); // the fixture really is the unpriced shape
+
+    // ── HALF 1: the priced expired offer is a live commitment ────────────────────────────────
+    const pricedRes = await mediator.apply(
+      {
+        entity: "package",
+        id: priced.packageId,
+        field: "grossWt",
+        queryId: query.id,
+        actorId,
+        reason: REASON,
+      },
+      async (tx) => {
+        await tx.package.update({ where: { id: priced.packageId }, data: { grossWt: NEW_GROSS_WT } });
+      },
+    );
+    expect(pricedRes.path).toBe("change-order");
+    expect(pricedRes.scope).toEqual([{ type: "leg", id: priced.leg.id }]);
+
+    // The edit applied, and the superseded price is INVALID — this is the fire that needs the
+    // `EXPIRED --invalidate--> INVALID` edge (award.module.ts). Without that edge this line does
+    // not merely read the wrong status: `status.fire` throws IllegalTransitionError AFTER tx1 has
+    // committed the edit and the ChangeLog, so `mediator.apply` above rejects instead.
+    expect(Number((await prisma.package.findUnique({ where: { id: priced.packageId } }))?.grossWt)).toBe(
+      NEW_GROSS_WT,
+    );
+    const pricedAfter = await prisma.quote.findUnique({ where: { id: quotePriced.id } });
+    expect(pricedAfter?.status).toBe(QuoteStatus.INVALID);
+    // The leg reopened, so the offer is off the compare screen entirely rather than sitting there
+    // rankable against cargo that has moved.
+    expect((await prisma.leg.findUnique({ where: { id: priced.leg.id } }))?.status).toBe(
+      "READY_FOR_RFQ",
+    );
+    // ...and the invalidation is in the audit trail with the price it superseded.
+    const pricedLogs = await prisma.changeLog.findMany({
+      where: { queryId: query.id, changeType: "change-order" },
+    });
+    expect(pricedLogs).toHaveLength(1);
+    const pricedPayload = pricedLogs[0].payload as {
+      affectedScope: { type: string; id: string }[];
+      invalidatedQuotes: { quoteId: string; grandTotal: string | null }[];
+      refreshedQuotes: { quoteId: string }[];
+    };
+    expect(pricedPayload.affectedScope).toEqual([{ type: "leg", id: priced.leg.id }]);
+    expect(pricedPayload.invalidatedQuotes.map((q) => q.quoteId)).toEqual([quotePriced.id]);
+    expect(Number(pricedPayload.invalidatedQuotes[0].grandTotal)).toBe(FF_A_GRAND_TOTAL);
+    expect(pricedPayload.refreshedQuotes).toEqual([]); // nothing was merely refreshed
+
+    // ── HALF 2 (positive control): the unpriced expired quote is NOT a commitment ─────────────
+    // Deliberately sent with NO `reason`. On the change-order path that is a PREVIEW, which applies
+    // nothing at all — so if this half ever regressed, the weight assertion below would fail too,
+    // not just the `path` one.
+    const unpricedRes = await mediator.apply(
+      {
+        entity: "package",
+        id: unpriced.packageId,
+        field: "grossWt",
+        queryId: query.id,
+        actorId,
+      },
+      async (tx) => {
+        await tx.package.update({
+          where: { id: unpriced.packageId },
+          data: { grossWt: NEW_GROSS_WT },
+        });
+      },
+    );
+    expect(unpricedRes.path).toBe("free");
+    expect(unpricedRes.needsConfirmation).toBeUndefined();
+    expect(
+      Number((await prisma.package.findUnique({ where: { id: unpriced.packageId } }))?.grossWt),
+    ).toBe(NEW_GROSS_WT);
+    // Nothing cascaded: the quote is still EXPIRED (not INVALID), the leg never reopened, and no
+    // second ChangeLog row appeared.
+    expect((await prisma.quote.findUnique({ where: { id: quoteUnpriced.id } }))?.status).toBe(
+      QuoteStatus.EXPIRED,
+    );
+    expect((await prisma.leg.findUnique({ where: { id: unpriced.leg.id } }))?.status).toBe("RFQ_SENT");
+    const allChangeOrders = await prisma.changeLog.findMany({
+      where: { queryId: query.id, changeType: "change-order" },
+    });
+    expect(allChangeOrders).toHaveLength(1); // still only HALF 1's
   });
 });

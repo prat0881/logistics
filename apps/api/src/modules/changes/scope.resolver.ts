@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
-import { QuoteStatus, type FindingScope } from "@svyft/shared";
+import { type FindingScope } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
+import { LIVE_QUOTE_WHERE } from "./live-quotes";
 
 // legId is `@db.Uuid`. Postgres parses `legId IN (...)` as ONE typed uuid[] literal, so a
 // single non-UUID element (e.g. a synthetic pre-Prisma test id like "leg-a") fails the cast for
@@ -9,16 +10,14 @@ import { PrismaService } from "../../prisma/prisma.service";
 // (multi-leg) scope. Version-agnostic on purpose: matches whatever `@default(uuid())` emits.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// "Does anything downstream (RFQs/quotes) depend on this scope?" (§7.3). TRUE iff a Quote on
-// a scope-leg is "live" (distributed: RFQ_SENT, QUOTED, PENDING_APPROVAL, or — Stage 5 S5.5
-// Task 3, §10.2 prereq — APPROVED, i.e. already awarded) — SELECT (pre-RFQ) and EXPIRED/INVALID
-// (gone stale) don't count. SB6 (Task 3) makes this real; previously (Stage 3, no downstream
-// artifacts yet) this was hardcoded false so every change stayed Free-path. APPROVED postdates
-// SB6 (added in S5.3) — without it here, a field edit on an already-awarded leg silently took
-// the Free path (no invalidation, no reopen), so the §10.2 award-reversal listener would never
-// fire. PENDING_APPROVAL (S5.9 §4.4) is the same live commitment mid-review — without it here, a
-// field edit on a leg under review would also silently free-path instead of raising a change
-// order (see change-order.strategy.ts's mirrored "invalidating" group for the other half).
+// "Does anything downstream (RFQs/quotes) depend on this scope?" (§7.3). TRUE iff a Quote on a
+// scope-leg is "live" — the ONE definition of that now lives in `live-quotes.ts`
+// (`LIVE_QUOTE_WHERE`), shared with change-order.strategy.ts's own quote load so the two halves
+// of the fork cannot disagree about what a live commitment is. Read that file for which statuses
+// count, and for why EXPIRED counts only when it carries a `draftJson` (S5.9.5).
+//
+// SB6 (Task 3) makes this real; previously (Stage 3, no downstream artifacts yet) this was
+// hardcoded false so every change stayed Free-path.
 @Injectable()
 export class ScopeResolver {
   constructor(private readonly prisma: PrismaService) {}
@@ -32,17 +31,7 @@ export class ScopeResolver {
     const validLegIds = legIds.filter((id) => UUID_RE.test(id));
     if (validLegIds.length === 0) return false;
     const live = await this.prisma.quote.count({
-      where: {
-        legId: { in: validLegIds },
-        status: {
-          in: [
-            QuoteStatus.RFQ_SENT,
-            QuoteStatus.QUOTED,
-            QuoteStatus.PENDING_APPROVAL,
-            QuoteStatus.APPROVED,
-          ],
-        },
-      },
+      where: { legId: { in: validLegIds }, ...LIVE_QUOTE_WHERE },
     });
     return live > 0;
   }

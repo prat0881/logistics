@@ -3,13 +3,13 @@ import { EventEmitter2 } from "@nestjs/event-emitter";
 import {
   LegEvent,
   QuoteEvent,
-  QuoteStatus,
   type ChangeRequest,
   type FindingScope,
   type ImpactDecision,
 } from "@svyft/shared";
 import { Prisma } from "@prisma/client";
 import type { ChangeResult, UnitOfWork } from "./free-path.strategy";
+import { LIVE_QUOTE_WHERE, invalidatedByChangeOrder } from "./live-quotes";
 import { PrismaService } from "../../prisma/prisma.service";
 import { CHANGE_LOG, type ChangeLog } from "./change-log";
 import { StatusService } from "../status/status.service";
@@ -44,7 +44,7 @@ export interface ChangeOrderReopenedEvent {
 // query-wide edit that is EVERY leg of the query, for cargo/point every carrying/using leg,
 // regardless of distribution status. `downstreamWork` (which gates the fork) is correctly true if
 // ANY of those legs has a live quote, but the cascade itself must only touch the legs that
-// ACTUALLY carry a live (RFQ_SENT/QUOTED) quote — `legsWithLiveQuotes`. Reopening a fanned-but-
+// ACTUALLY carry a live quote (`LIVE_QUOTE_WHERE`, live-quotes.ts) — `legsWithLiveQuotes`. Reopening a fanned-but-
 // undistributed leg (DRAFT/AWARDED/…) has no REOPEN edge (→ IllegalTransitionError, after tx1 has
 // already committed) or silently regresses a READY_FOR_RFQ leg to DRAFT — so REOPEN and the
 // ChangeLog's affectedScope are both driven from `legsWithLiveQuotes`, never the raw fan.
@@ -67,41 +67,28 @@ export class ChangeOrderStrategy {
       .map((s) => s.id);
 
     const quotes = await this.prisma.quote.findMany({
-      where: {
-        legId: { in: legIds },
-        // Stage 5 S5.5 Task 3 (§10.2 prereq): APPROVED (already-awarded) is live too — see
-        // scope.resolver.ts's downstreamWork, the gate this query mirrors. PENDING_APPROVAL
-        // (S5.9 §4.4 — Task 2 addition beyond scope.resolver.ts's own Step 5) is live too: a
-        // quote under review is a commitment in progress, not yet decided either way, and must
-        // be caught by this filter or it silently falls into neither invalidating nor refreshing.
-        status: {
-          in: [
-            QuoteStatus.RFQ_SENT,
-            QuoteStatus.QUOTED,
-            QuoteStatus.PENDING_APPROVAL,
-            QuoteStatus.APPROVED,
-          ],
-        },
-      },
+      // `LIVE_QUOTE_WHERE` (live-quotes.ts) is the SAME predicate scope.resolver.ts's
+      // `downstreamWork` uses to arm this fork — one definition, imported by both, rather than
+      // the two hand-copied status lists that used to sit here and there. Read that file for
+      // which statuses are live and for why EXPIRED is live only when it carries a `draftJson`.
+      where: { legId: { in: legIds }, ...LIVE_QUOTE_WHERE },
       select: { id: true, freightForwarderId: true, legId: true, status: true },
     });
-    // QUOTED, PENDING_APPROVAL, and APPROVED are all INVALIDATED (re-quote required); only
-    // RFQ_SENT is merely refreshed in place (still pending, never submitted). An APPROVED quote
-    // is a QUOTED one that already cleared maker-checker; a PENDING_APPROVAL quote is a QUOTED
-    // one currently mid-review — either way a change-order must undo the in-flight commitment the
-    // same way it undoes an ordinary submission, which is exactly what §10.2's reversal listener
-    // hooks off of via the leg REOPEN this fires below (and, for PENDING_APPROVAL specifically,
-    // the award.module.ts PENDING_APPROVAL --invalidate--> INVALID edge this relies on).
+    // Everything carrying a submitted price is INVALIDATED (re-quote required); only RFQ_SENT is
+    // merely refreshed in place (still pending, never submitted). An APPROVED quote is a QUOTED
+    // one that already cleared maker-checker; a PENDING_APPROVAL quote is a QUOTED one currently
+    // mid-review; a priced EXPIRED one (S5.9.5 D4/D8) is a submitted price that is still
+    // comparable, rankable, sendable and approvable — a change-order must undo each of those
+    // in-flight commitments the same way it undoes an ordinary submission, which is exactly what
+    // §10.2's reversal listener hooks off of via the leg REOPEN this fires below. Each of those
+    // three sources needs its own `--invalidate--> INVALID` edge on the quote machine
+    // (award.module.ts) or the fire in `apply` below throws IllegalTransitionError; the split
+    // itself lives in `invalidatedByChangeOrder` so it stays beside the status list it mirrors.
     const invalidating = quotes
-      .filter(
-        (q) =>
-          q.status === QuoteStatus.QUOTED ||
-          q.status === QuoteStatus.PENDING_APPROVAL ||
-          q.status === QuoteStatus.APPROVED,
-      )
+      .filter((q) => invalidatedByChangeOrder(q.status))
       .map((q) => ({ quoteId: q.id, freightForwarderId: q.freightForwarderId }));
     const refreshing = quotes
-      .filter((q) => q.status === QuoteStatus.RFQ_SENT)
+      .filter((q) => !invalidatedByChangeOrder(q.status))
       .map((q) => ({ quoteId: q.id, freightForwarderId: q.freightForwarderId }));
     // The MINIMAL blast radius (§11.3): only the legs that ACTUALLY carry a live quote — NOT the
     // full classifier fan (`legIds`, which can include DRAFT/AWARDED legs with no REOPEN edge).
@@ -139,7 +126,7 @@ export class ChangeOrderStrategy {
   ): Promise<ChangeResult> {
     const refreshingIds = refreshing.map((q) => q.quoteId);
 
-    // (1) Snapshot the to-be-invalidated (QUOTED) pricing BEFORE any write — the durable
+    // (1) Snapshot the to-be-invalidated (submitted-price) pricing BEFORE any write — the durable
     // historical record (§11): on re-distribute the quote row is reused and its pricing
     // children overwritten, so this lightweight summary is the only surviving "what they bid".
     // `legId` rides along so the per-FF notify below can name each FF's reopened leg(s).
@@ -171,7 +158,7 @@ export class ChangeOrderStrategy {
       for (const legId of affectedLegs) {
         // Reload from THIS tx so the snapshot reflects the just-applied edit (loadLegForRfq
         // accepts a tx client). Only the RFQ_SENT (refreshing) quotes on the leg re-freeze;
-        // the QUOTED (invalidating) ones keep their old snapshot as history.
+        // the invalidating ones keep their old snapshot as history.
         const ctx = await loadLegForRfq(tx, req.queryId!, legId);
         const snap = buildManifestSnapshot(ctx, query ?? { incoterms: null }, frozenAt);
         // Re-freeze the charge-config snapshot too (§5.5). A charge-selection / warehouse-toggle

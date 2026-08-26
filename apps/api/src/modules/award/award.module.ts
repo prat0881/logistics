@@ -93,14 +93,26 @@ export class AwardModule implements OnModuleInit {
       // durable REQUOTED re-submit
       { from: QuoteStatus.REQUOTED, on: QuoteEvent.SUBMIT, to: QuoteStatus.QUOTED, kind: "forward" },
       { from: QuoteStatus.REQUOTED, on: QuoteEvent.EXPIRE, to: QuoteStatus.EXPIRED, kind: "forward" },
-      // change-order source. PENDING_APPROVAL (S5.9 Task 2 addition, beyond the brief's Step 3 —
-      // see change-order.strategy.ts:74/84's mirrored "invalidating" group and its comment) is a
+      // change-order sources. PENDING_APPROVAL (S5.9 Task 2 addition, beyond the brief's Step 3 —
+      // see `invalidatedByChangeOrder` in changes/live-quotes.ts, the list this mirrors) is a
       // live commitment mid-review, exactly like an already-approved one: a change-order must
       // invalidate it too, not silently skip it. Without this edge, ChangeOrderStrategy.apply's
       // `status.fire("quote", ..., QuoteEvent.INVALIDATE, ...)` would throw IllegalTransitionError
       // the moment a change-order ever touched a leg carrying a PENDING_APPROVAL quote.
       { from: QuoteStatus.PENDING_APPROVAL, on: QuoteEvent.INVALIDATE, to: QuoteStatus.INVALID, kind: "reopen" },
       { from: QuoteStatus.APPROVED, on: QuoteEvent.INVALIDATE, to: QuoteStatus.INVALID, kind: "reopen" },
+      // S5.9.5 final review (CRITICAL 1) — the third change-order source, added for exactly the
+      // reason the PENDING_APPROVAL edge above was: `ChangeOrderStrategy.apply` fires INVALIDATE on
+      // every quote its filter calls live, and a source with no edge throws IllegalTransitionError
+      // AFTER tx1 (the field edit + ChangeLog) has already committed. D4/D8 made a PRICED EXPIRED
+      // offer live — comparable, rankable, sendable, approvable — so `LIVE_QUOTE_WHERE`
+      // (changes/live-quotes.ts) now admits it and this fire can reach an EXPIRED row.
+      //
+      // Only priced EXPIRED quotes ever get here: the filter that selects them requires a non-null
+      // `draftJson`, so an ordinary never-answered expiry keeps free-pathing exactly as it always
+      // has. This edge does not itself encode that distinction — an edge is a machine fact, not a
+      // policy — it just has to exist for the ones that do arrive.
+      { from: QuoteStatus.EXPIRED, on: QuoteEvent.INVALIDATE, to: QuoteStatus.INVALID, kind: "reopen" },
     ]);
     this.registry.contribute("leg", [
       { from: LegStatus.FULLY_QUOTED, on: LegEvent.SEND_FOR_APPROVAL, to: LegStatus.PENDING_APPROVAL, kind: "forward" },
