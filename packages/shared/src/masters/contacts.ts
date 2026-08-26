@@ -11,27 +11,35 @@ export const MASTER_STATUSES: MasterStatus[] = [MasterStatus.ACTIVE, MasterStatu
 /** Extracted so Task 4's tightened schema and the FF and Warehouse tables share one pattern. */
 export const E164 = /^\+[1-9]\d{6,14}$/;
 
-// Moved verbatim from masters.ts — same shape, same behaviour. Task 4 replaces this with the
-// nine-field version when the Client migration makes email and phone mandatory. Do not tighten
-// it here: clients.controller.ts, clients.service.ts and masters.test.ts all bind to it as is.
-export const contactCreateSchema = z.object({
+/** The nine fields every contact table carries — Client, Freight Forwarder and Warehouse. */
+export const contactCoreSchema = z.object({
   name: z.string().min(1).max(160),
   designation: z.string().max(120).optional(),
-  contactNo: z.string().regex(E164, "Phone must be E.164").optional(),
-  email: z.string().email().optional(),
-  isPrimary: z.boolean().optional(),
+  email: z.string().email(),
+  contactNo: z.string().regex(E164, "Phone must be E.164, e.g. +971501234567"),
+  whatsappAvailable: z.boolean().default(false),
+  wechatAvailable: z.boolean().default(false),
+  botimAvailable: z.boolean().default(false),
+  pocLevel: z.enum(POC_LEVELS as [PocLevel, ...PocLevel[]]).default(PocLevel.NONE),
+  status: z.enum(MASTER_STATUSES as [MasterStatus, ...MasterStatus[]]).default(MasterStatus.ACTIVE),
 });
-export const contactUpdateSchema = contactCreateSchema.partial();
-export type ContactCreateInput = z.infer<typeof contactCreateSchema>;
-export type ContactUpdateInput = z.infer<typeof contactUpdateSchema>;
+
+export const contactCreateSchema = contactCoreSchema;
+export const contactUpdateSchema = contactCoreSchema.partial();
+export type ContactCreateInput = z.input<typeof contactCreateSchema>;
+export type ContactUpdateInput = z.input<typeof contactUpdateSchema>;
 
 export interface ContactDto {
   id: string;
   name: string;
   designation: string | null;
-  contactNo: string | null;
-  email: string | null;
-  isPrimary: boolean;
+  email: string;
+  contactNo: string;
+  whatsappAvailable: boolean;
+  wechatAvailable: boolean;
+  botimAvailable: boolean;
+  pocLevel: PocLevel;
+  status: MasterStatus;
 }
 
 export interface Paginated<T> {

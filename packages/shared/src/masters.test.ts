@@ -3,7 +3,14 @@ import { clientCreateSchema, vesselCreateSchema, MASTER_STATUSES, contactCreateS
 
 describe("masters schemas", () => {
   it("accepts a valid client (no code — server-minted)", () => {
-    expect(clientCreateSchema.safeParse({ companyName: "Acme", country: "IN" }).success).toBe(true);
+    expect(
+      clientCreateSchema.safeParse({
+        companyName: "Acme",
+        country: "IN",
+        streetAddress: "1 Raffles Place",
+        city: "Singapore",
+      }).success,
+    ).toBe(true);
   });
   it("rejects a client with no companyName", () => {
     expect(clientCreateSchema.safeParse({ country: "IN" }).success).toBe(false);
@@ -44,10 +51,13 @@ describe("contactCreateSchema.contactNo (strict E.164)", () => {
     expect(contactCreateSchema.safeParse({ name: "A", contactNo: "6591234567" }).success).toBe(false);
   });
   it("accepts a +-prefixed E.164 contactNo", () => {
-    expect(contactCreateSchema.safeParse({ name: "A", contactNo: "+6591234567" }).success).toBe(true);
+    expect(
+      contactCreateSchema.safeParse({ name: "A", email: "a@example.com", contactNo: "+6591234567" })
+        .success,
+    ).toBe(true);
   });
-  it("allows contactNo to be omitted", () => {
-    expect(contactCreateSchema.safeParse({ name: "A" }).success).toBe(true);
+  it("no longer allows contactNo (or email) to be omitted", () => {
+    expect(contactCreateSchema.safeParse({ name: "A" }).success).toBe(false);
   });
 });
 

@@ -48,6 +48,12 @@ enum MasterStatus {
   INACTIVE
 }
 
+enum PocLevel {
+  PRIMARY
+  SECONDARY
+  NONE
+}
+
 enum FreightMode {
   ROAD
   AIR
@@ -55,37 +61,44 @@ enum FreightMode {
 }
 
 model Client {
-  id          String          @id @default(uuid()) @db.Uuid
-  tenantId    String?         @db.Uuid
-  clientCode  String          @unique
-  companyName String          @unique
-  industry    String?
-  country     String
-  status      MasterStatus    @default(ACTIVE)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  createdById String?
-  updatedById String?
-  contacts    ClientContact[]
-  queries     Query[]
+  id            String          @id @default(uuid()) @db.Uuid
+  tenantId      String?         @db.Uuid
+  clientCode    String          @unique
+  companyName   String          @unique
+  industry      String?
+  country       String
+  streetAddress String
+  city          String
+  postalCode    String?
+  status        MasterStatus    @default(ACTIVE)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  createdById   String?
+  updatedById   String?
+  contacts      ClientContact[]
+  queries       Query[]
 
   @@index([tenantId])
 }
 
 model ClientContact {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String?  @db.Uuid
-  clientId    String   @db.Uuid
-  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  name        String
-  designation String?
-  contactNo   String?
-  email       String?
-  isPrimary   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  createdById String?
-  updatedById String?
+  id                String       @id @default(uuid()) @db.Uuid
+  tenantId          String?      @db.Uuid
+  clientId          String       @db.Uuid
+  client            Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name              String
+  designation       String?
+  email             String
+  contactNo         String
+  whatsappAvailable Boolean      @default(false)
+  wechatAvailable   Boolean      @default(false)
+  botimAvailable    Boolean      @default(false)
+  pocLevel          PocLevel     @default(NONE)
+  status            MasterStatus @default(ACTIVE)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  createdById       String?
+  updatedById       String?
 
   @@index([clientId])
 }

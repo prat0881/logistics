@@ -21,15 +21,31 @@ describe("E164", () => {
   });
 });
 
-describe("the moved contact schema", () => {
-  // Task 1 moves this schema; it does not change it. Task 4 makes email and phone
-  // mandatory, alongside the migration that makes that true in the database. These two
-  // assertions exist to catch an accidental tightening here.
-  it("still treats email and phone as optional", () => {
-    expect(contactCreateSchema.safeParse({ name: "Asha Menon" }).success).toBe(true);
+describe("the nine-field contact schema", () => {
+  // Task 4 makes email and phone mandatory, alongside the migration that makes that
+  // true in the database, and adds the channel-availability + POC-level + status fields.
+  it("defaults the channel-availability flags to false", () => {
+    const parsed = contactCreateSchema.parse({
+      name: "Asha Menon",
+      email: "asha@example.com",
+      contactNo: "+971501234567",
+    });
+    expect(parsed.whatsappAvailable).toBe(false);
+    expect(parsed.wechatAvailable).toBe(false);
+    expect(parsed.botimAvailable).toBe(false);
   });
 
-  it("still validates a supplied phone number as E.164", () => {
-    expect(contactCreateSchema.safeParse({ name: "Asha", contactNo: "0501234567" }).success).toBe(false);
+  it("defaults pocLevel to NONE and status to ACTIVE", () => {
+    const parsed = contactCreateSchema.parse({
+      name: "Asha Menon",
+      email: "asha@example.com",
+      contactNo: "+971501234567",
+    });
+    expect(parsed.pocLevel).toBe("NONE");
+    expect(parsed.status).toBe("ACTIVE");
+  });
+
+  it("rejects a contact with no email or phone", () => {
+    expect(contactCreateSchema.safeParse({ name: "Asha Menon" }).success).toBe(false);
   });
 });

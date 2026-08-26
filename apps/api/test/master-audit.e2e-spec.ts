@@ -51,7 +51,12 @@ describe("Master audit columns (e2e)", () => {
     const created = await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.ADMINISTRATOR, ADMIN_USER_ID))
-      .send({ companyName: NAME, country: "United Arab Emirates" })
+      .send({
+        companyName: NAME,
+        country: "United Arab Emirates",
+        streetAddress: "1 Test Road",
+        city: "Test City",
+      })
       .expect(201);
 
     const afterCreate = await prisma.client.findUnique({ where: { id: created.body.id } });

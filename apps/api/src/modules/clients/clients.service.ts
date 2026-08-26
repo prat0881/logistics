@@ -92,17 +92,13 @@ export class ClientsService {
 
   async addContact(clientId: string, input: ContactCreateInput, user?: RequestUser) {
     await this.get(clientId);
-    return this.prisma.$transaction(async (tx) => {
-      if (input.isPrimary) {
-        await tx.clientContact.updateMany({
-          where: { clientId, isPrimary: true },
-          data: { isPrimary: false, ...auditUpdate(user) },
-        });
-      }
-      return tx.clientContact.create({
+    try {
+      return await this.prisma.clientContact.create({
         data: { clientId, ...input, ...auditCreate(user) },
       });
-    });
+    } catch (e) {
+      throw this.mapUnique(e, "A contact with that value already exists");
+    }
   }
 
   async updateContact(
@@ -115,18 +111,14 @@ export class ClientsService {
       where: { id: contactId, clientId },
     });
     if (!existing) throw new NotFoundException("Contact not found");
-    return this.prisma.$transaction(async (tx) => {
-      if (input.isPrimary) {
-        await tx.clientContact.updateMany({
-          where: { clientId, isPrimary: true, NOT: { id: contactId } },
-          data: { isPrimary: false, ...auditUpdate(user) },
-        });
-      }
-      return tx.clientContact.update({
+    try {
+      return await this.prisma.clientContact.update({
         where: { id: contactId },
         data: { ...input, ...auditUpdate(user) },
       });
-    });
+    } catch (e) {
+      throw this.mapUnique(e, "A contact with that value already exists");
+    }
   }
 
   async removeContact(clientId: string, contactId: string) {
@@ -137,10 +129,14 @@ export class ClientsService {
     await this.prisma.clientContact.delete({ where: { id: contactId } });
   }
 
-  private mapUnique(e: unknown, msg: string): unknown {
+  private mapUnique(e: unknown, fallback: string) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-      return new ConflictException(msg);
+      const target = String((e.meta as { target?: string })?.target ?? "");
+      if (target.includes("one_primary")) {
+        return new ConflictException("This client already has a primary contact");
+      }
+      return new ConflictException(fallback);
     }
-    return e;
+    return e as Error;
   }
 }

@@ -8,6 +8,9 @@ export const clientCreateSchema = z.object({
   companyName: z.string().min(1).max(200),
   industry: z.string().max(120).optional(),
   country: z.string().min(1).max(120),
+  streetAddress: z.string().min(1).max(300),
+  city: z.string().min(1).max(120),
+  postalCode: z.string().max(20).optional(),
   status: statusField,
 });
 export const clientUpdateSchema = clientCreateSchema.partial();
@@ -20,6 +23,9 @@ export interface ClientDto {
   companyName: string;
   industry: string | null;
   country: string;
+  streetAddress: string;
+  city: string;
+  postalCode: string | null;
   status: MasterStatus;
   contacts?: ContactDto[];
 }

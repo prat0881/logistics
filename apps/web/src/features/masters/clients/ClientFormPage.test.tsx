@@ -51,6 +51,8 @@ describe("ClientFormPage (create)", () => {
     );
     await userEvent.type(await screen.findByLabelText(/company name/i), "NewCo");
     await userEvent.type(screen.getByLabelText(/country/i), "IN");
+    await userEvent.type(screen.getByLabelText(/street address/i), "1 Test Road");
+    await userEvent.type(screen.getByLabelText(/city/i), "Test City");
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(screen.getByText("clients list")).toBeInTheDocument());
     expect(calls).toContain("create");
