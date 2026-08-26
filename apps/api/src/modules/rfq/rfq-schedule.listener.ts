@@ -6,11 +6,13 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { StatusService } from "../status/status.service";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
 import { ScheduledEventService } from "../comms/scheduled-event.service";
+import { closedLegReasons } from "../ff-portal/leg-closure";
 
 type TimerPayload = { entityType: string; entityId: string; tier: string };
 
 // Reacts to the generic minute-cron timers seeded at distribute-time (Task 9): a reminder
-// nudges the FF before the deadline; the DEADLINE-tier expiry closes out every quote still open
+// nudges the FF before the deadline — unless every leg on the RFQ has been closed to them
+// (S5.9.5 D5, see onReminder); the DEADLINE-tier expiry closes out every quote still open
 // on the RFQ (discard the draft — RFQ_SENT only, see the loop below → fire EXPIRE → notify →
 // cancel the RFQ's remaining reminders). Both handlers swallow their own errors — they run from
 // the cron loop (ScheduledEventService.runDue), and a throw here must not abort that loop.
@@ -38,6 +40,37 @@ export class RfqScheduleListener {
         },
       });
       if (!rfq) return;
+
+      // S5.9.5 final review (IMPORTANT 4) — do not nudge a forwarder who has been shut out of
+      // every leg this RFQ covers. D5 closes an APPROVED leg to the forwarders who did not win
+      // it: the portal renders that leg read-only and `saveDraft`/`submit` 409 them. Until this
+      // check, the reminder fired unconditionally, so a forwarder whose only leg on the query had
+      // been approved to a rival kept receiving "please submit your quote before the deadline"
+      // for a portal that refuses the submission — a forwarder-facing message claiming something
+      // is open that the product has closed (vocabulary rule D5).
+      //
+      // Per LEG, never per RFQ, and that is the whole subtlety: `Rfq` is
+      // `@@unique([queryId, freightForwarderId])`, so ONE RFQ covers every leg this forwarder
+      // holds on the query. A forwarder approved on LEG-1 but still quoting LEG-2 has real work
+      // to do and must keep being reminded — which is exactly what D5's own rationale assumes
+      // ("their reminder timers, which are per-RFQ, rightly keep running while LEG-2 is open").
+      // So the reminder is skipped only when EVERY leg is closed to them.
+      //
+      // The rule itself is `closedLegReasons` (ff-portal/leg-closure.ts) — the same one the portal
+      // DTO and the write guards use, not a second copy that could disagree about what "closed"
+      // means. Deliberately NOT also filtering on quote status: whether an already-submitted
+      // forwarder should still be reminded is a separate question nobody has ruled on, and
+      // widening this beyond leg closure would change behaviour that is not at issue here.
+      //
+      // An RFQ with no quotes at all is left alone (nothing is closed, so nothing is skipped) —
+      // unchanged behaviour rather than a new refusal for a shape this check has no view on.
+      const quotes = await this.prisma.quote.findMany({
+        where: { rfqId: p.entityId },
+        select: { id: true, legId: true },
+      });
+      const closed = await closedLegReasons(this.prisma, quotes);
+      if (quotes.length > 0 && quotes.every((q) => closed.has(q.legId))) return;
+
       await this.dispatcher.dispatch("rfq.reminder", {
         scope: { entityType: "QUERY", entityId: rfq.queryId },
         tokens: { RFQ_Number: rfq.rfqNumber, Deadline: rfq.submissionDeadline.toISOString() },

@@ -35,12 +35,13 @@ import type {
   SeedEndpoint,
   SubmitQuoteInput,
 } from "@svyft/shared";
-import { AwardDecisionStatus, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { StatusService } from "../status/status.service";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
 import { ScheduledEventService } from "../comms/scheduled-event.service";
 import type { FfScope } from "../rfq/rfq-token.service";
+import { closedLegReasons } from "./leg-closure";
 
 /** Calc line amount (design §7): HEAVY_WEIGHT_CALC lines compute from the FF-entered piece
  *  weight / airline limit / excess rate; every other charge line carries its own amount. */
@@ -137,14 +138,6 @@ function seedQuoteDraft(
     termsConditions: null,
   };
 }
-
-/** S5.9.5 (D5) — forwarder-facing copy, so vocabulary rule D5 applies with full force. The
- *  obvious phrasing here is "this leg has been awarded to another forwarder", and it is WRONG:
- *  nothing has been awarded, no forwarder has been notified, and the selection stays reversible
- *  until the client accepts. It also deliberately does not name who was selected — that is a
- *  competitor's commercial information, not this forwarder's to read. */
-export const LEG_APPROVED_REASON =
-  "This leg is no longer open for quoting — a forwarder has been selected.";
 
 /** The quote-status refusal, shared VERBATIM by `submit` and `saveDraft` so the two cannot drift
  *  apart on which statuses accept a write (they must accept exactly the same set — see
@@ -252,44 +245,16 @@ export class FfPortalService {
   }
 
   /**
-   * S5.9.5 (D5) — which of the given quotes sit on a leg that is CLOSED to their forwarder, and
-   * the forwarder-facing reason. Keyed by legId; a leg absent from the map is open.
+   * S5.9.5 (D5) — which of the given quotes sit on a leg CLOSED to their forwarder.
    *
-   * The ONE rule, in ONE place, so the DTO the portal renders and the guards that refuse writes
-   * can never disagree: a leg is closed to a forwarder iff its `LegAwardDecision` is `APPROVED`
-   * and the approved (`shortlistedQuoteId`) offer is not this forwarder's own quote.
-   *
-   * - **`APPROVED` only — `PENDING_APPROVAL` does NOT close the leg** (D5, deliberate). A leg under
-   *   checker review is not decided; a late submission from a rival merely adds an offer the
-   *   checker can see. Do not "tighten" this.
-   * - **The LEG closes, never the RFQ.** `Rfq` is `@@unique([queryId, freightForwarderId])`, so one
-   *   RFQ covers every leg this forwarder holds on the query — hence the per-legId map rather than
-   *   an RFQ-wide verdict. A forwarder approved on LEG-1 keeps quoting LEG-2, and their per-RFQ
-   *   reminder timers rightly keep running.
-   * - **The selected forwarder's own leg is NOT reported closed to them.** Nothing tells a
-   *   forwarder they were selected (S5.9 D9: approval is silent and reversible), and their own
-   *   quote is already `APPROVED`, which the submit status-guard below refuses on its own. Excluding
-   *   them here keeps this DTO field from leaking the outcome to the one reader it would leak to.
+   * The rule itself lives in `leg-closure.ts`, NOT here: the deadline-reminder listener
+   * (`rfq-schedule.listener.ts`) has to answer the same question — a forwarder with no leg still
+   * open to them on an RFQ must stop being nudged to submit — and a second copy of "is this leg
+   * still open?" is exactly the drift D5 warns about. This wrapper stays so the three call sites
+   * below read unchanged.
    */
-  private async closedReasons(
-    quotes: { id: string; legId: string }[],
-  ): Promise<Map<string, string>> {
-    if (quotes.length === 0) return new Map();
-    const decisions = await this.prisma.legAwardDecision.findMany({
-      where: {
-        legId: { in: quotes.map((q) => q.legId) },
-        status: AwardDecisionStatus.APPROVED,
-      },
-      select: { legId: true, shortlistedQuoteId: true },
-    });
-    const winnerByLeg = new Map(decisions.map((d) => [d.legId, d.shortlistedQuoteId]));
-    const closed = new Map<string, string>();
-    for (const q of quotes) {
-      if (winnerByLeg.has(q.legId) && winnerByLeg.get(q.legId) !== q.id) {
-        closed.set(q.legId, LEG_APPROVED_REASON);
-      }
-    }
-    return closed;
+  private closedReasons(quotes: { id: string; legId: string }[]): Promise<Map<string, string>> {
+    return closedLegReasons(this.prisma, quotes);
   }
 
   private quoteForLeg(scope: FfScope, legId: string) {
