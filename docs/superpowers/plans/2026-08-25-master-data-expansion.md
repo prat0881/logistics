@@ -2327,7 +2327,11 @@ for (const def of [...CHARGE_LINE_DEFINITIONS, ...NEW_CHARGE_LINES]) {
   await prisma.chargeLineDefinition.upsert({
     where: { key: def.key },
     create: { ...def, ...derived, tagKey, isActive: def.isActive ?? true },
-    update: { ...def, ...derived, tagKey, isActive: def.isActive ?? true },
+    // create-only. `deploy.yml` runs this seed on EVERY production deploy, and the catalogue
+    // is now admin-editable — a full-overwrite update would silently revert every edit an
+    // admin made through the screen Task 11 built, on the next deploy. The sibling
+    // freightDensityFactor upsert already does this for the same reason.
+    update: {},
   });
 }
 ```
