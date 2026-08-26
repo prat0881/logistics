@@ -443,6 +443,96 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(okEvents[0].quoteId).toBe(draft.quote.id);
   });
 
+  // ── S5.9.5 final whole-branch review, IMPORTANT 2 (register C12) ────────────────────────────
+  it("register C12 — an Executive's request-requote is the in-product exit from the DRAFT/APPROVED/APPROVED wedge, and clears all three rows", async () => {
+    // THE WEDGE. C12 records a real race: a Manager approving while another rejects can leave
+    // `decision = DRAFT` above `leg = APPROVED` and `quote = APPROVED`, because `approve()` commits
+    // the decision inside its transaction and fires the leg/quote transitions after the row lock is
+    // released. The register row claimed both exits were closed (`reject` 409s on a DRAFT decision;
+    // `sendForApproval`'s A3 refuses the leg) and that "nothing inside the product moves it".
+    //
+    // There is a THIRD exit, and this test is it. Traced against negotiation.service.ts:
+    // `assertUnlocked` passes (nothing was generated), BOTH decision guards read the DECISION and
+    // it is DRAFT, `REQUOTABLE_STATUSES` includes APPROVED — which is exactly why that member is
+    // kept there — `wasApproved` reads the LEG and is true, so the quote takes
+    // `APPROVED --request_requote--> REQUOTED`, the leg takes `APPROVED --REOPEN_AWARD-->
+    // FULLY_QUOTED` and is then walked to its honest rollup target, and the decision is reset.
+    // All three rows leave the wedge together, in one click, from the compare screen.
+    //
+    // It is Executive-only (D3) — a Manager or Administrator staring at the wedge cannot clear it
+    // themselves, which is worth knowing before someone reaches for DB surgery.
+    //
+    // This is the ONLY coverage of `REQUOTABLE_STATUSES`' APPROVED member in the drifted shape:
+    // every other route to it is refused by the D1 decision guard, so without this test the one
+    // capability keeping C12 recoverable would be untested and deletable by accident.
+    const wedged = await seedLeg("c12drift", "APPROVED", "APPROVED", {
+      withDraft: true,
+      decisionStatus: "DRAFT",
+    });
+    // The fixture really is the wedge: decision one fire BEHIND the two rows above it.
+    expect(wedged.decision?.status).toBe("DRAFT");
+    expect((await prisma.leg.findUniqueOrThrow({ where: { id: wedged.leg.id } })).status).toBe(
+      "APPROVED",
+    );
+
+    const actorId = randomUUID();
+    const comment = "Approval and rejection crossed; re-opening the conversation with this FF.";
+    const ok = await request(app.getHttpServer())
+      .post(
+        `/api/queries/${wedged.query.id}/legs/${wedged.leg.id}/quotes/${wedged.quote.id}/request-requote`,
+      )
+      .set("Cookie", cookieFor(actorId))
+      .send({ comment })
+      .expect(200);
+    expect(ok.body.status).toBe("REQUOTED");
+
+    // Row 1 — the quote leaves APPROVED (the edge only `REQUOTABLE_STATUSES`' APPROVED member
+    // reaches), keeping its price so the forwarder is not asked to start from nothing.
+    const quoteAfter = await prisma.quote.findUniqueOrThrow({ where: { id: wedged.quote.id } });
+    expect(quoteAfter.status).toBe("REQUOTED");
+    expect(quoteAfter.draftJson).not.toBeNull();
+    // Row 2 — the leg leaves APPROVED via REOPEN_AWARD (`wasApproved`), then falls to its honest
+    // target: its only quote is REQUOTED, so nothing comparable is left.
+    expect((await prisma.leg.findUniqueOrThrow({ where: { id: wedged.leg.id } })).status).toBe(
+      "RFQ_SENT",
+    );
+    // Row 3 — the decision, already DRAFT, is reset to a CLEAN DRAFT: the stale shortlist and
+    // send metadata that made it a wedge rather than an ordinary starting point are gone.
+    const decisionAfter = await prisma.legAwardDecision.findUniqueOrThrow({
+      where: { legId: wedged.leg.id },
+    });
+    expect(decisionAfter.status).toBe("DRAFT");
+    expect(decisionAfter.shortlistedQuoteId).toBeNull();
+    expect(decisionAfter.sentByUserId).toBeNull();
+    // ...and it left a trace, which DB surgery would not have.
+    const events = await prisma.awardDecisionEvent.findMany({
+      where: { legId: wedged.leg.id, type: "REQUEST_REQUOTE" },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].actorId).toBe(actorId);
+
+    // ── POSITIVE CONTROL — the same call on the SAME leg/quote shape whose decision is NOT
+    //    drifted is refused. So the exit above is a property of the wedge, not of request-requote
+    //    tolerating approved legs in general (D1 forbids exactly that).
+    const coherent = await seedLeg("c12coherent", "APPROVED", "APPROVED", {
+      withDraft: true,
+      decisionStatus: "APPROVED",
+    });
+    await request(app.getHttpServer())
+      .post(
+        `/api/queries/${coherent.query.id}/legs/${coherent.leg.id}/quotes/${coherent.quote.id}/request-requote`,
+      )
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment })
+      .expect(409);
+    expect((await prisma.quote.findUniqueOrThrow({ where: { id: coherent.quote.id } })).status).toBe(
+      "APPROVED",
+    );
+    expect((await prisma.leg.findUniqueOrThrow({ where: { id: coherent.leg.id } })).status).toBe(
+      "APPROVED",
+    );
+  });
+
   it("QUOTED leg (no approval yet): request-requote -> 200; quote REQUOTED, no REOPEN_AWARD fire, leg walked back by the rollup to RFQ_SENT, decision (if any) reset to DRAFT", async () => {
     const { query, leg, quote } = await seedLeg("quoted", "FULLY_QUOTED", "QUOTED", {
       withDraft: true,
