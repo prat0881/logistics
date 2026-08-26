@@ -83,10 +83,11 @@ describe("Client address + contacts (e2e)", () => {
       .send(contact("First"))
       .expect(201);
 
-    await request(app.getHttpServer())
+    const conflict = await request(app.getHttpServer())
       .post(`/api/clients/${client.body.id}/contacts`)
       .set("Cookie", cookie(Role.ADMINISTRATOR))
       .send(contact("Second"))
       .expect(409);
+    expect(conflict.body.message).toBe("This client already has a primary contact");
   });
 });

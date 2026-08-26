@@ -48,7 +48,10 @@ describe("masters schemas", () => {
 
 describe("contactCreateSchema.contactNo (strict E.164)", () => {
   it("rejects a non-E.164 contactNo", () => {
-    expect(contactCreateSchema.safeParse({ name: "A", contactNo: "6591234567" }).success).toBe(false);
+    expect(
+      contactCreateSchema.safeParse({ name: "A", email: "a@example.com", contactNo: "6591234567" })
+        .success,
+    ).toBe(false);
   });
   it("accepts a +-prefixed E.164 contactNo", () => {
     expect(

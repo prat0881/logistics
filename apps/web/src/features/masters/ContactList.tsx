@@ -1,8 +1,15 @@
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { contactCreateSchema, POC_LEVELS, type ContactCreateInput, type ContactDto } from "@svyft/shared";
-import { fetchJson, postJson } from "@/lib/api";
+import {
+  contactCreateSchema,
+  PocLevel,
+  POC_LEVELS,
+  type ContactCreateInput,
+  type ContactDto,
+} from "@svyft/shared";
+import { ApiError, fetchJson, postJson } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,13 +22,22 @@ export function ContactList({ ownerPath, ownerId }: { ownerPath: string; ownerId
     queryFn: () => fetchJson<ContactDto[]>(`/api/${ownerPath}/${ownerId}/contacts`),
     enabled: Boolean(ownerId),
   });
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } =
-    useForm<ContactCreateInput>({ resolver: zodResolver(contactCreateSchema) });
+    useForm<ContactCreateInput>({
+      resolver: zodResolver(contactCreateSchema),
+      defaultValues: { pocLevel: PocLevel.NONE },
+    });
 
   async function onAdd(values: ContactCreateInput) {
-    await postJson(`/api/${ownerPath}/${ownerId}/contacts`, values);
-    reset();
-    await qc.invalidateQueries({ queryKey: key });
+    setSubmitError(null);
+    try {
+      await postJson(`/api/${ownerPath}/${ownerId}/contacts`, values);
+      reset({ pocLevel: PocLevel.NONE });
+      await qc.invalidateQueries({ queryKey: key });
+    } catch (err) {
+      setSubmitError(err instanceof ApiError ? err.message : "Failed to add contact");
+    }
   }
 
   if (!ownerId) {
@@ -72,6 +88,7 @@ export function ContactList({ ownerPath, ownerId }: { ownerPath: string; ownerId
             {POC_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
           </select>
         </div>
+        {submitError && <p role="alert" className="text-sm text-destructive">{submitError}</p>}
         <Button type="submit" disabled={isSubmitting}>Add contact</Button>
       </form>
     </section>

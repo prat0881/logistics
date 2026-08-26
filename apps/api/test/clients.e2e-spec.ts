@@ -87,11 +87,12 @@ describe("Clients (e2e)", () => {
       .set("Cookie", cookie(Role.MANAGER))
       .send({ name: "First", email: "first@example.com", contactNo: "+10000000001", pocLevel: "PRIMARY" })
       .expect(201);
-    await request(app.getHttpServer())
+    const conflict = await request(app.getHttpServer())
       .post(`/api/clients/${id}/contacts`)
       .set("Cookie", cookie(Role.MANAGER))
       .send({ name: "Second", email: "second@example.com", contactNo: "+10000000002", pocLevel: "PRIMARY" })
       .expect(409);
+    expect(conflict.body.message).toBe("This client already has a primary contact");
     const primaries = await prisma.clientContact.findMany({
       where: { clientId: id, pocLevel: "PRIMARY" },
     });

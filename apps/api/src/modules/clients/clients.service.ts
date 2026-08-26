@@ -131,8 +131,14 @@ export class ClientsService {
 
   private mapUnique(e: unknown, fallback: string) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-      const target = String((e.meta as { target?: string })?.target ?? "");
-      if (target.includes("one_primary")) {
+      // ClientContact_one_primary is a raw-SQL partial unique index (Prisma can't declare
+      // one via @@unique), so Prisma can't map the violated constraint to a name it knows —
+      // it reports the column list instead. Verified against the live error shape: P2002's
+      // meta.target here is ["clientId"], never the index name "ClientContact_one_primary".
+      // The Client model's own unique constraint (companyName) never reports "clientId", so
+      // this check is unambiguous between the two callers of mapUnique.
+      const target = String((e.meta as { target?: string | string[] })?.target ?? "");
+      if (target.includes("clientId")) {
         return new ConflictException("This client already has a primary contact");
       }
       return new ConflictException(fallback);
