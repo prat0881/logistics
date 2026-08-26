@@ -14,6 +14,9 @@ const client1: ClientDto = {
   companyName: "Acme Corp",
   industry: "Logistics",
   country: "SG",
+  streetAddress: "1 Raffles Place",
+  city: "Singapore",
+  postalCode: "048616",
   status: "ACTIVE",
 };
 
@@ -23,6 +26,9 @@ const client2: ClientDto = {
   companyName: "Beta Ltd",
   industry: null,
   country: "US",
+  streetAddress: "1 Beta Avenue",
+  city: "Boston",
+  postalCode: "02110",
   status: "ACTIVE",
 };
 
