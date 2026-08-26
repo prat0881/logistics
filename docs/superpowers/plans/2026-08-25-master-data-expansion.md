@@ -61,7 +61,9 @@
 - Modify: `packages/shared/src/index.ts:5`
 
 **Interfaces:**
-- Produces: `PocLevel` (`"PRIMARY" | "SECONDARY" | "NONE"`), `POC_LEVELS`, `contactCoreSchema`, `contactCreateSchema`, `contactUpdateSchema`, `ContactCreateInput`, `ContactUpdateInput`, `ContactDto`. Every existing export of `masters.ts` keeps its name and type.
+- Produces: `PocLevel` (`"PRIMARY" | "SECONDARY" | "NONE"`), `POC_LEVELS`, `E164`. **Every existing export of `masters.ts` keeps its name, its type and its current behaviour** — `contactCreateSchema` still has optional email and phone and still carries `isPrimary`.
+
+**This task is a pure move plus three new names.** It must not change any existing contract. `contactCreateSchema`, `ContactCreateInput` and `ContactDto` are consumed by `clients.controller.ts`, `clients.service.ts` and the unmodifiable `masters.test.ts`; tightening them here breaks all three. The nine-field contact shape lands in **Task 4**, together with the migration that makes it true in the database.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -69,38 +71,38 @@ Create `packages/shared/src/masters/contacts.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { contactCreateSchema, POC_LEVELS } from "./contacts";
+import { contactCreateSchema, E164, POC_LEVELS } from "./contacts";
 
-const valid = {
-  name: "Asha Menon",
-  email: "asha@example.com",
-  contactNo: "+971501234567",
-};
-
-describe("contactCreateSchema", () => {
-  it("accepts a minimal contact and defaults the channel flags to false", () => {
-    const parsed = contactCreateSchema.parse(valid);
-    expect(parsed.whatsappAvailable).toBe(false);
-    expect(parsed.wechatAvailable).toBe(false);
-    expect(parsed.botimAvailable).toBe(false);
-  });
-
-  it("defaults pocLevel to NONE and status to ACTIVE", () => {
-    const parsed = contactCreateSchema.parse(valid);
-    expect(parsed.pocLevel).toBe("NONE");
-    expect(parsed.status).toBe("ACTIVE");
-  });
-
-  it("requires email and phone", () => {
-    expect(contactCreateSchema.safeParse({ name: "No contact details" }).success).toBe(false);
-  });
-
-  it("rejects a phone number that is not E.164", () => {
-    expect(contactCreateSchema.safeParse({ ...valid, contactNo: "0501234567" }).success).toBe(false);
-  });
-
-  it("exposes exactly three POC levels", () => {
+describe("POC levels", () => {
+  it("exposes exactly three, primary first", () => {
     expect(POC_LEVELS).toEqual(["PRIMARY", "SECONDARY", "NONE"]);
+  });
+});
+
+describe("E164", () => {
+  it("accepts an international number", () => {
+    expect(E164.test("+971501234567")).toBe(true);
+  });
+
+  it("rejects a number with no country code", () => {
+    expect(E164.test("0501234567")).toBe(false);
+  });
+
+  it("rejects a country code starting with zero", () => {
+    expect(E164.test("+0501234567")).toBe(false);
+  });
+});
+
+describe("the moved contact schema", () => {
+  // Task 1 moves this schema; it does not change it. Task 4 makes email and phone
+  // mandatory, alongside the migration that makes that true in the database. These two
+  // assertions exist to catch an accidental tightening here.
+  it("still treats email and phone as optional", () => {
+    expect(contactCreateSchema.safeParse({ name: "Asha Menon" }).success).toBe(true);
+  });
+
+  it("still validates a supplied phone number as E.164", () => {
+    expect(contactCreateSchema.safeParse({ name: "Asha", contactNo: "0501234567" }).success).toBe(false);
   });
 });
 ```
@@ -125,37 +127,30 @@ export const MasterStatus = { ACTIVE: "ACTIVE", INACTIVE: "INACTIVE" } as const;
 export type MasterStatus = (typeof MasterStatus)[keyof typeof MasterStatus];
 export const MASTER_STATUSES: MasterStatus[] = [MasterStatus.ACTIVE, MasterStatus.INACTIVE];
 
+/** Extracted so Task 4's tightened schema and the FF and Warehouse tables share one pattern. */
 export const E164 = /^\+[1-9]\d{6,14}$/;
 
-/** The nine fields every contact table carries — Client, Freight Forwarder and Warehouse. */
-export const contactCoreSchema = z.object({
+// Moved verbatim from masters.ts — same shape, same behaviour. Task 4 replaces this with the
+// nine-field version when the Client migration makes email and phone mandatory. Do not tighten
+// it here: clients.controller.ts, clients.service.ts and masters.test.ts all bind to it as is.
+export const contactCreateSchema = z.object({
   name: z.string().min(1).max(160),
   designation: z.string().max(120).optional(),
-  email: z.string().email(),
-  contactNo: z.string().regex(E164, "Phone must be E.164, e.g. +971501234567"),
-  whatsappAvailable: z.boolean().default(false),
-  wechatAvailable: z.boolean().default(false),
-  botimAvailable: z.boolean().default(false),
-  pocLevel: z.enum(POC_LEVELS as [PocLevel, ...PocLevel[]]).default(PocLevel.NONE),
-  status: z.enum(MASTER_STATUSES as [MasterStatus, ...MasterStatus[]]).default(MasterStatus.ACTIVE),
+  contactNo: z.string().regex(E164, "Phone must be E.164").optional(),
+  email: z.string().email().optional(),
+  isPrimary: z.boolean().optional(),
 });
-
-export const contactCreateSchema = contactCoreSchema;
-export const contactUpdateSchema = contactCoreSchema.partial();
-export type ContactCreateInput = z.input<typeof contactCreateSchema>;
-export type ContactUpdateInput = z.input<typeof contactUpdateSchema>;
+export const contactUpdateSchema = contactCreateSchema.partial();
+export type ContactCreateInput = z.infer<typeof contactCreateSchema>;
+export type ContactUpdateInput = z.infer<typeof contactUpdateSchema>;
 
 export interface ContactDto {
   id: string;
   name: string;
   designation: string | null;
-  email: string;
-  contactNo: string;
-  whatsappAvailable: boolean;
-  wechatAvailable: boolean;
-  botimAvailable: boolean;
-  pocLevel: PocLevel;
-  status: MasterStatus;
+  contactNo: string | null;
+  email: string | null;
+  isPrimary: boolean;
 }
 
 export interface Paginated<T> {
@@ -169,7 +164,7 @@ export interface Paginated<T> {
 - [ ] **Step 4: Run the test and watch it pass**
 
 Run: `pnpm --filter @svyft/shared test contacts`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 5: Move the remaining three masters into the directory**
 
@@ -692,7 +687,50 @@ export const clientCreateSchema = z.object({
 });
 ```
 
-and extend `ClientDto` with `streetAddress: string; city: string; postalCode: string | null;`. Then `pnpm --filter @svyft/shared build`.
+and extend `ClientDto` with `streetAddress: string; city: string; postalCode: string | null;`.
+
+**This task also owns the contact contract change.** Task 1 moved the old contact schema unchanged; here it becomes the nine-field version, because the migration in Step 3 is what makes that true in the database. In `packages/shared/src/masters/contacts.ts`, replace `contactCreateSchema`, `contactUpdateSchema` and `ContactDto` with:
+
+```ts
+/** The nine fields every contact table carries — Client, Freight Forwarder and Warehouse. */
+export const contactCoreSchema = z.object({
+  name: z.string().min(1).max(160),
+  designation: z.string().max(120).optional(),
+  email: z.string().email(),
+  contactNo: z.string().regex(E164, "Phone must be E.164, e.g. +971501234567"),
+  whatsappAvailable: z.boolean().default(false),
+  wechatAvailable: z.boolean().default(false),
+  botimAvailable: z.boolean().default(false),
+  pocLevel: z.enum(POC_LEVELS as [PocLevel, ...PocLevel[]]).default(PocLevel.NONE),
+  status: z.enum(MASTER_STATUSES as [MasterStatus, ...MasterStatus[]]).default(MasterStatus.ACTIVE),
+});
+
+export const contactCreateSchema = contactCoreSchema;
+export const contactUpdateSchema = contactCoreSchema.partial();
+export type ContactCreateInput = z.input<typeof contactCreateSchema>;
+export type ContactUpdateInput = z.input<typeof contactUpdateSchema>;
+
+export interface ContactDto {
+  id: string;
+  name: string;
+  designation: string | null;
+  email: string;
+  contactNo: string;
+  whatsappAvailable: boolean;
+  wechatAvailable: boolean;
+  botimAvailable: boolean;
+  pocLevel: PocLevel;
+  status: MasterStatus;
+}
+```
+
+Delete the two guard assertions Task 1 left in `contacts.test.ts` under `describe("the moved contact schema")` — they existed to catch an accidental tightening, and the tightening is now deliberate. Replace them with assertions for the new shape: channel flags default to false, `pocLevel` defaults to `NONE`, `status` defaults to `ACTIVE`, and a contact with no email or phone is rejected.
+
+`clients.service.ts` writes `input.isPrimary` at lines 91 and 107. Change both to pass `pocLevel` through with the rest of the input — the column no longer exists after Step 3's migration.
+
+**`packages/shared/src/masters.test.ts` will fail.** Two of its assertions encode the old contract: line 45 asserts a contact with only a name parses successfully, and the surrounding `describe` block covers optional-phone behaviour. That contract is what this task deliberately changes, per the workbook's requirement that POC email and phone are mandatory. Update **only** those assertions to the new expectation — a name-only contact must now fail — and change nothing else in the file. This is the single sanctioned exception to the no-editing-existing-tests constraint; it is recorded in the ledger.
+
+Then `pnpm --filter @svyft/shared build`.
 
 - [ ] **Step 5: Map the unique-index violation to 409**
 
