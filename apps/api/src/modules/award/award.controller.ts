@@ -66,11 +66,17 @@ export class AwardController {
     return this.award.reject(id, legId, body, user);
   }
 
-  // S5.5 (design §10.1) — negotiation. Executive+ (no @Roles), same maker tier as
-  // shortlist/send-for-approval/reject above: asking an FF to revise their price is not itself
-  // a checker-level decision. Delegates to NegotiationService (a dedicated service, not
+  // S5.5 (design §10.1) — negotiation. Delegates to NegotiationService (a dedicated service, not
   // AwardService, since it orchestrates RfqService's token/deadline reset + comms alongside the
   // status/decision writes — see negotiation.service.ts).
+  //
+  // S5.9.5 (design D3) — Executive ONLY, and deliberately EXCLUDING the higher roles. This is the
+  // first workflow write in the codebase to do that, and it is not an oversight to be normalised
+  // away: the product owner's rule is that negotiation with a forwarder is always the Executive's,
+  // and a Manager/Administrator's route to a revised price is Reject-with-a-reason. The UI has
+  // enforced this since S5.9.1 R3; the server never shared the rule, so a checker could negotiate
+  // straight through the API — the same shape as register B1, already found and closed once.
+  @Roles(Role.EXECUTIVE)
   @Post("legs/:legId/quotes/:quoteId/request-requote")
   @HttpCode(200)
   requestRequote(

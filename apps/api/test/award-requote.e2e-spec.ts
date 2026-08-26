@@ -14,11 +14,14 @@ import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { ScheduledEventService } from "../src/modules/comms/scheduled-event.service";
 
-// S5.5 Task 2 (design §10.1) — the negotiation core: POST .../quotes/:quoteId/request-requote,
-// Executive+ (no @Roles). Fires quote REQUEST_REQUOTE (QUOTED|APPROVED -> REQUOTED, retaining
-// draftJson), resets the leg's LegAwardDecision to DRAFT (+ reopens the leg via REOPEN_AWARD if
-// it was APPROVED), reissues the FF's portal token, resets the RFQ deadline + re-arms the
-// reminder/expiry ScheduledEvents, and notifies the FF with the negotiation comment.
+// S5.5 Task 2 (design §10.1) — the negotiation core: POST .../quotes/:quoteId/request-requote.
+// CHANGED (S5.9.5 Task 4, design D3) — Executive-ONLY now (@Roles(Role.EXECUTIVE)), not
+// Executive+: a Manager/Administrator's route to a revised price is Reject-with-a-reason, and
+// negotiating with a forwarder is always the Executive's call. See the "D3 — role gate" test
+// below. Fires quote REQUEST_REQUOTE (QUOTED|APPROVED -> REQUOTED, retaining draftJson), resets
+// the leg's LegAwardDecision to DRAFT (+ reopens the leg via REOPEN_AWARD if it was APPROVED),
+// reissues the FF's portal token, resets the RFQ deadline + re-arms the reminder/expiry
+// ScheduledEvents, and notifies the FF with the negotiation comment.
 const PREFIX = "AWRQ";
 const CODE = `YAL00-${PREFIX}`;
 
@@ -28,13 +31,20 @@ describe(`${PREFIX} (e2e)`, () => {
   let jwt: JwtService;
   let scheduled: ScheduledEventService;
 
-  // Any authenticated (Executive+) role works — the route carries no @Roles.
+  // The route is Executive-ONLY (S5.9.5 D3, below) — every other test in this file calls it as
+  // EXECUTIVE, which is still the only role that succeeds.
   const cookieFor = (userId: string) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role: Role.EXECUTIVE, tenantId: null })}`;
   // generate-client-quote is Manager+ gated (design §4/§16 O4) — needed to reach a REAL
   // QUOTING_CLIENT for the snapshot-teardown regression below.
   const managerCookie = (userId: string) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role: Role.MANAGER, tenantId: null })}`;
+  // S5.9.5 (D3) — request-requote is now Executive-ONLY (the route excludes the higher roles,
+  // not just admits them alongside EXECUTIVE), so the role-check test below needs an
+  // ADMINISTRATOR cookie too, mirroring award-workflow-checker.e2e-spec.ts's role-parametrised
+  // cookieFor.
+  const adminCookie = (userId: string) =>
+    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role: Role.ADMINISTRATOR, tenantId: null })}`;
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
@@ -796,5 +806,39 @@ describe(`${PREFIX} (e2e)`, () => {
       orderBy: { createdAt: "desc" },
     });
     expect(msg?.bodyRendered).toContain("the portal link in your original RFQ email");
+  });
+
+  it("S5.9.5 (D3) — request-requote is Executive-only; a Manager and an Administrator are both refused", async () => {
+    const { query, leg, quote } = await seedLeg("rolegate", "FULLY_QUOTED", "QUOTED", {
+      withDraft: true,
+      decisionStatus: "DRAFT",
+    });
+    const body = { comment: "please sharpen" };
+    const url = `/api/queries/${query.id}/legs/${leg.id}/quotes/${quote.id}/request-requote`;
+
+    await request(app.getHttpServer())
+      .post(url)
+      .set("Cookie", managerCookie(randomUUID()))
+      .send(body)
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(url)
+      .set("Cookie", adminCookie(randomUUID()))
+      .send(body)
+      .expect(403);
+
+    // Nothing moved for either refused attempt.
+    const quoteAfterRefusals = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
+    expect(quoteAfterRefusals.status).toBe("QUOTED");
+
+    // Positive control — the same call from an Executive still succeeds (route is @HttpCode(200),
+    // not the POST default 201), so a bug that 403s everyone cannot pass this test.
+    await request(app.getHttpServer())
+      .post(url)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send(body)
+      .expect(200);
+    const quoteAfterExec = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
+    expect(quoteAfterExec.status).toBe("REQUOTED");
   });
 });
