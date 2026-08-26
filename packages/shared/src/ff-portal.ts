@@ -64,6 +64,12 @@ export interface FfPortalLegDto {
   seededCharges: FfPortalSeededCharge[];
   warehouseIncluded?: boolean; // frozen Leg warehouse decision (design §9); optional so pre-Task-9 build stays green, set from Task 9 on
   draft: QuoteDraft | null;
+  /** S5.9.5 (D5) — non-null when this leg is closed to this forwarder and why, in copy the
+   *  forwarder may read. Today there is exactly one cause: another forwarder has been approved for
+   *  the leg. Deliberately a REASON STRING rather than a new `QuoteStatus`: the product owner
+   *  ruled against a "Cancelled" status, and the forwarder's own quote status is unchanged — it is
+   *  the LEG that closed, not their quote. */
+  closedReason: string | null;
   /** Opaque fingerprint of everything a submit is priced against — quote status, submission
    *  deadline, manifest snapshot, charge-config snapshot. Echoed back on submit so an open page
    *  whose basis moved fails loudly instead of pricing against a stale one (S5.9 D10).

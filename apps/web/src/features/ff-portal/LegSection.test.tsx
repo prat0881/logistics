@@ -223,6 +223,52 @@ describe("LegSection outcome-status neutrality (design D9)", () => {
   });
 });
 
+describe("LegSection leg-closed branch (S5.9.5 D5)", () => {
+  // The server's LEG_APPROVED_REASON verbatim (ff-portal.service.ts) — the DTO carries the copy,
+  // the client only renders it, so this fixture is the contract that string travels through.
+  const CLOSED = "This leg is no longer open for quoting — a forwarder has been selected.";
+
+  const renderLeg = (l: FfPortalLegDto) =>
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={l}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={true}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+
+  it("shows the reason and no quote form, even though this forwarder's own quote is still open", () => {
+    // The whole point of the leg-level rule: status is RFQ_SENT — nothing about THIS forwarder's
+    // quote closes it — and the leg is closed anyway.
+    renderLeg({ ...leg, status: "RFQ_SENT", closedReason: CLOSED } as unknown as FfPortalLegDto);
+    expect(screen.getByText(CLOSED)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /submit quote/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save draft/i })).not.toBeInTheDocument();
+    // Vocabulary rule D5, on a forwarder-facing surface: never "awarded", and never a name.
+    expect(screen.queryByText(/award/i)).not.toBeInTheDocument();
+  });
+
+  it("outranks the QUOTED branch — a forwarder can be closed AND have already quoted", () => {
+    renderLeg({ ...quotedLeg, closedReason: CLOSED } as unknown as FfPortalLegDto);
+    expect(screen.getByText(CLOSED)).toBeInTheDocument();
+    // The QUOTED branch's own summary heading is gone — this branch replaced it, not the reverse.
+    expect(screen.queryByText(/quote submitted/i)).not.toBeInTheDocument();
+  });
+
+  it("control: closedReason null leaves the editable form exactly as it was", () => {
+    renderLeg({ ...leg, closedReason: null } as unknown as FfPortalLegDto);
+    expect(screen.queryByText(CLOSED)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /submit quote/i })).toBeInTheDocument();
+  });
+});
+
 describe("LegSection legacy (pre-v2) manifest guard", () => {
   it("shows the re-issue notice instead of crashing when the manifest predates the v2 model", () => {
     const legacyLeg = {

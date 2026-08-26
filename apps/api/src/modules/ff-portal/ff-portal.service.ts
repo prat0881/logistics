@@ -35,7 +35,7 @@ import type {
   SeedEndpoint,
   SubmitQuoteInput,
 } from "@svyft/shared";
-import { Prisma } from "@prisma/client";
+import { AwardDecisionStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { StatusService } from "../status/status.service";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
@@ -138,6 +138,14 @@ function seedQuoteDraft(
   };
 }
 
+/** S5.9.5 (D5) — forwarder-facing copy, so vocabulary rule D5 applies with full force. The
+ *  obvious phrasing here is "this leg has been awarded to another forwarder", and it is WRONG:
+ *  nothing has been awarded, no forwarder has been notified, and the selection stays reversible
+ *  until the client accepts. It also deliberately does not name who was selected — that is a
+ *  competitor's commercial information, not this forwarder's to read. */
+export const LEG_APPROVED_REASON =
+  "This leg is no longer open for quoting — a forwarder has been selected.";
+
 @Injectable()
 export class FfPortalService {
   private readonly logger = new Logger(FfPortalService.name);
@@ -166,6 +174,8 @@ export class FfPortalService {
         .map((p) => p.id),
     );
     const whPos = classifyWarehousePositions(whLegs, whPointIds);
+    // S5.9.5 (D5) — one batched read for the whole scope; see closedReasons for the rule.
+    const closed = await this.closedReasons(scope.quotes);
 
     const legs: FfPortalLegDto[] = scope.quotes.map((q) => {
       const manifest = q.manifestSnapshot as ManifestSnapshot;
@@ -216,6 +226,7 @@ export class FfPortalService {
         draft: q.draftJson
           ? (q.draftJson as QuoteDraft)
           : seedQuoteDraft(q.legId, mode, snap.lines, endpoints, snap.warehouseIncluded),
+        closedReason: closed.get(q.legId) ?? null,
         version: this.legVersion(q, scope.rfq.submissionDeadline),
       };
     });
@@ -229,6 +240,47 @@ export class FfPortalService {
       freightForwarder: { companyName: ff?.companyName ?? "" },
       legs,
     };
+  }
+
+  /**
+   * S5.9.5 (D5) — which of the given quotes sit on a leg that is CLOSED to their forwarder, and
+   * the forwarder-facing reason. Keyed by legId; a leg absent from the map is open.
+   *
+   * The ONE rule, in ONE place, so the DTO the portal renders and the guards that refuse writes
+   * can never disagree: a leg is closed to a forwarder iff its `LegAwardDecision` is `APPROVED`
+   * and the approved (`shortlistedQuoteId`) offer is not this forwarder's own quote.
+   *
+   * - **`APPROVED` only — `PENDING_APPROVAL` does NOT close the leg** (D5, deliberate). A leg under
+   *   checker review is not decided; a late submission from a rival merely adds an offer the
+   *   checker can see. Do not "tighten" this.
+   * - **The LEG closes, never the RFQ.** `Rfq` is `@@unique([queryId, freightForwarderId])`, so one
+   *   RFQ covers every leg this forwarder holds on the query — hence the per-legId map rather than
+   *   an RFQ-wide verdict. A forwarder approved on LEG-1 keeps quoting LEG-2, and their per-RFQ
+   *   reminder timers rightly keep running.
+   * - **The selected forwarder's own leg is NOT reported closed to them.** Nothing tells a
+   *   forwarder they were selected (S5.9 D9: approval is silent and reversible), and their own
+   *   quote is already `APPROVED`, which the submit status-guard below refuses on its own. Excluding
+   *   them here keeps this DTO field from leaking the outcome to the one reader it would leak to.
+   */
+  private async closedReasons(
+    quotes: { id: string; legId: string }[],
+  ): Promise<Map<string, string>> {
+    if (quotes.length === 0) return new Map();
+    const decisions = await this.prisma.legAwardDecision.findMany({
+      where: {
+        legId: { in: quotes.map((q) => q.legId) },
+        status: AwardDecisionStatus.APPROVED,
+      },
+      select: { legId: true, shortlistedQuoteId: true },
+    });
+    const winnerByLeg = new Map(decisions.map((d) => [d.legId, d.shortlistedQuoteId]));
+    const closed = new Map<string, string>();
+    for (const q of quotes) {
+      if (winnerByLeg.has(q.legId) && winnerByLeg.get(q.legId) !== q.id) {
+        closed.set(q.legId, LEG_APPROVED_REASON);
+      }
+    }
+    return closed;
   }
 
   private quoteForLeg(scope: FfScope, legId: string) {
@@ -264,6 +316,19 @@ export class FfPortalService {
 
   async saveDraft(scope: FfScope, legId: string, draft: QuoteDraft): Promise<{ savedAt: string }> {
     const q = this.quoteForLeg(scope, legId);
+    // ── leg-closed guard (S5.9.5 D5) — the brief for this task specified `submit` only; this
+    // second call site is a deliberate widening, for two reasons. (1) The portal renders a closed
+    // leg read-only, so the only requests that reach here are a page opened before the approval or
+    // a hand-crafted one — neither is a draft anyone should keep. (2) This write is not confined to
+    // the closed leg: alongside `Quote.draftJson` it upserts `Rfq.currency` and
+    // `Rfq.quoteValidityUntil`, which are RFQ-level and therefore feed every OTHER leg's DTO and
+    // submit basis on this query. Leaving it open would keep a query whose legs are all APPROVED
+    // writable through the portal — the exact thing S5.9.5 D6's query-wide lock exempts the portal
+    // from on the grounds that D5 has already closed it.
+    // NOTE: this guard is leg-level ONLY. It adds no quote-STATUS check, so it does not touch the
+    // registered open issue that `saveDraft` writes `draftJson` with no status guard at all.
+    const closedReason = (await this.closedReasons([q])).get(legId);
+    if (closedReason) throw new ConflictException(closedReason);
     const now = new Date();
     await this.prisma.$transaction([
       this.prisma.quote.update({
@@ -299,6 +364,15 @@ export class FfPortalService {
         "This RFQ has been updated — please refresh the page before submitting.",
       );
     }
+
+    // ── leg-closed guard (S5.9.5 D5) — AFTER the stale-page guard above and BEFORE the
+    // quote-status guard below, for the same reason the stale-page guard states: the most
+    // actionable message wins. A stale page's "please refresh" still outranks this one (refreshing
+    // is what surfaces the closed leg in the first place); and this one outranks the generic
+    // "already submitted or is not open", which is the wrong story for a forwarder whose own quote
+    // is perfectly open and whose LEG is what closed. ──
+    const closedReason = (await this.closedReasons([q])).get(legId);
+    if (closedReason) throw new ConflictException(closedReason);
 
     if (q.status !== "RFQ_SENT" && q.status !== "REQUOTED") {
       throw new ConflictException("This quote has already been submitted or is not open");

@@ -63,6 +63,7 @@ const leg: FfPortalLegDto = {
   ],
   warehouseIncluded: true,
   draft: null,
+  closedReason: null,
   version: "v1",
 };
 
@@ -161,6 +162,7 @@ const quotedRoadLeg: FfPortalLegDto = {
   ],
   warehouseIncluded: false,
   draft: quotedRoadDraft,
+  closedReason: null,
   version: "v3",
 };
 

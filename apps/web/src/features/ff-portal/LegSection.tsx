@@ -167,6 +167,23 @@ function LegSectionBody({
     return <ManifestUnavailableCard />;
   }
 
+  // ── Leg-closed branch (S5.9.5 D5) ──────────────────────────────────────
+  // ABOVE both status branches below, and it does not replace either: `closedReason` is a
+  // LEG-level fact (a forwarder has been selected for it) that is independent of this forwarder's
+  // own quote status, so a forwarder can be closed AND have already quoted. Whichever is true, the
+  // leg is not submittable, and the closed reason is the one that explains why. The server refuses
+  // the matching writes itself (ff-portal.service.ts's saveDraft/submit) — this is the explanation,
+  // not the enforcement. Still below the legacy-manifest guard above: this branch renders
+  // CargoManifestTable, which is exactly what that guard protects.
+  if (leg.closedReason != null) {
+    return (
+      <div className="space-y-4">
+        <CargoManifestTable cargo={leg.manifest.cargo} />
+        <p className="text-sm text-muted-foreground">{leg.closedReason}</p>
+      </div>
+    );
+  }
+
   // ── Status branch: QUOTED ──────────────────────────────────────────────
   if (leg.status === "QUOTED") {
     return <AlreadySubmittedSummary leg={leg} rfq={rfq} />;

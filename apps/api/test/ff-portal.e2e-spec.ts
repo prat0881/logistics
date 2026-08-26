@@ -1,5 +1,6 @@
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? "test-access-secret";
 
+import { randomUUID } from "node:crypto";
 import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
@@ -190,6 +191,11 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     legId: string,
     getBody: {
       legs: Array<{
+        // S5.9.5 Task 7 — the multi-leg fixture below needs a draft for a NAMED leg, so this picks
+        // the matching entry rather than assuming `legs[0]`. Single-leg callers are unaffected
+        // (their only leg IS the match); the `?? legs[0]` fallback preserves the old behaviour for
+        // any caller passing a body whose legs predate this field.
+        legId?: string;
         manifest: {
           cargo: Array<{ packageId: string; grossWt: string; volumeCbm: string | null }>;
         };
@@ -203,7 +209,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       }>;
     },
   ): QuoteDraft {
-    const leg = getBody.legs[0];
+    const leg = getBody.legs.find((l) => l.legId === legId) ?? getBody.legs[0];
     return {
       legId,
       mode: "AIR",
@@ -1257,5 +1263,301 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     expect((await prisma.quote.findFirst({ where: { legId: seaLeg.id } }))?.status).toBe(
       "RFQ_SENT",
     );
+  });
+
+  // ── S5.9.5 (D5): the forwarder portal closes an approved leg ─────────────────────────────────
+  //
+  // Fixture: ONE query, THREE Air legs, TWO forwarders — and, because `Rfq` is
+  // `@@unique([queryId, freightForwarderId])`, exactly ONE RFQ and ONE portal token per forwarder
+  // covering every leg they hold. That one-token-many-legs shape is precisely why the rule under
+  // test is per-LEG and never per-RFQ.
+  //
+  //   L1 — ffA + ffB · ffA submits, ffA is APPROVED (real maker+checker calls) → CLOSED to ffB
+  //   L2 — ffA + ffB · ffA submits, sent for approval only                     → still OPEN to ffB
+  //   L3 —       ffB · untouched                                               → still OPEN to ffB
+  //
+  // ffB never submits anywhere, so every ffB quote stays RFQ_SENT with a saved draft — the exact
+  // shape that sailed through the portal before this task, whose submit guard only ever asked
+  // about the forwarder's OWN quote status.
+  async function closedLegFixture(): Promise<{
+    queryId: string;
+    tokenA: string;
+    tokenB: string;
+    ffIds: { a: string; b: string };
+    legIds: { approved: string; pending: string; sibling: string };
+  }> {
+    const admin = cookie(Role.ADMINISTRATOR);
+    const seq = ++fixtureSeq;
+    // The award endpoints stamp `actorId`/`sentByUserId`/`decidedByUserId`, all `@db.Uuid` — a
+    // literal like "u-MANAGER" (this file's own `cookie()` helper) 500s on Prisma P2023 rather
+    // than doing the thing under test. Sender and approver are deliberately different users:
+    // approve() enforces four-eyes.
+    const cookieFor = (userId: string, role: Role) =>
+      `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role, tenantId: null })}`;
+    const senderId = randomUUID();
+    const approverId = randomUUID();
+
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-CLOSED-${seq}`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+
+    const mkLeg = async (code: string) => {
+      const leg = await prisma.leg.create({
+        data: {
+          queryId: query.id,
+          legCode: `L-${PREFIX}-${code}-${seq}`,
+          mode: "AIR",
+          status: "READY_FOR_RFQ",
+          originPointId: origin.id,
+          destinationPointId: dest.id,
+          readyDate: new Date(),
+          targetDelivery: new Date(Date.now() + 86400000),
+          warehouseHandlingIncluded: false,
+        },
+      });
+      // F1 (leg completeness) gates distribution on >= 1 package assigned to THIS leg.
+      const { packageIds } = await createCargoWithPackages(prisma, {
+        queryId: query.id,
+        packages: [
+          { packageNo: `PO-${PREFIX}-${code}-${seq}`, dimL: 10, dimW: 20, dimH: 30, grossWt: 5 },
+        ],
+      });
+      await assignPackagesToLeg(prisma, leg.id, packageIds);
+      return leg.id;
+    };
+    const approvedLeg = await mkLeg("CA");
+    const pendingLeg = await mkLeg("CP");
+    const siblingLeg = await mkLeg("CS");
+
+    const mkFf = (suffix: string) =>
+      prisma.freightForwarder.create({
+        data: {
+          freightForwarderCode: `FF-${PREFIX}-${suffix}-${seq}`,
+          companyName: `FF ${PREFIX} ${suffix} ${seq}`,
+          pic: "P",
+          contactNumber: "+1000000000",
+          email: `ff-${PREFIX.toLowerCase()}-${suffix.toLowerCase()}-${seq}@e2e.test`,
+          availableCountries: ["CN", "AE"],
+          modes: ["AIR"],
+          handleDg: false,
+          defaultCurrency: "USD",
+        },
+      });
+    const ffA = await mkFf("CLA");
+    const ffB = await mkFf("CLB");
+
+    for (const [legId, ffIds] of [
+      [approvedLeg, [ffA.id, ffB.id]],
+      [pendingLeg, [ffA.id, ffB.id]],
+      [siblingLeg, [ffB.id]],
+    ] as const) {
+      await request(app.getHttpServer())
+        .put(`/api/queries/${query.id}/legs/${legId}/ff-selection`)
+        .set("Cookie", admin)
+        .send({ ffIds })
+        .expect(200);
+    }
+
+    // ONE distribute for the whole query → one RFQ per forwarder, spanning their legs.
+    const dist = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/distribute-all`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    const entryFor = (ffId: string) =>
+      dist.body.rfqs.find((r: { freightForwarderId: string }) => r.freightForwarderId === ffId);
+    const tokenA = entryFor(ffA.id).accessToken as string;
+    const tokenB = entryFor(ffB.id).accessToken as string;
+    expect(entryFor(ffB.id).legIds).toHaveLength(3); // one RFQ really does cover all three legs
+
+    const view = (token: string) =>
+      request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+    const legOf = (body: { legs: { legId: string }[] }, legId: string) =>
+      body.legs.find((l) => l.legId === legId) as {
+        legId: string;
+        version: string;
+        status: string;
+      };
+
+    // ffA prices and SUBMITS the two legs they are competing for — a real portal round-trip, so
+    // the offers the maker endpoint later names are genuinely materialized ones.
+    for (const legId of [approvedLeg, pendingLeg]) {
+      const got = await view(tokenA);
+      await request(app.getHttpServer())
+        .patch(`/api/ff/rfq/${tokenA}/quotes/${legId}`)
+        .send(fullValidDraft(legId, got.body))
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/api/ff/rfq/${tokenA}/quotes/${legId}/submit`)
+        .send({ version: legOf(got.body, legId).version })
+        .expect(201);
+    }
+
+    // ffB SAVES a complete, submittable draft on the leg they are about to lose — and stops there.
+    // Without this the submit refusal under test could be an incidental 422 on an empty draft
+    // rather than the leg-closed guard, and removing that guard would not visibly change anything.
+    const gotB = await view(tokenB);
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${tokenB}/quotes/${approvedLeg}`)
+      .send(fullValidDraft(approvedLeg, gotB.body))
+      .expect(200);
+
+    // A3 (award.service.ts) refuses a send while a forwarder's RFQ window is still open, and ffB's
+    // is — by design, they are still allowed to answer. Close it for the two sends, then REOPEN it
+    // (the whole window, because the deadline is per-RFQ and shared across ffB's three legs) so the
+    // tests below exercise the leg-closed rule and not an incidental Q_DEADLINE.
+    const rfqB = await prisma.rfq.findFirstOrThrow({
+      where: { queryId: query.id, freightForwarderId: ffB.id },
+      select: { id: true, submissionDeadline: true },
+    });
+    await prisma.rfq.update({
+      where: { id: rfqB.id },
+      data: { submissionDeadline: new Date(Date.now() - 60_000) },
+    });
+
+    // Name ffA's offer through the REAL maker endpoint, reading the quote/variant off the
+    // comparison the screen itself reads (Air's single column is `variant: null`).
+    const sendFor = async (legId: string) => {
+      const cmp = await request(app.getHttpServer())
+        .get(`/api/queries/${query.id}/comparison`)
+        .set("Cookie", cookieFor(senderId, Role.MANAGER))
+        .expect(200);
+      const offer = cmp.body.legs
+        .find((l: { legId: string }) => l.legId === legId)
+        .offers.find(
+          (o: { freightForwarderId: string; priced: boolean }) =>
+            o.freightForwarderId === ffA.id && o.priced,
+        );
+      await request(app.getHttpServer())
+        .post(`/api/queries/${query.id}/legs/${legId}/send-for-approval`)
+        .set("Cookie", cookieFor(senderId, Role.MANAGER))
+        .send({ quoteId: offer.quoteId, variant: offer.variant, overrideReason: "e2e fixture" })
+        .expect(200);
+    };
+    await sendFor(approvedLeg);
+    await sendFor(pendingLeg);
+
+    // Only ONE of the two is approved — the other stays PENDING_APPROVAL, which D5 says does NOT
+    // close the portal.
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${approvedLeg}/approve`)
+      .set("Cookie", cookieFor(approverId, Role.MANAGER))
+      .expect(200);
+
+    await prisma.rfq.update({
+      where: { id: rfqB.id },
+      data: { submissionDeadline: rfqB.submissionDeadline },
+    });
+
+    return {
+      queryId: query.id,
+      tokenA,
+      tokenB,
+      ffIds: { a: ffA.id, b: ffB.id },
+      legIds: { approved: approvedLeg, pending: pendingLeg, sibling: siblingLeg },
+    };
+  }
+
+  it("S5.9.5 (D5) — a forwarder cannot submit on a leg approved to someone else, and the leg says why", async () => {
+    const { tokenB, ffIds, legIds } = await closedLegFixture();
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${tokenB}`).expect(200);
+    const closedLeg = got.body.legs.find((l: { legId: string }) => l.legId === legIds.approved) as {
+      closedReason: string;
+      version: string;
+      status: string;
+    };
+
+    expect(closedLeg.closedReason).toMatch(/no longer open for quoting/i);
+    // Vocabulary rule D5, on a forwarder-facing string: never "awarded", and never a rival's name.
+    expect(closedLeg.closedReason).not.toMatch(/award/i);
+    expect(closedLeg.closedReason).not.toContain("FF ");
+    // THIS forwarder's own quote is untouched and still open — it is the LEG that closed. That is
+    // the whole gap: the pre-existing status guard sees nothing wrong here.
+    expect(closedLeg.status).toBe("RFQ_SENT");
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${tokenB}/quotes/${legIds.approved}/submit`)
+      .send({ version: closedLeg.version })
+      .expect(409);
+    expect(res.body.message).toBe(closedLeg.closedReason);
+
+    // Refused before anything was written: the losing quote is still exactly where it was.
+    const ffBQuote = await prisma.quote.findFirstOrThrow({
+      where: { legId: legIds.approved, freightForwarderId: ffIds.b },
+    });
+    expect(ffBQuote.status).toBe("RFQ_SENT");
+    expect(ffBQuote.submittedAt).toBeNull();
+  });
+
+  it("S5.9.5 (D5) — a leg merely PENDING_APPROVAL stays open, and the forwarder's OTHER leg stays open too", async () => {
+    // Positive control on both halves of the rule: neither PENDING_APPROVAL nor a sibling leg
+    // closes. Both are deliberate design rulings, not omissions.
+    const { tokenB, legIds } = await closedLegFixture();
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${tokenB}`).expect(200);
+    const legOf = (legId: string) =>
+      got.body.legs.find((l: { legId: string }) => l.legId === legId) as {
+        closedReason: string | null;
+        version: string;
+      };
+    expect(legOf(legIds.pending).closedReason).toBeNull();
+    expect(legOf(legIds.sibling).closedReason).toBeNull();
+
+    // …and the sibling is genuinely still submittable end to end, not merely un-badged.
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${tokenB}/quotes/${legIds.sibling}`)
+      .send(fullValidDraft(legIds.sibling, got.body))
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${tokenB}/quotes/${legIds.sibling}/submit`)
+      .send({ version: legOf(legIds.sibling).version })
+      .expect(201);
+  });
+
+  it("S5.9.5 (D5) — a closed leg also refuses a draft save, while the forwarder's open legs still accept one", async () => {
+    const { tokenB, legIds } = await closedLegFixture();
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${tokenB}`).expect(200);
+    const res = await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${tokenB}/quotes/${legIds.approved}`)
+      .send(fullValidDraft(legIds.approved, got.body))
+      .expect(409);
+    expect(res.body.message).toMatch(/no longer open for quoting/i);
+
+    // The guard is leg-scoped, not RFQ-scoped: the same token keeps saving on the open legs.
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${tokenB}/quotes/${legIds.pending}`)
+      .send(fullValidDraft(legIds.pending, got.body))
+      .expect(200);
+  });
+
+  it("S5.9.5 (D5 + S5.9 D9) — the SELECTED forwarder is told nothing: their own leg is not reported closed", async () => {
+    // Approval is silent and reversible, and this DTO field is forwarder-facing — reporting the
+    // winner's own leg as closed would tell exactly one reader that a selection had happened.
+    // Their submit is refused anyway, by the pre-existing quote-status guard (their quote is
+    // APPROVED), so nothing is left open by leaving them out.
+    const { tokenA, legIds } = await closedLegFixture();
+
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${tokenA}`).expect(200);
+    const winner = got.body.legs.find((l: { legId: string }) => l.legId === legIds.approved) as {
+      closedReason: string | null;
+      status: string;
+      version: string;
+    };
+    expect(winner.status).toBe("APPROVED");
+    expect(winner.closedReason).toBeNull();
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${tokenA}/quotes/${legIds.approved}/submit`)
+      .send({ version: winner.version })
+      .expect(409);
+    expect(res.body.message).toBe("This quote has already been submitted or is not open");
   });
 });

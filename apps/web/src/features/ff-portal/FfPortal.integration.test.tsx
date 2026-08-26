@@ -226,6 +226,7 @@ const sentLeg: FfPortalLegDto = {
   // submit (LegSection.tsx reads `leg.version`, never a cached value). Test 1 below asserts the
   // submit POST body carries exactly this string.
   version: "v-fixture-1",
+  closedReason: null,
 };
 
 const sentRfq: FfPortalRfqDto = {
