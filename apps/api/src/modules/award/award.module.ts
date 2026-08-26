@@ -65,6 +65,21 @@ export class AwardModule implements OnModuleInit {
       { from: QuoteStatus.PENDING_APPROVAL, on: QuoteEvent.APPROVE, to: QuoteStatus.APPROVED, kind: "forward" },
       { from: QuoteStatus.PENDING_APPROVAL, on: QuoteEvent.RETURN, to: QuoteStatus.QUOTED, kind: "reopen" },
       { from: QuoteStatus.APPROVED, on: QuoteEvent.UNAPPROVE, to: QuoteStatus.QUOTED, kind: "reopen" },
+      // S5.9.5 (Step 5c) — an offer that was EXPIRED when it was sent for approval returns to
+      // EXPIRED, not to QUOTED. RETURN's and UNAPPROVE's single edges both land on QUOTED, which
+      // would resurrect a quote whose submission window closed and whose forwarder never answered
+      // — the exact dishonesty D4's "let it expire, keep the price" choice exists to prevent.
+      // ONE event with BOTH review states as sources, because reject() reverses from either one
+      // (PENDING_APPROVAL in its original mode, APPROVED in D2's new reversal mode) and the
+      // destination is the same in both: back to where the send found it. `reject()` picks this
+      // event over RETURN/UNAPPROVE by reading the send's own immutable StatusTransition row —
+      // see `wasExpiredWhenSentForApproval` in award.service.ts.
+      {
+        from: [QuoteStatus.PENDING_APPROVAL, QuoteStatus.APPROVED],
+        on: QuoteEvent.RETURN_EXPIRED,
+        to: QuoteStatus.EXPIRED,
+        kind: "reopen",
+      },
       // negotiation sources — a re-quote can be asked for from any live state
       { from: QuoteStatus.QUOTED, on: QuoteEvent.REQUEST_REQUOTE, to: QuoteStatus.REQUOTED, kind: "reopen" },
       { from: QuoteStatus.PENDING_APPROVAL, on: QuoteEvent.REQUEST_REQUOTE, to: QuoteStatus.REQUOTED, kind: "reopen" },
@@ -92,6 +107,17 @@ export class AwardModule implements OnModuleInit {
       { from: LegStatus.PENDING_APPROVAL, on: LegEvent.APPROVE, to: LegStatus.APPROVED, kind: "forward" },
       { from: LegStatus.PENDING_APPROVAL, on: LegEvent.RETURN_FULL, to: LegStatus.FULLY_QUOTED, kind: "reopen" },
       { from: LegStatus.PENDING_APPROVAL, on: LegEvent.RETURN_PARTIAL, to: LegStatus.PARTIALLY_QUOTED, kind: "reopen" },
+      // S5.9.5 (design D2) — the reversal edges. reject() gains a second mode that walks an APPROVED
+      // leg back, and it already chooses between "full" and "partial" using `isFullyQuotedForDecision`
+      // (the shared D4 rule), so it reuses the SAME two events rather than needing new ones.
+      //
+      // Deliberately NOT reusing REOPEN_AWARD + the projector's re-quote recompute (the route
+      // negotiation.service.ts takes): REQUOTE_PARTIAL/REQUOTE_OUTSTANDING are documented as fireable
+      // only by LegQuoteProjector's re-quote branch, and borrowing them here would break that stated
+      // rule and make the StatusTransition log unable to say whether a leg moved because of a re-quote
+      // or a rejection.
+      { from: LegStatus.APPROVED, on: LegEvent.RETURN_FULL, to: LegStatus.FULLY_QUOTED, kind: "reopen" },
+      { from: LegStatus.APPROVED, on: LegEvent.RETURN_PARTIAL, to: LegStatus.PARTIALLY_QUOTED, kind: "reopen" },
       { from: LegStatus.APPROVED, on: LegEvent.REOPEN_AWARD, to: LegStatus.FULLY_QUOTED, kind: "reopen" },
       // change-order source
       { from: LegStatus.APPROVED, on: LegEvent.REOPEN, to: LegStatus.READY_FOR_RFQ, kind: "reopen" },

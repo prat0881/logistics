@@ -61,6 +61,20 @@ const OUTSTANDING_QUOTE_STATUSES: readonly QuoteStatus[] = [
 // the pre-transaction `!offer` check 400s (see the `getComparison` block below).
 const SENDABLE_STATUSES: readonly QuoteStatus[] = [QuoteStatus.QUOTED, QuoteStatus.EXPIRED];
 
+// S5.9.5 (design D2) — the statuses a leg / a quote can be WALKED BACK from by reject(), i.e. the
+// exact `from` set of the reversal edges award.module.ts registers:
+//   leg   — RETURN_FULL / RETURN_PARTIAL, from PENDING_APPROVAL (S5.4) and from APPROVED (D2);
+//   quote — RETURN (PENDING_APPROVAL), UNAPPROVE (APPROVED), RETURN_EXPIRED (both).
+// reject() uses these to decide whether a row has any edge to fire at all, and picks the event from
+// the row's OWN status; keep them in lock-step with those edges, the same discipline
+// SENDABLE_STATUSES keeps with the SEND_FOR_APPROVAL edges above. Both are supersets of the single
+// status the decision's own mode would imply, on purpose — see the long note in reject().
+const LEG_REVERSIBLE_FROM: readonly LegStatus[] = [LegStatus.PENDING_APPROVAL, LegStatus.APPROVED];
+const QUOTE_REVERSIBLE_FROM: readonly QuoteStatus[] = [
+  QuoteStatus.PENDING_APPROVAL,
+  QuoteStatus.APPROVED,
+];
+
 // S5.9 Task 4 review round — IMPORTANT 2. lockLeg's raw SQL casts both ids to `::uuid` directly
 // against Postgres, unlike a typed Prisma call, which validates the shape client-side first —
 // see lockLeg's own doc for why that matters. Same `.uuid()` check `@svyft/shared`'s schemas use
@@ -613,11 +627,17 @@ export class AwardService {
     return updated;
   }
 
-  // Shared preconditions for both checker actions: (1) the decision must exist (404); (2) it
-  // must be PENDING_APPROVAL — you cannot decide something not sent for approval (409); (3)
-  // four-eyes — the Manager (or Admin) deciding may not be the same user who sent it (403). The
-  // @Roles guard already keeps plain Executives out before this ever runs; this additionally
-  // stops a Manager from approving/rejecting their own send.
+  // approve()'s preconditions: (1) the decision must exist (404); (2) it must be
+  // PENDING_APPROVAL — you cannot decide something not sent for approval (409); (3) four-eyes —
+  // the Manager (or Admin) deciding may not be the same user who sent it (403). The @Roles guard
+  // already keeps plain Executives out before this ever runs; this additionally stops a Manager
+  // from approving their own send.
+  //
+  // CORRECTED (S5.9.5, design D2) — this used to open "Shared preconditions for both checker
+  // actions" and was called by approve() AND reject(). reject() now has its own sibling,
+  // `requireRejectable` below, because D2 gave it a second mode (reversing an APPROVED decision)
+  // in which neither the PENDING_APPROVAL requirement nor four-eyes applies. approve() is
+  // deliberately left on this stricter version: approval only ever exists at PENDING_APPROVAL.
   //
   // S5.9 Task 4 — takes `tx`, not `this.prisma`: both callers now run this from inside the SAME
   // transaction that holds lockLeg's row lock on this leg (see approve()/reject() below), so the
@@ -642,6 +662,86 @@ export class AwardService {
       throw new ForbiddenException("SELF_APPROVAL");
     }
     return { decision };
+  }
+
+  /**
+   * S5.9.5 (design D2) — reject() accepts a decision in EITHER live state, and reports which one it
+   * found so the caller can pick the right reversal fires.
+   *
+   * - PENDING_APPROVAL: the original mode. Four-eyes applies — the user who SENT it may not decide it.
+   * - APPROVED: the reversal mode. Four-eyes deliberately does NOT apply: undoing your own mistake
+   *   is a different act from approving your own work, and the product owner ruled explicitly that
+   *   the Manager who approved a leg may reject it back. A single-manager team could otherwise never
+   *   undo an approval at all.
+   *
+   * Anything else (DRAFT, or the REJECTED literal the enum allows but nothing ever persists) has no
+   * live decision to act on and still 409s.
+   *
+   * Returns only the decision, NOT which of the two modes it matched — deliberately, and against the
+   * task brief's own signature. The only thing the mode was to be used for is picking the reversal
+   * fires, and reject() picks those from the LEG and QUOTE rows' own statuses instead; see the long
+   * note on the leg guard in reject() for the concurrent approve+reject wedge that choice removes.
+   * The distinction that survives here is the one this method genuinely owns: whether four-eyes
+   * applies.
+   *
+   * Same `tx` contract as `requireDecidable` above — called from inside reject()'s transaction, after
+   * lockLeg has taken this leg's row lock, so the read is against that transaction's own snapshot.
+   */
+  private async requireRejectable(
+    tx: Prisma.TransactionClient,
+    legId: string,
+    user: RequestUser,
+  ): Promise<{ decision: LegAwardDecision }> {
+    const decision = await tx.legAwardDecision.findUnique({ where: { legId } });
+    if (!decision) throw new NotFoundException("No award decision on this leg");
+    if (decision.status === AwardDecisionStatus.PENDING_APPROVAL) {
+      if (decision.sentByUserId === user.userId) throw new ForbiddenException("SELF_APPROVAL");
+      return { decision };
+    }
+    if (decision.status === AwardDecisionStatus.APPROVED) {
+      return { decision };
+    }
+    throw new ConflictException("This leg has no decision to reject");
+  }
+
+  /**
+   * S5.9.5 (Step 5c) — was this quote EXPIRED at the moment it was sent for approval?
+   *
+   * D4 made a priced-EXPIRED offer sendable, so by the time reject() runs the quote is
+   * PENDING_APPROVAL (or APPROVED) and its pre-send status is no longer readable off the row. It is
+   * readable off the LOG: `StatusService.fire` appends an immutable `StatusTransition` whose `from`
+   * is the status the entity held when the fire ran (status.service.ts — `from: current`, read
+   * through the state store inside the same transaction that writes the row). So the send's own row
+   * records verbatim what the quote was returned FROM.
+   *
+   * Narrow by construction, in the same shape as `latestSendForApproval` above:
+   *   * the query pins the EDGE (`event` + `to`), not just the landing status, and takes the most
+   *     recent one, so it describes THIS review — a quote sent, rejected and sent again appends a
+   *     new row each time;
+   *   * `award.service.ts:sendForApproval` is the ONLY caller in the codebase that fires
+   *     `QuoteEvent.SEND_FOR_APPROVAL` (grepped), and `award.module.ts` gives that event exactly two
+   *     edges — from QUOTED and from EXPIRED — so a row's `from` can only be one of those two.
+   *
+   * No row at all (a quote written straight into PENDING_APPROVAL by a fixture or a direct DB write)
+   * answers `false`, i.e. the pre-S5.9.5 behaviour: return it to QUOTED. That is a safety bias
+   * rather than an observed path — it keeps the fire on an edge that certainly exists rather than
+   * guessing EXPIRED for a quote whose history we cannot see.
+   */
+  private async wasExpiredWhenSentForApproval(
+    tx: Prisma.TransactionClient,
+    quoteId: string,
+  ): Promise<boolean> {
+    const row = await tx.statusTransition.findFirst({
+      where: {
+        entity: "quote",
+        entityId: quoteId,
+        event: QuoteEvent.SEND_FOR_APPROVAL,
+        to: QuoteStatus.PENDING_APPROVAL,
+      },
+      orderBy: { seq: "desc" },
+      select: { from: true },
+    });
+    return row?.from === QuoteStatus.EXPIRED;
   }
 
   // S5.9 Task 4 — approve() used to guard on `leg.status !== FULLY_QUOTED`, straight off the
@@ -768,14 +868,27 @@ export class AwardService {
   // — StatusService.fire cannot run while this transaction still holds the leg's row lock).
   //
   // The target is computed from the quotes' statuses AS THEY STAND at guard time, i.e. BEFORE
-  // the quote RETURN fire below reverts the shortlisted quote off PENDING_APPROVAL — not "after
+  // the quote fire below reverts the shortlisted quote off PENDING_APPROVAL/APPROVED — not "after
   // the return" as it might seem more natural to compute. This is deliberately safe: the shared
-  // rollup rule (status.ts) treats PENDING_APPROVAL and QUOTED identically as "resolved" for the
-  // FULLY_QUOTED branch, and reject() only ever uses the answer to pick between RETURN_FULL
-  // (fully quoted) and RETURN_PARTIAL (everything else) — so computing pre- or post-return can
-  // never change which of those two edges fires. Computing it inside the same locked transaction
-  // as the decision write (rather than as a separate pre-tx read, per the brief's own
-  // illustrative ordering) is what lets the lock cover it.
+  // rollup rule (status.ts's LEG_ROLLUP_RESOLVED) treats every status either side of that fire —
+  // PENDING_APPROVAL, APPROVED, QUOTED and EXPIRED alike — as "resolved" for the FULLY_QUOTED
+  // branch, and reject() only ever uses the answer to pick between RETURN_FULL (fully quoted) and
+  // RETURN_PARTIAL (everything else) — so computing pre- or post-return can never change which of
+  // those two edges fires. Computing it inside the same locked transaction as the decision write
+  // (rather than as a separate pre-tx read, per the brief's own illustrative ordering) is what lets
+  // the lock cover it.
+  //
+  // S5.9.5 (design D2) — reject() now has TWO modes, chosen by `requireRejectable` from the
+  // decision's own status:
+  //   * PENDING_APPROVAL — the original mode, unchanged in every respect including four-eyes;
+  //   * APPROVED — the reversal mode, and the ONLY way to undo an approval (D1 removes every other
+  //     action from an approved leg). Four-eyes deliberately does not apply here; see
+  //     `requireRejectable`.
+  // The two modes differ ONLY in which status each of the three rows is expected to be sitting in
+  // and which quote event walks it back (`expectedQuoteStatus`/`expectedLegStatus`/`quoteEvent`
+  // below). Everything else — the decision write to DRAFT, the REJECT event, the leg's
+  // RETURN_FULL/RETURN_PARTIAL choice, the Q5 tolerance, the executive notification — is shared, so
+  // the two modes cannot disagree about what a rejection means.
   //
   // S5.9 final whole-branch review, CRITICAL 1 — that choice originally came from
   // `legRollupTarget` ALONE, with `null` (and everything else) falling through to RETURN_PARTIAL.
@@ -841,8 +954,9 @@ export class AwardService {
   // `quote = QUOTED`, reachable when `sendForApproval`'s post-commit QUOTE fire throws — the leg
   // never gets its own fire, so it never leaves FULLY_QUOTED while the decision already committed
   // to PENDING_APPROVAL. On that exact triple the quote skip fired correctly and then the leg fire
-  // hit `No 'return.full' transition from 'FULLY_QUOTED'` (both return edges start at
-  // PENDING_APPROVAL and nowhere else — award.module.ts's leg machine, lines 84-85), i.e. an
+  // hit `No 'return.full' transition from 'FULLY_QUOTED'` (award.module.ts's leg machine gives both
+  // return edges the two review states as sources — PENDING_APPROVAL, and, since S5.9.5's D2
+  // reversal mode, APPROVED — and nothing else, so FULLY_QUOTED has no such edge), i.e. an
   // `IllegalTransitionError` AFTER the decision had committed to DRAFT: HTTP 500, the UI saying
   // "Failed to reject" for a rejection that had in fact happened, and the post-reject executive
   // notification at the tail of this method never dispatching. The state "recovered" only as a side
@@ -858,43 +972,94 @@ export class AwardService {
     input: RejectInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
-    const { decision, returnToFullyQuoted, quoteNeedsReturn, legNeedsReturn } =
+    const { decision, returnToFullyQuoted, quoteEvent, quoteNeedsReturn, legNeedsReturn } =
       await this.prisma.$transaction(async (tx) => {
         await this.lockLeg(tx, queryId, legId);
-        const { decision } = await this.requireDecidable(tx, legId, user);
+        const { decision } = await this.requireRejectable(tx, legId, user);
 
         // Final review IMPORTANT 1 — the LEG half of the same tolerance. Read under lockLeg's own
         // row lock, so nothing can move the leg between this read and the post-commit fire that acts
         // on it (a concurrent send/approve/reject blocks on that lock; the projector's ROLLUP_FROZEN
-        // guard leaves a PENDING_APPROVAL leg alone). PENDING_APPROVAL is the ONLY `from` either
-        // return edge has, so anything else has no edge to fire and nothing to be returned to.
+        // guard leaves a PENDING_APPROVAL or APPROVED leg alone). The two review states are the ONLY
+        // `from`s either return edge has, so a leg sitting anywhere else has no edge to fire and
+        // nothing to be returned to.
+        //
+        // S5.9.5 (D2) — DELIBERATE DEPARTURE from the task brief's Step 5, which had this compare
+        // against a single `expectedLegStatus` derived from the decision's own mode (APPROVED in
+        // reversal mode, PENDING_APPROVAL otherwise). That version is measurably wrong under a
+        // concurrent approve+reject, and the failure it produces is the unrecoverable kind this
+        // guard exists to prevent. Measured, not reasoned: with `Promise.all([approve, reject])` on
+        // one leg (the "CRITICAL — approve and reject racing" test below), approve wins lockLeg and
+        // commits `decision = APPROVED`, then does its status fires AFTER the lock is released —
+        // and its LEG fire immediately queues behind reject's own `SELECT … FOR UPDATE`. So reject
+        // reads `decision = APPROVED` (mode APPROVED) above a leg still sitting at
+        // PENDING_APPROVAL, the mode-derived expectation misses, the leg fire is skipped, and
+        // approve's queued fire then lands the leg on APPROVED. Final state, observed on 5 of 5
+        // runs: decision DRAFT, quote QUOTED, leg APPROVED — which nothing can move afterwards
+        // (reject 409s on a DRAFT decision; sendForApproval's A3 refuses a leg that is neither
+        // FULLY_QUOTED nor past an open deadline), i.e. exactly the "unrecoverable without DB
+        // surgery" outcome Q5 was written to eliminate, reintroduced by the reversal mode.
+        //
+        // The question this guard actually needs to ask has never been "is the row where this MODE
+        // expects it?" but "does this row have a reversal edge to fire at all?" — its whole purpose
+        // is to avoid an `IllegalTransitionError` thrown after the decision has committed. Since
+        // Step 1 registered RETURN_FULL/RETURN_PARTIAL from APPROVED as well, that answer is now
+        // "either review state", for both modes; the event is then picked from the ROW's own status
+        // rather than the decision's, so a row that is one fire behind is still walked back
+        // correctly instead of being abandoned. Nothing is ever REFUSED — a row outside both review
+        // states is still skipped with a warning, exactly as Q5 requires.
         const legRow = await tx.leg.findUnique({ where: { id: legId }, select: { status: true } });
-        const legNeedsReturn = legRow?.status === LegStatus.PENDING_APPROVAL;
+        const legNeedsReturn =
+          legRow != null && LEG_REVERSIBLE_FROM.includes(legRow.status as LegStatus);
         if (!legNeedsReturn) {
           this.logger.warn(
-            `reject: leg ${legId} is ${legRow ? legRow.status : "missing"}, not PENDING_APPROVAL — ` +
-              "skipping its RETURN fire and rejecting the decision anyway (Q5: rejection must stay " +
-              "possible). Reachable when sendForApproval's post-commit quote fire threw, leaving the " +
-              "decision PENDING_APPROVAL above a leg that never moved.",
+            `reject: leg ${legId} is ${legRow ? legRow.status : "missing"}, not under review ` +
+              `(${LEG_REVERSIBLE_FROM.join("/")}) — skipping its RETURN fire and rejecting the ` +
+              "decision anyway (Q5: rejection must stay possible). Reachable when sendForApproval's " +
+              "post-commit quote fire threw, leaving the decision PENDING_APPROVAL above a leg that " +
+              "never moved.",
           );
         }
 
-        // Q5 — tolerate rather than refuse. Only fire the quote's own RETURN when it is still
-        // exactly where sendForApproval left it; otherwise skip that one fire and carry on (see the
-        // class doc above for why this is safe).
+        // Q5 — tolerate rather than refuse. Only fire the quote's own return when it is still under
+        // review, i.e. sitting on a status a reversal edge starts from; otherwise skip that one fire
+        // and carry on (see the class doc above for why this is safe, and the leg block above for
+        // why the set is the two review states rather than the one this mode expects).
         let quoteNeedsReturn = false;
+        // S5.9.5 (D2 + Step 5c) — the event that walks the quote back, resolved to ONE of three
+        // while we still hold the lock:
+        //   * RETURN_EXPIRED — the offer was EXPIRED when it was sent (D4 made a priced-EXPIRED
+        //     offer sendable), so it goes back to EXPIRED. RETURN and UNAPPROVE both land on QUOTED,
+        //     which would report a forwarder who never answered as live — rankable as live,
+        //     re-sendable, and carrying a submission window that closed weeks ago. The pre-send
+        //     status is read off the send's own immutable transition row; see
+        //     `wasExpiredWhenSentForApproval`. Registered from BOTH review states, so it needs no
+        //     further branching here.
+        //   * UNAPPROVE — APPROVED → QUOTED. The edge has existed since S5.4 and nothing had ever
+        //     fired it until D2's reversal mode.
+        //   * RETURN — PENDING_APPROVAL → QUOTED, the original behaviour.
+        // Chosen from the QUOTE ROW's own status, not the decision's mode, for the reason given on
+        // the leg block above. Default value is only a placeholder for the `!quoteNeedsReturn` path,
+        // where nothing fires.
+        let quoteEvent: QuoteEvent = QuoteEvent.RETURN;
         if (decision.shortlistedQuoteId) {
           const quote = await tx.quote.findUnique({
             where: { id: decision.shortlistedQuoteId },
             select: { status: true },
           });
-          if (quote && quote.status === QuoteStatus.PENDING_APPROVAL) {
+          if (quote && QUOTE_REVERSIBLE_FROM.includes(quote.status)) {
             quoteNeedsReturn = true;
+            quoteEvent = (await this.wasExpiredWhenSentForApproval(tx, decision.shortlistedQuoteId))
+              ? QuoteEvent.RETURN_EXPIRED
+              : quote.status === QuoteStatus.APPROVED
+                ? QuoteEvent.UNAPPROVE
+                : QuoteEvent.RETURN;
           } else {
             this.logger.warn(
               `reject: leg ${legId}'s shortlisted quote ${decision.shortlistedQuoteId} is ` +
-                `${quote ? `already ${quote.status}` : "missing"}, not PENDING_APPROVAL — skipping ` +
-                "its RETURN fire and rejecting the leg anyway (Q5: rejection must stay possible).",
+                `${quote ? `already ${quote.status}` : "missing"}, not under review ` +
+                `(${QUOTE_REVERSIBLE_FROM.join("/")}) — skipping its RETURN fire and rejecting the ` +
+                "leg anyway (Q5: rejection must stay possible).",
             );
           }
         }
@@ -934,12 +1099,14 @@ export class AwardService {
             actorId: user.userId,
           },
         });
-        return { decision: updated, returnToFullyQuoted, quoteNeedsReturn, legNeedsReturn };
+        return { decision: updated, returnToFullyQuoted, quoteEvent, quoteNeedsReturn, legNeedsReturn };
       });
 
     // Quote first, then leg — same order as approve()/sendForApproval. On the ordinary path the leg
-    // is still PENDING_APPROVAL for the whole duration of the quote fire, so the projector's freeze
-    // (Task 2) skips the rollup it would otherwise trigger off this quote's status change; the
+    // is still in its review state for the whole duration of the quote fire — PENDING_APPROVAL, or
+    // APPROVED in D2's reversal mode, both of which are in the projector's ROLLUP_FROZEN set
+    // (leg-quote.projector.ts) — so the projector's freeze (Task 2) skips the rollup it would
+    // otherwise trigger off this quote's status change; the
     // leg's own RETURN_FULL/RETURN_PARTIAL fire right after is what actually moves it, using the
     // `returnToFullyQuoted` answer already computed above. The one path where that is NOT true is
     // the `legNeedsReturn === false` skip below: there the leg is not PENDING_APPROVAL, so it is not
@@ -947,12 +1114,13 @@ export class AwardService {
     // precisely because this method then fires nothing at the leg itself, so the projector's answer
     // is the only one, and no half-applied pair of statuses can result.
     //
-    // Q5 — `quoteNeedsReturn` is false whenever the shortlisted quote had already drifted off
-    // PENDING_APPROVAL (or vanished) by guard time; firing RETURN against it here would find no
-    // matching edge and throw `IllegalTransitionError` AFTER the decision above has already
-    // committed to DRAFT, which is precisely the half-committed hazard this skip exists to avoid.
+    // Q5 — `quoteNeedsReturn` is false whenever the shortlisted quote had already drifted off the
+    // status this mode expects (or vanished) by guard time; firing a return event against it here
+    // would find no matching edge and throw `IllegalTransitionError` AFTER the decision above has
+    // already committed to DRAFT, which is precisely the half-committed hazard this skip exists to
+    // avoid. `quoteEvent` was resolved inside that same locked transaction — see there.
     if (decision.shortlistedQuoteId && quoteNeedsReturn) {
-      await this.status.fire("quote", decision.shortlistedQuoteId, QuoteEvent.RETURN, {
+      await this.status.fire("quote", decision.shortlistedQuoteId, quoteEvent, {
         queryId,
         actorId: user.userId,
         reason: input.reason,

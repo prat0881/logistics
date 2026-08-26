@@ -100,6 +100,13 @@ export const QuoteEvent = {
   APPROVE: "approve",             // PENDING_APPROVAL → APPROVED
   RETURN: "return",               // PENDING_APPROVAL → QUOTED (reject)
   UNAPPROVE: "unapprove",         // APPROVED → QUOTED
+  // S5.9.5 (Step 5c) — PENDING_APPROVAL/APPROVED → EXPIRED. The reversal edge for an offer that
+  // was already EXPIRED when it was sent for approval (S5.9.5 D4 made a priced-EXPIRED offer
+  // sendable). RETURN and UNAPPROVE both land on QUOTED, which would hand a live status back to a
+  // forwarder whose submission window closed and who never answered. A separate EVENT rather than
+  // a second target for RETURN/UNAPPROVE because `findTransition` matches on (from, on), so one
+  // event cannot have two destinations from the same source.
+  RETURN_EXPIRED: "return_expired",
   REQUEST_REQUOTE: "request_requote", // QUOTED/APPROVED → REQUOTED
 } as const;
 export type QuoteEvent = (typeof QuoteEvent)[keyof typeof QuoteEvent];
