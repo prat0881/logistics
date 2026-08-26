@@ -771,11 +771,24 @@ export function ContactList({ ownerPath, ownerId }: { ownerPath: string; ownerId
     queryFn: () => fetchJson<ContactDto[]>(`/api/${ownerPath}/${ownerId}/contacts`),
     enabled: Boolean(ownerId),
   });
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } =
-    useForm<ContactCreateInput>({ resolver: zodResolver(contactCreateSchema) });
+  const { register, handleSubmit, reset, setError, formState: { errors, isSubmitting } } =
+    useForm<ContactCreateInput>({
+      resolver: zodResolver(contactCreateSchema),
+      // POC_LEVELS lists PRIMARY first, so an uncontrolled select would submit PRIMARY for a
+      // user who never opens it — contradicting both the Zod default and the column default,
+      // and 409ing on the second contact anyone adds.
+      defaultValues: { pocLevel: PocLevel.NONE },
+    });
 
   async function onAdd(values: ContactCreateInput) {
-    await postJson(`/api/${ownerPath}/${ownerId}/contacts`, values);
+    try {
+      await postJson(`/api/${ownerPath}/${ownerId}/contacts`, values);
+    } catch (e) {
+      // The one-primary-per-parent rule surfaces here as a 409. Without this the form neither
+      // clears nor complains, and the server's message never reaches anyone.
+      setError("root", { message: e instanceof Error ? e.message : "Could not add this contact" });
+      return;
+    }
     reset();
     await qc.invalidateQueries({ queryKey: key });
   }
@@ -828,12 +841,15 @@ export function ContactList({ ownerPath, ownerId }: { ownerPath: string; ownerId
             {POC_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
           </select>
         </div>
+        {errors.root && <p role="alert" className="text-sm text-destructive">{errors.root.message}</p>}
         <Button type="submit" disabled={isSubmitting}>Add contact</Button>
       </form>
     </section>
   );
 }
 ```
+
+**This component needs its own test**, and not only for its own sake: Tasks 5 and 8 reuse it for the Freight Forwarder and Warehouse contact tables, so a defect here propagates three times. Rendering it through `ClientFormPage.test.tsx` does not count — that route has no `ownerId`, so the component hits its early return and nothing inside it runs. Create `apps/web/src/features/masters/ContactList.test.tsx` covering, at minimum: the `pocLevel` value actually submitted when the user never opens the select, and that a 409 from the server surfaces a visible message.
 
 In `ClientFormPage.tsx`, add inputs for `streetAddress`, `city` and `postalCode` following the existing `companyName` block exactly, and render `<ContactList ownerPath="clients" ownerId={id} />` below the form.
 
