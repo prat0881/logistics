@@ -13,6 +13,7 @@ import { ApiError, fetchJson, postJson } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ContactRow, type ActiveRowAction } from "./ContactRow";
 
 export function ContactList({ ownerPath, ownerId }: { ownerPath: string; ownerId?: string }) {
   const qc = useQueryClient();
@@ -23,6 +24,7 @@ export function ContactList({ ownerPath, ownerId }: { ownerPath: string; ownerId
     enabled: Boolean(ownerId),
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [active, setActive] = useState<ActiveRowAction>(null);
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } =
     useForm<ContactCreateInput>({
       resolver: zodResolver(contactCreateSchema),
@@ -40,6 +42,12 @@ export function ContactList({ ownerPath, ownerId }: { ownerPath: string; ownerId
     }
   }
 
+  async function onMutated() {
+    setSubmitError(null);
+    setActive(null);
+    await qc.invalidateQueries({ queryKey: key });
+  }
+
   if (!ownerId) {
     return <p className="text-sm text-muted-foreground">Save this record before adding contacts.</p>;
   }
@@ -47,50 +55,60 @@ export function ContactList({ ownerPath, ownerId }: { ownerPath: string; ownerId
   return (
     <section aria-label="Contacts" className="space-y-4">
       <h2 className="font-display text-lg font-semibold tracking-tight">Contacts</h2>
+      {submitError && <p role="alert" className="text-sm text-destructive">{submitError}</p>}
       <ul className="space-y-1">
         {contacts.data?.map((c) => (
-          <li key={c.id} className="text-sm">
-            {c.name} — {c.email} — {c.contactNo}
-            {c.pocLevel !== "NONE" && <span className="ml-2 text-muted-foreground">{c.pocLevel}</span>}
-          </li>
+          <ContactRow
+            key={c.id}
+            contact={c}
+            ownerPath={ownerPath}
+            ownerId={ownerId}
+            active={active}
+            onStartEdit={(id) => setActive({ type: "edit", id })}
+            onStartDelete={(id) => setActive({ type: "delete", id })}
+            onCancel={() => setActive(null)}
+            onMutated={onMutated}
+            onError={setSubmitError}
+          />
         ))}
       </ul>
-      <form onSubmit={handleSubmit(onAdd)} className="space-y-3" aria-label="Add contact">
-        <div className="space-y-1">
-          <Label htmlFor="contact-name">Name</Label>
-          <Input id="contact-name" {...register("name")} />
-          {errors.name && <p role="alert" className="text-sm text-destructive">{errors.name.message}</p>}
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="contact-email">Email</Label>
-          <Input id="contact-email" {...register("email")} />
-          {errors.email && <p role="alert" className="text-sm text-destructive">{errors.email.message}</p>}
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="contact-phone">Phone</Label>
-          <Input id="contact-phone" placeholder="+971501234567" {...register("contactNo")} />
-          {errors.contactNo && <p role="alert" className="text-sm text-destructive">{errors.contactNo.message}</p>}
-        </div>
-        <div className="flex gap-4">
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" {...register("whatsappAvailable")} /> WhatsApp
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" {...register("wechatAvailable")} /> WeChat
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" {...register("botimAvailable")} /> Botim
-          </label>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="contact-level">POC level</Label>
-          <select id="contact-level" className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" {...register("pocLevel")}>
-            {POC_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-          </select>
-        </div>
-        {submitError && <p role="alert" className="text-sm text-destructive">{submitError}</p>}
-        <Button type="submit" disabled={isSubmitting}>Add contact</Button>
-      </form>
+      {!active && (
+        <form onSubmit={handleSubmit(onAdd)} className="space-y-3" aria-label="Add contact">
+          <div className="space-y-1">
+            <Label htmlFor="contact-name">Name</Label>
+            <Input id="contact-name" {...register("name")} />
+            {errors.name && <p role="alert" className="text-sm text-destructive">{errors.name.message}</p>}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="contact-email">Email</Label>
+            <Input id="contact-email" {...register("email")} />
+            {errors.email && <p role="alert" className="text-sm text-destructive">{errors.email.message}</p>}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="contact-phone">Phone</Label>
+            <Input id="contact-phone" placeholder="+971501234567" {...register("contactNo")} />
+            {errors.contactNo && <p role="alert" className="text-sm text-destructive">{errors.contactNo.message}</p>}
+          </div>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" {...register("whatsappAvailable")} /> WhatsApp
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" {...register("wechatAvailable")} /> WeChat
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" {...register("botimAvailable")} /> Botim
+            </label>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="contact-level">POC level</Label>
+            <select id="contact-level" className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm" {...register("pocLevel")}>
+              {POC_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </div>
+          <Button type="submit" disabled={isSubmitting}>Add contact</Button>
+        </form>
+      )}
     </section>
   );
 }
