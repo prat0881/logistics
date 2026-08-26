@@ -34,7 +34,7 @@ describe("masters schemas", () => {
       }).success,
     ).toBe(true);
   });
-  it("exposes the enum value lists", () => {
+  it("exposes the status value list", () => {
     expect(MASTER_STATUSES).toEqual(["ACTIVE", "INACTIVE"]);
   });
 });
