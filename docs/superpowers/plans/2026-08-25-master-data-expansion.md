@@ -1096,10 +1096,15 @@ Add contact routes to `freight-forwarders.controller.ts` mirroring `clients.cont
 
 ```ts
   /**
-   * Keeps the four columns rfq.service.ts snapshots (pic, contactNumber, email, whLocation)
-   * aligned with the primary contact. Phase 1 of the parallel change — the RFQ payload keeps
-   * reading columns while the contact table becomes the source of truth. Retired in the
-   * Stage-4 pass; see the design doc §2.2.
+   * Rewrites the three columns rfq.service.ts snapshots from a contact — pic, contactNumber
+   * and email. It does NOT touch whLocation, which that service also reads: whLocation tracks
+   * warehouses and has no counterpart on the contact table, so Task 14 wires it to the
+   * warehouse relation instead.
+   *
+   * Phase 1 of the parallel change: the RFQ payload keeps reading columns while the contact
+   * table becomes the source of truth. This is the ONLY writer of those three columns —
+   * `update()` must not write them, or the two writers silently overwrite each other.
+   * Retired in the Stage-4 pass; see the design doc §2.2.
    */
   private async syncPrimaryContactColumns(tx: Prisma.TransactionClient, ffId: string) {
     const primary = await tx.freightForwarderContact.findFirst({
@@ -1153,7 +1158,7 @@ git commit -m "feat(masters): FF contact table with snapshot-column sync, enum p
 - Modify: `packages/shared/src/masters/index.ts`
 
 **Interfaces:**
-- Produces: `warehouseCreateSchema` (with `superRefine` for the type-conditional fields), `WarehouseDto`, `WAREHOUSE_TYPES`, `CAPACITY_UNITS`, `HANDLING_UNITS`, `STORAGE_UNITS`, `WAREHOUSE_CAPABILITIES`.
+- Produces: `warehouseCreateSchema` (with `superRefine` for the type-conditional fields), `WarehouseDto`, `WAREHOUSE_MASTER_TYPES`, `CAPACITY_UNITS`, `HANDLING_UNITS`, `STORAGE_UNITS`, `WAREHOUSE_CAPABILITIES`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1214,11 +1219,11 @@ import { z } from "zod";
 import { CURRENCY_CODES } from "../reference";
 import { MASTER_STATUSES, type MasterStatus, type ContactDto } from "./contacts";
 
-export const WAREHOUSE_TYPES = ["OWNED", "CONTRACTED", "CLIENT", "FF"] as const;
-export type WarehouseType = (typeof WAREHOUSE_TYPES)[number];
+export const WAREHOUSE_MASTER_TYPES = ["OWNED", "CONTRACTED", "CLIENT", "FF"] as const;
+export type WarehouseMasterType = (typeof WAREHOUSE_MASTER_TYPES)[number];
 
 /** Contract and rate fields apply only to warehouses the organisation owns or contracts. */
-export const CONTRACTED_TYPES: readonly WarehouseType[] = ["OWNED", "CONTRACTED"];
+export const CONTRACTED_TYPES: readonly WarehouseMasterType[] = ["OWNED", "CONTRACTED"];
 
 export const CAPACITY_UNITS = ["CBM", "PALLETS", "SQ_FT", "MT"] as const;
 export const HANDLING_UNITS = ["PER_PALLET", "PER_CBM", "PER_MT", "PER_SHIPMENT", "PER_PACKAGE"] as const;
@@ -1233,7 +1238,7 @@ export const WAREHOUSE_CAPABILITIES = [
 
 const baseWarehouse = z.object({
   name: z.string().min(1).max(200),
-  type: z.enum(WAREHOUSE_TYPES),
+  type: z.enum(WAREHOUSE_MASTER_TYPES),
   streetAddress: z.string().min(1).max(300),
   country: z.string().min(1).max(120),
   city: z.string().min(1).max(120),
@@ -1303,7 +1308,7 @@ export type WarehouseVehicleInput = z.infer<typeof warehouseVehicleSchema>;
 export interface WarehouseDto {
   id: string;
   name: string;
-  type: WarehouseType;
+  type: WarehouseMasterType;
   freightForwarderId: string | null;
   clientId: string | null;
   streetAddress: string;
