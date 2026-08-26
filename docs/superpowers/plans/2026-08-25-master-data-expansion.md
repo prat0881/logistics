@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **No file under `apps/api/src/modules/{rfq,ff-portal,quotes,legs,changes,status}`, `apps/web/src/features/{ff-portal,rfq-workspace,query-wizard}`, or `packages/shared/src/{charge-config,quote,quote-engine,quote-seed,ff-portal,rfq}.ts` may be modified.** If a task appears to require it, stop and report — that work belongs to the later Stage-4 pass.
-- **Existing test files may not be edited.** New test files only. An existing test that fails means a regression, not an out-of-date test.
+- **Existing test files are edited only to follow a contract this build deliberately changes.** The default remains: a failing pre-existing test is a regression, and you fix your change, not the test. The exception is narrow and has three conditions — the assertion encodes a contract a decision in §3 explicitly changes (D8, D9, the mandatory-field decisions); **only** those assertions change, nothing else in the file; and the edit is recorded in the ledger with the decision that justifies it. Anything failing for any other reason is a regression. Where a task knows in advance which assertions it will invalidate, they are named in that task's steps.
 - `packages/shared` is consumed as a **built** package. After any edit under `packages/shared/src`, run `pnpm --filter @svyft/shared build` before typechecking or testing api/web.
 - **vitest does not type-check.** Run `pnpm -r run typecheck` at the end of every task.
 - **`prisma migrate dev` does not work in this repo** — it hard-errors non-interactively even with `--create-only`. Migrations are hand-written; see the recipe in Task 2, Step 3.
@@ -2639,7 +2639,7 @@ git commit -m "feat(masters): assign warehouses to forwarders and clients"
 ## Done when
 
 - `pnpm run ci` is green.
-- Every pre-existing test file is byte-identical to its state at `b875291` — `git diff --stat b875291 -- '**/*.test.ts' '**/*.test.tsx' 'apps/api/test'` shows only added files.
+- Every edit to a pre-existing test file is justified by a named decision in §3 and recorded in the ledger. `git diff b875291 -- '**/*.test.ts' '**/*.test.tsx' 'apps/api/test'` shows added files, plus only those assertions.
 - `git diff --name-only b875291` contains no path under `apps/api/src/modules/{rfq,ff-portal,quotes,legs,changes,status}`, `apps/web/src/features/{ff-portal,rfq-workspace,query-wizard}`, or the six protected files in `packages/shared/src`.
 - `charge-catalogue-snapshot.e2e-spec.ts` passes: an Air leg with nothing selected resolves to exactly the eleven definitions it resolved to before this build.
 - The backfill log at the end of this document lists every vessel given a generated IMO.
