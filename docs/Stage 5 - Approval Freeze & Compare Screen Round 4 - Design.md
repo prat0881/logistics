@@ -158,6 +158,16 @@ field edits, not only the compare-screen actions.
 The FF portal needs no exception: a locked query has every leg `APPROVED`, and D5 already closes an
 approved leg's portal.
 
+**CORRECTION, found during Task 5 (2026-08-27).** This section originally argued that the
+`QUOTING_CLIENT` teardown in `award-change-order.listener.ts` "must stay — it fires from a field
+edit, which is a different entry point". That reasoning is **wrong**: a field edit is precisely what
+D6 now refuses on a locked query, so the change-order cascade can no longer reach a query with a
+frozen snapshot, and the listener's `awardSnapshot != null` teardown branch is unreachable. It is
+KEPT anyway — deleting it is a behaviour change nobody has ruled on, and it costs nothing standing —
+but it is now dead code with no e2e coverage, and no comment anywhere may claim it fires. Recorded
+so a later reader does not "restore" reachability by relaxing the lock, and so the dead branch is
+removed deliberately rather than discovered.
+
 Consequences, both accepted:
 
 - The `QUOTING_CLIENT` teardown inside `negotiation.service.ts` (built by S5.9's whole-branch review)
