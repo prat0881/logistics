@@ -665,8 +665,8 @@ export class AwardService {
   }
 
   /**
-   * S5.9.5 (design D2) — reject() accepts a decision in EITHER live state, and reports which one it
-   * found so the caller can pick the right reversal fires.
+   * S5.9.5 (design D2) — reject() accepts a decision in EITHER live state. This method's whole job
+   * is the ONE thing the two states differ on: whether four-eyes applies.
    *
    * - PENDING_APPROVAL: the original mode. Four-eyes applies — the user who SENT it may not decide it.
    * - APPROVED: the reversal mode. Four-eyes deliberately does NOT apply: undoing your own mistake
@@ -677,12 +677,11 @@ export class AwardService {
    * Anything else (DRAFT, or the REJECTED literal the enum allows but nothing ever persists) has no
    * live decision to act on and still 409s.
    *
-   * Returns only the decision, NOT which of the two modes it matched — deliberately, and against the
-   * task brief's own signature. The only thing the mode was to be used for is picking the reversal
-   * fires, and reject() picks those from the LEG and QUOTE rows' own statuses instead; see the long
-   * note on the leg guard in reject() for the concurrent approve+reject wedge that choice removes.
-   * The distinction that survives here is the one this method genuinely owns: whether four-eyes
-   * applies.
+   * Returns only the decision, NOT which of the two states it matched — deliberately, and against
+   * the task brief's own signature. The only thing that "mode" was to be used for is picking the
+   * reversal fires, and reject() picks those from the LEG and QUOTE rows' own statuses instead; see
+   * the long note on the leg guard in reject() for the concurrent approve+reject wedge that choice
+   * removes.
    *
    * Same `tx` contract as `requireDecidable` above — called from inside reject()'s transaction, after
    * lockLeg has taken this leg's row lock, so the read is against that transaction's own snapshot.
@@ -884,11 +883,17 @@ export class AwardService {
   //   * APPROVED — the reversal mode, and the ONLY way to undo an approval (D1 removes every other
   //     action from an approved leg). Four-eyes deliberately does not apply here; see
   //     `requireRejectable`.
-  // The two modes differ ONLY in which status each of the three rows is expected to be sitting in
-  // and which quote event walks it back (`expectedQuoteStatus`/`expectedLegStatus`/`quoteEvent`
-  // below). Everything else — the decision write to DRAFT, the REJECT event, the leg's
-  // RETURN_FULL/RETURN_PARTIAL choice, the Q5 tolerance, the executive notification — is shared, so
-  // the two modes cannot disagree about what a rejection means.
+  // The mode decides exactly ONE thing: whether four-eyes applies. Everything after
+  // `requireRejectable` returns is common to both — the decision write to DRAFT, the REJECT event,
+  // the two Q5 tolerance guards, the leg's RETURN_FULL/RETURN_PARTIAL choice, the quote event, the
+  // executive notification — so the two modes cannot disagree about what a rejection means.
+  //
+  // In particular the reversal FIRES are not mode-derived. Both guards below ask the same
+  // mode-independent question — is this row sitting on a status a reversal edge starts from
+  // (`LEG_REVERSIBLE_FROM` / `QUOTE_REVERSIBLE_FROM`, identical for both modes) — and the quote
+  // event is picked from the QUOTE ROW's own status, not the decision's. The long note on the leg
+  // guard below records the concurrent approve+reject wedge that made a mode-derived version wrong,
+  // and is the authority if this paragraph and that one ever drift apart.
   //
   // S5.9 final whole-branch review, CRITICAL 1 — that choice originally came from
   // `legRollupTarget` ALONE, with `null` (and everything else) falling through to RETURN_PARTIAL.
@@ -1109,13 +1114,17 @@ export class AwardService {
     // otherwise trigger off this quote's status change; the
     // leg's own RETURN_FULL/RETURN_PARTIAL fire right after is what actually moves it, using the
     // `returnToFullyQuoted` answer already computed above. The one path where that is NOT true is
-    // the `legNeedsReturn === false` skip below: there the leg is not PENDING_APPROVAL, so it is not
-    // frozen and a quote fire here would let `LegQuoteProjector` recompute it — which is fine
-    // precisely because this method then fires nothing at the leg itself, so the projector's answer
-    // is the only one, and no half-applied pair of statuses can result.
+    // the `legNeedsReturn === false` skip below: that branch is reached only when the leg is on
+    // NEITHER review status (`LEG_REVERSIBLE_FROM`), and `ROLLUP_FROZEN` is exactly those two
+    // statuses (leg-quote.projector.ts) — so on that branch, and only because the branch excludes
+    // both of them, the leg is unfrozen and a quote fire here would let `LegQuoteProjector`
+    // recompute it. Which is fine precisely because this method then fires nothing at the leg
+    // itself, so the projector's answer is the only one, and no half-applied pair of statuses can
+    // result. (Do not read this as "not PENDING_APPROVAL ⇒ not frozen" — an APPROVED leg IS frozen;
+    // it simply cannot reach this branch.)
     //
-    // Q5 — `quoteNeedsReturn` is false whenever the shortlisted quote had already drifted off the
-    // status this mode expects (or vanished) by guard time; firing a return event against it here
+    // Q5 — `quoteNeedsReturn` is false whenever the shortlisted quote had already drifted off both
+    // review statuses (or vanished) by guard time; firing a return event against it here
     // would find no matching edge and throw `IllegalTransitionError` AFTER the decision above has
     // already committed to DRAFT, which is precisely the half-committed hazard this skip exists to
     // avoid. `quoteEvent` was resolved inside that same locked transaction — see there.
@@ -1128,9 +1137,13 @@ export class AwardService {
     }
 
     // Final review IMPORTANT 1 — same shape, same reason as the quote skip above: firing a return
-    // edge at a leg that is not PENDING_APPROVAL finds no matching transition and throws
+    // edge at a leg that is on NEITHER review status finds no matching transition and throws
     // `IllegalTransitionError` AFTER the decision has already committed to DRAFT, turning a
     // rejection that really happened into a 500 and swallowing the notification below with it.
+    // CORRECTED (S5.9.5 review round 1, IMPORTANT 2) — this used to say "a leg that is not
+    // PENDING_APPROVAL", which Step 1 falsified: RETURN_FULL/RETURN_PARTIAL now start at APPROVED
+    // too (award.module.ts's leg machine), so an APPROVED leg has exactly such a transition and is
+    // fired at, not skipped. `LEG_REVERSIBLE_FROM` is the set that decides it.
     if (legNeedsReturn) {
       await this.status.fire(
         "leg",
