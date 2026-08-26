@@ -146,6 +146,15 @@ function seedQuoteDraft(
 export const LEG_APPROVED_REASON =
   "This leg is no longer open for quoting — a forwarder has been selected.";
 
+/** The quote-status refusal, shared VERBATIM by `submit` and `saveDraft` so the two cannot drift
+ *  apart on which statuses accept a write (they must accept exactly the same set — see
+ *  `saveDraft`). One string, one vocabulary. */
+const QUOTE_NOT_OPEN_REASON = "This quote has already been submitted or is not open";
+
+/** The only two quote statuses a forwarder may write against: their RFQ is open, or they have been
+ *  asked to revise. Mirrors the portal UI, which renders every other status read-only. */
+const WRITABLE_QUOTE_STATUSES: readonly string[] = ["RFQ_SENT", "REQUOTED"];
+
 @Injectable()
 export class FfPortalService {
   private readonly logger = new Logger(FfPortalService.name);
@@ -316,19 +325,35 @@ export class FfPortalService {
 
   async saveDraft(scope: FfScope, legId: string, draft: QuoteDraft): Promise<{ savedAt: string }> {
     const q = this.quoteForLeg(scope, legId);
-    // ── leg-closed guard (S5.9.5 D5) — the brief for this task specified `submit` only; this
-    // second call site is a deliberate widening, for two reasons. (1) The portal renders a closed
-    // leg read-only, so the only requests that reach here are a page opened before the approval or
-    // a hand-crafted one — neither is a draft anyone should keep. (2) This write is not confined to
-    // the closed leg: alongside `Quote.draftJson` it upserts `Rfq.currency` and
-    // `Rfq.quoteValidityUntil`, which are RFQ-level and therefore feed every OTHER leg's DTO and
-    // submit basis on this query. Leaving it open would keep a query whose legs are all APPROVED
-    // writable through the portal — the exact thing S5.9.5 D6's query-wide lock exempts the portal
-    // from on the grounds that D5 has already closed it.
-    // NOTE: this guard is leg-level ONLY. It adds no quote-STATUS check, so it does not touch the
-    // registered open issue that `saveDraft` writes `draftJson` with no status guard at all.
+    // ── write guards (S5.9.5 D5) — `saveDraft` accepts EXACTLY what `submit` accepts, in the same
+    // order. The brief for this task specified `submit` only; guarding this second call site too
+    // is a deliberate widening, because this write is not confined to the leg it names: alongside
+    // `Quote.draftJson` it upserts `Rfq.currency` and `Rfq.quoteValidityUntil`, all three of which
+    // are read LIVE by code that runs AFTER a query is locked —
+    //   * `quotation.service.ts`'s `buildInitialDraft` prices the client quotation's cost lines and
+    //     `validUntil` off the WINNING quote's `draftJson`, and it runs lazily on the first
+    //     `GET queries/:id/quotation`, i.e. after `generateClientQuote` froze `awardSnapshot`; and
+    //   * `comparison.service.ts` reads `rfq.currency` / `rfq.quoteValidityUntil` live on every
+    //     read of the compare grid.
+    // The leg-closed guard alone does NOT cover that: `generateClientQuote` requires every leg to be
+    // APPROVED with a shortlisted winner (award.service.ts's A6), so a locked query's every leg has
+    // a winner — and `closedReasons` deliberately excludes the winner's own leg. Without the status
+    // check below, that winner could still edit the numbers their client quotation is priced from.
+    // Together the two guards are what make S5.9.5 D6's blanket FF-portal exemption from the
+    // query-wide lock safe.
+    //
+    // Nothing legitimate loses anything: the portal renders every non-RFQ_SENT/REQUOTED leg
+    // read-only and has no autosave timer, so only a stale page or a hand-crafted request lands here.
+    //
+    // SCOPE, precisely: this admits `REQUOTED`, exactly as `submit` does — a forwarder asked to
+    // revise must be able to type. So it does NOT touch the registered open issue that `draftJson`
+    // on a REQUOTED quote is the forwarder's last SAVED state rather than provably their submitted
+    // price; that issue stands unchanged.
     const closedReason = (await this.closedReasons([q])).get(legId);
     if (closedReason) throw new ConflictException(closedReason);
+    if (!WRITABLE_QUOTE_STATUSES.includes(q.status)) {
+      throw new ConflictException(QUOTE_NOT_OPEN_REASON);
+    }
     const now = new Date();
     await this.prisma.$transaction([
       this.prisma.quote.update({
@@ -374,8 +399,8 @@ export class FfPortalService {
     const closedReason = (await this.closedReasons([q])).get(legId);
     if (closedReason) throw new ConflictException(closedReason);
 
-    if (q.status !== "RFQ_SENT" && q.status !== "REQUOTED") {
-      throw new ConflictException("This quote has already been submitted or is not open");
+    if (!WRITABLE_QUOTE_STATUSES.includes(q.status)) {
+      throw new ConflictException(QUOTE_NOT_OPEN_REASON);
     }
 
     const manifest = q.manifestSnapshot as ManifestSnapshot;

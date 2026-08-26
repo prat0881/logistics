@@ -255,17 +255,111 @@ describe("LegSection leg-closed branch (S5.9.5 D5)", () => {
     expect(screen.queryByText(/award/i)).not.toBeInTheDocument();
   });
 
-  it("outranks the QUOTED branch — a forwarder can be closed AND have already quoted", () => {
+  it("keeps a losing forwarder's OWN submitted prices, with the reason above them", () => {
+    // DELIBERATELY REVERSED in review round 1 (MINOR 3). This assertion used to be
+    // `queryByText(/quote submitted/i)).not.toBeInTheDocument()` — i.e. the closed branch REPLACED
+    // the QUOTED one. That was wrong: a forwarder who submitted and then lost still owns their own
+    // submitted prices, which are their commercial record and no competitor's information. The
+    // brief's "above both" ordering is what is actually required, and it is what is asserted now.
     renderLeg({ ...quotedLeg, closedReason: CLOSED } as unknown as FfPortalLegDto);
-    expect(screen.getByText(CLOSED)).toBeInTheDocument();
-    // The QUOTED branch's own summary heading is gone — this branch replaced it, not the reverse.
-    expect(screen.queryByText(/quote submitted/i)).not.toBeInTheDocument();
+    const reason = screen.getByText(CLOSED);
+    const summary = screen.getByText(/quote submitted/i);
+    expect(summary).toBeInTheDocument();
+    expect(reason.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Visible, but not actionable: nothing offers to change or re-submit it.
+    expect(screen.queryByRole("button", { name: /submit quote/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save draft/i })).not.toBeInTheDocument();
+  });
+
+  it("the collapsed header does not contradict the body it hides", () => {
+    // Review round 1, MINOR 2 — a closed loser's own quote is still RFQ_SENT, whose badge reads
+    // "Open for quoting". Collapsed, that was the only thing on screen, and it said the opposite
+    // of the body one click away.
+    const closed = {
+      ...leg,
+      status: "RFQ_SENT",
+      closedReason: CLOSED,
+    } as unknown as FfPortalLegDto;
+    const { unmount } = render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={closed}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={false}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    expect(screen.queryByText("Open for quoting")).not.toBeInTheDocument();
+    expect(screen.getByText("Closed for quoting")).toBeInTheDocument();
+    // Still neutral: the badge says nothing about who was selected or that anything was awarded.
+    expect(screen.queryByText(/award/i)).not.toBeInTheDocument();
+    unmount();
+
+    // Control: an ordinary open leg keeps its original badge.
+    renderLeg({ ...leg, status: "RFQ_SENT", closedReason: null } as unknown as FfPortalLegDto);
+    expect(screen.getByText("Open for quoting")).toBeInTheDocument();
   });
 
   it("control: closedReason null leaves the editable form exactly as it was", () => {
     renderLeg({ ...leg, closedReason: null } as unknown as FfPortalLegDto);
     expect(screen.queryByText(CLOSED)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /submit quote/i })).toBeInTheDocument();
+  });
+});
+
+describe("LegSection save-draft failure surfacing (review round 1, MINOR 4)", () => {
+  it("shows the server's refusal when Save draft fails, instead of failing silently", async () => {
+    // Before round 1 `onSaveDraft` passed only an `onSuccess`, so any refused save — including
+    // S5.9.5 D5's new closed-leg 409 — produced nothing on screen at all; the only cue was a
+    // "Saved ✓" timestamp that never appeared.
+    const message = "This leg is no longer open for quoting — a forwarder has been selected.";
+    const fx = mockFetch((_url, init) =>
+      init?.method === "PATCH" ? { status: 409, body: { message } } : { status: 200, body: {} },
+    );
+    vi.stubGlobal("fetch", fx);
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={leg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={true}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /save draft/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  });
+
+  it("control: a successful save shows no error", async () => {
+    const fx = mockFetch(() => ({ status: 200, body: {} }));
+    vi.stubGlobal("fetch", fx);
+    render(
+      wrap(
+        <LegSection
+          token="tok"
+          rfq={rfq}
+          leg={leg}
+          currency="USD"
+          quoteValidityUntil={rfq.quoteValidityUntil}
+          readOnly={false}
+          open={true}
+          onOpen={() => {}}
+        />,
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /save draft/i }));
+    expect(await screen.findByText(/saved/i)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
 

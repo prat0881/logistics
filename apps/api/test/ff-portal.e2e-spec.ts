@@ -25,6 +25,11 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   const cookie = (role: Role) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: `u-${role}`, role, tenantId: null })}`;
 
+  // S5.9.5 Task 7 — the award endpoints stamp `actorId`/`sentByUserId`/`decidedByUserId`, all
+  // `@db.Uuid`; `cookie()`'s `sub: "u-ADMINISTRATOR"` 500s on Prisma P2023 against those columns.
+  const cookieFor = (userId: string, role: Role) =>
+    `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role, tenantId: null })}`;
+
   // Self-clean the comms rows too (Task 11): ScheduledEvent/MessageLog reference entityId
   // as a plain string, not a Prisma relation, so they survive a Query/Rfq delete.
   // Notification.queryId IS a real relation (onDelete: Cascade), so those cascade for free.
@@ -1288,12 +1293,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   }> {
     const admin = cookie(Role.ADMINISTRATOR);
     const seq = ++fixtureSeq;
-    // The award endpoints stamp `actorId`/`sentByUserId`/`decidedByUserId`, all `@db.Uuid` — a
-    // literal like "u-MANAGER" (this file's own `cookie()` helper) 500s on Prisma P2023 rather
-    // than doing the thing under test. Sender and approver are deliberately different users:
-    // approve() enforces four-eyes.
-    const cookieFor = (userId: string, role: Role) =>
-      `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: userId, role, tenantId: null })}`;
+    // Sender and approver are deliberately different users: approve() enforces four-eyes.
     const senderId = randomUUID();
     const approverId = randomUUID();
 
@@ -1559,5 +1559,192 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .send({ version: winner.version })
       .expect(409);
     expect(res.body.message).toBe("This quote has already been submitted or is not open");
+  });
+
+  // ── S5.9.5 (D5, review round 1 / IMPORTANT 1): a LOCKED query's winner cannot edit the numbers
+  //    their client quotation is priced from ────────────────────────────────────────────────────
+  //
+  // The leg-closed guard alone does not cover this. `generateClientQuote` refuses unless EVERY leg
+  // is APPROVED with a shortlisted winner (A6), so a locked query's every leg HAS a winner — and
+  // `closedReasons` deliberately excludes the winner's own leg (S5.9 D9). Their `saveDraft` used to
+  // pass `quoteForLeg` (leg membership only) and write `Quote.draftJson` +
+  // `Rfq.currency`/`quoteValidityUntil`, all of which are read LIVE after the freeze:
+  // `quotation.service.ts`'s `buildInitialDraft` prices the client quotation's cost lines and
+  // `validUntil` off the winner's `draftJson` on the FIRST `GET queries/:id/quotation`, which
+  // happens after `awardSnapshot` was frozen. The quote-status guard is what closes that.
+  //
+  // One leg, two forwarders, so BOTH refusal paths are on the same fixture: ffA (the winner,
+  // APPROVED → status guard) and ffB (a loser still RFQ_SENT → leg-closed guard).
+  async function lockedQueryFixture(): Promise<{
+    queryId: string;
+    tokenA: string;
+    tokenB: string;
+    legId: string;
+  }> {
+    const admin = cookie(Role.ADMINISTRATOR);
+    const seq = ++fixtureSeq;
+    const senderId = randomUUID();
+    const approverId = randomUUID();
+
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-LOCKED-${seq}`, incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", country: "AE" },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: `L-${PREFIX}-LK-${seq}`,
+        mode: "AIR",
+        status: "READY_FOR_RFQ",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+        readyDate: new Date(),
+        targetDelivery: new Date(Date.now() + 86400000),
+        warehouseHandlingIncluded: false,
+      },
+    });
+    const { packageIds } = await createCargoWithPackages(prisma, {
+      queryId: query.id,
+      packages: [{ packageNo: `PO-${PREFIX}-LK-${seq}`, dimL: 10, dimW: 20, dimH: 30, grossWt: 5 }],
+    });
+    await assignPackagesToLeg(prisma, leg.id, packageIds);
+
+    const mkFf = (suffix: string) =>
+      prisma.freightForwarder.create({
+        data: {
+          freightForwarderCode: `FF-${PREFIX}-${suffix}-${seq}`,
+          companyName: `FF ${PREFIX} ${suffix} ${seq}`,
+          pic: "P",
+          contactNumber: "+1000000000",
+          email: `ff-${PREFIX.toLowerCase()}-${suffix.toLowerCase()}-${seq}@e2e.test`,
+          availableCountries: ["CN", "AE"],
+          modes: ["AIR"],
+          handleDg: false,
+          defaultCurrency: "USD",
+        },
+      });
+    const ffA = await mkFf("LKA");
+    const ffB = await mkFf("LKB");
+
+    await request(app.getHttpServer())
+      .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
+      .set("Cookie", admin)
+      .send({ ffIds: [ffA.id, ffB.id] })
+      .expect(200);
+    const dist = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/distribute`)
+      .set("Cookie", admin)
+      .send({})
+      .expect(201);
+    const entryFor = (ffId: string) =>
+      dist.body.rfqs.find((r: { freightForwarderId: string }) => r.freightForwarderId === ffId);
+    const tokenA = entryFor(ffA.id).accessToken as string;
+    const tokenB = entryFor(ffB.id).accessToken as string;
+
+    // ffA prices and submits; ffB never answers.
+    const gotA = await request(app.getHttpServer()).get(`/api/ff/rfq/${tokenA}`).expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${tokenA}/quotes/${leg.id}`)
+      .send(fullValidDraft(leg.id, gotA.body))
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${tokenA}/quotes/${leg.id}/submit`)
+      .send({ version: gotA.body.legs[0].version })
+      .expect(201);
+
+    // A3 needs ffB's window closed before the send; restored afterwards so the refusals under test
+    // are the guards and not an incidental deadline effect.
+    const rfqB = await prisma.rfq.findFirstOrThrow({
+      where: { queryId: query.id, freightForwarderId: ffB.id },
+      select: { id: true, submissionDeadline: true },
+    });
+    await prisma.rfq.update({
+      where: { id: rfqB.id },
+      data: { submissionDeadline: new Date(Date.now() - 60_000) },
+    });
+
+    const cmp = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookieFor(senderId, Role.MANAGER))
+      .expect(200);
+    const offer = cmp.body.legs
+      .find((l: { legId: string }) => l.legId === leg.id)
+      .offers.find(
+        (o: { freightForwarderId: string; priced: boolean }) =>
+          o.freightForwarderId === ffA.id && o.priced,
+      );
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(senderId, Role.MANAGER))
+      .send({ quoteId: offer.quoteId, variant: offer.variant, overrideReason: "e2e fixture" })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/approve`)
+      .set("Cookie", cookieFor(approverId, Role.MANAGER))
+      .expect(200);
+
+    // THE LOCK: every leg APPROVED → generate freezes `Query.awardSnapshot` (D6's "locked").
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(approverId, Role.MANAGER))
+      .expect(200);
+    const locked = await prisma.query.findUniqueOrThrow({
+      where: { id: query.id },
+      select: { awardSnapshot: true },
+    });
+    expect(locked.awardSnapshot).not.toBeNull(); // the fixture really is locked
+
+    await prisma.rfq.update({
+      where: { id: rfqB.id },
+      data: { submissionDeadline: rfqB.submissionDeadline },
+    });
+
+    return { queryId: query.id, tokenA, tokenB, legId: leg.id };
+  }
+
+  it("S5.9.5 (D5) — on a LOCKED query the winning forwarder cannot save a draft either, while an open leg elsewhere still can", async () => {
+    const { tokenA, tokenB, legId } = await lockedQueryFixture();
+
+    const gotA = await request(app.getHttpServer()).get(`/api/ff/rfq/${tokenA}`).expect(200);
+    expect(gotA.body.legs[0].status).toBe("APPROVED");
+    expect(gotA.body.legs[0].closedReason).toBeNull(); // D9: the winner is still told nothing
+
+    // The winner's own PATCH — the one `closedReasons` deliberately lets through — is refused by
+    // the quote-status guard. Without it they could rewrite the very draftJson the client
+    // quotation is priced from, after the snapshot was frozen.
+    const winnerSave = await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${tokenA}/quotes/${legId}`)
+      .send(fullValidDraft(legId, gotA.body))
+      .expect(409);
+    expect(winnerSave.body.message).toBe("This quote has already been submitted or is not open");
+
+    // The draftJson the client quotation prices from is untouched.
+    const winnerQuote = await prisma.quote.findFirstOrThrow({
+      where: { legId, status: "APPROVED" },
+      select: { draftJson: true },
+    });
+    expect((winnerQuote.draftJson as { chargedWeightKg: number }).chargedWeightKg).toBe(125);
+
+    // The loser on the same locked leg is refused too — by the OTHER guard, with the other message.
+    const gotB = await request(app.getHttpServer()).get(`/api/ff/rfq/${tokenB}`).expect(200);
+    const loserSave = await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${tokenB}/quotes/${legId}`)
+      .send(fullValidDraft(legId, gotB.body))
+      .expect(409);
+    expect(loserSave.body.message).toMatch(/no longer open for quoting/i);
+
+    // POSITIVE CONTROL, in the same test: an ordinary RFQ_SENT forwarder on an open, unlocked
+    // leg still saves. A guard that refused every save would pass everything above and fail here.
+    const open = await distributeFixture();
+    const gotOpen = await request(app.getHttpServer()).get(`/api/ff/rfq/${open.token}`).expect(200);
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${open.token}/quotes/${open.legId}`)
+      .send(fullValidDraft(open.legId, gotOpen.body))
+      .expect(200);
   });
 });
