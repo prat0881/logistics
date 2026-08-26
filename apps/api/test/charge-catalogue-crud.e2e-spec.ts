@@ -47,7 +47,19 @@ describe("Charge catalogue write API (e2e)", () => {
     await prisma.legChargeLineSelection.deleteMany({ where: { leg: { legCode: "L1" } } });
     await prisma.leg.deleteMany({ where: { legCode: "L1" } });
     await prisma.query.deleteMany({ where: { queryCode: "Q-CATALOGUE-E2E" } });
-    await prisma.chargeLineDefinition.deleteMany({ where: { label: { startsWith: "Catalogue E2E" } } });
+    // By key AND by label. The rename test below PATCHes a row's label to "wharfage charges", so
+    // a label-only cleanup leaves that row behind whenever the test fails part-way — and an
+    // orphan SEA/DESTINATION/STANDARD row breaks both the POST in this suite (duplicate key on
+    // the next run) and charge-catalogue.e2e-spec.ts's per-mode role counts. The key is minted at
+    // create and never changes, so it is the reliable handle.
+    await prisma.chargeLineDefinition.deleteMany({
+      where: {
+        OR: [
+          { label: { startsWith: "Catalogue E2E" } },
+          { key: { startsWith: "SEA_DEST_CATALOGUE_E2E" } },
+        ],
+      },
+    });
     await app.close(); // mandatory — prevents cron hang
   });
 
@@ -84,6 +96,43 @@ describe("Charge catalogue write API (e2e)", () => {
     expect(
       await prisma.chargeLineDefinition.findUnique({ where: { key: "SEA_DEST_WHARFAGE_CHARGES" } }),
     ).toBeNull();
+  });
+
+  it("rejects renaming a line onto an existing line's label (the same guard create() applies)", async () => {
+    // The near-duplicate create() refuses was reachable in one PATCH: the update schema permits
+    // `label`, and `key` is minted once at create and never re-derived — so renaming a row to
+    // "Wharfage Charges" produced exactly the pair of rows create() exists to prevent, with the
+    // key unique constraint no help at all since neither key changed.
+    const created = await request(app.getHttpServer())
+      .post(BASE).set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ ...line, label: "Catalogue E2E Renamer" }).expect(201);
+
+    const dup = await request(app.getHttpServer())
+      .patch(`${BASE}/${created.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ label: "wharfage charges" }) // different case, same SEA/DESTINATION label
+      .expect(409);
+    expect(dup.body.message).toMatch(/already exists/i);
+    expect(dup.body.message).toContain("SEA_DEST_WHARFAGE");
+
+    // The refused PATCH must not have landed.
+    const row = await prisma.chargeLineDefinition.findUnique({ where: { id: created.body.id } });
+    expect(row?.label).toBe("Catalogue E2E Renamer");
+  });
+
+  it("still allows a PATCH that re-sends the row's own current label", async () => {
+    // The duplicate check excludes the row's own id, so a no-op or partial edit that happens to
+    // carry the unchanged label is not mistaken for a collision with itself.
+    const created = await request(app.getHttpServer())
+      .post(BASE).set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ ...line, label: "Catalogue E2E Self Rename" }).expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`${BASE}/${created.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ label: "Catalogue E2E Self Rename", sortOrder: 777 })
+      .expect(200);
+
+    const row = await prisma.chargeLineDefinition.findUnique({ where: { id: created.body.id } });
+    expect(row?.sortOrder).toBe(777);
   });
 
   it("refuses to change category after creation", async () => {

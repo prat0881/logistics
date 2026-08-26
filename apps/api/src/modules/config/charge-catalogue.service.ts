@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
   chargeLineKey,
@@ -95,6 +95,29 @@ export class ChargeCatalogueService {
   }
 
   async update(id: string, input: ChargeLineUpdateInput, user?: RequestUser) {
+    // Same near-duplicate hazard create() guards against, reachable in one PATCH: the update
+    // schema permits `label`, and `key` is minted once at create and never re-derived, so
+    // renaming a row to an existing row's label produces exactly the pair of rows create()
+    // refuses — with the `key` unique constraint no help at all, since neither key changes.
+    // Scoped to the row's OWN mode+category (both immutable after creation, per D18) and
+    // excluding the row itself, so a no-op PATCH that re-sends the current label still passes.
+    if (input.label !== undefined) {
+      const current = await this.prisma.chargeLineDefinition.findUnique({ where: { id } });
+      if (!current) throw new NotFoundException("Charge line not found");
+      const duplicate = await this.prisma.chargeLineDefinition.findFirst({
+        where: {
+          id: { not: id },
+          mode: current.mode,
+          category: current.category,
+          label: { equals: input.label, mode: "insensitive" },
+        },
+      });
+      if (duplicate) {
+        throw new ConflictException(
+          `A ${current.mode} ${current.category} charge line named "${input.label}" already exists (key: ${duplicate.key}). Use that line instead of creating a near-duplicate.`,
+        );
+      }
+    }
     return this.prisma.chargeLineDefinition.update({
       where: { id },
       data: { ...input, ...auditUpdate(user) },

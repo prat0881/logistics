@@ -247,4 +247,88 @@ describe("FF Contacts (e2e)", () => {
     expect(row?.contactNumber).toBe(base.contactNumber);
     expect(row?.email).toBe(base.email);
   });
+
+  it("prefers an ACTIVE non-primary over an INACTIVE primary", async () => {
+    // The PRIMARY lookup used to ignore `status`, so a deactivated primary still won — and the
+    // RFQ payload, which snapshots these three columns, named a person who had been switched
+    // off. The fallback branch right below it already filtered ACTIVE; the primary branch now
+    // does too.
+    const ff = await request(app.getHttpServer())
+      .post("/api/freight-forwarders")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ ...base, companyName: `${NAME} inactive-primary` })
+      .expect(201);
+
+    const seededPrimary = await prisma.freightForwarderContact.findFirstOrThrow({
+      where: { freightForwarderId: ff.body.id, pocLevel: "PRIMARY" },
+    });
+
+    // A second, ACTIVE, non-primary contact to fall back to.
+    await request(app.getHttpServer())
+      .post(`/api/freight-forwarders/${ff.body.id}/contacts`)
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({
+        name: "Still Here",
+        email: "still.here@example.com",
+        contactNo: "+971500000088",
+        pocLevel: "SECONDARY",
+      })
+      .expect(201);
+
+    // Deactivating the primary is what re-runs the sync.
+    await request(app.getHttpServer())
+      .patch(`/api/freight-forwarders/${ff.body.id}/contacts/${seededPrimary.id}`)
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ status: "INACTIVE" })
+      .expect(200);
+
+    const row = await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } });
+    expect(row?.pic).toBe("Still Here");
+    expect(row?.email).toBe("still.here@example.com");
+    expect(row?.contactNumber).toBe("+971500000088");
+  });
+
+  it("stamps the acting user on the forwarder row when a contact write re-derives its columns", async () => {
+    // syncPrimaryContactColumns writes FreightForwarder on three paths (create/update/delete
+    // contact) and took no `user` at all, so on the very branch that introduced
+    // createdById/updatedById those three writes left updatedById stale — and deleteContact
+    // never even received a user, because the controller route omitted @CurrentUser().
+    const ff = await request(app.getHttpServer())
+      .post("/api/freight-forwarders")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ ...base, companyName: `${NAME} audit-actor` })
+      .expect(201);
+    expect((await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } }))?.updatedById)
+      .toBe(`u-${Role.ADMINISTRATOR}`);
+
+    // createContact path: a PRIMARY replaces the seeded one, so the columns are re-derived.
+    const seeded = await prisma.freightForwarderContact.findFirstOrThrow({
+      where: { freightForwarderId: ff.body.id, pocLevel: "PRIMARY" },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/freight-forwarders/${ff.body.id}/contacts/${seeded.id}`)
+      .set("Cookie", cookie(Role.MANAGER))
+      .send({ name: "Renamed By Manager" })
+      .expect(200);
+    expect((await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } }))?.updatedById)
+      .toBe(`u-${Role.MANAGER}`);
+
+    // deleteContact path — the one whose controller route had no @CurrentUser() at all.
+    const second = await request(app.getHttpServer())
+      .post(`/api/freight-forwarders/${ff.body.id}/contacts`)
+      .set("Cookie", cookie(Role.MANAGER))
+      .send({
+        name: "Deletable",
+        email: "deletable@example.com",
+        contactNo: "+971500000099",
+        pocLevel: "SECONDARY",
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .delete(`/api/freight-forwarders/${ff.body.id}/contacts/${second.body.id}`)
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .expect(204);
+    expect((await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } }))?.updatedById)
+      .toBe(`u-${Role.ADMINISTRATOR}`);
+  });
 });

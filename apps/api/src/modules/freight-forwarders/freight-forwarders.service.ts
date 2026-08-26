@@ -196,17 +196,27 @@ export class FreightForwardersService {
    * payload keeps reading columns while the contact table becomes the source of truth.
    * Retired in the Stage-4 pass; see the design doc §2.2.
    *
-   * Fallback: if no PRIMARY remains (just deleted, or demoted via an update), fall back to
-   * the oldest remaining ACTIVE contact rather than leaving the columns naming someone who's
-   * gone — an RFQ addressed to a departed contact is worse than one addressed to a still-active
-   * contact who just isn't flagged primary. Only when there is no contact left at all —
-   * PRIMARY or otherwise — do the columns keep their last-known values: pic/contactNumber/email
-   * are NOT NULL on FreightForwarder with no other source of truth, and ContactList has no UI
-   * yet to reassign a primary (known gap, not this task's to fix).
+   * Fallback: if no ACTIVE PRIMARY remains (just deleted, demoted via an update, or
+   * deactivated), fall back to the oldest remaining ACTIVE contact rather than leaving the
+   * columns naming someone who's gone — an RFQ addressed to a departed contact is worse than
+   * one addressed to a still-active contact who just isn't flagged primary. Both lookups filter
+   * `status: "ACTIVE"`, and the primary one must: without it a deactivated PRIMARY outranked an
+   * ACTIVE non-primary, and the RFQ payload named the deactivated person. Only when there is no
+   * ACTIVE contact left at all do the columns keep their last-known values:
+   * pic/contactNumber/email are NOT NULL on FreightForwarder with no other source of truth, and
+   * ContactList has no UI yet to reassign a primary (known gap, not this task's to fix).
+   *
+   * Takes `user` for the same reason `setWarehouses` does — this is a write to FreightForwarder,
+   * and the branch that added createdById/updatedById must not leave a writer that doesn't
+   * stamp them.
    */
-  private async syncPrimaryContactColumns(tx: Prisma.TransactionClient, ffId: string) {
+  private async syncPrimaryContactColumns(
+    tx: Prisma.TransactionClient,
+    ffId: string,
+    user?: RequestUser,
+  ) {
     const primary = await tx.freightForwarderContact.findFirst({
-      where: { freightForwarderId: ffId, pocLevel: "PRIMARY" },
+      where: { freightForwarderId: ffId, pocLevel: "PRIMARY", status: "ACTIVE" },
     });
     const source =
       primary ??
@@ -217,7 +227,12 @@ export class FreightForwardersService {
     if (!source) return;
     await tx.freightForwarder.update({
       where: { id: ffId },
-      data: { pic: source.name, contactNumber: source.contactNo, email: source.email },
+      data: {
+        pic: source.name,
+        contactNumber: source.contactNo,
+        email: source.email,
+        ...auditUpdate(user),
+      },
     });
   }
 
@@ -228,7 +243,7 @@ export class FreightForwardersService {
         const contact = await tx.freightForwarderContact.create({
           data: { freightForwarderId: ffId, ...input, ...auditCreate(user) },
         });
-        await this.syncPrimaryContactColumns(tx, ffId);
+        await this.syncPrimaryContactColumns(tx, ffId, user);
         return contact;
       });
     } catch (e) {
@@ -252,7 +267,7 @@ export class FreightForwardersService {
           where: { id: contactId },
           data: { ...input, ...auditUpdate(user) },
         });
-        await this.syncPrimaryContactColumns(tx, ffId);
+        await this.syncPrimaryContactColumns(tx, ffId, user);
         return contact;
       });
     } catch (e) {
@@ -260,14 +275,14 @@ export class FreightForwardersService {
     }
   }
 
-  async deleteContact(ffId: string, contactId: string) {
+  async deleteContact(ffId: string, contactId: string, user?: RequestUser) {
     const existing = await this.prisma.freightForwarderContact.findFirst({
       where: { id: contactId, freightForwarderId: ffId },
     });
     if (!existing) throw new NotFoundException("Contact not found");
     await this.prisma.$transaction(async (tx) => {
       await tx.freightForwarderContact.delete({ where: { id: contactId } });
-      await this.syncPrimaryContactColumns(tx, ffId);
+      await this.syncPrimaryContactColumns(tx, ffId, user);
     });
   }
 

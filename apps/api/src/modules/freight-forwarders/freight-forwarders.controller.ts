@@ -91,8 +91,15 @@ export class FreightForwardersController {
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
   @Delete(":id/contacts/:contactId")
   @HttpCode(204)
-  async removeContact(@Param("id") id: string, @Param("contactId") contactId: string) {
-    await this.ffs.deleteContact(id, contactId);
+  async removeContact(
+    @Param("id") id: string,
+    @Param("contactId") contactId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    // Deleting a contact re-derives pic/contactNumber/email on the FreightForwarder row
+    // (syncPrimaryContactColumns), so this route writes a master record and must supply the
+    // actor — same as addContact/updateContact above.
+    await this.ffs.deleteContact(id, contactId, user);
   }
 
   @Get(":id/warehouses")
