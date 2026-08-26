@@ -9,6 +9,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { seedReferenceData } from "../src/seed/reference-seed";
 
 // Route note: the controller is registered as `charge-line-definitions` (see
 // charge-catalogue.controller.ts), not `config/charge-catalogue` — the brief's task
@@ -37,6 +38,9 @@ describe("Charge catalogue write API (e2e)", () => {
     await app.init();
     prisma = moduleRef.get(PrismaService);
     jwt = moduleRef.get(JwtService);
+    // create-only upserts: guarantees SEA_DEST_WHARFAGE (used by the duplicate-label test below)
+    // exists regardless of test order/DB state (CI has no seed step).
+    await seedReferenceData(prisma);
   });
 
   afterAll(async () => {
@@ -57,6 +61,29 @@ describe("Charge catalogue write API (e2e)", () => {
     expect(row?.zone).toBe("DESTINATION"); // derived
     expect(row?.role).toBe("STANDARD"); // derived: additional, no tag
     expect(row?.key).toBe("SEA_DEST_CATALOGUE_E2E_CHARGE");
+  });
+
+  it("rejects a duplicate label even when it would mint a different key than the curated existing row (case-insensitive)", async () => {
+    // SEA_DEST_WHARFAGE is seeded with a curated key, not the one chargeLineKey("SEA",
+    // "DESTINATION", "Wharfage Charges") would mint (SEA_DEST_WHARFAGE_CHARGES) — see
+    // reference-seed.ts. A key-uniqueness check alone would let this create a near-duplicate
+    // row meaning the same thing under a different key; it must be caught by label instead.
+    const existing = await prisma.chargeLineDefinition.findUniqueOrThrow({
+      where: { key: "SEA_DEST_WHARFAGE" },
+    });
+    expect(existing.label).toBe("Wharfage Charges");
+
+    const dup = await request(app.getHttpServer())
+      .post(BASE).set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ mode: "SEA", variant: "BOTH", category: "DESTINATION", label: "wharfage charges", isAdditional: true })
+      .expect(409);
+
+    expect(dup.body.message).toMatch(/already exists/i);
+    expect(dup.body.message).toContain("SEA_DEST_WHARFAGE");
+    // Confirms no near-duplicate row was created under the chargeLineKey-generated key.
+    expect(
+      await prisma.chargeLineDefinition.findUnique({ where: { key: "SEA_DEST_WHARFAGE_CHARGES" } }),
+    ).toBeNull();
   });
 
   it("refuses to change category after creation", async () => {

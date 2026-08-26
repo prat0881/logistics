@@ -39,8 +39,10 @@ type ChargeDef = {
   zone?: "ORIGIN" | "MAIN_FREIGHT" | "DESTINATION" | null;
   tagKey?: string | null;
   label: string;
-  // Optional: Prisma defaults sortOrder to 0 when omitted (schema.prisma `@default(0)`). The 19
-  // new lines rely on that default rather than hand-picking a position in an existing sequence.
+  // Optional on the literal: the 19 new lines omit it and get one computed by
+  // withComputedSortOrder() below (mirrors ChargeCatalogueService.create()'s convention),
+  // rather than tying at the schema's sortOrder default of 0 and sorting above every existing
+  // row the moment one is selected.
   sortOrder?: number;
   isActive?: boolean;
   // category/variant/isAdditional are the new admin-facing columns (Task 10/12): zone and role
@@ -648,12 +650,35 @@ const CHARGE_LINE_DEFINITIONS: ChargeDef[] = [
   },
 ];
 
+// Assigns each def a sortOrder equal to MAX(sortOrder) among rows sharing its mode+category,
+// plus 10 — mirroring ChargeCatalogueService.create()'s convention for admin-created lines
+// (apps/api/src/modules/config/charge-catalogue.service.ts), rather than tying at the schema's
+// default of 0. `seed` supplies the starting max per group; `running` is updated after each
+// assignment so several new lines sharing a group (e.g. the 8 new SEA_DEST_* lines) land in a
+// stable, spaced sequence instead of colliding with each other. Never touches a def that already
+// has a sortOrder, so no existing row is renumbered.
+function withComputedSortOrder(defs: ChargeDef[], seed: ChargeDef[]): ChargeDef[] {
+  const running = new Map<string, number>();
+  for (const d of seed) {
+    if (!d.category) continue;
+    const group = `${d.mode}:${d.category}`;
+    running.set(group, Math.max(running.get(group) ?? 0, d.sortOrder ?? 0));
+  }
+  return defs.map((d) => {
+    if (d.sortOrder != null || !d.category) return d;
+    const group = `${d.mode}:${d.category}`;
+    const next = (running.get(group) ?? 0) + 10;
+    running.set(group, next);
+    return { ...d, sortOrder: next };
+  });
+}
+
 // Task 12: the 19 charge lines named in the client's workbook with no existing definition.
 // AIR_ORIGIN_INSURANCE / SEA_ORIGIN_CONTAINER_TRANSPORT / SEA_ORIGIN_LSS are always-included
 // (isAdditional: false, so deriveRole gives them CORE) — seeding them active would price on
 // every future Air/Sea RFQ the moment this seed ran, so they ship isActive: false (D17). The
 // other 16 are executive-selected (isAdditional: true) and merely appear in a selection list.
-const NEW_CHARGE_LINES: ChargeDef[] = [
+const NEW_CHARGE_LINES: ChargeDef[] = withComputedSortOrder([
   // Air — origin
   { key: "AIR_ORIGIN_INSURANCE", mode: "AIR", category: "ORIGIN", variant: "BOTH", label: "Insurance", isAdditional: false, isActive: false },
   { key: "AIR_ORIGIN_MAGNETIC_FEE", mode: "AIR", category: "ORIGIN", variant: "BOTH", label: "Magnetic Fee", isAdditional: true },
@@ -679,7 +704,7 @@ const NEW_CHARGE_LINES: ChargeDef[] = [
   { key: "SEA_ADD_EMERGENCY_SURCHARGE", mode: "SEA", category: "ADDITIONAL", variant: "BOTH", label: "Emergency Surcharge", isAdditional: true },
   // Road — additional
   { key: "ROAD_ADD_BONDED_LICENCE", mode: "ROAD", category: "ADDITIONAL", variant: "BOTH", label: "Bonded Licence Fee", isAdditional: true },
-];
+], CHARGE_LINE_DEFINITIONS);
 
 export async function seedReferenceData(prisma: PrismaClient): Promise<void> {
   for (const key of ["CLIENT", "VESSEL", "FREIGHT_FORWARDER"]) {

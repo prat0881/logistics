@@ -29,6 +29,20 @@ export class ChargeCatalogueService {
 
   async create(input: ChargeLineCreateInput, user?: RequestUser) {
     const tagKey = input.tagKey ?? null;
+    // Catch the real hazard before minting a key: two rows meaning the same thing. chargeLineKey
+    // slugifies+truncates the label, so two labels that read as duplicates to a human (different
+    // case, or different enough after truncation/slugging) can still mint different keys and
+    // sail past the `key` unique constraint below as a near-duplicate row. Check by
+    // mode+category+label (case-insensitive) instead, active or inactive, and name the existing
+    // key in the error so the admin can go use that line instead of creating another one.
+    const duplicate = await this.prisma.chargeLineDefinition.findFirst({
+      where: { mode: input.mode, category: input.category, label: { equals: input.label, mode: "insensitive" } },
+    });
+    if (duplicate) {
+      throw new ConflictException(
+        `A ${input.mode} ${input.category} charge line named "${input.label}" already exists (key: ${duplicate.key}). Use that line instead of creating a near-duplicate.`,
+      );
+    }
     const key = chargeLineKey(input.mode, input.category, input.label);
     const maxSort = await this.prisma.chargeLineDefinition.aggregate({
       where: { mode: input.mode, category: input.category },
