@@ -177,7 +177,25 @@ same applies to `whLocation`, which stays populated with the primary warehouse's
 warehouse relation in §4.5 becomes the real link. Both retire in the Stage-4 pass.
 
 Sync happens in the service layer on contact create, update and delete: whenever the primary
-contact changes, the three columns are rewritten in the same transaction.
+contact changes, the three columns are rewritten in the same transaction. Note the sync does not
+touch `whLocation` — that column tracks warehouses and has no counterpart on the contact table;
+Task 14 wires it to the warehouse relation instead.
+
+**The columns must have exactly one writer.** Two consequences follow, and missing either
+produces silent data corruption rather than an error:
+
+- `update()` must **not** write `pic`, `contactNumber` or `email`. If it does, an admin editing
+  the forwarder form sets them, and the next contact write of any kind silently reverts them.
+  The form renders those three read-only once the record exists, pointing at the contact list.
+- `create()` must **seed a PRIMARY contact** from the `pic`/`contactNumber`/`email` it accepts,
+  in the same transaction. The migration's backfill establishes "every forwarder has exactly one
+  primary contact" for existing rows; without seeding, every row created afterwards breaks that
+  invariant — populated columns, empty contact list.
+
+When the primary contact is deleted or demoted, the sync falls back to the oldest remaining
+active contact. Only when none remain are the columns left as they were: they are NOT NULL, so
+naming a departed contact beats failing the write — but naming a departed contact while a live
+one exists would put the wrong person on an RFQ.
 
 ### 4.4 Vessel
 
