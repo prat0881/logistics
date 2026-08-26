@@ -47,6 +47,17 @@ const OUTSTANDING_QUOTE_STATUSES: readonly QuoteStatus[] = [
   QuoteStatus.INVALID,
 ];
 
+// S5.9.5 (D4) — quote statuses `sendForApproval` will accept for the NAMED offer. Must stay in
+// lock-step with the `send_for_approval` sources registered on the quote machine
+// (award.module.ts): QUOTED and EXPIRED. They are two independent gates — this one produces the
+// 409 below BEFORE anything is written, the machine would otherwise throw
+// `IllegalTransitionError` out of the POST-COMMIT fire, leaving a wedged decision (see step 2).
+// EXPIRED is here because D4 preserves a re-quoted forwarder's submitted price through the expiry
+// sweep and promises it stays approvable, not merely visible; it is self-limiting the same way the
+// comparison is — an EXPIRED quote with no `draftJson` produces no offer at all, so it never
+// reaches this guard (the pre-transaction `o.priced` check 400s first).
+const SENDABLE_STATUSES: readonly QuoteStatus[] = [QuoteStatus.QUOTED, QuoteStatus.EXPIRED];
+
 // S5.9 Task 4 review round — IMPORTANT 2. lockLeg's raw SQL casts both ids to `::uuid` directly
 // against Postgres, unlike a typed Prisma call, which validates the shape client-side first —
 // see lockLeg's own doc for why that matters. Same `.uuid()` check `@svyft/shared`'s schemas use
@@ -412,11 +423,11 @@ export class AwardService {
       if (!leg) throw new NotFoundException("Leg not found");
 
       // 2. A1 IN-TRANSACTION REFRESH (review round 2, CRITICAL 2) — the named quote must be
-      // QUOTED right now, not merely "comparable" (COMPARABLE_STATUSES in comparison.service.ts
-      // is QUOTED | REQUOTED | PENDING_APPROVAL — a REQUOTED offer is still visible/priced in
-      // the grid, stale-flagged, and passes the pre-tx A1 check above). The quote machine
-      // registers exactly ONE source for `send_for_approval`: QUOTED -> PENDING_APPROVAL.
-      // Without this, naming a REQUOTED (or otherwise non-QUOTED) offer sails through every
+      // SENDABLE right now, not merely "comparable". COMPARABLE_STATUSES (comparison.service.ts)
+      // is the wider set — a REQUOTED offer, for one, is still visible/priced in the grid,
+      // stale-flagged, and passes the pre-tx A1 check above — so this re-check is what keeps the
+      // send narrower than the read model.
+      // Without it, naming a REQUOTED (or otherwise non-sendable) offer sails through every
       // guard below, commits persistSelection's write and the PENDING_APPROVAL decision update,
       // and only THEN throws `IllegalTransitionError` out of the post-commit quote fire — a
       // committed, wedged decision with nothing to undo it but reject() (B2 blocks a re-send,
@@ -424,10 +435,14 @@ export class AwardService {
       // DIFFERENT, still-outstanding quote elsewhere on the leg (proceed past it, with reason);
       // naming the re-quoted offer itself is refused unconditionally, override or not — mirrors
       // approve()'s own A8 freshness re-check, just applied at send time instead of decide time.
+      //
+      // S5.9.5 (D4) — WIDENED from "must be QUOTED" to SENDABLE_STATUSES (see its doc above), so a
+      // price the expiry sweep preserved is approvable and not just rankable. The guard and the
+      // machine edges are deliberately two separate gates, not one: keep them in lock-step.
       const namedQuote = leg.quotes.find((q) => q.id === input.quoteId);
-      if (!namedQuote || namedQuote.status !== QuoteStatus.QUOTED) {
+      if (!namedQuote || !SENDABLE_STATUSES.includes(namedQuote.status)) {
         throw new ConflictException(
-          "The named offer is no longer QUOTED — refresh the comparison and pick again",
+          "Only a live or expired offer can be sent for approval — this one is being re-quoted, is already under review, or has been decided or invalidated",
         );
       }
 

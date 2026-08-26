@@ -868,13 +868,13 @@ describe("GET /queries/:id/comparison (e2e)", () => {
   // collapses them (e.g. dropping the `if (!draftJson) continue` skip in `buildLeg`) can satisfy
   // both.
   //
-  // WHY THE STATUSES ARE SEEDED DIRECTLY rather than driven through the real expiry sweep: the
-  // sweep (`rfq-schedule.listener.ts#onExpiry`) still nulls `draftJson` for EVERY quote it
-  // sweeps, REQUOTED included — teaching it to keep a REQUOTED quote's submitted price is Task 2
-  // of this sub-build, not this one. Task 1 owns only the READ MODEL, whose contract is
-  // "EXPIRED + a draft ⇒ an offer; EXPIRED + no draft ⇒ a pending forwarder". These fixtures are
-  // exactly the two end states D4's table (scenarios B and A) describes; Task 2 adds its own e2e
-  // proving the sweep produces the first of them.
+  // WHY THE STATUSES ARE SEEDED DIRECTLY rather than driven through the real expiry sweep: this
+  // test owns only the READ MODEL, whose contract is "EXPIRED + a draft ⇒ an offer; EXPIRED + no
+  // draft ⇒ a pending forwarder". These fixtures are exactly the two end states D4's table
+  // (scenarios B and A) describes. UPDATED (S5.9.5 Task 2) — the sweep
+  // (`rfq-schedule.listener.ts#onExpiry`) now genuinely produces the first of them: it keeps
+  // `draftJson` for a REQUOTED quote and discards it only for RFQ_SENT. That the sweep does so is
+  // pinned by award-requote.e2e-spec.ts's own D4 sweep test, not here.
   it("S5.9.5 (D4) — an EXPIRED quote that still carries a price produces an offer; one that does not, does not", async () => {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-exp`, priority: "MEDIUM", incoterms: "FOB" },

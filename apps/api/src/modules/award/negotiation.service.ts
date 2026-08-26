@@ -15,10 +15,16 @@ import { RfqService } from "../rfq/rfq.service";
 import { QueryStatusProjector } from "../status/query-status.projector";
 import { StatusService } from "../status/status.service";
 
-// Quote statuses a re-quote can legally be requested against — a live offer (QUOTED) or one
-// already provisionally selected (APPROVED, design §5). Anything else (RFQ_SENT — no price to
-// negotiate yet; EXPIRED/INVALID/CLOSED/REQUOTED — already not-live) is a 409.
-const REQUOTABLE_STATUSES: readonly string[] = [QuoteStatus.QUOTED, QuoteStatus.APPROVED];
+// Quote statuses a re-quote can legally be requested against — a live offer (QUOTED), one already
+// provisionally selected (APPROVED, design §5), or one whose re-quote window closed with the
+// forwarder silent (EXPIRED, S5.9.5 D4 — their price survives the sweep now, so asking again is
+// the only way back into a conversation with them). Anything else (RFQ_SENT — no price to
+// negotiate yet; INVALID/CLOSED/REQUOTED — already not-live, or already being asked) is a 409.
+const REQUOTABLE_STATUSES: readonly string[] = [
+  QuoteStatus.QUOTED,
+  QuoteStatus.APPROVED,
+  QuoteStatus.EXPIRED,
+];
 
 // S5.5 (Technical Design §10.1) — the negotiation core: an Executive asks a single FF to
 // revise their price. Unlike SB6's change-order path (a field edit that invalidates whatever
@@ -77,11 +83,12 @@ export class NegotiationService {
 
     if (!REQUOTABLE_STATUSES.includes(quote.status)) {
       throw new ConflictException(
-        "Only a live (QUOTED) or provisionally APPROVED quote can be re-negotiated",
+        "Only a live, provisionally approved, or expired quote can be re-negotiated",
       );
     }
-    // Structurally unreachable — a QUOTED/APPROVED quote only ever gets there via distribution,
-    // which always sets rfqId — but the column is nullable; fail clean rather than crash below
+    // Structurally unreachable — a REQUOTABLE quote only ever gets to one of those statuses via
+    // distribution, which always sets rfqId (EXPIRED included: the sweep that mints it is keyed on
+    // an RFQ) — but the column is nullable; fail clean rather than crash below
     // (mirrors award.service.ts's MIN-1 defensive guards).
     if (!quote.rfqId) {
       throw new ConflictException("This quote has no RFQ to re-quote against");
@@ -89,8 +96,10 @@ export class NegotiationService {
 
     const wasApproved = quote.leg.status === LegStatus.APPROVED;
 
-    // 1) Quote: QUOTED|APPROVED -> REQUOTED. The edge has no `effect` (award.module.ts), so
+    // 1) Quote: QUOTED|APPROVED|EXPIRED -> REQUOTED. The edge has no `effect` (award.module.ts), so
     // draftJson is untouched — the earlier price stays visible, exactly as design §10.1 wants.
+    // S5.9.5 (D4): that also holds for the EXPIRED source, so re-negotiating a price the expiry
+    // sweep preserved does not discard it either.
     await this.status.fire("quote", quoteId, QuoteEvent.REQUEST_REQUOTE, {
       queryId,
       actorId: user.userId,

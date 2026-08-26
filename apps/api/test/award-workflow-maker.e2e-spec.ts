@@ -31,7 +31,7 @@ const CODE = `YAL00-${PREFIX}`;
 
 type FfSpec = {
   key: string;
-  status: "QUOTED" | "RFQ_SENT" | "REQUOTED";
+  status: "QUOTED" | "RFQ_SENT" | "REQUOTED" | "EXPIRED";
   deadline: Date;
   draft?: { amount: number; transitDays: number }; // omit for a never-submitted (RFQ_SENT) FF
 };
@@ -701,5 +701,55 @@ describe("award workflow — maker endpoints (e2e)", () => {
         proceedReason: "Still cannot wait — re-sending after the rejection",
       })
       .expect(200);
+  });
+
+  // S5.9.5 Task 2 (D4) — D4 preserves a re-quoted forwarder's submitted price through the expiry
+  // sweep and promises it stays "rankable AND approvable". This is the approvable half: the named
+  // offer guard (award.service.ts step 2) accepts SENDABLE_STATUSES = [QUOTED, EXPIRED], and the
+  // quote machine has the matching `EXPIRED --send_for_approval--> PENDING_APPROVAL` edge.
+  //
+  // Both halves are one test on purpose — they are the positive and negative control for the same
+  // "does it carry a price" condition, on one leg. NOTE on what the negative half actually pins:
+  // the never-submitted EXPIRED quote is refused by the PRE-TRANSACTION offer check (it produces
+  // no offer at all, because `buildLeg` skips a quote with no `draftJson`), NOT by
+  // SENDABLE_STATUSES — so it is a control on D4's self-limiting property, not on the status list.
+  // The status list is pinned by the 200 half plus its mutation proof (drop EXPIRED from
+  // SENDABLE_STATUSES and only the 200 half reddens — mutation 4 in the task report).
+  it("S5.9.5 (D4) — a priced EXPIRED offer can be sent for approval; an unpriced EXPIRED one cannot", async () => {
+    // A leg whose every quote is EXPIRED rolls up to FULLY_QUOTED (LEG_ROLLUP_RESOLVED includes
+    // EXPIRED), so A3 passes on `fullyQuoted` with no proceed-override — seeded at that status
+    // directly, this file's convention. Deadlines in the past: these windows really did close.
+    const { query, leg, quotes } = await seedLeg("expsend", "FULLY_QUOTED", [
+      { key: "PRICED", status: "EXPIRED", deadline: past(), draft: { amount: 83200, transitDays: 3 } },
+      { key: "NOPRICE", status: "EXPIRED", deadline: past() },
+    ]);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ quoteId: quotes.PRICED.id, variant: "DEDICATED" })
+      .expect(200);
+    expect((await prisma.quote.findUniqueOrThrow({ where: { id: quotes.PRICED.id } })).status).toBe(
+      "PENDING_APPROVAL",
+    );
+    // No override reason was supplied and none was demanded: the priced EXPIRED offer is the only
+    // one the engine can rank, so it IS the recommendation (Task 1 admitted EXPIRED to
+    // buildRecommendation). That is the A2 half of "approvable".
+    const decision = await prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: leg.id } });
+    expect(decision.status).toBe("PENDING_APPROVAL");
+    expect(decision.shortlistedQuoteId).toBe(quotes.PRICED.id);
+    expect(decision.recommendedQuoteId).toBe(quotes.PRICED.id);
+    expect(decision.overrideReason).toBeNull();
+
+    // The never-submitted EXPIRED quote on the same leg is still refused (see the note above for
+    // which gate does it).
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/send-for-approval`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ quoteId: quotes.NOPRICE.id, variant: "DEDICATED" })
+      .expect(400);
+    expect((await prisma.quote.findUniqueOrThrow({ where: { id: quotes.NOPRICE.id } })).status).toBe(
+      "EXPIRED",
+    );
   });
 });

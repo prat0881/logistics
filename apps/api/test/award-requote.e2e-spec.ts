@@ -12,6 +12,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { ScheduledEventService } from "../src/modules/comms/scheduled-event.service";
 
 // S5.5 Task 2 (design §10.1) — the negotiation core: POST .../quotes/:quoteId/request-requote,
 // Executive+ (no @Roles). Fires quote REQUEST_REQUOTE (QUOTED|APPROVED -> REQUOTED, retaining
@@ -25,6 +26,7 @@ describe(`${PREFIX} (e2e)`, () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let jwt: JwtService;
+  let scheduled: ScheduledEventService;
 
   // Any authenticated (Executive+) role works — the route carries no @Roles.
   const cookieFor = (userId: string) =>
@@ -284,6 +286,7 @@ describe(`${PREFIX} (e2e)`, () => {
     await app.init();
     prisma = moduleRef.get(PrismaService);
     jwt = moduleRef.get(JwtService);
+    scheduled = moduleRef.get(ScheduledEventService);
     // create-only upserts: guarantees rfq.requote_requested + the reminder/deadline AppSettings
     // exist regardless of test order/DB state (CI has no separate seed step).
     await seedReferenceData(prisma);
@@ -455,13 +458,127 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(quoteAfter.status).toBe("QUOTED");
   });
 
-  it("a quote in a non-live status (EXPIRED) -> 409", async () => {
-    const { query, leg, quote } = await seedLeg("expired", "FULLY_QUOTED", "EXPIRED");
+  // CHANGED (S5.9.5 Task 2) — this case used to be seeded EXPIRED. D4 makes EXPIRED requotable
+  // (see the two D4 tests below), so it is no longer a valid example of a non-requotable status.
+  // RFQ_SENT is: the forwarder has never submitted anything, so there is no price to negotiate.
+  it("a quote in a non-requotable status (RFQ_SENT — nothing submitted to negotiate) -> 409", async () => {
+    const { query, leg, quote } = await seedLeg("notrequotable", "RFQ_SENT", "RFQ_SENT");
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${leg.id}/quotes/${quote.id}/request-requote`)
       .set("Cookie", cookieFor(randomUUID()))
       .send({ comment: "x" })
       .expect(409);
+  });
+
+  // S5.9.5 (D4, register A4) — the sweep, driven end to end through the real cron entry point
+  // (ScheduledEventService.runDue -> the `rfq.expiry` listener), on ONE FF holding TWO legs of one
+  // query. Rfq is @@unique([queryId, freightForwarderId]), so that is ONE shared Rfq carrying TWO
+  // quotes and a SINGLE onExpiry pass has to get both halves right — the same fixture shape, and
+  // the same reason for it, as ff-portal-requote-submit.e2e-spec.ts's shared-Rfq sweep test.
+  it("S5.9.5 (D4) — the expiry sweep keeps a REQUOTED quote's submitted price, and still discards an RFQ_SENT draft", async () => {
+    // legA / ffPriced: QUOTED with a real draftJson, then negotiated through the real endpoint so
+    // it is REQUOTED for exactly the reason D4 is about — we asked for a better price.
+    const { query, leg: legA, ff, rfq, quote: pricedQuote } = await seedLeg(
+      "sweep",
+      "FULLY_QUOTED",
+      "QUOTED",
+      { withDraft: true, decisionStatus: "DRAFT" },
+    );
+
+    // legB: the SAME forwarder on a second leg, still RFQ_SENT with a half-filled draft they never
+    // submitted — the case the discard was written for and must keep serving.
+    const originB = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Ningbo", country: "CN" },
+    });
+    const destB = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Sharjah", country: "AE" },
+    });
+    const legB = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L2",
+        mode: "ROAD",
+        originPointId: originB.id,
+        destinationPointId: destB.id,
+        status: "RFQ_SENT" as never,
+      },
+    });
+    const draftQuote = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: legB.id,
+        freightForwarderId: ff.id,
+        rfqId: rfq.id,
+        status: "RFQ_SENT",
+        // never submitted — an arbitrary in-progress placeholder is enough (mirrors
+        // rfq-expiry.e2e-spec.ts's own `{ note: "in-progress draft" }`).
+        draftJson: { note: "in-progress draft" } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${legA.id}/quotes/${pricedQuote.id}/request-requote`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment: "Can you sharpen this rate?" })
+      .expect(200);
+    expect((await prisma.quote.findUniqueOrThrow({ where: { id: pricedQuote.id } })).status).toBe(
+      "REQUOTED",
+    );
+
+    // The forwarder never answers. Force the ONE shared DEADLINE-tier rfq.expiry timer that
+    // request-requote just re-armed (RfqService.resetDeadlineAndRearm deletes + re-creates it) due
+    // now, then run the cron for real.
+    await prisma.scheduledEvent.update({
+      where: {
+        entityType_entityId_eventKey_tier: {
+          entityType: "RFQ",
+          entityId: rfq.id,
+          eventKey: "rfq.expiry",
+          tier: "DEADLINE",
+        },
+      },
+      data: { dueAt: new Date() },
+    });
+    await scheduled.runDue();
+
+    const requoted = await prisma.quote.findUniqueOrThrow({ where: { id: pricedQuote.id } });
+    expect(requoted.status).toBe("EXPIRED"); // the window really did close
+    expect(requoted.draftJson).not.toBeNull(); // ...but the price survived
+    expect((requoted.draftJson as unknown as QuoteDraft).chargedWeightKg).toBe(500);
+
+    const neverSubmitted = await prisma.quote.findUniqueOrThrow({ where: { id: draftQuote.id } });
+    expect(neverSubmitted.status).toBe("EXPIRED");
+    expect(neverSubmitted.draftJson).toBeNull(); // still discarded
+  });
+
+  // S5.9.5 (D4) — the other half of price-preservation: keeping the price would freeze the
+  // forwarder OUT (price visible, portal closed) if EXPIRED had no way back to REQUOTED. Seeded at
+  // EXPIRED-with-a-draft directly — the end state the sweep test above proves the sweep produces.
+  it("S5.9.5 (D4) — an EXPIRED quote can be re-negotiated, which reopens the forwarder's portal", async () => {
+    const { query, leg, rfq, quote } = await seedLeg("expiredrequote", "FULLY_QUOTED", "EXPIRED", {
+      withDraft: true,
+      decisionStatus: "DRAFT",
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${leg.id}/quotes/${quote.id}/request-requote`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment: "Are you still able to hold this price?" })
+      .expect(200);
+
+    const after = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
+    expect(after.status).toBe("REQUOTED");
+    expect(after.draftJson).not.toBeNull(); // re-negotiating does not discard it either
+
+    // "reopens the forwarder's portal" concretely: a fresh submission window plus a re-armed
+    // DEADLINE timer, so the RFQ is live again rather than a closed one they can still see.
+    const rfqAfter = await prisma.rfq.findUniqueOrThrow({ where: { id: rfq.id } });
+    expect(rfqAfter.submissionDeadline.getTime()).toBeGreaterThan(Date.now());
+    const expiry = await prisma.scheduledEvent.findFirst({
+      where: { entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.expiry", tier: "DEADLINE" },
+    });
+    expect(expiry?.dueAt.getTime()).toBe(rfqAfter.submissionDeadline.getTime());
+    expect(expiry?.firedAt).toBeNull();
   });
 
   it("401 when unauthenticated (locks the auth guard on the route)", async () => {

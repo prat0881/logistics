@@ -10,10 +10,10 @@ import { ScheduledEventService } from "../comms/scheduled-event.service";
 type TimerPayload = { entityType: string; entityId: string; tier: string };
 
 // Reacts to the generic minute-cron timers seeded at distribute-time (Task 9): a reminder
-// nudges the FF before the deadline; the DEADLINE-tier expiry closes out any quote the FF
-// never submitted (discard draft → fire EXPIRE → notify → cancel the RFQ's remaining
-// reminders). Both handlers swallow their own errors — they run from the cron loop
-// (ScheduledEventService.runDue), and a throw here must not abort that loop.
+// nudges the FF before the deadline; the DEADLINE-tier expiry closes out every quote still open
+// on the RFQ (discard the draft — RFQ_SENT only, see the loop below → fire EXPIRE → notify →
+// cancel the RFQ's remaining reminders). Both handlers swallow their own errors — they run from
+// the cron loop (ScheduledEventService.runDue), and a throw here must not abort that loop.
 @Injectable()
 export class RfqScheduleListener {
   private readonly logger = new Logger(RfqScheduleListener.name);
@@ -66,7 +66,7 @@ export class RfqScheduleListener {
 
       const openQuotes = await this.prisma.quote.findMany({
         where: { rfqId, status: { in: [QuoteStatus.RFQ_SENT, QuoteStatus.REQUOTED] } },
-        select: { id: true, legId: true, leg: { select: { legCode: true } } },
+        select: { id: true, legId: true, status: true, leg: { select: { legCode: true } } },
       });
 
       // Nothing still open → still clear any remaining reminders, then done.
@@ -108,8 +108,18 @@ export class RfqScheduleListener {
       // Each expired quote is processed independently — one leg's failure won't skip the rest.
       for (const q of openQuotes) {
         try {
-          // discard the unsubmitted draft (permanent, spec S8/E3), then fire EXPIRE (the one door, after the write)
-          await this.prisma.quote.update({ where: { id: q.id }, data: { draftJson: Prisma.DbNull } });
+          // S5.9.5 (D4, register A4) — discard the draft ONLY for a quote that was still RFQ_SENT.
+          // For a REQUOTED quote `draftJson` is NOT an unsubmitted draft: it is the forwarder's ALREADY
+          // SUBMITTED earlier price, retained on purpose by `requestRequote` (negotiation.service.ts, which
+          // fires the status change with no effect precisely so the price survives) and it is the only
+          // thing keeping that offer on the compare screen. Nulling it here destroyed a real, acceptable
+          // price as a direct consequence of asking for a better one — doing nothing would have kept it.
+          // The quote still EXPIRES: the window really did close and the forwarder's silence must be
+          // visible rather than reading as still-pending forever (design D4).
+          // (Discard is permanent, spec S8/E3; the EXPIRE fire is the one door, after the write.)
+          if (q.status === QuoteStatus.RFQ_SENT) {
+            await this.prisma.quote.update({ where: { id: q.id }, data: { draftJson: Prisma.DbNull } });
+          }
           await this.status.fire("quote", q.id, QuoteEvent.EXPIRE, { queryId: rfq.queryId });
 
           // Exec IN_APP notification per leg (IN_APP-only ⇒ only the in-app template fires).

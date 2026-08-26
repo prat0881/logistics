@@ -58,6 +58,10 @@ export class AwardModule implements OnModuleInit {
   onModuleInit(): void {
     this.registry.contribute("quote", [
       { from: QuoteStatus.QUOTED, on: QuoteEvent.SEND_FOR_APPROVAL, to: QuoteStatus.PENDING_APPROVAL, kind: "forward" },
+      // S5.9.5 (D4) — an EXPIRED offer that still carries a price is approvable, not merely visible.
+      // D4's whole point is that the forwarder's silence must not cost us a price we would have
+      // accepted; a price nobody can act on would deliver half of that.
+      { from: QuoteStatus.EXPIRED, on: QuoteEvent.SEND_FOR_APPROVAL, to: QuoteStatus.PENDING_APPROVAL, kind: "forward" },
       { from: QuoteStatus.PENDING_APPROVAL, on: QuoteEvent.APPROVE, to: QuoteStatus.APPROVED, kind: "forward" },
       { from: QuoteStatus.PENDING_APPROVAL, on: QuoteEvent.RETURN, to: QuoteStatus.QUOTED, kind: "reopen" },
       { from: QuoteStatus.APPROVED, on: QuoteEvent.UNAPPROVE, to: QuoteStatus.QUOTED, kind: "reopen" },
@@ -65,6 +69,11 @@ export class AwardModule implements OnModuleInit {
       { from: QuoteStatus.QUOTED, on: QuoteEvent.REQUEST_REQUOTE, to: QuoteStatus.REQUOTED, kind: "reopen" },
       { from: QuoteStatus.PENDING_APPROVAL, on: QuoteEvent.REQUEST_REQUOTE, to: QuoteStatus.REQUOTED, kind: "reopen" },
       { from: QuoteStatus.APPROVED, on: QuoteEvent.REQUEST_REQUOTE, to: QuoteStatus.REQUOTED, kind: "reopen" },
+      // S5.9.5 (D4) — an EXPIRED quote that still carries a price can be asked again. Without this
+      // edge, D4's price-preservation would freeze the forwarder OUT: their price visible and
+      // approvable, their portal closed, and no way to reopen it. Re-negotiating is the deliberate act
+      // that reopens it with a fresh deadline, exactly as it is for a live quote.
+      { from: QuoteStatus.EXPIRED, on: QuoteEvent.REQUEST_REQUOTE, to: QuoteStatus.REQUOTED, kind: "reopen" },
       // durable REQUOTED re-submit
       { from: QuoteStatus.REQUOTED, on: QuoteEvent.SUBMIT, to: QuoteStatus.QUOTED, kind: "forward" },
       { from: QuoteStatus.REQUOTED, on: QuoteEvent.EXPIRE, to: QuoteStatus.EXPIRED, kind: "forward" },

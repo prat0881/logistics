@@ -375,9 +375,9 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(quoteB.status).toBe("RFQ_SENT");
 
     // Flip quoteB to REQUOTED with a retained draft (same direct-seed convention as the submit
-    // test above — onExpiry unconditionally discards draftJson for every quote it sweeps, so an
-    // arbitrary placeholder is enough here; mirrors rfq-expiry.e2e-spec.ts's own
-    // `{ note: "in-progress draft" }` placeholder).
+    // test above). On a REQUOTED quote this stands for the forwarder's ALREADY SUBMITTED earlier
+    // price, which S5.9.5 D4 now preserves through the sweep — the assertions below check it by
+    // identity, so an arbitrary placeholder object is still all this test needs.
     await prisma.quote.update({
       where: { id: quoteB.id },
       data: {
@@ -413,6 +413,11 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // THE FIX under test: REQUOTED is now swept too, in the same pass.
     expect(quoteBAfter.status).toBe("EXPIRED");
-    expect(quoteBAfter.draftJson).toBeNull();
+    // CHANGED (S5.9.5 Task 2, D4/register A4) — this used to assert `toBeNull()`. Destroying the
+    // forwarder's already-submitted earlier price was the bug: it made asking for a better price
+    // strictly worse than doing nothing. The sweep now discards the draft ONLY for RFQ_SENT
+    // (quoteA above is the still-green control for that), and this file's shared-Rfq fixture is
+    // what proves both branches are taken in ONE onExpiry pass.
+    expect(quoteBAfter.draftJson).toEqual({ note: "revised bid in progress" });
   });
 });
