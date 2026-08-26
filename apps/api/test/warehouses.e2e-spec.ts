@@ -144,7 +144,12 @@ describe("Warehouses (e2e)", () => {
   });
 
   describe("update invariant (row-after-write, not patch-alone)", () => {
-    it("rejects clearing agreementValidUntil on an OWNED warehouse via PATCH", async () => {
+    // Named for what it actually proves. `agreementValidUntil` is `z.string().datetime()
+    // .optional()` — `.optional()` admits `undefined`, never `null` — so this PATCH is rejected
+    // by warehouseUpdateSchema before the service's merged-row invariant runs at all. It is a
+    // Zod-shape test, not evidence for the merge logic; the type-flip case at the bottom of this
+    // describe block is the one that exercises the merged row.
+    it("rejects an explicit null for agreementValidUntil (Zod: the field is optional, not nullable)", async () => {
       const created = await request(app.getHttpServer())
         .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
         .send({
@@ -162,7 +167,10 @@ describe("Warehouses (e2e)", () => {
       expect(res.status).toBe(400);
     });
 
-    it("rejects clearing rateCurrency via PATCH while a handling rate remains set", async () => {
+    // Same correction as above: `rateCurrency` is `z.enum(CURRENCY_CODES).optional()`, so the
+    // `null` is refused by the schema and the "a rate needs a currency" merge check is never
+    // reached. Renamed to say what it checks.
+    it("rejects an explicit null for rateCurrency (Zod: the field is optional, not nullable)", async () => {
       const created = await request(app.getHttpServer())
         .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
         .send({

@@ -52,6 +52,30 @@ describe("Charge catalogue snapshot (e2e)", () => {
     expect(keys).not.toContain("AIR_ORIGIN_INSURANCE");
   });
 
+  it("does not change what a Sea leg resolves to, despite 19 new definitions", async () => {
+    // The Sea half of the same acceptance criterion. Without it, the two new always-included Sea
+    // lines rested on the `isActive` assertion below alone — which proves the seed set the flag,
+    // not that resolveChargeConfig honours it on a real Sea leg.
+    const definitions = await prisma.chargeLineDefinition.findMany({ where: { mode: "SEA" } });
+    const snapshot = resolveChargeConfig(definitions as never, [], false, []);
+
+    const keys = snapshot.lines.map((l) => l.definitionKey).sort();
+    expect(keys).toEqual([
+      "SEA_ORIGIN_BILL_OF_LADING",
+      "SEA_ORIGIN_DOCUMENTATION",
+      "SEA_ORIGIN_EXPORT_CLEARANCE",
+      "SEA_ORIGIN_THC",
+      "SEA_ORIGIN_WAREHOUSE",
+    ]);
+    // SEA_ORIGIN_CONTAINER_TRANSPORT and SEA_ORIGIN_LSS are new and always-included, so they are
+    // seeded inactive (D17) and must NOT appear here. If they do, the seed changed live pricing.
+    expect(keys).not.toContain("SEA_ORIGIN_CONTAINER_TRANSPORT");
+    expect(keys).not.toContain("SEA_ORIGIN_LSS");
+    // SEA_MAIN_FREIGHT was retired to inactive by migration 20260806010000; it is deliberately
+    // absent from the list above rather than missing by oversight.
+    expect(keys).not.toContain("SEA_MAIN_FREIGHT");
+  });
+
   it("seeds the three new always-included lines inactive", async () => {
     const rows = await prisma.chargeLineDefinition.findMany({
       where: { key: { in: ["AIR_ORIGIN_INSURANCE", "SEA_ORIGIN_CONTAINER_TRANSPORT", "SEA_ORIGIN_LSS"] } },

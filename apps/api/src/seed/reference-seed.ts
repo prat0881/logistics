@@ -27,7 +27,7 @@ const CHECKLIST: { itemKey: string; label: string; order: number; dgConditional?
   { itemKey: "delivery-address", label: "Delivery address confirmed", order: 9 },
 ];
 
-type ChargeDef = {
+export type ChargeDef = {
   key: string;
   mode: "ROAD" | "AIR" | "SEA";
   // Optional now: for any def with `category` set, the upsert loop below computes role (and
@@ -53,7 +53,17 @@ type ChargeDef = {
   variant?: ChargeVariant;
   isAdditional?: boolean;
 };
-const CHARGE_LINE_DEFINITIONS: ChargeDef[] = [
+/**
+ * The 51 charge lines that predate the category/variant/isAdditional columns. 50 of them carry
+ * BOTH the new admin-facing fields AND the legacy `role:`/`zone:` literals the upsert loop below
+ * now overrides via deriveZone/deriveRole. Those literals are therefore dead at runtime — but
+ * they are an independent, hand-authored record of what the derivation is SUPPOSED to produce,
+ * which is why they were kept rather than deleted, and why this array is exported:
+ * test/charge-derivation.spec.ts asserts the two derivation functions still reproduce all 50.
+ * (The 51st, ROAD_WH_HANDLING, has no category — warehousing is deferred — and is the one row
+ * whose role/zone literals are still load-bearing; see the loop's `derived` fallback branch.)
+ */
+export const CHARGE_LINE_DEFINITIONS: ChargeDef[] = [
   // ── AIR cores (Zones 1-2) ──
   {
     key: "AIR_ORIGIN_EXPORT_CLEARANCE",
