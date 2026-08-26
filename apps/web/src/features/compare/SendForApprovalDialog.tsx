@@ -17,7 +17,12 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { buildComparisonRowModel, STALE_OFFER_LABEL, type OfferCell } from "./comparisonRowModel";
+import {
+  buildComparisonRowModel,
+  EXPIRED_OFFER_LABEL,
+  STALE_OFFER_LABEL,
+  type OfferCell,
+} from "./comparisonRowModel";
 import { useSendForApproval } from "./useAwardActions";
 import { errorMessage } from "./errorMessage";
 import { fmtUsd } from "./money";
@@ -51,14 +56,14 @@ export interface SendForApprovalDialogProps {
  * filter are listed — an unpriced offer has nothing to award and the server's guards would refuse
  * it anyway. The A9 in-flight-re-quote block is unchanged from `ShortlistDialog`.
  *
- * **Stale (`REQUOTED`) offers are listed, DISABLED, with their reason on screen** — never hidden,
- * and never selectable (S5.9 final whole-branch review, IMPORTANT 1). This dialog originally
- * ported `ShortlistDialog`'s pre-Task-3 "stays selectable" behaviour, which the server has refused
+ * **`REQUOTED` offers are listed, DISABLED, with their reason on screen** — never hidden, and never
+ * selectable (S5.9 final whole-branch review, IMPORTANT 1). This dialog originally ported
+ * `ShortlistDialog`'s pre-Task-3 "stays selectable" behaviour, which the server has refused
  * unconditionally since Task 3: `award.service.ts`'s in-transaction A1 refresh requires the NAMED
  * quote to be in `SENDABLE_STATUSES` right now — `QUOTED` or, since S5.9.5 D4, `EXPIRED`
  * (CORRECTED review round 1: this used to say "`QUOTED` right now", which stopped being the rule
  * when S5.9.5 Task 2 widened the guard). `REQUOTED` is in neither, so the conclusion below is
- * unchanged: picking a stale offer cost the maker a written override reason, a ticked
+ * unchanged: picking a re-quoted offer cost the maker a written override reason, a ticked
  * proceed-without-waiting box and a Send press to earn a 409 — *"Only a live or expired offer can
  * be sent for approval…"* — which cannot help, because refreshing leaves it `REQUOTED`.
  * Note this is a DIFFERENT rule from A9, which is about some
@@ -66,6 +71,13 @@ export interface SendForApprovalDialogProps {
  * proceedable at all. Same shape `NegotiateDialog` uses for an ineligible forwarder in this
  * folder — disabled control, reason text beside it — so an unavailable option is always visible
  * and always explained rather than silently missing.
+ *
+ * **An `EXPIRED` offer is the opposite case, and Step 5b split the two apart.** Both are
+ * `cell.stale` (Task 8 widened that flag to span both causes), but only `REQUOTED` is unsendable.
+ * Keying the radio's `disabled` off `cell.stale` therefore refused, from the only screen that can
+ * issue a send, exactly what Task 2 had just taught the server to accept — and labelled it
+ * "Re-quote requested", which is false for an offer whose re-quote window closed unanswered. Both
+ * the badge and the disabled-ness now read `cell.offer.quoteStatus` directly.
  *
  * **The reason field (PO ruling, review round).** Always rendered, for every selection — not only
  * when `overrideRequired`. It stays REQUIRED only off the recommendation; on the recommended path
@@ -213,6 +225,13 @@ export function SendForApprovalDialog({
                 <p className="text-xs font-semibold text-foreground">{g.freightForwarderName}</p>
                 {g.cells.map((cell) => {
                   const optionId = `send-option-${cell.key}`;
+                  // S5.9.5 Step 5b — `cell.stale` spans BOTH stale causes since Task 8 (`REQUOTED`
+                  // and `EXPIRED`), and the two must not be treated alike here: only `REQUOTED` is
+                  // outside the server's `SENDABLE_STATUSES`. Keying off the offer's own status
+                  // rather than off `cell.stale` is what `EXPIRED_OFFER_LABEL`'s own doc comment
+                  // in `comparisonRowModel.ts` asks this call site to do.
+                  const isRequoted = cell.offer.quoteStatus === "REQUOTED";
+                  const isExpired = cell.offer.quoteStatus === "EXPIRED";
                   return (
                     <div
                       key={cell.key}
@@ -221,9 +240,11 @@ export function SendForApprovalDialog({
                     >
                       <div className="flex items-center gap-2">
                         {/* Disabled, never omitted (review IMPORTANT 1) — the server refuses a
-                            non-QUOTED named offer unconditionally, so letting this be picked only
-                            buys the maker a 409 whose "refresh and pick again" advice can't help. */}
-                        <RadioGroupItem id={optionId} value={cell.key} disabled={cell.stale} />
+                            REQUOTED named offer unconditionally, so letting it be picked only buys
+                            the maker a 409 whose "refresh and pick again" advice can't help. An
+                            EXPIRED offer is NOT in that position: S5.9.5 Task 2 put it in
+                            `SENDABLE_STATUSES`, so it stays selectable (Step 5b). */}
+                        <RadioGroupItem id={optionId} value={cell.key} disabled={isRequoted} />
                         <div className="space-y-0.5">
                           <Label
                             htmlFor={optionId}
@@ -240,16 +261,26 @@ export function SendForApprovalDialog({
                                 ★
                               </span>
                             )}
-                            {cell.stale && (
+                            {(isRequoted || isExpired) && (
                               <Badge variant="warning" className="whitespace-nowrap">
-                                {STALE_OFFER_LABEL}
+                                {isRequoted ? STALE_OFFER_LABEL : EXPIRED_OFFER_LABEL}
                               </Badge>
                             )}
                           </Label>
-                          {cell.stale && (
+                          {isRequoted && (
                             <p className="text-xs text-muted-foreground">
                               This price isn’t live while a re-quote is outstanding — it can’t be
                               sent for approval. Wait for the new quote, or pick another offer.
+                            </p>
+                          )}
+                          {/* The expired case says what is actually true of it: the re-quote
+                              window closed with no answer, so this is the last price the forwarder
+                              submitted. It is sendable — deliberately, not by omission. */}
+                          {isExpired && (
+                            <p className="text-xs text-muted-foreground">
+                              This forwarder didn’t answer the re-quote before the deadline, so this
+                              is their last submitted price. You can still send it for approval —
+                              doing so is a deliberate choice.
                             </p>
                           )}
                         </div>

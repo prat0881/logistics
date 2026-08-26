@@ -1,10 +1,11 @@
+import { useState } from "react";
 import type { LegComparisonDto, QueryAwardSnapshot } from "@svyft/shared";
-import { rateVariantLabel } from "@svyft/shared";
+import { rateVariantLabel, Role } from "@svyft/shared";
 import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/dates";
+import { useAuth } from "@/features/auth/AuthProvider";
 import { fmtUsd } from "./money";
-import { useReopenComparison } from "./useAwardActions";
-import { errorMessage } from "./errorMessage";
+import { ReopenDialog } from "./ReopenDialog";
 
 export interface QuotingClientPanelProps {
   queryId: string;
@@ -23,10 +24,18 @@ export interface QuotingClientPanelProps {
  * Task 6). Mounted purely off `comparison.awardSnapshot != null` (coordinator ambiguity
  * resolution #1 — the same presence signal `query-status.projector.ts` itself reads to roll the
  * query to QUOTING_CLIENT). Renders each leg's frozen winner (FF + variant + USD/transit), the
- * snapshot's own `combinedUsd`, the comparison's FX "as of" stamp, and the Executive+ Reopen
- * control (resolution #3 — no confirmation dialog; `useReopenComparison` invalidates both
- * `["comparison", queryId]` and `["query", queryId]` on success, same convention as every other
- * award-action hook in `useAwardActions.ts`).
+ * snapshot's own `combinedUsd`, the comparison's FX "as of" stamp, and the Reopen control.
+ *
+ * **The Reopen control, CORRECTED at S5.9.5 (design D6).** This used to be described as "the
+ * Executive+ Reopen control (resolution #3 — no confirmation dialog)". Neither half survives D6:
+ * `award.controller.ts`'s `reopen-comparison` now carries `@Roles(Role.ADMINISTRATOR,
+ * Role.MANAGER)` and requires a `{reason}` body. So the button is withheld from anyone who is not
+ * a checker — a ROLE rule hides rather than disables (D1), and an Executive who clicked it could
+ * only ever earn a 403 — and it opens `ReopenDialog` to collect the reason instead of mutating
+ * straight from the bar, the same shape `RejectDialog` has. `useReopenComparison` still
+ * invalidates both `["comparison", queryId]` and `["query", queryId]` on success, same convention
+ * as every other award-action hook in `useAwardActions.ts`. The mutation's error state is rendered
+ * inside the dialog now (it is where the submit happens), not beside the trigger.
  *
  * ID -> NAME RESOLUTION (judgment call, revised in review round 1): `QueryAwardSnapshotLeg`
  * stores only ids (`freightForwarderId`, `legId`) — nothing in the snapshot itself carries a
@@ -35,13 +44,16 @@ export interface QuotingClientPanelProps {
  * the `Leg` table, unaffected by any quote's status.
  *
  * Forwarder names are NOT resolved from `legs[].offers[]`/`pendingForwarders[]` — an earlier
- * version of this component did that and was wrong: once a quote is APPROVED (which every
- * snapshot winner is, by the time this panel can ever render — see
- * `award.service.ts#generateClientQuote`'s own doc comment), `ComparisonService.getComparison`
- * stops emitting ANY `OfferDto`/`PendingForwarderDto` for it (`COMPARABLE_STATUSES` is
- * QUOTED/REQUOTED only), including on its own leg. So a lookup scoped to "the live comparison's
- * offers" ALWAYS misses for the one forwarder that matters most on a given leg — a single-leg
- * query would show "Unknown forwarder" every time, not as a rare edge case but as the norm.
+ * version of this component did that and was wrong. RE-TRACED at S5.9.5 (design D8), because the
+ * reason recorded here has changed: it used to be that `COMPARABLE_STATUSES` excluded `APPROVED`
+ * outright, so `ComparisonService.getComparison` emitted no `OfferDto` at all for a snapshot
+ * winner (which every leg's winner is by the time this panel can render — see
+ * `award.service.ts#generateClientQuote`'s own doc comment) and a lookup scoped to the live
+ * comparison missed EVERY time. D8 added `APPROVED` to that list, so an approved winner usually
+ * does produce an offer now — but only usually: `buildLeg` skips any quote with no `draftJson`,
+ * and the whole point of a frozen snapshot is that it must not depend on what the live read model
+ * happens to still carry. `forwarderNames` is the source that does not depend on status at all,
+ * which is why it stays the one used here.
  * Instead this reads `ComparisonDto.forwarderNames` (a `freightForwarderId -> companyName` map
  * `ComparisonService.getComparison` builds server-side from EVERY quote on the query, no status
  * filter — see that field's own doc comment) — the exact same data source that names
@@ -59,14 +71,13 @@ export function QuotingClientPanel({
   forwarderNames,
   fxAsOf,
 }: QuotingClientPanelProps) {
-  const reopen = useReopenComparison(queryId);
+  const { user } = useAuth();
+  // The SAME "is this viewer a checker?" test `CompareLegPanel` and `CompareQuotesPage` already
+  // compute, matching `reopen-comparison`'s own `@Roles(Role.ADMINISTRATOR, Role.MANAGER)` (D6).
+  const isChecker = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
+  const [reopenOpen, setReopenOpen] = useState(false);
 
   const legById = new Map(legs.map((l) => [l.legId, l]));
-
-  function onReopen() {
-    if (reopen.isPending) return;
-    reopen.mutate();
-  }
 
   return (
     <div
@@ -123,15 +134,14 @@ export function QuotingClientPanel({
         <span className="text-lg font-semibold">{fmtUsd(snapshot.combinedUsd)}</span>
       </div>
 
-      {reopen.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          {errorMessage(reopen.error, "Failed to reopen the comparison.")}
-        </p>
+      {isChecker && (
+        <Button type="button" variant="outline" onClick={() => setReopenOpen(true)}>
+          Reopen comparison
+        </Button>
       )}
-
-      <Button type="button" variant="outline" onClick={onReopen} disabled={reopen.isPending}>
-        {reopen.isPending ? "Reopening…" : "Reopen comparison"}
-      </Button>
+      {isChecker && (
+        <ReopenDialog open={reopenOpen} onOpenChange={setReopenOpen} queryId={queryId} />
+      )}
     </div>
   );
 }

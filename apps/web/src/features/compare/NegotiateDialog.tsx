@@ -71,10 +71,10 @@ interface Candidate {
  * actually has — `NegotiateDialog.test.tsx`'s "posts one request per selected forwarder" catches
  * exactly that regression (asserts 2 calls off a 4-offer/1-pending fixture, not 4 or 5).
  *
- * A forwarder is eligible when it has AT LEAST ONE offer with `quoteStatus` `QUOTED` or
- * `APPROVED` — REQUOTED forwarders (an offer exists, but a revised one is already pending) and
- * `pendingForwarders` (sent the RFQ, never comparably quoted) are both included, disabled, with
- * their own reason text — never hidden.
+ * A forwarder is eligible when it has AT LEAST ONE offer whose `quoteStatus` is in the server's
+ * `REQUOTABLE_STATUSES` — `QUOTED`, `APPROVED` or (S5.9.5 D4) `EXPIRED`. REQUOTED forwarders (an
+ * offer exists, but a revised one is already pending) and `pendingForwarders` (sent the RFQ, never
+ * comparably quoted) are both included, disabled, with their own reason text — never hidden.
  *
  * PENDING_APPROVAL is ALSO ineligible, with its own reason text (design decision D5, S5.9 code
  * review round 2): negotiate stays REFUSED while a leg is under review — the maker must reject
@@ -92,7 +92,24 @@ interface Candidate {
 function buildCandidates(leg: LegComparisonDto): Candidate[] {
   const byForwarder = new Map<string, Candidate>();
   for (const offer of leg.offers) {
-    const quotable = offer.quoteStatus === "QUOTED" || offer.quoteStatus === "APPROVED";
+    // Mirrors negotiation.service.ts's REQUOTABLE_STATUSES exactly (S5.9.5 D4). EXPIRED is new:
+    // after D4 an expired quote can still carry the forwarder's real submitted price, and
+    // re-negotiating is the deliberate act that reopens their portal with a fresh deadline.
+    // APPROVED stays listed because the SERVER still accepts it — but D1 means this dialog can no
+    // longer be opened on an approved leg (`CompareLegPanel`'s `negotiateDisabledReason`), so it is
+    // unreachable from here. Kept rather than deleted so the two lists stay readable side by side;
+    // do not "clean it up" without checking the server first.
+    const quotable =
+      offer.quoteStatus === "QUOTED" ||
+      offer.quoteStatus === "APPROVED" ||
+      offer.quoteStatus === "EXPIRED";
+    // Reachable only for the statuses left over once `quotable` has taken QUOTED/APPROVED/EXPIRED:
+    // `COMPARABLE_STATUSES` (comparison.service.ts) admits exactly QUOTED, REQUOTED,
+    // PENDING_APPROVAL, APPROVED and EXPIRED, so the two arms below cover PENDING_APPROVAL and
+    // REQUOTED and nothing else. That is why the fallback may state REQUOTED's cause outright —
+    // and why widening `quotable` above without revisiting it would be a bug: before S5.9.5 an
+    // EXPIRED offer landed on this fallback and was told a re-quote was outstanding, when in fact
+    // the re-quote had already gone unanswered.
     const ineligibleReason =
       offer.quoteStatus === "PENDING_APPROVAL"
         ? "This leg is pending approval — reject it first."

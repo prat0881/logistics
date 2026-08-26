@@ -33,19 +33,25 @@ interface CompareLegPanelProps {
    *  query is QUOTING_CLIENT). `MakerPanel`, the whole checker action bar (Approve/Reject) AND the
    *  dialogs those buttons open are NOT MOUNTED at all while locked (not merely disabled) — the
    *  final whole-branch review found this sentence true of the BAR but not of `ApproveDialog`/
-   *  `RejectDialog`, which were gated on `canCheck` alone while their maker counterparts also
-   *  carried `!locked`; `canCheck` now carries the `!locked` term itself (see its definition
-   *  below), so the claim holds for every checker surface rather than describing a guard the code
-   *  lacked. `CompareQuotesPage` computes this ONE
+   *  `RejectDialog`, which were gated on the decision status alone while their maker counterparts
+   *  also carried `!locked`; `canApprove`/`canReject` each carry the `!locked` term themselves (see
+   *  their definitions below), so the claim holds for every checker surface rather than describing
+   *  a guard the code lacked. That term became load-bearing at S5.9.5: `canReject` now survives an
+   *  APPROVED decision (D2), which is exactly what every leg of a locked query is in.
+   *  `CompareQuotesPage` computes this ONE
    *  boolean and threads it straight
    *  through, so no child re-derives the condition. `ChargeBreakdownDialog`/`DecisionTimeline` stay
    *  mounted and read-only either way. The grid stays too, but not untouched: Task 6 originally
    *  judged the whole read-only half `locked`-agnostic, and the final review overturned that for the
    *  RECOMMENDATION specifically. Once the client quote is generated the winning quote is
-   *  `APPROVED`, which `COMPARABLE_STATUSES` excludes from `offers` (comparison.service.ts), so
-   *  `buildRecommendation` ranks only the offers that LOST — the column tint/badge would name a
+   *  `APPROVED`, and `buildRecommendation` (comparison.service.ts) deliberately does not rank an
+   *  APPROVED offer, so it ranks only the offers that LOST — the column tint/badge would name a
    *  different forwarder than the award panel immediately below them. It is therefore suppressed
-   *  while locked, at the model layer (`buildComparisonRowModel`, S5.7 T1) — final review M1. */
+   *  while locked, at the model layer (`buildComparisonRowModel`, S5.7 T1) — final review M1.
+   *  RE-TRACED at S5.9.5 (design D8): the stated CAUSE used to be that `COMPARABLE_STATUSES`
+   *  excludes `APPROVED` from `offers` altogether, which stopped being true when D8 added it. The
+   *  conclusion is unchanged — an approved offer is now present in `offers` but still filtered out
+   *  of `buildRecommendation`'s candidates, so the live ranking still names a loser. */
   locked: boolean;
   /** `ComparisonDto.fxAsOf` (query-level) — threaded down from `CompareQuotesPage` so
    *  `ChargeBreakdownDialog`'s footer can state which FX snapshot an offer's rate came from.
@@ -86,20 +92,24 @@ interface CompareLegPanelProps {
  * opens `NegotiateDialog` (S5.7 T5) for an EXECUTIVE viewer only — Manager/Admin never see it,
  * because their path to a revised price is Reject with a reason (product item 1), not a
  * per-condition disable the way `negotiateDisabledReason` handles PENDING_APPROVAL for an
- * Executive. "Send for approval…" opens `SendForApprovalDialog` (S5.9 T9); for an Executive it is
- * available whenever `canSend`'s decision-status terms allow it, but for Manager/Admin `canSend`
- * carries one more term (S5.9.2 Q6, PO ruling): `leg.decision != null` — a checker only ever sees
- * Send once an exec has sent this leg at least once (the ONLY thing that can create a
- * `LegAwardDecision` row is `sendForApproval`'s upsert), which still lets the four-eyes rule work
- * (a Manager can push a leg an exec sent — and a different Manager rejected back to DRAFT, or a
- * re-quote fell back from — forward for a *different* Manager to check) without offering a
- * checker a Send affordance on a leg no exec has ever shortlisted. "Approve"/"Reject" (S5.9.1
- * Task 2) render only for Manager/Admin once `decision.status === "PENDING_APPROVAL"` (`canCheck`,
- * absorbing what used to be the standalone `CheckerPanel`'s self-gate), each opening its own
- * confirmation — `ApproveDialog` names the shortlisted forwarder before firing `useApprove`,
+ * Executive. "Send for approval…" opens `SendForApprovalDialog` (S5.9 T9); it is PRESENT for every
+ * role except a checker on a leg with no decision row (S5.9.2 Q6, PO ruling: `leg.decision != null`
+ * — a checker only ever sees Send once an exec has sent this leg at least once, the ONLY thing that
+ * can create a `LegAwardDecision` row being `sendForApproval`'s upsert), which still lets the
+ * four-eyes rule work (a Manager can push a leg an exec sent — and a different Manager rejected
+ * back to DRAFT, or a re-quote fell back from — forward for a *different* Manager to check) without
+ * offering a checker a Send affordance on a leg no exec has ever shortlisted. It is DISABLED, with
+ * `sendDisabledReason` beside it, on a leg already with a checker or already approved (S5.9.5 D1 —
+ * a state refusal shows itself and says why; only role refusals hide). "Approve" (S5.9.1 Task 2)
+ * renders for Manager/Admin only while `decision.status === "PENDING_APPROVAL"` (`canApprove`,
+ * absorbing what used to be the standalone `CheckerPanel`'s self-gate); "Reject" (`canReject`)
+ * renders on `PENDING_APPROVAL` **or** `APPROVED`, because S5.9.5 D2 makes it the one action that
+ * survives an approval and the only way back. Each opens its own confirmation —
+ * `ApproveDialog` names the shortlisted forwarder before firing `useApprove`,
  * `RejectDialog` collects the required reason before firing `useReject` — never mutating from the
- * bar directly. Four-eyes (`decision.sentByUserId === user.id`) disables both WITHOUT hiding them,
- * with the same visible hint `CheckerPanel` carried since S5.6; `CheckerPanel.tsx` itself is
+ * bar directly. Four-eyes (`decision.sentByUserId === user.id`) disables APPROVE only, WITHOUT
+ * hiding it, with the same visible hint `CheckerPanel` carried since S5.6 (reworded at S5.9.5 to
+ * name Approve, since it no longer speaks for Reject); `CheckerPanel.tsx` itself is
  * deleted (Task 2's judgement call — see its own removal note atop `GenerateGate.test.tsx`, the
  * file `CheckerPanel.test.tsx` was renamed to once nothing `CheckerPanel`-shaped was left in it)
  * since every line it rendered (the hint, the two buttons, the reason form) now lives directly in
@@ -153,11 +163,11 @@ export function CompareLegPanel({
   const [selectedOfferKey, setSelectedOfferKey] = useState<string | undefined>(undefined);
   const selectedOffer = leg.offers.find((o) => offerKey(o.quoteId, o.variant) === selectedOfferKey);
 
-  // Once the leg's decision has left DRAFT the server 409s a re-send (award.service.ts's B2 guard),
-  // so the Send affordance is withheld entirely rather than offered and rejected. `REJECTED` is
-  // never persisted — `reject()` writes DRAFT + `rejectionReason` in one update — so a returned leg
-  // is an editable DRAFT and keeps Send available (final review I2).
+  // `REJECTED` is never persisted — `reject()` writes DRAFT + `rejectionReason` in one update — so
+  // a returned leg is an editable DRAFT and keeps Send available (final review I2).
   const decisionStatus = leg.decision?.status;
+  const isApproved = decisionStatus === "APPROVED";
+  const isPendingApproval = decisionStatus === "PENDING_APPROVAL";
 
   // S5.9.1 Task 2 (R3/R5) — `isChecker` gates Negotiate OFF (product item 1: Manager/Admin reject
   // with a reason instead) and gates Approve/Reject ON once there's something to check. This is
@@ -167,49 +177,66 @@ export function CompareLegPanel({
   // up, so the three call sites can't quietly drift apart on who counts.
   const isChecker = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
 
-  // S5.9.2 Q6 (PO ruling) — a Manager/Admin sees "Send for approval" only once a `LegAwardDecision`
-  // row exists (`leg.decision != null`). `sendForApproval`'s upsert is the ONLY creator of that
-  // row anywhere in the codebase, so `decision != null` means exactly "an exec has sent this leg
-  // for approval at least once" — it bites on a leg an exec sent and a checker rejected back to
-  // DRAFT (the row survives with the rejection reason on it), or one a re-quote fell back from
-  // PENDING_APPROVAL: a manager may still push either forward. A brand-new, never-sent leg has no
-  // decision row at all, and Manager/Admin have no shortlist of their own to send — that path is
-  // exec-only, same as Negotiate. Executives are unaffected by this term (`!isChecker` short-
-  // circuits it) — this is a checker-only condition on top of the existing decision-status gate.
-  const canSend =
-    !locked &&
-    decisionStatus !== "PENDING_APPROVAL" &&
-    decisionStatus !== "APPROVED" &&
-    (!isChecker || leg.decision != null);
-  // The `!locked` term is the final whole-branch review's fix: this component's `locked` contract
-  // says the checker surfaces are NOT MOUNTED while locked, and the action BAR honoured that
-  // (`!locked && hasActionBarControls`) — but `ApproveDialog`/`RejectDialog` below were gated on
-  // `canCheck` alone, unlike the maker's own `NegotiateDialog`/`MakerPanel`, which carry `!locked`
-  // explicitly. Unreachable today (a locked query's decisions are all APPROVED, so `canCheck` is
-  // already false), which is exactly why it had to be fixed as a stated guard rather than left to
-  // an incidental one. Folded into `canCheck` itself rather than repeated at each mount so there is
-  // ONE definition of "this viewer may check this leg now" — which also makes the reset effect
-  // below cover a `locked` transition without a second dependency.
-  const canCheck = isChecker && !locked && decisionStatus === "PENDING_APPROVAL";
-  // Four-eyes (S5.6) — disables Approve/Reject WITHOUT hiding them when this viewer is the same
-  // one who sent the leg for approval. `leg.decision` is guaranteed non-null whenever `canCheck` is
-  // true (PENDING_APPROVAL only exists once a decision row does), but this reads directly off
+  // S5.9.5 (design D1) — "visible but disabled with a reason" applies to STATE rules only. ROLE
+  // rules keep hiding, as they always have: an Executive has never had Reject, a checker has never
+  // had Negotiate, and a checker has no Send on a leg no exec ever sent (S5.9.2 Q6). A disabled
+  // control must be one THIS viewer could use in some other state — never one their role can never
+  // reach, which would be a permanently greyed button that never means anything.
+  //
+  // S5.9.2 Q6 (PO ruling), the checker-only half of `sendHidden`: a Manager/Admin sees "Send for
+  // approval" only once a `LegAwardDecision` row exists. `sendForApproval`'s upsert is the ONLY
+  // creator of that row anywhere in the codebase, so `decision != null` means exactly "an exec has
+  // sent this leg for approval at least once" — it bites on a leg an exec sent and a checker
+  // rejected back to DRAFT (the row survives with the rejection reason on it), or one a re-quote
+  // fell back from PENDING_APPROVAL: a manager may still push either forward. A brand-new,
+  // never-sent leg has no decision row at all, and Manager/Admin have no shortlist of their own to
+  // send — that path is exec-only, same as Negotiate. Executives are unaffected by this term
+  // (`!isChecker` short-circuits it).
+  const sendHidden = locked || (isChecker && leg.decision == null);
+  // Both STATE refusals the server already enforces (award.service.ts's B2 guard 409s a re-send
+  // once the decision has left DRAFT), now surfaced as a reason on screen instead of a missing
+  // button.
+  const sendDisabledReason = isApproved
+    ? "This leg is approved — a checker must reject it before it can be sent again."
+    : isPendingApproval
+      ? "This leg is already with a checker."
+      : null;
+  // Gates the DIALOG's mount and the reset effect below — NOT the button's presence. A disabled
+  // button must not be able to open a dialog, so these two conditions are deliberately different.
+  const canSend = !sendHidden && sendDisabledReason == null;
+
+  // S5.9.5 (D2) — Reject is now the ONE action that survives an approval, and the only way back.
+  // The `!locked` term is the final S5.9 whole-branch review's fix, kept: this component's `locked`
+  // contract says the checker surfaces are NOT MOUNTED while locked, and the action BAR honoured
+  // that while `ApproveDialog`/`RejectDialog` were gated on the decision status alone. Carrying
+  // `!locked` in these two booleans keeps ONE definition of "this viewer may check this leg now"
+  // per action, and makes the reset effect below cover a `locked` transition with no extra
+  // dependency. It is load-bearing now in a way it wasn't before: an APPROVED decision is exactly
+  // what a locked query's legs are all in, so without `!locked` a locked query would show Reject.
+  const canReject = isChecker && !locked && (isPendingApproval || isApproved);
+  // Approve is unchanged: it only ever exists at PENDING_APPROVAL. A reopened leg's decision is
+  // APPROVED, so Approve is already unavailable there and needed no work for D2's flow.
+  const canApprove = isChecker && !locked && isPendingApproval;
+  // Four-eyes (S5.6) — disables APPROVE only, WITHOUT hiding it, when this viewer is the same one
+  // who sent the leg for approval. It deliberately no longer gates Reject: D2 rules that the
+  // manager who approved a leg may reject it back, and `reject()` server-side skips its
+  // SELF_APPROVAL check entirely in APPROVED mode, so disabling Reject here would contradict what
+  // the server now allows. `leg.decision` is guaranteed non-null whenever `canApprove` is true
+  // (PENDING_APPROVAL only exists once a decision row does), but this reads directly off
   // `leg.decision` rather than assuming that, so it degrades to `false` (never a crash) if the two
   // ever come apart.
   const isSelf = user != null && leg.decision != null && leg.decision.sentByUserId === user.id;
 
-  // Same class of bug the `canSend`/`sendOpen` effect below fixes, on the two new booleans: a
+  // Same class of bug the `canSend`/`sendOpen` effect below fixes, on the two checker booleans: a
   // checker who opens Approve or Reject, then has the read model refetch out from under them
   // (another checker decides first, or `locked` engages) must not silently reopen the same dialog
-  // if `canCheck` later becomes true again on a DIFFERENT pending decision. `{canCheck && (...)}`
-  // already unmounts both dialogs the instant `canCheck` goes false; this clears the boolean that
-  // drives their `open` prop too, so a later remount starts closed.
+  // if that action later becomes available again on a DIFFERENT decision. The `{canApprove && …}`/
+  // `{canReject && …}` gates below already unmount each dialog the instant its boolean goes false;
+  // this clears the boolean that drives their `open` prop too, so a later remount starts closed.
   useEffect(() => {
-    if (!canCheck) {
-      setApproveOpen(false);
-      setRejectOpen(false);
-    }
-  }, [canCheck]);
+    if (!canApprove) setApproveOpen(false);
+    if (!canReject) setRejectOpen(false);
+  }, [canApprove, canReject]);
 
   // Review round IMPORTANT 3 — `{canSend && (<SendForApprovalDialog open={sendOpen} …>)}` below
   // unmounts the dialog the instant `canSend` goes false, but does NOT clear `sendOpen` itself:
@@ -231,27 +258,44 @@ export function CompareLegPanel({
     if (!canSend) setSendOpen(false);
   }, [canSend]);
 
-  // CORRECTED (S5.9 final whole-branch review) — this used to say the restriction was "UI-only"
-  // and that "the server still accepts a re-quote on a PENDING_APPROVAL leg and resets its
-  // decision to DRAFT" (design consequence C1, true when S5.7 T5 wrote it). D5 removed exactly
-  // that: `negotiation.service.ts` now refuses a re-quote on any leg whose decision is
-  // PENDING_APPROVAL, with a 409 and this same "reject it first" reasoning — checked at the LEG
-  // level, so a still-QUOTED sibling quote cannot slip past it either. This copy therefore states
-  // the server's actual rule rather than softening a rule the server does not have.
-  const negotiateDisabledReason =
-    decisionStatus === "PENDING_APPROVAL"
+  // The PENDING_APPROVAL arm states the server's actual rule (CORRECTED at the S5.9 final
+  // whole-branch review, when it still claimed the restriction was "UI-only"):
+  // `negotiation.service.ts` refuses a re-quote on any leg whose decision is PENDING_APPROVAL,
+  // with a 409 and this same "reject it first" reasoning — checked at the LEG level, so a
+  // still-QUOTED sibling quote cannot slip past it either.
+  //
+  // S5.9.5 (D1) — Negotiate is refused on an approved leg too, not just a pending one. This
+  // REVERSES an earlier ruling in the same product round ("Negotiate should be allowed with all the
+  // quoted options" on an approved leg), which was confirmed once and then overturned after a
+  // business discussion. Do not restore it as a bug fix; see the design's D1. Note this arm is a
+  // UI-only refusal, deliberately: `negotiation.service.ts`'s leg-level decision guard covers
+  // PENDING_APPROVAL only, and its `REQUOTABLE_STATUSES` still admits an APPROVED quote — so the
+  // server would accept what this refuses. Recorded here and in `NegotiateDialog.buildCandidates`
+  // so neither side is "fixed" into agreement without a ruling.
+  const negotiateDisabledReason = isApproved
+    ? "This leg is approved — it must be rejected before it can be re-negotiated."
+    : isPendingApproval
       ? "A checker must reject this leg before it can be re-negotiated."
       : null;
 
-  // Review round (Minor) — a checker viewing an already-APPROVED leg (one leg approved while
-  // siblings are still pending, so `locked` hasn't engaged yet) has none of the three controls:
-  // `!isChecker` is false (no Negotiate), `canCheck` is false (status isn't PENDING_APPROVAL any
-  // more), and `canSend` is false (APPROVED is one of the two statuses that turns it off). Without
-  // this check the bar below still rendered — a bare `border-t`/`pt-3` div with nothing in it, a
-  // stray rule-and-padding with no controls. `hasActionBarControls` names the exact same three
-  // conditions the JSX already gates each control on, so it can't drift from what actually renders
-  // inside.
-  const hasActionBarControls = !isChecker || canCheck || canSend;
+  // S5.9.5 Task 10 — the same one-line guard as the `canSend`/`sendOpen` effect above, on
+  // `negotiateOpen`, because this task gave `NegotiateDialog`'s mount a condition it never had: it
+  // used to be gated on `!locked && !isChecker` alone (neither of which a refetch changes), so a
+  // stale-open remount was impossible. `negotiateDisabledReason` DOES move under a refetch —
+  // another maker sends the leg for approval, a checker approves it — so without this the dialog
+  // would unmount and then silently reappear, already open, the moment the leg came back.
+  useEffect(() => {
+    if (negotiateDisabledReason != null) setNegotiateOpen(false);
+  }, [negotiateDisabledReason]);
+
+  // Review round (Minor) — the bar must not render as a bare `border-t`/`pt-3` div with nothing in
+  // it. This names the exact same four conditions the JSX gates each control on (Negotiate on
+  // `!isChecker`, Approve on `canApprove`, Reject on `canReject`, Send on `!sendHidden`) — note
+  // they are the PRESENCE gates, not the enabled-ness ones: a disabled control with its reason
+  // beside it is still content, and D1 requires it to show. The shape that still reaches zero
+  // controls is a checker on a leg no exec has ever sent (S5.9.5 Task 10: a checker on an APPROVED
+  // leg no longer does, since Reject survives there).
+  const hasActionBarControls = !isChecker || canApprove || canReject || !sendHidden;
 
   function handleSelectOffer(quoteId: string, variant: string | null) {
     const key = offerKey(quoteId, variant);
@@ -323,15 +367,18 @@ export function CompareLegPanel({
           />
           {/* ONE action bar shared by maker and checker roles (S5.9.1 Task 2), withheld entirely
               (not merely disabled) once locked, per this component's own `locked` contract. Each
-              control keeps its own gate — Negotiate to `!isChecker`, Send to `canSend` for every
-              role, Approve/Reject to `canCheck` — rather than swapping the whole bar by role: see
-              this component's doc comment for why. `hasActionBarControls` withholds the bar itself
-              (not just each button) once none of the three would render — e.g. a checker viewing an
-              already-APPROVED leg — so it never renders as a bare, control-less rule with padding. */}
+              control keeps its own PRESENCE gate — Negotiate to `!isChecker`, Send to
+              `!sendHidden`, Approve to `canApprove`, Reject to `canReject` — rather than swapping
+              the whole bar by role: see this component's doc comment for why. Enabled-ness is a
+              separate question from presence (S5.9.5 D1): a control refused by the leg's STATE
+              renders disabled with its reason beside it, and only a ROLE rule hides.
+              `hasActionBarControls` withholds the bar itself (not just each button) once none of
+              the four would render — a checker on a leg no exec has ever sent — so it never renders
+              as a bare, control-less rule with padding. */}
           {!locked && hasActionBarControls && (
             <div
               data-testid="leg-action-bar"
-              className="flex items-center justify-end gap-2 border-t border-border pt-3"
+              className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3"
             >
               {!isChecker && negotiateDisabledReason && (
                 <span className="text-xs text-muted-foreground">{negotiateDisabledReason}</span>
@@ -347,23 +394,22 @@ export function CompareLegPanel({
                   Negotiate…
                 </Button>
               )}
-              {canCheck && isSelf && (
+              {canApprove && isSelf && (
                 <span className="text-xs text-muted-foreground">
-                  You sent this for approval — another manager must decide.
+                  You sent this for approval — another manager must approve it.
                 </span>
               )}
-              {canCheck && (
+              {canReject && (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={isSelf}
                   onClick={() => setRejectOpen(true)}
                 >
                   Reject
                 </Button>
               )}
-              {canCheck && (
+              {canApprove && (
                 <Button
                   type="button"
                   size="sm"
@@ -373,8 +419,16 @@ export function CompareLegPanel({
                   Approve
                 </Button>
               )}
-              {canSend && (
-                <Button type="button" size="sm" onClick={() => setSendOpen(true)}>
+              {!sendHidden && sendDisabledReason && (
+                <span className="text-xs text-muted-foreground">{sendDisabledReason}</span>
+              )}
+              {!sendHidden && (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={sendDisabledReason != null}
+                  onClick={() => setSendOpen(true)}
+                >
                   Send for approval…
                 </Button>
               )}
@@ -388,7 +442,7 @@ export function CompareLegPanel({
               leg={leg}
             />
           )}
-          {canCheck && (
+          {canApprove && (
             <ApproveDialog
               open={approveOpen}
               onOpenChange={setApproveOpen}
@@ -396,7 +450,7 @@ export function CompareLegPanel({
               leg={leg}
             />
           )}
-          {canCheck && (
+          {canReject && (
             <RejectDialog
               open={rejectOpen}
               onOpenChange={setRejectOpen}
@@ -415,10 +469,12 @@ export function CompareLegPanel({
           )}
           {/* `!isChecker` alongside `!locked` (final whole-branch review): the "Negotiate…" button
               is hidden for Manager/Admin (R3 — their path to a revised price is Reject-with-reason),
-              so mounting the dialog for them was a dead mount with no way to open it. Mirrors the
-              button's own gate exactly, the same way `canCheck` now gates both the Approve/Reject
-              buttons and their dialogs. */}
-          {!locked && !isChecker && (
+              so mounting the dialog for them was a dead mount with no way to open it. S5.9.5 Task 10
+              adds the `negotiateDisabledReason == null` term, matching what `canSend` already does
+              for Send: a DISABLED button must not be able to have a dialog open behind it (a
+              refetch can disable the button while the dialog is up). See the reset effect above,
+              which clears `negotiateOpen` alongside this unmount. */}
+          {!locked && !isChecker && negotiateDisabledReason == null && (
             <NegotiateDialog
               open={negotiateOpen}
               onOpenChange={setNegotiateOpen}

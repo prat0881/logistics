@@ -126,6 +126,35 @@ const LEG_WITH_PENDING_APPROVAL: LegComparisonDto = {
   ],
 };
 
+// S5.9.5 (D4) — Sable Lines is EXPIRED but still PRICED: the re-quote went unanswered and the
+// sweep now keeps their earlier submitted price. `REQUOTABLE_STATUSES` (negotiation.service.ts)
+// admits EXPIRED, so this forwarder must be selectable. Separate fixture, same reason as
+// `LEG_WITH_PENDING_APPROVAL` above — it must not shift the dedup/"select all" counts other tests
+// assert against.
+const LEG_WITH_EXPIRED: LegComparisonDto = {
+  ...LEG,
+  offers: [
+    ...LEG.offers,
+    {
+      quoteId: "q-sable",
+      freightForwarderId: "ff-sable",
+      freightForwarderName: "Sable Lines",
+      variant: "DEDICATED",
+      variantLabel: "Dedicated",
+      priced: true,
+      nativeTotal: 43000,
+      currency: "INR",
+      unitsPerUsd: 83,
+      usdTotal: 518.07,
+      transitDays: 4,
+      chargeableWeightKg: 500,
+      validUntil: "2026-08-20T12:00:00.000Z",
+      quoteStatus: "EXPIRED",
+      charges: [],
+    },
+  ],
+};
+
 type FetchCall = { url: string; quoteId: string; body: unknown };
 
 /** A fetch stub that records every `request-requote` call (so a test can assert exactly which
@@ -247,6 +276,19 @@ describe("NegotiateDialog", () => {
     expect(screen.getByText(/this leg is pending approval — reject it first\./i)).toBeInTheDocument();
     // Distinct from REQUOTED's reason — proves the two ineligible states aren't conflated.
     expect(screen.getByText(/already awaiting a revised quote/i)).toBeInTheDocument();
+  });
+
+  // S5.9.5 (D4) — `REQUOTABLE_STATUSES` gained EXPIRED, so a priced expired offer is selectable
+  // here. The old fallback reason ("Already awaiting a revised quote.") would have been plainly
+  // false for it — nobody is waiting; the window closed unanswered.
+  it("S5.9.5 (D4) — a priced EXPIRED forwarder is eligible, while the REQUOTED one stays disabled", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderDialog(qc, { onOpenChange: vi.fn(), leg: LEG_WITH_EXPIRED });
+
+    expect(await screen.findByRole("checkbox", { name: /sable/i })).toBeEnabled();
+    // Positive control in the same test: the REQUOTED sibling keeps the old treatment, so a bug
+    // that enables every forwarder cannot pass this.
+    expect(screen.getByRole("checkbox", { name: /zenith/i })).toBeDisabled();
   });
 
   // ── final review IMPORTANT #4 — design item 6 (§89): "a checkbox per forwarder, showing each

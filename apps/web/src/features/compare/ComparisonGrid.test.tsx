@@ -1763,30 +1763,79 @@ describe("Checker action bar — Approve/Reject (S5.9.1 Task 2)", () => {
     expect(screen.getByRole("button", { name: /send for approval/i })).toBeInTheDocument();
   });
 
-  // ── Review round (Minor) — the bar itself must not render when it would have zero controls
-  // (`hasActionBarControls`, `CompareLegPanel.tsx`), not merely each button individually. A checker
-  // viewing an already-APPROVED leg (one leg approved while its siblings are still pending, so
-  // `locked` hasn't engaged yet) has none of the three: no Negotiate (`isChecker`), no Approve/
-  // Reject (`canCheck` needs PENDING_APPROVAL), no Send (`canSend` excludes APPROVED) — the exact
-  // shape that used to leave a bare, control-less `border-t`/`pt-3` rule in the DOM. The positive
-  // control here can't be the bar itself (that's the thing under test), so it awaits the settled
-  // role text directly instead. ───────────────────────────────────────────────────────────────────
-  it("renders no action bar at all for a manager viewing an already-approved leg", async () => {
-    const approvedLeg: LegComparisonDto = {
-      ...PENDING_LEG,
-      decision: { ...PENDING_LEG.decision!, status: "APPROVED" },
-    };
-    renderPanel(approvedLeg, { role: "MANAGER", withAuthProbe: true });
-    await screen.findByText("MANAGER");
-    expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
-  });
-
-  // ── Ported from `CheckerPanel.test.tsx`'s four-eyes test ───────────────────────────────────────
-  it("disables both controls with a hint when the checker is the sender (four-eyes)", async () => {
+  // ── Ported from `CheckerPanel.test.tsx`'s four-eyes test. REWRITTEN by S5.9.5 Task 10: it used
+  // to assert BOTH controls disabled ("disables both controls with a hint…"). D2 keeps four-eyes on
+  // Approve and removes it from Reject — `reject()` server-side deliberately does not apply the
+  // SELF_APPROVAL check in its new APPROVED mode, and applying it here on the PENDING_APPROVAL
+  // path too would have left the sender unable to withdraw their own leg while the server allowed
+  // it. So the Reject half of this test is now a POSITIVE assertion, which is also what mutation
+  // proof 3 (re-adding `disabled={isSelf}` to Reject) reddens. ─────────────────────────────────
+  it("four-eyes disables Approve with a hint when the checker is the sender, but leaves Reject enabled", async () => {
     renderPanel(PENDING_LEG, { role: "MANAGER", userId: "sender-1" });
     expect(await screen.findByRole("button", { name: /^approve$/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^reject$/i })).toBeDisabled();
-    expect(screen.getByText(/another manager must decide/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^reject$/i })).toBeEnabled();
+    expect(screen.getByText(/another manager must approve it/i)).toBeInTheDocument();
+  });
+
+  // ── S5.9.5 (design D1/D2/D6) — approval is a freeze with exactly one door out ─────────────────
+  // The leg an approval froze. Same shape `PENDING_LEG` is in, one field along.
+  const APPROVED_LEG: LegComparisonDto = {
+    ...PENDING_LEG,
+    decision: { ...PENDING_LEG.decision!, status: "APPROVED" },
+  };
+  // The positive control's fixture: an editable leg an exec has sent once and a checker returned.
+  const DRAFT_LEG: LegComparisonDto = {
+    ...PENDING_LEG,
+    decision: { ...PENDING_LEG.decision!, status: "DRAFT" },
+  };
+
+  it("S5.9.5 (D1) — on an APPROVED leg every control is disabled with a reason, except Reject for a checker", async () => {
+    renderPanel(APPROVED_LEG, { role: "EXECUTIVE", withAuthProbe: true });
+    await screen.findByText("EXECUTIVE");
+    expect(screen.getByRole("button", { name: /send for approval/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /negotiate/i })).toBeDisabled();
+    expect(screen.getByTestId("leg-action-bar")).toHaveTextContent(/approved/i);
+
+    // An Executive still has NO Reject — that is a ROLE rule, so it hides rather than disables.
+    expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
+  });
+
+  it("S5.9.5 (D1/D2) — a Manager on an APPROVED leg gets an enabled Reject and nothing else enabled", async () => {
+    renderPanel(APPROVED_LEG, { role: "MANAGER", withAuthProbe: true });
+    await screen.findByText("MANAGER");
+    expect(screen.getByRole("button", { name: /^reject$/i })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^approve$/i })).not.toBeInTheDocument();
+    // Negotiate is checker-hidden (S5.9.1 R3, unchanged by this sub-build).
+    expect(screen.queryByRole("button", { name: /negotiate/i })).not.toBeInTheDocument();
+    // Send is a STATE refusal for a checker who already has a decision row, so it stays visible
+    // and disabled rather than hiding — the other half of D1's "nothing else enabled".
+    expect(screen.getByRole("button", { name: /send for approval/i })).toBeDisabled();
+  });
+
+  // D2's own sentence: "the Manager who approved a leg may reject it back". `reject()` skips the
+  // SELF_APPROVAL check entirely in APPROVED mode, so a four-eyes disable here would contradict
+  // the server. `userId` collides with the decision's `sentByUserId` on purpose.
+  it("S5.9.5 (D2) — the checker who sent the leg may still reject it once it is APPROVED", async () => {
+    renderPanel(APPROVED_LEG, { role: "MANAGER", userId: "sender-1", withAuthProbe: true });
+    await screen.findByText("MANAGER");
+    expect(screen.getByRole("button", { name: /^reject$/i })).toBeEnabled();
+  });
+
+  it("S5.9.5 (D1) — the same controls are ENABLED on a leg whose decision is still DRAFT", async () => {
+    // The positive control for both tests above. Without it, a bug that disables everything
+    // unconditionally passes them.
+    renderPanel(DRAFT_LEG, { role: "EXECUTIVE", withAuthProbe: true });
+    await screen.findByText("EXECUTIVE");
+    expect(screen.getByRole("button", { name: /send for approval/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /negotiate/i })).toBeEnabled();
+  });
+
+  it("S5.9.5 (D6) — a locked leg shows no action bar at all", async () => {
+    renderPanel(APPROVED_LEG, { role: "MANAGER", locked: true, withAuthProbe: true });
+    await screen.findByText("MANAGER");
+    expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
+    // Positive control: the grid is still there, so this did not pass by rendering nothing.
+    expect(screen.getByTestId("comparison-grid")).toBeInTheDocument();
   });
 
   it("confirms the forwarder by name before approving, and does not fire the mutation on open", async () => {
@@ -2023,8 +2072,12 @@ describe("SendForApprovalDialog is gated by the same rule as the button that ope
     refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, status: "PENDING_APPROVAL" } });
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    // ...and the button is gone too, i.e. the action bar and the dialog agree.
-    expect(screen.queryByRole("button", { name: /send for approval/i })).not.toBeInTheDocument();
+    // ...and the button can no longer reopen it, i.e. the action bar and the dialog agree.
+    // AMENDED at S5.9.5 (D1): this used to assert the button was GONE. A state refusal now shows
+    // itself and says why, so the button stays and goes disabled — `sendDisabledReason` and
+    // `canSend` (which gates the dialog's mount) are deliberately different conditions.
+    expect(screen.getByRole("button", { name: /send for approval/i })).toBeDisabled();
+    expect(screen.getByTestId("leg-action-bar")).toHaveTextContent(/already with a checker/i);
   });
 
   it("does not silently re-open the dialog when the leg becomes sendable again", async () => {

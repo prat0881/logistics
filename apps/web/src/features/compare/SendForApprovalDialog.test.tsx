@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { LegComparisonDto, OfferDto } from "@svyft/shared";
 import { renderWithProviders } from "@/test/renderWithProviders";
 import { ApiError, postJson } from "@/lib/api";
-import { STALE_OFFER_LABEL } from "./comparisonRowModel";
+import { EXPIRED_OFFER_LABEL, STALE_OFFER_LABEL } from "./comparisonRowModel";
 import { SendForApprovalDialog } from "./SendForApprovalDialog";
 
 // `postJson` is mocked directly rather than via the usual `mockFetch`/global-`fetch` stub: this
@@ -142,6 +142,33 @@ const LEG: LegComparisonDto = {
     decidedAt: null,
   },
   timeline: [],
+};
+
+// S5.9.5 Step 5b — Sable Lines is EXPIRED and still PRICED: the D4 scenario-B row (quoted →
+// negotiated → silent → deadline passed, draft KEPT). It sits alongside Falcon's REQUOTED offer so
+// the two stale causes are exercised side by side in one render. A separate fixture, not folded
+// into `LEG`, so it can't shift the option counts every other test in this file asserts against.
+const SABLE_EXPIRED: OfferDto = {
+  quoteId: "quote-sable",
+  freightForwarderId: "ff-sable",
+  freightForwarderName: "Sable Lines",
+  variant: "DEDICATED",
+  variantLabel: "Dedicated",
+  priced: true,
+  nativeTotal: 39000,
+  currency: "AED",
+  unitsPerUsd: 3.6725,
+  usdTotal: 10619.47,
+  transitDays: 5,
+  chargeableWeightKg: 500,
+  validUntil: "2026-08-20T00:00:00.000Z",
+  quoteStatus: "EXPIRED",
+  charges: [],
+};
+
+const LEG_WITH_EXPIRED: LegComparisonDto = {
+  ...LEG,
+  offers: [...LEG.offers, SABLE_EXPIRED],
 };
 
 function renderDialog({
@@ -329,6 +356,32 @@ describe("SendForApprovalDialog", () => {
     await userEvent.click(liveRadio);
     expect(liveRadio).toBeChecked();
     expect(screen.getAllByText(STALE_OFFER_LABEL)).toHaveLength(1); // Falcon's only
+  });
+
+  // S5.9.5 Step 5b — Task 2 made a priced EXPIRED offer sendable server-side and Task 8 widened
+  // `cell.stale` to span REQUOTED **and** EXPIRED. Keying the radio's `disabled` off `cell.stale`
+  // therefore refused, from the only screen that can issue the send, exactly what the server had
+  // just started accepting. Label and disabled-ness both key off the offer's own status now.
+  it("S5.9.5 — a priced EXPIRED offer is selectable and labelled 'Re-quote unanswered'; a REQUOTED one is neither", async () => {
+    renderDialog({ leg: LEG_WITH_EXPIRED });
+    const expired = screen.getByRole("radio", { name: new RegExp(EXPIRED_OFFER_LABEL, "i") });
+    expect(expired).toBeEnabled();
+    // Positive control in the same test — the REQUOTED sibling keeps the old treatment, so a bug
+    // that enables every offer, or that relabels every offer, cannot pass.
+    const requoted = screen.getByRole("radio", { name: new RegExp(STALE_OFFER_LABEL, "i") });
+    expect(requoted).toBeDisabled();
+
+    // …and it is genuinely pickable, not merely un-disabled.
+    await userEvent.click(expired);
+    expect(expired).toBeChecked();
+  });
+
+  // The copy half of the same split: an expired offer must not claim a re-quote is outstanding.
+  it("S5.9.5 — an EXPIRED offer's explanation says the re-quote went unanswered, not that one is outstanding", () => {
+    renderDialog({ leg: LEG_WITH_EXPIRED });
+    expect(screen.getByText(/didn’t answer the re-quote before the deadline/i)).toBeInTheDocument();
+    // Positive control: the REQUOTED sibling keeps its own, different sentence.
+    expect(screen.getByText(/isn’t live while a re-quote is outstanding/i)).toBeInTheDocument();
   });
 
   it("surfaces a send failure inline and keeps the dialog open to retry", async () => {

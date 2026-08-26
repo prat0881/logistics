@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { AwardDecisionDto, RejectInput, SendForApprovalInput } from "@svyft/shared";
+import type {
+  AwardDecisionDto,
+  RejectInput,
+  ReopenComparisonInput,
+  SendForApprovalInput,
+} from "@svyft/shared";
 import { postJson } from "@/lib/api";
 import { errorMessage } from "./errorMessage";
 
@@ -158,15 +163,20 @@ export function useGenerateClientQuote(queryId: string) {
 }
 
 // S5.6 Task 6 — the reverse of generate: unfreeze the award and go back to a live comparison.
-// Query-scoped like generate, no body, Executive+ (award.controller.ts's `reopenComparison` has
-// no `@Roles`, same auth-only convention as shortlist/send-for-approval — reopening just undoes
-// the freeze, it isn't itself a fresh checker-level decision). Same both-keys invalidation as
-// generate/approve/reject: reopening flips `query.status` back off QUOTING_CLIENT, so `["query",
-// queryId]` (StageRail/header) needs to re-derive alongside the comparison read model.
+// Query-scoped like generate. CORRECTED at S5.9.5 (design D6): this used to be described as
+// "no body, Executive+ … reopening just undoes the freeze, it isn't itself a fresh checker-level
+// decision". Both halves changed. `award.controller.ts`'s `reopenComparison` now carries
+// `@Roles(Role.ADMINISTRATOR, Role.MANAGER)` — it supersedes an ISSUED client quotation and
+// deletes a DRAFT one, which IS a checker-tier act — and validates a required `{reason}` body with
+// `ZodValidationPipe(reopenComparisonSchema)`, stored on every leg's `REOPEN` audit event.
+// `ReopenDialog` collects that reason. Same both-keys invalidation as generate/approve/reject:
+// reopening flips `query.status` back off QUOTING_CLIENT, so `["query", queryId]` (StageRail/
+// header) needs to re-derive alongside the comparison read model.
 export function useReopenComparison(queryId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => postJson(`/api/queries/${queryId}/reopen-comparison`),
+    mutationFn: (body: ReopenComparisonInput) =>
+      postJson(`/api/queries/${queryId}/reopen-comparison`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["comparison", queryId] });
       qc.invalidateQueries({ queryKey: ["query", queryId] });
