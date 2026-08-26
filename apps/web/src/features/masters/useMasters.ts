@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
-import type { ClientDto, FreightForwarderDto, Paginated, VesselDto } from "@svyft/shared";
+import type { ClientDto, FreightForwarderDto, Paginated, VesselDto, WarehouseDto } from "@svyft/shared";
 
 export function useClients(params: { q: string; page: number; pageSize: number }) {
   const { q, page, pageSize } = params;
@@ -52,6 +52,25 @@ export function useFreightForwarder(id: string | undefined) {
   return useQuery({
     queryKey: ["freight-forwarder", id],
     queryFn: () => fetchJson<FreightForwarderDto>(`/api/freight-forwarders/${id}`),
+    enabled: !!id,
+  });
+}
+
+export function useWarehouses(params: { q: string; page: number; pageSize: number }) {
+  const { q, page, pageSize } = params;
+  return useQuery({
+    queryKey: ["warehouses", q, page, pageSize],
+    queryFn: () =>
+      fetchJson<Paginated<WarehouseDto>>(
+        `/api/warehouses?q=${encodeURIComponent(q)}&page=${page}&pageSize=${pageSize}`,
+      ),
+  });
+}
+
+export function useWarehouse(id: string | undefined) {
+  return useQuery({
+    queryKey: ["warehouse", id],
+    queryFn: () => fetchJson<WarehouseDto>(`/api/warehouses/${id}`),
     enabled: !!id,
   });
 }

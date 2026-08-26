@@ -12,6 +12,8 @@ import { VesselsListPage } from "@/features/masters/vessels/VesselsListPage";
 import { VesselFormPage } from "@/features/masters/vessels/VesselFormPage";
 import { FreightForwardersListPage } from "@/features/masters/freight-forwarders/FreightForwardersListPage";
 import { FreightForwarderFormPage } from "@/features/masters/freight-forwarders/FreightForwarderFormPage";
+import { WarehousesListPage } from "@/features/masters/warehouses/WarehousesListPage";
+import { WarehouseFormPage } from "@/features/masters/warehouses/WarehouseFormPage";
 import { ConfigPage } from "@/features/admin/ConfigPage";
 import { QueriesListPage } from "@/features/query-list/QueriesListPage";
 import { QueryWizardPage } from "@/features/query-wizard/QueryWizardPage";
@@ -146,6 +148,30 @@ export function App() {
         element={
           <Protected>
             <FreightForwarderFormPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/warehouses"
+        element={
+          <Protected>
+            <WarehousesListPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/warehouses/new"
+        element={
+          <Protected>
+            <WarehouseFormPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/warehouses/:id"
+        element={
+          <Protected>
+            <WarehouseFormPage />
           </Protected>
         }
       />
