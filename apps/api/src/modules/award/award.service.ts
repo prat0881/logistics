@@ -1004,13 +1004,24 @@ export class AwardService {
   }
 
   // The two TERMINAL endpoints (design §5.6/§8.3/§9, S5.4 Task 4). Both are QUERY-scoped (no
-  // legId) — unlike every method above. `generateClientQuote` cannot reuse
-  // `ComparisonService.getComparison` for pricing: comparison.service.ts's COMPARABLE_STATUSES
-  // deliberately excludes APPROVED (its line-51 comment), and every winning quote IS APPROVED by
-  // the time this runs (Task 3's approve() put it there) — getComparison would emit zero offers.
-  // Instead each winner is priced directly off its own draftJson, mirroring
-  // comparison.service.ts's buildLeg (lines ~147-190) but targeted at the single shortlisted
-  // variant instead of every variantsForMode column.
+  // legId) — unlike every method above.
+  //
+  // S5.9.5 (D8) CORRECTION — this comment used to say `generateClientQuote` *cannot* reuse
+  // `ComparisonService.getComparison` for pricing, because COMPARABLE_STATUSES excluded APPROVED
+  // and every winning quote IS APPROVED by the time this runs, so getComparison "would emit zero
+  // offers". That is no longer true: D8 put APPROVED in COMPARABLE_STATUSES, so an approved
+  // winner carrying a draftJson now DOES produce offers there. (The comment also cited a
+  // "line-51" comment that had already moved before this correction — don't re-add line numbers
+  // for another file.)
+  //
+  // What is unchanged is what the loop below actually does, stated here as behaviour rather than
+  // as an impossibility: each winner is priced DIRECTLY off its own draftJson via
+  // computeQuoteTotals — the same engine comparison.service.ts's buildLeg uses, but targeted at
+  // the single shortlisted variant instead of every variantsForMode column, and gated by this
+  // method's own A6/A7 409s (no draftJson, no such variant, or no FX rate on file are each a hard
+  // refusal here, where getComparison would simply emit a null usdTotal). Whether it COULD now be
+  // rewritten on top of getComparison is an open question nobody has evaluated; it is not being
+  // claimed either way.
   async generateClientQuote(queryId: string, user: RequestUser): Promise<Query> {
     // MIN-3 (task-4 review) — 404 a nonexistent query explicitly (mirrors reopenComparison
     // below), so it stays distinct from a real, zero-leg query (a 409 next).

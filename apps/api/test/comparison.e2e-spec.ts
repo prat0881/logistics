@@ -479,13 +479,21 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     expect(resNoSnapshot.body.awardSnapshot).toBeNull();
   });
 
-  // S5.9.5 (D8) — RE-AIMED, not deleted. This test was written for the S5.6 review-round-1 fix
+  // S5.9.5 (D8) — RE-AIMED, not deleted. This test was written for the S5.6 review-round-1 fix,
   // and its original control asserted `offers`/`pendingForwarders` were BOTH empty for an APPROVED
-  // quote, which is exactly what D8 changes: APPROVED is now in COMPARABLE_STATUSES, so an
-  // approved winner carrying a `draftJson` renders as a real offer on its own leg. The control is
-  // updated to the new truth; the `forwarderNames` assertion — the thing this test exists for — is
-  // untouched, and still guards the query-wide, status-unfiltered map `QuotingClientPanel` needs.
-  it("names an APPROVED (snapshot-winner) forwarder in forwarderNames, and (S5.9.5 D8) surfaces its offer on its own leg", async () => {
+  // quote — which is what made the `forwarderNames` assertion mean something: with no other route
+  // to the name, only a status-UNFILTERED map could produce it. D8 destroys that control (APPROVED
+  // is comparable now, and every `OfferDto` carries `freightForwarderName` off the very same
+  // `ffNameById` map), so an APPROVED-only fixture can no longer tell a status-unfiltered map from
+  // a comparable-only one.
+  //
+  // FIX ROUND 1, FINDING 2 — the discriminating power is restored with a SECOND forwarder whose
+  // quote is `SELECT`: not in COMPARABLE_STATUSES, not in PENDING_STATUSES, so it appears in
+  // NEITHER list and `forwarderNames` is the only thing that can name it. `SELECT` is the Quote
+  // model's own `@default` and its `rfqId` is nullable — a pre-distribution quote genuinely has no
+  // RFQ — so this fixture is the real shape, not a contrivance. If `ffNameById` were ever narrowed
+  // to comparable quotes, THIS is the assertion that reddens.
+  it("names forwarders in forwarderNames regardless of quote status — including a SELECT quote in neither offers nor pendingForwarders — and (S5.9.5 D8) surfaces an APPROVED winner's offer on its own leg", async () => {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-5`, priority: "MEDIUM", incoterms: "FOB" },
     });
@@ -523,21 +531,46 @@ describe("GET /queries/:id/comparison (e2e)", () => {
       },
     });
 
+    // The discriminator (finding 2): selected for this leg but never distributed — no Rfq row at
+    // all, no draft, status SELECT. In neither status list, so neither `offers` nor
+    // `pendingForwarders` can ever name it.
+    const ffSelected = await mkFf(`FF-${PREFIX}-SEL`);
+    await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffSelected.id,
+        status: "SELECT",
+      },
+    });
+
     const res = await request(app.getHttpServer())
       .get(`/api/queries/${query.id}/comparison`)
       .set("Cookie", cookie())
       .expect(200);
 
+    const offers = res.body.legs[0].offers as OfferBody[];
+    const pendingIds = (res.body.legs[0].pendingForwarders as { freightForwarderId: string }[]).map(
+      (p) => p.freightForwarderId,
+    );
+
     // S5.9.5 (D8) — the APPROVED winner now DOES produce an offer on its own leg (this replaces
     // the pre-S5.9.5 `offers).toEqual([])` control). It is still never a "pending" forwarder.
     expect(
-      (res.body.legs[0].offers as OfferBody[]).some(
-        (o) => o.freightForwarderId === ffWinner.id && o.quoteStatus === "APPROVED",
-      ),
+      offers.some((o) => o.freightForwarderId === ffWinner.id && o.quoteStatus === "APPROVED"),
     ).toBe(true);
-    expect(res.body.legs[0].pendingForwarders).toEqual([]);
-    // ...and forwarderNames carries its name — the whole point of the fix.
+    expect(pendingIds).not.toContain(ffWinner.id);
+
+    // The SELECT forwarder reaches NEITHER list — the premise the assertion below depends on, and
+    // asserted rather than assumed so a future status-list change cannot quietly hollow it out.
+    expect(offers.some((o) => o.freightForwarderId === ffSelected.id)).toBe(false);
+    expect(pendingIds).not.toContain(ffSelected.id);
+
+    // ...yet forwarderNames names BOTH. For `ffSelected` this is the only possible source, which
+    // is what makes it a real test of the status-unfiltered map rather than of `OfferDto`'s own
+    // `freightForwarderName` (which reads the same map, and so cannot discriminate).
     expect(res.body.forwarderNames[ffWinner.id]).toBe(ffWinner.companyName);
+    expect(res.body.forwarderNames[ffSelected.id]).toBe(ffSelected.companyName);
   });
 
   // S5.9.3 Task 2 follow-up (P4, review Important) — the SAME "legs sequence should be as per
@@ -716,8 +749,15 @@ describe("GET /queries/:id/comparison (e2e)", () => {
 
     const ffWin = await mkFf(`FF-${PREFIX}-APPRW`);
     const ffLose = await mkFf(`FF-${PREFIX}-APPRL`);
+    // FIX ROUND 1, FINDING 3 — a third forwarder left at RFQ_SENT. Without it BOTH quotes on this
+    // leg are comparable, `pendingForwarders` is `[]` outright, and the `not.toContain` below
+    // asserts against a hard-coded empty array — it could not fail for any reason. This forwarder
+    // makes the list genuinely non-empty, so `not.toContain(winnerFfId)` is a real exclusion and
+    // `toContain(ffPending.id)` is its positive control.
+    const ffPending = await mkFf(`FF-${PREFIX}-APPRP`);
     const rfqWin = await mkRfq(query.id, ffWin.id, "APPRW", "INR");
     const rfqLose = await mkRfq(query.id, ffLose.id, "APPRL", "INR");
+    const rfqPending = await mkRfq(query.id, ffPending.id, "APPRP", "INR");
     await prisma.quote.create({
       data: {
         queryId: query.id,
@@ -739,6 +779,18 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         status: "QUOTED",
         submittedAt: new Date(),
         draftJson: roadDraft(leg.id, origin.id, "INR", 90000, 5) as unknown as Prisma.InputJsonValue,
+      },
+    });
+    // Sent, never submitted — no draftJson, so it produces no offer and stays "awaiting". A3 is
+    // satisfied by the leg already being FULLY_QUOTED, so this outstanding RFQ does not block the
+    // send below (and A9 only ever looks at REQUOTED quotes).
+    await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ffPending.id,
+        rfqId: rfqPending.id,
+        status: "RFQ_SENT",
       },
     });
 
@@ -786,14 +838,21 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     expect(approved[0].priced).toBe(true);
     // and it must NOT also appear as a pending forwarder.
     //
-    // HONEST NOTE (mutation 2, task report): this assertion is a SAFETY BIAS, not exercised
-    // behaviour. APPROVED is not in PENDING_STATUSES, so removing the `!offeredQuoteIds.has(q.id)`
-    // subtraction from `pendingForwarders` cannot redden it — the EXPIRED test below is the one
-    // that proves that subtraction. It is kept because "an offer must never double-render as a
-    // Not-quoted cell" is the invariant the grid depends on, whatever the status list says today.
-    expect(
-      (legDto.pendingForwarders as { freightForwarderId: string }[]).map((p) => p.freightForwarderId),
-    ).not.toContain(winnerFfId);
+    // HONEST NOTE, revised in fix round 1 (finding 3). `pendingForwarders` is now genuinely
+    // non-empty — `ffPending` sits in it — so this is a real exclusion from a real list rather
+    // than an assertion against `[]`, and `toContain(ffPending.id)` is the positive control that
+    // keeps it that way if the fixture is ever edited.
+    //
+    // What it still is NOT: a proof of the `!offeredQuoteIds.has(q.id)` subtraction. APPROVED is
+    // not in PENDING_STATUSES, so removing that subtraction cannot redden this line — the EXPIRED
+    // test below is the one that proves it (mutation 2 in the task report). This assertion guards
+    // the weaker but real invariant "an offer must never double-render as a Not-quoted cell",
+    // whatever the status lists say today.
+    const pendingIds = (legDto.pendingForwarders as { freightForwarderId: string }[]).map(
+      (p) => p.freightForwarderId,
+    );
+    expect(pendingIds).toContain(ffPending.id);
+    expect(pendingIds).not.toContain(winnerFfId);
   });
 
   // D4's two EXPIRED scenarios, side by side on one leg. Both halves are in ONE test on purpose:
