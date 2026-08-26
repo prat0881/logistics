@@ -605,6 +605,57 @@ if (decision.shortlistedQuoteId && quoteNeedsReturn) {
 
 The leg fire below it needs **no** change: it already chooses `RETURN_FULL`/`RETURN_PARTIAL` from `returnToFullyQuoted`, and Step 1 gave both events an `APPROVED` source.
 
+- [ ] **Step 5c: A rejected EXPIRED offer must not come back alive (ADDED after Task 2)**
+
+**The hole.** Task 2's Step 5b made a priced-`EXPIRED` offer sendable. `reject()`'s quote fire uses
+`QuoteEvent.RETURN`, whose only registered edge is `PENDING_APPROVAL → QUOTED`. So send-then-reject
+on an expired offer launders it into a **live `QUOTED`** quote — rankable as live, re-sendable, and
+carrying a submission deadline that lapsed weeks ago. Reading "Quoted" for a forwarder who went
+silent is precisely the dishonesty design D4 chose variant B to avoid.
+
+`reject()` cannot infer the pre-send status from the quote itself — by the time it runs, the quote
+is `PENDING_APPROVAL` and the original status is gone. It must be recorded at send time.
+
+**Record it at send time.** `sendForApproval` already writes an `AwardDecisionEvent` of type
+`SEND_FOR_APPROVAL`. Persist the quote's pre-send status on that event (the `reason` column is
+taken; add nothing to the schema — read the pre-send status inside `sendForApproval`'s existing
+transaction and carry it, or re-derive it in `reject()` from the most recent `StatusTransition` row
+for that quote, which `StatusService.fire` already appends immutably). **Prefer the
+`StatusTransition` route** — it needs no new write at all, and that table exists to answer exactly
+this question. Trace it before committing to either; do not assert which one works without reading
+`status.service.ts`.
+
+**Then branch the return.** Add a distinct event rather than a second target for `RETURN` —
+`findTransition` matches on `(from, on)`, so one event cannot have two destinations:
+
+```ts
+// S5.9.5 (Step 5c) — an offer that was EXPIRED when it was sent for approval returns to EXPIRED,
+// not to QUOTED. RETURN's single edge lands on QUOTED, which would resurrect a quote whose
+// submission window closed and whose forwarder never answered — the exact dishonesty D4's
+// "let it expire, keep the price" choice exists to prevent.
+{ from: QuoteStatus.PENDING_APPROVAL, on: QuoteEvent.RETURN_EXPIRED, to: QuoteStatus.EXPIRED, kind: "reopen" },
+```
+
+Add `RETURN_EXPIRED: "return_expired"` to `QuoteEvent` in `packages/shared/src/status.ts` and rebuild
+the shared package.
+
+**Test** in `apps/api/test/award-workflow-checker.e2e-spec.ts`:
+
+```ts
+it("S5.9.5 (Step 5c) — rejecting a sent EXPIRED offer returns it to EXPIRED, not QUOTED", async () => {
+  // send the priced-EXPIRED offer, then reject it
+  expect((await prisma.quote.findUniqueOrThrow({ where: { id: expiredQuoteId } })).status)
+    .toBe("EXPIRED");
+  // Positive control in the same test: a QUOTED offer sent and rejected still returns to QUOTED,
+  // so a bug that sends everything to EXPIRED cannot pass.
+  expect((await prisma.quote.findUniqueOrThrow({ where: { id: liveQuoteId } })).status)
+    .toBe("QUOTED");
+});
+```
+
+Mutation-prove: force the fire back to `QuoteEvent.RETURN` unconditionally → the first assertion
+reddens, the control stays green. Revert.
+
 - [ ] **Step 6: Run and confirm the tests pass**
 
 ```bash
