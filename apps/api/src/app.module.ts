@@ -8,6 +8,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { HealthModule } from "./modules/health/health.module";
 import { ClientsModule } from "./modules/clients/clients.module";
+import { WarehousesModule } from "./modules/warehouses/warehouses.module";
 import { VesselsModule } from "./modules/vessels/vessels.module";
 import { FreightForwardersModule } from "./modules/freight-forwarders/freight-forwarders.module";
 import { RfqModule } from "./modules/rfq/rfq.module";
@@ -45,6 +46,7 @@ const staticImports =
     PrismaModule,
     AuthModule,
     ClientsModule,
+    WarehousesModule,
     VesselsModule,
     FreightForwardersModule,
     RfqModule,
