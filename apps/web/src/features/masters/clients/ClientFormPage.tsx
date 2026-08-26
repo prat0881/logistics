@@ -1,9 +1,9 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { clientCreateSchema, type ClientCreateInput } from "@svyft/shared";
-import { postJson, patchJson } from "@/lib/api";
+import { ApiError, postJson, patchJson } from "@/lib/api";
 import { useClient, useOwnerWarehouses } from "../useMasters";
 import { ContactList } from "../ContactList";
 import { WarehousePicker } from "../WarehousePicker";
@@ -15,6 +15,7 @@ export function ClientFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const existing = useClient(id);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const ownedWarehouses = useOwnerWarehouses("clients", id);
   const {
     register,
@@ -38,10 +39,19 @@ export function ClientFormPage() {
     }
   }, [existing.data, reset]);
 
+  // Mirrors ChargeLineFormPage: without this catch a rejected save produced nothing at all —
+  // the button simply stopped spinning. There is no toast system in this app, so an unhandled
+  // rejection here is silence, and it swallowed every 409 (duplicate company name), every 400
+  // and every 403 alike.
   async function onSubmit(values: ClientCreateInput) {
-    if (id) await patchJson(`/api/clients/${id}`, values);
-    else await postJson("/api/clients", values);
-    navigate("/masters/clients");
+    setSubmitError(null);
+    try {
+      if (id) await patchJson(`/api/clients/${id}`, values);
+      else await postJson("/api/clients", values);
+      navigate("/masters/clients");
+    } catch (err) {
+      setSubmitError(err instanceof ApiError ? err.message : "Could not save this client");
+    }
   }
 
   return (
@@ -50,6 +60,11 @@ export function ClientFormPage() {
         <h1 className="font-display text-xl font-semibold tracking-tight">
           {id ? "Edit client" : "New client"}
         </h1>
+        {submitError && (
+          <p role="alert" className="text-sm text-destructive">
+            {submitError}
+          </p>
+        )}
         <div className="space-y-1">
           <Label htmlFor="companyName">Company name</Label>
           <Input id="companyName" {...register("companyName")} />

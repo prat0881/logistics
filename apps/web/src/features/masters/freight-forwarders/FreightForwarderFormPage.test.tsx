@@ -116,4 +116,41 @@ describe("FreightForwarderFormPage (create)", () => {
     await waitFor(() => expect(screen.getByText("ff list")).toBeInTheDocument());
     expect(body).toMatchObject({ city: "Singapore", postalCode: "049145", country: "Singapore" });
   });
+
+  // Mirrors ChargeLineFormPage: before this, onSubmit had no try/catch and there is no toast
+  // system anywhere in apps/web, so a rejected save produced NOTHING — the button stopped
+  // spinning and the page sat there. The 409 below is the message the API actually returns.
+  it("surfaces the server’s error message instead of failing silently", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/freight-forwarders") && init?.method === "POST")
+          return {
+            status: 409,
+            body: { message: "A freight forwarder with that company name already exists" },
+          };
+        return { status: 404 };
+      }),
+    );
+    renderForm();
+    await userEvent.type(await screen.findByLabelText(/company name/i), "Acme Freight");
+    await userEvent.type(screen.getByLabelText(/street address/i), "1 Cargo Way");
+    await userEvent.type(screen.getByLabelText(/^city$/i), "Singapore");
+    await userEvent.type(screen.getByLabelText(/^country$/i), "Singapore");
+    await userEvent.type(screen.getByLabelText(/person in charge/i), "Jane Doe");
+    await userEvent.type(screen.getByLabelText(/contact number/i), "+15551234567");
+    await userEvent.type(screen.getByLabelText(/^email$/i), "ops@acme.example");
+    await userEvent.click(screen.getByRole("button", { name: /countries/i }));
+    await userEvent.click(await screen.findByText("Singapore"));
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: /^modes$/i }));
+    await userEvent.click(await screen.findByText("AIR"));
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+    // Still on the form: a refused save must never look like a successful one.
+    expect(screen.queryByText("ff list")).not.toBeInTheDocument();
+  });
 });

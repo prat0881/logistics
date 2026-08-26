@@ -84,3 +84,42 @@ describe("VesselFormPage (create)", () => {
     expect(screen.queryByText("vessels list")).not.toBeInTheDocument();
   });
 });
+
+describe("VesselFormPage save failure", () => {
+  // Mirrors ChargeLineFormPage: before this, onSubmit had no try/catch and there is no toast
+  // system anywhere in apps/web, so a rejected save produced NOTHING — the button stopped
+  // spinning and the page sat there. The 409 below is the message the API actually returns.
+  it("surfaces the server’s error message instead of failing silently", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/vessels") && init?.method === "POST")
+          return { status: 409, body: { message: "A vessel with that IMO number already exists" } };
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/masters/vessels/new"]}>
+            <Routes>
+              <Route path="/masters/vessels/new" element={<VesselFormPage />} />
+              <Route path="/masters/vessels" element={<p>vessels list</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    await userEvent.type(await screen.findByLabelText(/name/i), "Dupe Vessel");
+    await userEvent.type(screen.getByLabelText(/imo number/i), "9074729");
+    await userEvent.type(screen.getByLabelText(/shipping line/i), "Test Line");
+    await userEvent.type(screen.getByLabelText(/vessel type/i), "Container Vessel");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+    // Still on the form: a refused save must never look like a successful one.
+    expect(screen.queryByText("vessels list")).not.toBeInTheDocument();
+  });
+});

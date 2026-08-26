@@ -5,6 +5,7 @@ import { LoginPage } from "@/features/auth/LoginPage";
 import { HomePage } from "@/features/home/HomePage";
 import { ProtectedRoute } from "@/features/auth/ProtectedRoute";
 import { useAuth } from "@/features/auth/AuthProvider";
+import { useCanWrite } from "@/features/auth/useCanWrite";
 import { AppLayout } from "@/components/AppLayout";
 import { ClientsListPage } from "@/features/masters/clients/ClientsListPage";
 import { ClientFormPage } from "@/features/masters/clients/ClientFormPage";
@@ -35,16 +36,15 @@ function AdminOnly({ children }: { children: ReactNode }) {
   return user?.role === Role.ADMINISTRATOR ? <>{children}</> : <Navigate to="/" replace />;
 }
 
-// GET /api/charge-line-definitions/admin is gated to Administrator OR Manager (not
-// Administrator-only like AdminOnly above) — the charge catalogue screen needs the matching
-// gate, or an Executive reaches a route whose only data source 403s.
+// Administrator OR Manager (not Administrator-only like AdminOnly above) — the gate every
+// master-data write endpoint enforces, and the one GET /api/charge-line-definitions/admin
+// enforces too. Without it an Executive reaches a route whose only data source, or whose only
+// action, can do nothing but 403. The list screens are deliberately NOT behind this: their GETs
+// are open to any signed-in user, and hiding the "New" link is the right treatment there. The
+// *form* routes are, because a row link on an open list page is an ungated way into a form whose
+// every Save 403s.
 function AdminOrManagerOnly({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
-  return user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER ? (
-    <>{children}</>
-  ) : (
-    <Navigate to="/" replace />
-  );
+  return useCanWrite() ? <>{children}</> : <Navigate to="/" replace />;
 }
 
 export function App() {
@@ -105,7 +105,9 @@ export function App() {
         path="/masters/clients/new"
         element={
           <Protected>
-            <ClientFormPage />
+            <AdminOrManagerOnly>
+              <ClientFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
@@ -113,7 +115,9 @@ export function App() {
         path="/masters/clients/:id"
         element={
           <Protected>
-            <ClientFormPage />
+            <AdminOrManagerOnly>
+              <ClientFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
@@ -129,7 +133,9 @@ export function App() {
         path="/masters/vessels/new"
         element={
           <Protected>
-            <VesselFormPage />
+            <AdminOrManagerOnly>
+              <VesselFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
@@ -137,7 +143,9 @@ export function App() {
         path="/masters/vessels/:id"
         element={
           <Protected>
-            <VesselFormPage />
+            <AdminOrManagerOnly>
+              <VesselFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
@@ -153,7 +161,9 @@ export function App() {
         path="/masters/freight-forwarders/new"
         element={
           <Protected>
-            <FreightForwarderFormPage />
+            <AdminOrManagerOnly>
+              <FreightForwarderFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
@@ -161,7 +171,9 @@ export function App() {
         path="/masters/freight-forwarders/:id"
         element={
           <Protected>
-            <FreightForwarderFormPage />
+            <AdminOrManagerOnly>
+              <FreightForwarderFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
@@ -177,7 +189,9 @@ export function App() {
         path="/masters/warehouses/new"
         element={
           <Protected>
-            <WarehouseFormPage />
+            <AdminOrManagerOnly>
+              <WarehouseFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
@@ -185,7 +199,9 @@ export function App() {
         path="/masters/warehouses/:id"
         element={
           <Protected>
-            <WarehouseFormPage />
+            <AdminOrManagerOnly>
+              <WarehouseFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />

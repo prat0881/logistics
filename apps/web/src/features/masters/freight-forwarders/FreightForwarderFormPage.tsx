@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
@@ -13,7 +13,7 @@ import {
   type CountryCode,
   type CurrencyCode,
 } from "@svyft/shared";
-import { postJson, patchJson } from "@/lib/api";
+import { ApiError, postJson, patchJson } from "@/lib/api";
 import { useFreightForwarder, useOwnerWarehouses } from "../useMasters";
 import { ContactList } from "../ContactList";
 import { WarehousePicker } from "../WarehousePicker";
@@ -31,6 +31,7 @@ export function FreightForwarderFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const existing = useFreightForwarder(id);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const ownedWarehouses = useOwnerWarehouses("freight-forwarders", id);
   const {
     register,
@@ -67,10 +68,21 @@ export function FreightForwarderFormPage() {
     }
   }, [existing.data, reset]);
 
+  // Mirrors ChargeLineFormPage: without this catch a rejected save produced nothing at all —
+  // the button simply stopped spinning. There is no toast system in this app, so an unhandled
+  // rejection here is silence, and it swallowed every 409 (duplicate company name), every 400
+  // and every 403 alike.
   async function onSubmit(values: FreightForwarderCreateInput) {
-    if (id) await patchJson(`/api/freight-forwarders/${id}`, values);
-    else await postJson("/api/freight-forwarders", values);
-    navigate("/masters/freight-forwarders");
+    setSubmitError(null);
+    try {
+      if (id) await patchJson(`/api/freight-forwarders/${id}`, values);
+      else await postJson("/api/freight-forwarders", values);
+      navigate("/masters/freight-forwarders");
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError ? err.message : "Could not save this freight forwarder",
+      );
+    }
   }
 
   const err = (name: keyof FreightForwarderCreateInput) =>
@@ -86,6 +98,11 @@ export function FreightForwarderFormPage() {
         <h1 className="font-display text-xl font-semibold tracking-tight">
           {id ? "Edit freight forwarder" : "New freight forwarder"}
         </h1>
+        {submitError && (
+          <p role="alert" className="text-sm text-destructive">
+            {submitError}
+          </p>
+        )}
 
         <section className="space-y-3">
           <h2 className={sectionTitleClass}>Company &amp; contact</h2>

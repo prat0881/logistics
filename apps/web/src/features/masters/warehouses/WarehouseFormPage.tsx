@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
@@ -81,11 +81,14 @@ export function WarehouseFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const existing = useWarehouse(id);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const {
     register,
     control,
     handleSubmit,
     reset,
+    setValue,
+    clearErrors,
     formState: { errors, isSubmitting },
   } = useForm<WarehouseCreateInput>({
     resolver: zodResolver(warehouseCreateSchema),
@@ -134,10 +137,50 @@ export function WarehouseFormPage() {
     }
   }, [existing.data, reset]);
 
+  // Byte-for-byte the mechanism already fixed in ChargeLineFormPage's mode/category/variant
+  // effect: a field whose only renderer has unmounted keeps its registered value (react-hook-
+  // form's `shouldUnregister` defaults to false), and `refineWarehouseInvariants` applies the
+  // rate rules for EVERY type, not just OWNED/CONTRACTED. So entering a handling rate with no
+  // unit on an OWNED warehouse and then switching type to CLIENT left a validation error on
+  // `handlingUnit` — a field ContractAndRatesSection is the only renderer of, and which is no
+  // longer on screen — and Save silently did nothing. Clearing the six rate fields (and their
+  // errors) when the type leaves OWNED/CONTRACTED keeps the registered values and what's
+  // visually shown in agreement, exactly as the charge-line fix does.
+  //
+  // Only on an actual transition, never on the first observed type: the load effect above sets
+  // `type` from an existing record, and clearing on that pass would blank a stored rate card on
+  // the next unrelated PATCH — the same silent-overwrite hazard that effect's own comment warns
+  // about. `agreementValidUntil`/`insuranceValidUntil` are deliberately left alone: their
+  // invariant fires only while the type IS contracted, i.e. only while the section is on screen.
+  const prevType = useRef<WarehouseCreateInput["type"] | undefined>(undefined);
+  useEffect(() => {
+    const wasContracted = CONTRACTED_TYPES.includes(
+      prevType.current as (typeof CONTRACTED_TYPES)[number],
+    );
+    prevType.current = type;
+    if (!wasContracted || isContracted) return;
+    const rateFields = [
+      "rateCurrency", "handlingRate", "handlingUnit",
+      "storageRate", "storageUnit", "weekendWorkingFee",
+    ] as const;
+    for (const f of rateFields) setValue(f, undefined);
+    clearErrors([...rateFields]);
+  }, [type, isContracted, setValue, clearErrors]);
+
+  // Mirrors ChargeLineFormPage: without this catch a rejected save produced nothing at all —
+  // the button simply stopped spinning. There is no toast system in this app, so an unhandled
+  // rejection here is silence, and it swallowed every 409 (duplicate warehouse name, second
+  // primary contact), every 400 and every 403 alike. VehicleSubForm above already caught its
+  // own; the main form did not.
   async function onSubmit(values: WarehouseCreateInput) {
-    if (id) await patchJson(`/api/warehouses/${id}`, values);
-    else await postJson("/api/warehouses", values);
-    navigate("/masters/warehouses");
+    setSubmitError(null);
+    try {
+      if (id) await patchJson(`/api/warehouses/${id}`, values);
+      else await postJson("/api/warehouses", values);
+      navigate("/masters/warehouses");
+    } catch (err) {
+      setSubmitError(err instanceof ApiError ? err.message : "Could not save this warehouse");
+    }
   }
 
   const err = (name: keyof WarehouseCreateInput) =>
@@ -153,6 +196,11 @@ export function WarehouseFormPage() {
         <h1 className="font-display text-xl font-semibold tracking-tight">
           {id ? "Edit warehouse" : "New warehouse"}
         </h1>
+        {submitError && (
+          <p role="alert" className="text-sm text-destructive">
+            {submitError}
+          </p>
+        )}
 
         {existing.data?.freightForwarderId || existing.data?.clientId ? (
           <p className="text-sm text-muted-foreground">

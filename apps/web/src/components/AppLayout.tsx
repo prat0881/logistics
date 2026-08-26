@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Role } from "@svyft/shared";
 import { useAuth } from "@/features/auth/AuthProvider";
+import { useCanWrite } from "@/features/auth/useCanWrite";
 import { Button } from "@/components/ui/button";
 import { NotificationBell } from "@/features/notifications/NotificationBell";
 
@@ -11,7 +12,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   // The charge catalogue screen's only data source (GET /api/charge-line-definitions/admin)
   // is gated to Administrator OR Manager — matching that here, not isAdmin, or a Manager would
   // see the link 404 into an AdminOnly redirect despite having real access.
-  const canSeeChargeCatalogue = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
+  const canSeeChargeCatalogue = useCanWrite();
   return (
     <div className="min-h-screen bg-background">
       <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-b-primary/70 bg-card px-4 py-3 sm:px-6">

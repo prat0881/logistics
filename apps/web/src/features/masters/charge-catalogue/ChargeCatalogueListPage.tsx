@@ -4,11 +4,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   CHARGE_CATEGORIES,
   FREIGHT_MODES,
-  Role,
   type ChargeCategory,
   type FreightMode,
 } from "@svyft/shared";
-import { useAuth } from "@/features/auth/AuthProvider";
+import { useCanWrite } from "@/features/auth/useCanWrite";
 import { ApiError, del, patchJson } from "@/lib/api";
 import { useChargeCatalogueAdmin } from "../useMasters";
 import { Input } from "@/components/ui/input";
@@ -24,9 +23,8 @@ const CATEGORY_LABELS: Record<ChargeCategory, string> = {
 type StatusFilter = "" | "active" | "inactive";
 
 export function ChargeCatalogueListPage() {
-  const { user } = useAuth();
   const qc = useQueryClient();
-  const canWrite = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
+  const canWrite = useCanWrite();
   const { data, isLoading, isError, error: fetchError } = useChargeCatalogueAdmin();
 
   const [q, setQ] = useState("");

@@ -101,6 +101,103 @@ describe("WarehouseFormPage (create)", () => {
     await waitFor(() => expect(screen.getByText("warehouses list")).toBeInTheDocument());
     expect(body).toMatchObject({ name: "Client DC", type: "CLIENT" });
   });
+
+  // Mirrors ChargeLineFormPage: before this, onSubmit had no try/catch and there is no toast
+  // system anywhere in apps/web, so a rejected save produced NOTHING — the button stopped
+  // spinning and the page sat there. The 409 below is the message the API actually returns.
+  // (VehicleSubForm on this same page already caught its own; the main form did not.)
+  it("surfaces the server’s error message instead of failing silently", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/warehouses") && init?.method === "POST")
+          return { status: 409, body: { message: "A warehouse with that name already exists" } };
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/masters/warehouses/new"]}>
+            <Routes>
+              <Route path="/masters/warehouses/new" element={<WarehouseFormPage />} />
+              <Route path="/masters/warehouses" element={<p>warehouses list</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    await userEvent.selectOptions(await screen.findByLabelText(/type of warehouse/i), "CLIENT");
+    await userEvent.type(screen.getByLabelText(/warehouse name/i), "Dubai DC");
+    await userEvent.type(screen.getByLabelText(/street address/i), "1 Dock Road");
+    await userEvent.type(screen.getByLabelText(/^country$/i), "United Arab Emirates");
+    await userEvent.type(screen.getByLabelText(/^city$/i), "Dubai");
+    await userEvent.type(screen.getByLabelText(/pin ?code/i), "00000");
+    await userEvent.type(screen.getByLabelText(/capacity$/i), "500");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+    // Still on the form: a refused save must never look like a successful one.
+    expect(screen.queryByText("warehouses list")).not.toBeInTheDocument();
+  });
+
+  it("saves after a handling rate is entered on OWNED and the type is switched to CLIENT", async () => {
+    // Regression test for a real bug found in review, the same mechanism as ChargeLineFormPage's
+    // mode-switch bug: ContractAndRatesSection is the ONLY renderer of the handlingUnit error,
+    // it unmounts when the type leaves OWNED/CONTRACTED, react-hook-form keeps the entered
+    // handlingRate registered, and refineWarehouseInvariants applies "a handling rate needs a
+    // unit" for every type. So Save failed validation on a field no longer on screen and did
+    // nothing at all — no navigation, no message. Proves the fix: the save goes through, and
+    // the cleared rate fields are not in the submitted body.
+    let body: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/warehouses") && init?.method === "POST") {
+          body = JSON.parse(init.body as string);
+          return { status: 201, body: { id: "w9", name: "Switcher DC" } };
+        }
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/masters/warehouses/new"]}>
+            <Routes>
+              <Route path="/masters/warehouses/new" element={<WarehouseFormPage />} />
+              <Route path="/masters/warehouses" element={<p>warehouses list</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    await userEvent.selectOptions(await screen.findByLabelText(/type of warehouse/i), "OWNED");
+    await userEvent.type(screen.getByLabelText(/warehouse name/i), "Switcher DC");
+    await userEvent.type(screen.getByLabelText(/street address/i), "1 Dock Road");
+    await userEvent.type(screen.getByLabelText(/^country$/i), "United Arab Emirates");
+    await userEvent.type(screen.getByLabelText(/^city$/i), "Dubai");
+    await userEvent.type(screen.getByLabelText(/pin ?code/i), "00000");
+    await userEvent.type(screen.getByLabelText(/capacity$/i), "500");
+    // A handling rate with no handling unit — invalid while the section is on screen.
+    await userEvent.type(screen.getByLabelText(/handling rate/i), "100");
+    // Leaving OWNED unmounts the whole Contract & rates section, taking the only renderer of
+    // the handlingUnit/rateCurrency errors with it.
+    await userEvent.selectOptions(screen.getByLabelText(/type of warehouse/i), "CLIENT");
+    expect(screen.queryByLabelText(/handling rate/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(screen.getByText("warehouses list")).toBeInTheDocument());
+    expect(body).toMatchObject({ name: "Switcher DC", type: "CLIENT" });
+    expect(body).not.toHaveProperty("handlingRate");
+    expect(body).not.toHaveProperty("handlingUnit");
+    expect(body).not.toHaveProperty("rateCurrency");
+  });
 });
 
 function ownedWarehouseDto(overrides: Record<string, unknown> = {}) {
