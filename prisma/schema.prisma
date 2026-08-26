@@ -74,8 +74,8 @@ model Client {
   status      MasterStatus    @default(ACTIVE)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
-  createdById String?         @db.Uuid
-  updatedById String?         @db.Uuid
+  createdById String?
+  updatedById String?
   contacts    ClientContact[]
   queries     Query[]
 
@@ -94,8 +94,8 @@ model ClientContact {
   isPrimary   Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  createdById String?  @db.Uuid
-  updatedById String?  @db.Uuid
+  createdById String?
+  updatedById String?
 
   @@index([clientId])
 }
@@ -111,8 +111,8 @@ model Vessel {
   status       MasterStatus @default(ACTIVE)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
-  createdById  String?      @db.Uuid
-  updatedById  String?      @db.Uuid
+  createdById  String?
+  updatedById  String?
   queries      Query[]
 
   @@index([tenantId])
@@ -141,8 +141,8 @@ model FreightForwarder {
   status               MasterStatus  @default(ACTIVE)
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
-  createdById          String?       @db.Uuid
-  updatedById          String?       @db.Uuid
+  createdById          String?
+  updatedById          String?
 
   rfqs   Rfq[]
   quotes Quote[]
@@ -353,8 +353,8 @@ model ChargeLineDefinition {
   isActive    Boolean             @default(true)
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
-  createdById String?             @db.Uuid
-  updatedById String?             @db.Uuid
+  createdById String?
+  updatedById String?
 
   selections LegChargeLineSelection[]
 
