@@ -382,20 +382,23 @@ model WarehouseStagingLine {
 }
 
 model ChargeLineDefinition {
-  id          String              @id @default(uuid()) @db.Uuid
-  key         String              @unique
-  mode        FreightMode
-  role        ChargeLineRole
-  inputType   ChargeLineInputType @default(PLAIN)
-  zone        ChargeZone?
-  tagKey      String?
-  label       String
-  sortOrder   Int                 @default(0)
-  isActive    Boolean             @default(true)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  createdById String?
-  updatedById String?
+  id           String              @id @default(uuid()) @db.Uuid
+  key          String              @unique
+  mode         FreightMode
+  role         ChargeLineRole
+  inputType    ChargeLineInputType @default(PLAIN)
+  zone         ChargeZone?
+  tagKey       String?
+  label        String
+  sortOrder    Int                 @default(0)
+  isActive     Boolean             @default(true)
+  category     ChargeCategory?
+  variant      ChargeVariant       @default(BOTH)
+  isAdditional Boolean             @default(false)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  createdById  String?
+  updatedById  String?
 
   selections LegChargeLineSelection[]
 
@@ -637,6 +640,23 @@ enum ChargeLineInputType {
   TRUCKING
   WAREHOUSE_STAGING
   HEAVY_WEIGHT_CALC
+}
+
+enum ChargeCategory {
+  ORIGIN
+  FREIGHT
+  DESTINATION
+  ADDITIONAL
+}
+
+enum ChargeVariant {
+  DEDICATED
+  GROUPAGE
+  DIRECT
+  INDIRECT
+  FCL
+  LCL
+  BOTH
 }
 
 enum ChargeRateVariant {
