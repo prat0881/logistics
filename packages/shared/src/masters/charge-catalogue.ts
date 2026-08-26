@@ -105,10 +105,18 @@ export const chargeLineCreateSchema = baseChargeLine.superRefine((v, ctx) => {
   }
 });
 
-/** Category and isAdditional are set on create and immutable afterwards — see design doc D18. */
+/**
+ * Category and isAdditional are set on create and immutable afterwards — see design doc D18.
+ * `.strict()` is required, not cosmetic: Zod's default `.object()` mode is "strip", which
+ * silently drops unrecognized keys (including `category`) rather than failing validation. A
+ * `.strict()`-less schema would let a PATCH carrying `category` return 200 with the field
+ * quietly ignored — passing the update through unchanged, not rejecting it. `.strict()` makes
+ * an unrecognized key a validation error, which ZodValidationPipe turns into a 400.
+ */
 export const chargeLineUpdateSchema = baseChargeLine
   .pick({ label: true, sortOrder: true, isActive: true, inputType: true })
-  .partial();
+  .partial()
+  .strict();
 
 export type ChargeLineCreateInput = z.input<typeof chargeLineCreateSchema>;
 export type ChargeLineUpdateInput = z.input<typeof chargeLineUpdateSchema>;
