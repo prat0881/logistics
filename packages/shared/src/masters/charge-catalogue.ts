@@ -56,6 +56,10 @@ export function deriveZone(
   }
 }
 
+// `tagKey` is `ReferenceTag | null` here, stricter than the schema field below (`.nullish()`,
+// which also admits `undefined`). A caller wiring this to parsed schema output — e.g. a future
+// catalogue service passing `parsed.tagKey` straight through — will need an explicit `?? null`
+// at the boundary; nothing here does that conversion for you.
 export function deriveRole(
   isAdditional: boolean,
   tagKey: ReferenceTag | null,
@@ -68,7 +72,8 @@ const baseChargeLine = z.object({
   mode: z.enum(FREIGHT_MODES),
   variant: z.enum(CHARGE_VARIANTS),
   category: z.enum(CHARGE_CATEGORIES),
-  label: z.string().min(1).max(120),
+  label: z.string().min(1).max(120)
+    .regex(/[A-Za-z0-9]/, "Label must contain at least one letter or number"),
   isAdditional: z.boolean(),
   tagKey: z.enum(REFERENCE_TAGS).nullish(),
   inputType: z.enum(["PLAIN", "TRUCKING", "WAREHOUSE_STAGING", "HEAVY_WEIGHT_CALC"]).default("PLAIN"),
@@ -122,9 +127,14 @@ export interface ChargeLineDefinitionAdminDto {
   isActive: boolean;
 }
 
-/** `SEA_DEST_WHARFAGE` from ("SEA", "DESTINATION", "Wharfage Charges"). */
+/**
+ * `SEA_DEST_WHARFAGE` from ("SEA", "DESTINATION", "Wharfage Charges"). Truncation happens BEFORE
+ * the boundary-underscore strip, not after: stripping first and then slicing to 40 chars can
+ * reintroduce a trailing `_` if the cut lands on a collapsed separator (e.g. a run of spaces at
+ * position 40). Slicing first means the strip always sees — and cleans — the final string.
+ */
 export function chargeLineKey(mode: FreightMode, category: ChargeCategory, label: string): string {
   const cat = { ORIGIN: "ORIGIN", FREIGHT: "FREIGHT", DESTINATION: "DEST", ADDITIONAL: "ADD" }[category];
-  const slug = label.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40);
+  const slug = label.toUpperCase().replace(/[^A-Z0-9]+/g, "_").slice(0, 40).replace(/^_|_$/g, "");
   return `${mode}_${cat}_${slug}`;
 }
