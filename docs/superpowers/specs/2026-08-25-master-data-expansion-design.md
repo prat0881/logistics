@@ -13,11 +13,29 @@ admin-managed Charge Line Catalogue, and put actor-level audit columns on every 
 
 ## 2. Scope
 
-**In:**
+### 2.1 The governing constraint
+
+**No Stage-4 or Stage-5 code is modified in this build.** Masters are stabilised first; the
+quote engine, FF portal, RFQ service and their tests are adapted in a later pass.
+
+Every change below is therefore additive at the boundary. Where a master change would otherwise
+alter something the quote layer reads, the old representation is kept populated alongside the
+new one. Three specific collisions were found and contained:
+
+| Master change | Stage-4 consumer | Containment |
+|---|---|---|
+| FF contacts move to a child table | `rfq.service.ts:228` snapshots `pic`, `contactNumber`, `email`, `whLocation` into the RFQ payload | The four columns stay, synced from the primary contact |
+| `zone` → `category`, `role` → `isAdditional` | `RfqPrintView.tsx:404`, `ChargeMatrix.tsx:62`, `LegSection.tsx:221`, `resolveChargeConfig` | New columns added alongside; `zone` and `role` stay populated in sync |
+| Removing the tag two-gate | `resolveChargeConfig` and the executive's selection UI | Deferred — `tagKey` and the two-gate keep working |
+
+Verified clean, with no consumer outside the masters modules: `vesselType`, and every Client,
+Warehouse and audit-column change.
+
+### 2.2 In
 
 1. Client master — address fields, contact channels, contact lifecycle.
 2. Freight Forwarder master — mandatory address, enumerated payment terms, numeric lead time,
-   a contacts child table (replacing three embedded columns), and a link to warehouses.
+   a contacts child table, and a link to warehouses.
 3. Vessel master — mandatory IMO and shipping line, vessel type relaxed to free text.
 4. Warehouse master — new entity, with contacts, a vehicle breakdown, a rate card, and
    ownership links to a forwarder or a client.
@@ -25,7 +43,7 @@ admin-managed Charge Line Catalogue, and put actor-level audit columns on every 
    workbook names that have no definition today.
 6. Audit columns (`createdById`, `updatedById`) on the master tables.
 
-**Out, and why:**
+### 2.3 Out, and why
 
 - **FX Rate master.** Already built on the Stage-5 branch as `FxRate`, with fields identical to
   the workbook's (`currency`, `unitsPerUsd`, `effectiveFrom`, `note`). Building a second one
@@ -33,8 +51,9 @@ admin-managed Charge Line Catalogue, and put actor-level audit columns on every 
 - **Warehouse charge lines in the catalogue.** Deferred by decision — the category list is
   Road/Air/Sea only. Warehouse charges remain defined by the Warehouse Charges sheet and priced
   from the Warehouse master's rate card.
-- **Air Direct/Indirect as a priced quoting variant.** Specified separately (§9) — it is a
-  quote-engine change, not master data.
+- **Everything in §2.1's containment table** — the Stage-4 pass, specced separately (§9).
+- **Air Direct/Indirect as a priced quoting variant.** Same pass. The catalogue stores the
+  variant; nothing filters on it yet.
 - **The wizard/`Point` migration.** Warehouses on a query keep working as they do today; the
   master is standalone in this build.
 - **Audit columns on the other 28 models.** A later pass, once the pattern is proven here.
@@ -51,11 +70,14 @@ admin-managed Charge Line Catalogue, and put actor-level audit columns on every 
 | D6 | `POC Level` (Primary / Secondary / None) replaces the primary boolean | Applied to all three contact tables, including FF, whose sheet still shows the boolean |
 | D7 | Newly-mandatory fields are backfilled, then made `NOT NULL` | Including IMO — see D8 |
 | D8 | IMO backfills with generated seven-digit numbers | Taken against recommendation: a generated value is indistinguishable from a real IMO once it reaches an RFQ. The migration logs every vessel it touches |
-| D9 | Vessel type drops its enum for free text | Taken against recommendation: nothing constrains the field afterwards, so spellings will drift |
-| D10 | Charge variant is a single stored value including `BOTH` | Multi-select in the UI; both selected collapses to `BOTH` |
-| D11 | The tag two-gate is removed | Taken against recommendation: DG, Fragile, Heavy, OOG and Non-stackable become ordinary selectable charges, so DG handling can be quoted on non-DG cargo |
+| D9 | Vessel type drops its enum for free text | Taken against recommendation: nothing constrains the field afterwards, so spellings will drift. Verified to have no consumer outside the vessels module |
+| D10 | Charge variant is a single stored value including `BOTH` | Multi-select in the UI; both selected collapses to `BOTH`. Stored now, filtered on in the Stage-4 pass |
+| D11 | The tag two-gate is **deferred, not removed** | Removing it changes `resolveChargeConfig` and the executive UI, which §2.1 forbids. `tagKey` stays, and the gate keeps working, until the Stage-4 pass |
 | D12 | Client `industry` is retained | Optional free text, though it appears on no version of the workbook |
 | D13 | Audit columns cover master tables only in this build | The remaining 28 models follow later |
+| D14 | No Stage-4 or Stage-5 file is edited | The governing constraint — see §2.1 |
+| D15 | FF's four snapshot columns stay, synced from the primary contact | The same contact is stored twice until the Stage-4 pass retires the columns |
+| D16 | The charge catalogue gains new columns beside the old, not instead of them | `zone` and `role` stay populated so the quote layer is untouched |
 
 ## 4. Data model
 
@@ -92,11 +114,16 @@ Unchanged: `country` stays required free text; `industry` stays optional.
 enum with ten values (7 / 15 / 30 / 45 / 60 Days Credit, 100% Advance, 50:50, 30:70, 70:30,
 100% After Delivery). `typicalLeadTime` changes from `String?` to `Int?`.
 
-New `FreightForwarderContact` with the same shape as `ClientContact`. The existing `pic`,
-`contactNumber` and `email` columns are migrated into a first contact row per forwarder and then
-dropped.
+New `FreightForwarderContact` with the same shape as `ClientContact`, backfilled from the
+existing `pic`, `contactNumber` and `email` columns.
 
-`whLocation` (free text) is retired in favour of the warehouse relation in §4.5.
+**Those three columns are not dropped** (D15). They stay, kept in sync with whichever contact
+carries `pocLevel = PRIMARY`, because `rfq.service.ts` snapshots them into the RFQ payload. The
+same applies to `whLocation`, which stays populated with the primary warehouse's name while the
+warehouse relation in §4.5 becomes the real link. Both retire in the Stage-4 pass.
+
+Sync happens in the service layer on contact create, update and delete: whenever the primary
+contact changes, the three columns are rewritten in the same transaction.
 
 ### 4.4 Vessel
 
@@ -162,41 +189,45 @@ types.
 
 ### 4.6 Charge Line Catalogue
 
-`ChargeLineDefinition` gains `variant` and `isAdditional`; `zone` is renamed and widened to
-`category`; `role` collapses.
+`ChargeLineDefinition` gains three columns. Nothing is renamed and nothing is removed (D16).
 
-| Field | Source | Notes |
+| Field | Status | Notes |
 |---|---|---|
-| `mode` | workbook | Unchanged |
-| `variant` | workbook | `DEDICATED` / `GROUPAGE` / `DIRECT` / `INDIRECT` / `FCL` / `LCL` / `BOTH`, validated against `mode` |
-| `category` | workbook | `ORIGIN` / `FREIGHT` / `DESTINATION` / `ADDITIONAL`. Road allows only `FREIGHT` and `ADDITIONAL` |
-| `label` | workbook | Unchanged |
-| `isAdditional` | workbook | Executive-configurable when true; always included when false |
-| `inputType` | existing | Drives the forwarder's input widget — trucking, warehouse staging, heavy-weight calculator |
-| `isActive` | existing | The only safe retirement, since deletion of a used line is refused by the database |
+| `mode` | existing | Unchanged |
+| `variant` | **new** | `DEDICATED` / `GROUPAGE` / `DIRECT` / `INDIRECT` / `FCL` / `LCL` / `BOTH`, validated against `mode`. Stored only — no resolver filters on it yet |
+| `category` | **new** | `ORIGIN` / `FREIGHT` / `DESTINATION` / `ADDITIONAL`. Road allows only `FREIGHT` and `ADDITIONAL` |
+| `isAdditional` | **new** | Executive-configurable when true; always included when false |
+| `label` | existing | Unchanged |
+| `zone` | existing, **kept in sync** | Derived from `category`: Origin → `ORIGIN`, Freight → `MAIN_FREIGHT`, Destination → `DESTINATION`, Additional → `null` |
+| `role` | existing, **kept in sync** | Derived from `isAdditional` and `tagKey`: false → `CORE`; true with a tag → `TAG_DRIVEN`; true without → `STANDARD` |
+| `tagKey` | existing, retained | The two-gate keeps working (D11) |
+| `inputType` | existing | Drives the forwarder's input widget |
+| `isActive` | existing | The only safe retirement — deleting a used line is refused by the database |
 | `key` | existing | Generated, immutable — quote rows reference definitions by key |
 | `sortOrder` | existing | Defaults to the current maximum plus ten within its mode and category |
 
-`tagKey` is removed (D11), along with the `TAG_DRIVEN` branch of `resolveChargeConfig`, its
-tests, and the tag column in the executive's selection UI. The fifteen tag-driven definitions
-become `isAdditional` lines in the `ADDITIONAL` category.
+The admin form shows Mode, Variant, Category, Label, Additional, Tag (when the line is
+tag-driven), Input type, Sort order and Active. `zone` and `role` never appear in the UI — they
+are written by the service from `category` and `isAdditional`, and exist only so that
+`resolveChargeConfig` and the FF portal keep working unchanged.
 
-`ROAD_WH_HANDLING` has no valid category under this model. It stays in the table, untouched and
-referenced by existing quotes, and is filtered out of the Charge Master screen until warehousing
-is decided.
+`ROAD_WH_HANDLING` has no valid category while warehousing is deferred. It stays in the table,
+untouched, and is filtered out of the Charge Master screen.
 
-**Seed — 70 lines** (51 existing, 19 new); 69 appear on the screen, since `ROAD_WH_HANDLING` is filtered out. The new ones:
+**Seed — 70 lines** (51 existing, 19 new); 69 appear on the screen. Existing definitions keep
+their current keys — renaming them would mean rewriting `definitionKey` on every quote row that
+references them, which §2.1 forbids. Only new lines use the new key pattern. The new ones:
 
 - Air: Insurance (Origin), Magnetic Fee, Europe T1 Document, EDD Security Check, Custom
   Documents T1 (Destination), File Opening Charges (Destination).
 - Sea: Container Transport / Loading and LSS (Origin); CFS, DO Release, Container Cleaning,
-  Devanning, Wharfage, BAF, CAF, DDF, Gas Measuring, Emergency Surcharge (Destination).
-- Road: Bonded Licence Fee.
+  Devanning, Wharfage, BAF, CAF, DDF (Destination); Gas Measuring and Emergency Surcharge
+  (Additional).
+- Road: Bonded Licence Fee (Additional).
 
 Container Cleaning and Devanning seed as `FCL`; everything else as `BOTH`. New Origin lines are
 always-included; new Destination lines are `isAdditional`, following the convention already in
-the seed rather than the workbook's "always included" header, which contradicts how destination
-charges are currently built.
+the seed rather than the workbook's "always included" header — see §10.
 
 ## 5. Code layout
 
@@ -212,18 +243,16 @@ All writes are gated `@Roles(ADMINISTRATOR, MANAGER)`, matching every existing m
 
 ## 6. Migrations
 
-Ordered, one per concern:
+Ordered, one per concern. Note there is no drop step — §2.1 keeps every existing column.
 
-1. Additive — new tables, new enums, new nullable columns, audit columns.
-2. Backfill — FF contacts from `pic` / `contactNumber` / `email`; addresses from existing values
-   with a placeholder only where genuinely empty; IMO numbers generated for vessels lacking one,
-   with the affected vessel ids logged.
+1. Additive — new tables, new enums, new nullable columns, audit columns, and the three new
+   charge-catalogue columns.
+2. Backfill — FF contacts from `pic` / `contactNumber` / `email`; `category` and `isAdditional`
+   from `zone` and `role`; addresses from existing values with a placeholder only where
+   genuinely empty; IMO numbers generated for vessels lacking one, with the affected vessel ids
+   logged.
 3. Constrain — `NOT NULL` on the newly-mandatory columns; partial unique indexes for one primary
    contact per parent, which Prisma cannot express and so are raw SQL.
-4. Drop — the three FF contact columns and `whLocation`, only after the backfill is verified.
-
-Production row counts for `Vessel`, `FreightForwarder` and `Client` are needed before step 2;
-they are not reachable from the development environment.
 
 ## 7. Testing
 
@@ -232,35 +261,51 @@ React Testing Library tests per page. `tsc` runs per task rather than relying on
 does not type-check.
 
 Specific coverage: the conditional warehouse validation by type; the one-primary-per-parent
-constraint; the FF contact backfill; the variant/mode validation on charge lines; and the
-refusal path when deleting a charge line that a quote references.
+constraint; the FF contact backfill; the FF column sync when the primary contact changes; the
+`category`/`isAdditional` to `zone`/`role` derivation; the variant/mode validation on charge
+lines; and the refusal path when deleting a charge line that a quote references.
+
+**Regression guard:** the existing Stage-4 suites must pass untouched. If a change requires
+editing one of their tests, that change belongs to the later pass, not this build.
 
 ## 8. Sequencing
 
 1. Vessel and Client — smallest, and they prove the contact pattern.
-2. Freight Forwarder — the contact migration.
+2. Freight Forwarder — the contact table, backfill and column sync.
 3. Warehouse — the largest, but depends on nothing.
-4. Charge Line Catalogue, including removal of the two-gate.
+4. Charge Line Catalogue — additive columns, the derivation, and the 19 new lines.
 5. FF and Client warehouse linking — last, since it needs both sides to exist.
 
-## 9. Follow-ups, specced separately
+## 9. The Stage-4 pass, specced separately
 
-- **Air Direct/Indirect as a priced quoting variant.** Adds `DIRECT` and `INDIRECT` to
-  `ChargeRateVariant` and makes air quotes per-variant like road and sea. Touches
-  `ff-portal.service.ts`, `ChargeMatrix.tsx`, `QuoteSummary.tsx`, `RfqPrintView.tsx` and
-  `quote-engine.ts` — the same files the Stage-5 branch is working through, so merge order needs
-  agreeing before either starts.
-- **Audit columns on the remaining 28 models.**
-- **Audit columns on `FxRate`**, once Stage 5 merges.
-- **Warehousing in the charge catalogue.**
-- **The wizard/`Point` migration**, so queries select warehouses from the master.
+Everything deferred by §2.1, to be done as one piece once masters are stable:
+
+- Retire FF's `pic`, `contactNumber`, `email` and `whLocation`; update `rfq.service.ts` and the
+  RFQ payload to read the contact table and warehouse relation.
+- Retire `zone` and `role`; update `resolveChargeConfig`, `ChargeMatrix`, `LegSection` and
+  `RfqPrintView` to read `category` and `isAdditional`.
+- Remove the tag two-gate (D11).
+- Make `variant` actually filter — including Air Direct/Indirect as a priced quoting variant,
+  which adds `DIRECT` and `INDIRECT` to `ChargeRateVariant` and makes air quotes per-variant like
+  road and sea.
+- Audit columns on the remaining 28 models, and on `FxRate` once Stage 5 merges.
+- Warehousing in the charge catalogue.
+- The wizard/`Point` migration, so queries select warehouses from the master.
+
+Merge order against the Stage-5 branch needs agreeing before this pass starts: it edits
+`ff-portal.service.ts`, `ChargeMatrix.tsx`, `QuoteSummary.tsx`, `RfqPrintView.tsx` and
+`quote-engine.ts`, which that branch is also working through.
 
 ## 10. Open questions
 
+- **Destination charges: always included, or executive-selected?** The seed matrix lists them
+  under "Always included Charges at FF view", but every destination line in the build today is
+  executive-selected. Seeded as `isAdditional`, following the build. If the sheet is right,
+  thirteen lines flip.
 - **Shipment type.** Destination charges are specified as conditional on Door-to-Door or
-  Port-to-Door, but the system has no shipment-type field — only Incoterms. Belongs to the
-  quoting spec.
+  Port-to-Door, but the system has no shipment-type field — only Incoterms.
 - **Fuel, Peak Season and Heavy Weight.** Seeded as always-included Air freight lines; the
-  Additional Configurable sheet lists them as executive-configurable. The seed keeps them
-  always-included, and the catalogue screen makes flipping them a UI action rather than a code
-  change.
+  Additional Configurable sheet lists them as executive-configurable. The catalogue screen makes
+  flipping them a UI action rather than a code change.
+- **Production row counts** for `Vessel`, `FreightForwarder` and `Client`, needed before the
+  backfill step. Neon is not reachable from the development environment.
