@@ -27,6 +27,7 @@ import {
   type QuoteDraft,
   type RecommendationDto,
   type RejectInput,
+  type ReopenComparisonInput,
   type SendForApprovalInput,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -1417,7 +1418,11 @@ export class AwardService {
     });
   }
 
-  async reopenComparison(queryId: string, user: RequestUser): Promise<Query> {
+  async reopenComparison(
+    queryId: string,
+    input: ReopenComparisonInput,
+    user: RequestUser,
+  ): Promise<Query> {
     const query = await this.prisma.query.findUnique({
       where: { id: queryId },
       select: { awardSnapshot: true },
@@ -1451,7 +1456,7 @@ export class AwardService {
       await tx.quotation.deleteMany({ where: { queryId, status: "DRAFT" } });
       for (const leg of legs) {
         await tx.awardDecisionEvent.create({
-          data: { legId: leg.id, queryId, type: "REOPEN", actorId: user.userId },
+          data: { legId: leg.id, queryId, type: "REOPEN", reason: input.reason, actorId: user.userId },
         });
       }
       await this.projector.recompute(queryId, tx);

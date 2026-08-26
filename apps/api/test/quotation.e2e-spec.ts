@@ -895,6 +895,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/reopen-comparison`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "S5.9.5 e2e — reopening to test the supersede/discard behaviour" })
       .expect(200);
 
     const rows = await prisma.quotation.findMany({ where: { queryId: query.id } });
@@ -940,6 +941,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/reopen-comparison`)
       .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "S5.9.5 e2e — reopening to test the fresh-draft-version behaviour" })
       .expect(200);
     expect((await prisma.quotation.findFirstOrThrow({ where: { queryId: query.id } })).status).toBe(
       "SUPERSEDED",

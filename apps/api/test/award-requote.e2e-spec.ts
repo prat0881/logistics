@@ -649,10 +649,13 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(decision1Refused?.status).toBe("APPROVED");
 
     // --- the door out, then the SAME negotiation ---
+    // S5.9.5 (D6) — reopen is Manager/Admin only and takes a required reason; `cookieFor` in this
+    // file signs an EXECUTIVE (needed for request-requote's own D3 gate), which would now 403 on
+    // reopen, so this call uses `managerCookie` instead.
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/reopen-comparison`)
-      .set("Cookie", cookieFor(randomUUID()))
-      .send()
+      .set("Cookie", managerCookie(randomUUID()))
+      .send({ reason: "S5.9.5 e2e — reopening to retry the negotiation" })
       .expect(200);
 
     await request(app.getHttpServer())

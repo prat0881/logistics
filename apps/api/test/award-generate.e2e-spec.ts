@@ -316,7 +316,7 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
-  it("2-leg query, both legs approved (INR) -> generate (MANAGER) 200: QUOTING_CLIENT + a 2-leg snapshot; then reopen (EXECUTIVE) 200: back to QUOTED, snapshot null, legs still APPROVED", async () => {
+  it("2-leg query, both legs approved (INR) -> generate (MANAGER) 200: QUOTING_CLIENT + a 2-leg snapshot; then reopen (MANAGER) 200: back to QUOTED, snapshot null, legs still APPROVED", async () => {
     const { query, legs } = await seedQuery("happy", [
       { decision: "APPROVED", currency: "INR", amount: 83200, transitDays: 3 }, // -> $1000 USD
       { decision: "APPROVED", currency: "INR", amount: 41600, transitDays: 5 }, // -> $500 USD
@@ -362,10 +362,12 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
     expect(legRows.every((l) => l.status === "APPROVED")).toBe(true);
 
     // --- reopen-comparison, same query ---
+    // S5.9.5 (D6) — reopen is Manager/Admin only and takes a required reason (see the dedicated
+    // role/reason tests below); this happy-path call just needs to keep succeeding.
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/reopen-comparison`)
-      .set("Cookie", cookieFor(randomUUID(), Role.EXECUTIVE))
-      .send()
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "Client pushed the dates" })
       .expect(200);
 
     const reopened = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
@@ -521,9 +523,80 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
 
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/reopen-comparison`)
-      .set("Cookie", cookieFor(randomUUID(), Role.EXECUTIVE))
-      .send()
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "x" })
       .expect(409);
+  });
+
+  // S5.9.5 (D6) — reopen-comparison had no @Roles at all before this task, so any authenticated
+  // role (including EXECUTIVE) could reopen a client-quoted comparison; it is now Manager/Admin
+  // only, matching the checker tier of approve/reject/generate-client-quote above.
+  it("S5.9.5 (D6) — reopen is Manager/Admin only", async () => {
+    const { query } = await seedQuery("reopenrbac", [
+      { decision: "APPROVED", currency: "INR", amount: 83200, transitDays: 3 },
+    ]);
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/reopen-comparison`)
+      .set("Cookie", cookieFor(randomUUID(), Role.EXECUTIVE))
+      .send({ reason: "x" })
+      .expect(403);
+    // The 403 changed nothing — still locked, not reopened by a role the guard should have blocked.
+    const stillLocked = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(stillLocked.awardSnapshot).not.toBeNull();
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/reopen-comparison`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "x" })
+      .expect(200);
+  });
+
+  // S5.9.5 (D6) — reopening supersedes an ISSUED client quotation and discards a DRAFT one, so
+  // it is a consequential, auditable act like reject(): it requires a non-blank reason, and that
+  // reason lands on every leg's own REOPEN AwardDecisionEvent (not just one row for the query).
+  it("S5.9.5 (D6) — reopen requires a reason, and stores it on every leg's REOPEN event", async () => {
+    const { query, legs } = await seedQuery("reopenreason", [
+      { decision: "APPROVED", currency: "INR", amount: 83200, transitDays: 3 },
+      { decision: "APPROVED", currency: "INR", amount: 41600, transitDays: 5 },
+    ]);
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(200);
+
+    const managerCookie = cookieFor(randomUUID(), Role.MANAGER);
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/reopen-comparison`)
+      .set("Cookie", managerCookie)
+      .send({})
+      .expect(400);
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/reopen-comparison`)
+      .set("Cookie", managerCookie)
+      .send({ reason: "   " })
+      .expect(400);
+    // Neither rejected attempt reopened the query.
+    const stillLocked = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(stillLocked.awardSnapshot).not.toBeNull();
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/reopen-comparison`)
+      .set("Cookie", managerCookie)
+      .send({ reason: "Client pushed the dates" })
+      .expect(200);
+
+    const events = await prisma.awardDecisionEvent.findMany({
+      where: { queryId: query.id, type: "REOPEN" },
+    });
+    expect(events).toHaveLength(legs.length);
+    expect(events.every((e) => e.reason === "Client pushed the dates")).toBe(true);
   });
 
   // S5.9.3 Task 2 (P4) — the product owner's finding: "legs sequence should be as per route

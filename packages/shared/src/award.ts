@@ -130,8 +130,14 @@ export const sendForApprovalSchema = z.object({
   proceedReason: z.string().trim().min(1).max(2000).optional(),
 });
 export const rejectSchema = z.object({ reason: z.string().trim().min(1).max(2000) });
+/** S5.9.5 (D6) — reopening a client-quoted comparison is a consequential, auditable act (it
+ *  supersedes an ISSUED quotation and discards a DRAFT one), so it collects a reason the same way
+ *  a rejection does. Same shape as `rejectSchema` deliberately: one validation rule for "a
+ *  required free-text reason", not two that can drift. */
+export const reopenComparisonSchema = z.object({ reason: z.string().trim().min(1).max(2000) });
 export type SendForApprovalInput = z.infer<typeof sendForApprovalSchema>;
 export type RejectInput = z.infer<typeof rejectSchema>;
+export type ReopenComparisonInput = z.infer<typeof reopenComparisonSchema>;
 
 // ── Stage 5 (S5.4 Task 4) — the frozen award snapshot ───────────────────────────
 // Persisted verbatim onto `Query.awardSnapshot` (Json?) by AwardService.generateClientQuote:

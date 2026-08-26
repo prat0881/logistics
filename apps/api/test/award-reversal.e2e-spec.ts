@@ -289,10 +289,14 @@ describe("change-order reversal of awards (e2e, design §10.2)", () => {
     );
 
     // --- the door out (D6's first exception), then the SAME edit ---
+    // S5.9.5 (D6) — reopen is Manager/Admin only and takes a required reason; an EXECUTIVE cookie
+    // would now 403. This reason is distinct from REASON (the later change-order edit's own
+    // reason, asserted separately below on the listener's OWN reversal event) so the two are never
+    // confused when reading the assertions.
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/reopen-comparison`)
-      .set("Cookie", cookieFor(randomUUID(), Role.EXECUTIVE))
-      .send()
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send({ reason: "S5.9.5 e2e — reopening to allow the change-order edit through" })
       .expect(200);
     // Reopen deliberately does NOT un-approve legs (D2), so the fixture the listener reacts to is
     // exactly the one the original test set up — minus the snapshot.

@@ -860,11 +860,13 @@ describe("S5.9.5 (D6) — a locked query refuses every write except Reopen and t
       .expect(200);
 
     // And reopen is the door out. It asserts the OPPOSITE condition (409 when NOT locked) and
-    // deliberately does not use the guard.
+    // deliberately does not use the guard. S5.9.5 (D6) made it Manager/Admin-only with a required
+    // reason, so this call uses the `manager` cookie already in scope above (an EXECUTIVE would
+    // now 403).
     await request(server)
       .post(`/api/queries/${locked.queryId}/reopen-comparison`)
-      .set("Cookie", cookieFor(EXEC_ID, Role.EXECUTIVE))
-      .send()
+      .set("Cookie", manager)
+      .send({ reason: "S5.9.5 query-lock e2e — reopen the door out" })
       .expect(200);
 
     // The refusals above really were the LOCK, not this query: the same PATCH that 409'd in test

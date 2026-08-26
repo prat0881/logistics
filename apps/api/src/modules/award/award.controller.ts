@@ -2,9 +2,11 @@ import { Body, Controller, HttpCode, Param, Post } from "@nestjs/common";
 import {
   Role,
   rejectSchema,
+  reopenComparisonSchema,
   requestRequoteSchema,
   sendForApprovalSchema,
   type RejectInput,
+  type ReopenComparisonInput,
   type RequestRequoteInput,
   type SendForApprovalInput,
 } from "@svyft/shared";
@@ -89,12 +91,10 @@ export class AwardController {
     return this.negotiation.requestRequote(id, legId, quoteId, body, user);
   }
 
-  // The two TERMINAL endpoints (S5.4 Task 4) — query-scoped (no :legId), neither takes a body.
+  // The two TERMINAL endpoints (S5.4 Task 4) — query-scoped (no :legId).
   // generate-client-quote freezes the award snapshot + rolls the query to QUOTING_CLIENT;
   // Manager+ gated like approve/reject above (it's the moment a client-facing quote is
-  // committed to). reopen-comparison reverses it back to QUOTED and is Executive+ (no @Roles),
-  // same auth-only convention as shortlist/send-for-approval — reopening is not itself a
-  // checker-level decision, just undoing the freeze.
+  // committed to).
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
   @Post("generate-client-quote")
   @HttpCode(200)
@@ -102,9 +102,17 @@ export class AwardController {
     return this.award.generateClientQuote(id, user);
   }
 
+  // S5.9.5 (design D6) — Manager/Admin only. Reopening supersedes an ISSUED client quotation and
+  // deletes a DRAFT one (see `reopenComparison`), which is a checker-tier act, not a maker one; the
+  // route carried no @Roles at all before this, so an Executive could do it.
+  @Roles(Role.ADMINISTRATOR, Role.MANAGER)
   @Post("reopen-comparison")
   @HttpCode(200)
-  reopenComparison(@Param("id") id: string, @CurrentUser() user: RequestUser) {
-    return this.award.reopenComparison(id, user);
+  reopenComparison(
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(reopenComparisonSchema)) body: ReopenComparisonInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.award.reopenComparison(id, body, user);
   }
 }
