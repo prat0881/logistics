@@ -334,18 +334,29 @@ describe(`${PREFIX} — a re-quote walks the leg back (e2e)`, () => {
     expect(await queryStatus(query.id)).toBe("RFQ_SENT");
   });
 
-  it("(i) a re-quote against an APPROVED leg's winner walks it past FULLY_QUOTED, all the way back to RFQ_SENT", async () => {
+  it("(i) a re-quote against an APPROVED leg walks it past FULLY_QUOTED, all the way back to RFQ_SENT", async () => {
     // The APPROVED path is NegotiationService's own: LegQuoteProjector's ROLLUP_FROZEN guard
     // skips a leg in APPROVED, so the quote fire cannot move it; `requestRequote` fires
     // REOPEN_AWARD (APPROVED -> FULLY_QUOTED) and then owns recomputing the rollup, exactly as
     // leg-quote.projector.ts's "unfreeze gap" note says the caller must. Without that second
     // step the leg would sit at FULLY_QUOTED with a REQUOTED-only quote set — the very C7
     // mismatch Q1 removes, just reached via a different door.
+    //
+    // AMENDED (S5.9.5 task-10 review round 1). The decision was `APPROVED` here, which the new D1
+    // guard in `requestRequote` now refuses outright — an Executive may no longer reverse an
+    // approval through this endpoint. That makes `wasApproved` (which reads `leg.status`, not the
+    // decision) reachable ONLY from a drifted row: `approve()`/`reject()` each commit their
+    // decision write before firing the leg transition, so a failure in that window leaves
+    // `leg.status = APPROVED` under a `DRAFT` decision. That is the shape seeded below, and it is
+    // the only shape the retained branch still serves — so this test now covers exactly what the
+    // branch is kept for, rather than a path the server refuses. The quote stays `APPROVED` for
+    // the same reason (`REQUOTABLE_STATUSES` retains it for this identical drift case), and every
+    // assertion is unchanged.
     const { query, leg, quotes } = await seedLeg(
       "i",
       "APPROVED",
       [{ key: "WIN", status: "APPROVED", draft: { amount: 83200, transitDays: 3 } }],
-      { decisionStatus: "APPROVED", shortlistKey: "WIN" },
+      { decisionStatus: "DRAFT", shortlistKey: "WIN" },
     );
 
     await requote(query.id, leg.id, quotes.WIN.id).expect(200);

@@ -267,11 +267,11 @@ export function CompareLegPanel({
   // S5.9.5 (D1) — Negotiate is refused on an approved leg too, not just a pending one. This
   // REVERSES an earlier ruling in the same product round ("Negotiate should be allowed with all the
   // quoted options" on an approved leg), which was confirmed once and then overturned after a
-  // business discussion. Do not restore it as a bug fix; see the design's D1. Note this arm is a
-  // UI-only refusal, deliberately: `negotiation.service.ts`'s leg-level decision guard covers
-  // PENDING_APPROVAL only, and its `REQUOTABLE_STATUSES` still admits an APPROVED quote — so the
-  // server would accept what this refuses. Recorded here and in `NegotiateDialog.buildCandidates`
-  // so neither side is "fixed" into agreement without a ruling.
+  // business discussion. Do not restore it as a bug fix; see the design's D1. The server SHARES
+  // this arm: task-10 review round 1 found `negotiation.service.ts`'s leg-level decision guard
+  // covered PENDING_APPROVAL only, so an Executive could POST `request-requote` on an approved leg
+  // and reverse the approval outright; it now refuses an APPROVED decision too, with the same
+  // "a checker must reject it first" remedy this copy names.
   const negotiateDisabledReason = isApproved
     ? "This leg is approved — it must be rejected before it can be re-negotiated."
     : isPendingApproval

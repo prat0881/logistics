@@ -1830,9 +1830,15 @@ describe("Checker action bar — Approve/Reject (S5.9.1 Task 2)", () => {
     expect(screen.getByRole("button", { name: /negotiate/i })).toBeEnabled();
   });
 
+  // The viewer is an EXECUTIVE deliberately (review round 1, MINOR 2). With a MANAGER this test
+  // could not fail from any single-point regression: on an APPROVED leg a checker's `canApprove`,
+  // `canReject` and `!sendHidden` are all false anyway, so `hasActionBarControls` withholds the bar
+  // regardless of the `!locked` term the test's name is actually about — only breaking BOTH gates
+  // reddened it. An Executive makes `!isChecker` true, so `hasActionBarControls` is true and
+  // `!locked` is the SOLE thing withholding the bar.
   it("S5.9.5 (D6) — a locked leg shows no action bar at all", async () => {
-    renderPanel(APPROVED_LEG, { role: "MANAGER", locked: true, withAuthProbe: true });
-    await screen.findByText("MANAGER");
+    renderPanel(APPROVED_LEG, { role: "EXECUTIVE", locked: true, withAuthProbe: true });
+    await screen.findByText("EXECUTIVE");
     expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
     // Positive control: the grid is still there, so this did not pass by rendering nothing.
     expect(screen.getByTestId("comparison-grid")).toBeInTheDocument();
@@ -2014,7 +2020,7 @@ describe("Checker action bar — Approve/Reject (S5.9.1 Task 2)", () => {
 //
 // Both tests re-render the panel with a new `leg` — exactly what TanStack Query does when
 // `["comparison", queryId]` refetches underneath it.
-describe("SendForApprovalDialog is gated by the same rule as the button that opens it", () => {
+describe("Each dialog is gated by the same rule as the button that opens it", () => {
   const DRAFT_DECISION = {
     legId: "leg-1",
     status: "DRAFT" as const,
@@ -2126,5 +2132,35 @@ describe("SendForApprovalDialog is gated by the same rule as the button that ope
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(screen.queryByTestId("leg-action-bar")).not.toBeInTheDocument();
+  });
+
+  // ── S5.9.5 Task 10, review round 1 MINOR 3 — the NegotiateDialog twin of the two tests above.
+  // Task 10 gave `NegotiateDialog`'s mount a `negotiateDisabledReason == null` term it never had
+  // (it was `!locked && !isChecker`, neither of which a refetch changes), which introduced exactly
+  // the stale-open shape review round IMPORTANT 3 fixed for `sendOpen` — and the reset effect that
+  // answers it shipped with NO coverage at all: deleting the whole effect left all 235 tests in
+  // this folder green. This is that effect's test, ported from its `sendOpen` twin.
+  //
+  // `renderRefetchablePanel`'s viewer is unauthenticated (a blanket 401), so `isChecker` is false
+  // and Negotiate renders — the same viewer every other test in this describe block uses.
+  it("does not silently re-open the negotiate dialog when the leg becomes negotiable again", async () => {
+    const draftLeg = { ...LEG, decision: DRAFT_DECISION };
+    const { refetchAs } = renderRefetchablePanel(draftLeg);
+
+    await userEvent.click(await screen.findByRole("button", { name: /negotiate/i }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    // Another maker sends the leg for approval underneath the open dialog — `negotiateDisabledReason`
+    // becomes non-null, so the dialog unmounts.
+    refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, status: "PENDING_APPROVAL" } });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // A checker rejects it back to DRAFT, so negotiating is available again. The maker's dismissed
+    // dialog must NOT come back as an open modal on its own.
+    refetchAs({ ...LEG, decision: { ...DRAFT_DECISION, rejectionReason: "Too expensive" } });
+
+    // Positive control — negotiating really is available again, so "no dialog" isn't vacuous.
+    expect(await screen.findByRole("button", { name: /negotiate/i })).toBeEnabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

@@ -585,31 +585,16 @@ describe("buildComparisonRowModel", () => {
     });
   });
 
-  // ── S5.9.5 (D4, ADDED after Task 1's review) — `stale` widens to cover a price-carrying
-  // EXPIRED offer, not only REQUOTED. Both are proven together, each acting as the other's
-  // positive control: a fix that only widened one status (or that broadened `stale` to "anything
-  // that isn't QUOTED") would still pass a test built around a single status.
-  describe("stale — widened to REQUOTED || EXPIRED (S5.9.5 D4)", () => {
-    it("marks a REQUOTED offer and a price-carrying EXPIRED offer both stale; a QUOTED offer stays live", () => {
-      const m = buildComparisonRowModel(
-        leg([
-          offer({ quoteId: "q-requoted", quoteStatus: "REQUOTED" }),
-          offer({ quoteId: "q-expired", quoteStatus: "EXPIRED" }),
-          offer({ quoteId: "q-live", quoteStatus: "QUOTED" }),
-        ]),
-        false,
-      );
-      expect(
-        asOffer(m.cells.find((c) => c.key === offerKey("q-requoted", "DEDICATED"))!).stale,
-      ).toBe(true);
-      expect(
-        asOffer(m.cells.find((c) => c.key === offerKey("q-expired", "DEDICATED"))!).stale,
-      ).toBe(true);
-      expect(asOffer(m.cells.find((c) => c.key === offerKey("q-live", "DEDICATED"))!).stale).toBe(
-        false,
-      );
-    });
-  });
+  // ── S5.9.5 (D4) — a `describe("stale — widened to REQUOTED || EXPIRED")` block lived here,
+  // asserting `OfferCell.stale` for a REQUOTED and a price-carrying EXPIRED offer. It went with the
+  // field itself in Task 10's review round 1 (MINOR 5): once `SendForApprovalDialog` had to tell the
+  // two causes APART — different badge, different copy, and only REQUOTED unselectable — a flag that
+  // deliberately spanned both was useless to its only consumer, which reads `offer.quoteStatus`
+  // instead. `stale` then had zero production readers, so these assertions were pinning a value
+  // nothing rendered. The behaviour they were really about is covered where it is now visible:
+  // `SendForApprovalDialog.test.tsx`'s "a priced EXPIRED offer is selectable and labelled
+  // 'Re-quote unanswered'; a REQUOTED one is neither".
+
 
   it("renders the conversion rate metric, and an em-dash when absent", () => {
     const rate = METRICS.find((x) => x.id === "rate")!;

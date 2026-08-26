@@ -79,8 +79,11 @@ interface Candidate {
  * PENDING_APPROVAL is ALSO ineligible, with its own reason text (design decision D5, S5.9 code
  * review round 2): negotiate stays REFUSED while a leg is under review — the maker must reject
  * the leg back to QUOTED first, matching the server's own gate: the LEG-level decision guard at
- * `negotiation.service.ts:69-74`, which loads the leg's `LegAwardDecision` and 409s when it is
- * `PENDING_APPROVAL`, BEFORE `REQUOTABLE_STATUSES` (`:76`) is ever consulted. That guard is NOT
+ * `negotiation.service.ts:114-124`, which loads the leg's `LegAwardDecision` and 409s when it is
+ * `PENDING_APPROVAL` — or, since S5.9.5 D1, `APPROVED` — BEFORE `REQUOTABLE_STATUSES` (`:126`) is
+ * ever consulted. (Those citations read `:69-74` and `:76` until review round 1 of Task 10; both
+ * had drifted well before that task, and the guard moved again when D1's `APPROVED` arm was added
+ * to it.) That guard is NOT
  * redundant with `REQUOTABLE_STATUSES` — the latter only gates the quote NAMED in a given call,
  * so a still-QUOTED sibling quote on the same leg would sail straight past it and let a maker
  * reset a decision a checker is mid-review of on a different, already-shortlisted quote. An
@@ -95,10 +98,13 @@ function buildCandidates(leg: LegComparisonDto): Candidate[] {
     // Mirrors negotiation.service.ts's REQUOTABLE_STATUSES exactly (S5.9.5 D4). EXPIRED is new:
     // after D4 an expired quote can still carry the forwarder's real submitted price, and
     // re-negotiating is the deliberate act that reopens their portal with a fresh deadline.
-    // APPROVED stays listed because the SERVER still accepts it — but D1 means this dialog can no
-    // longer be opened on an approved leg (`CompareLegPanel`'s `negotiateDisabledReason`), so it is
-    // unreachable from here. Kept rather than deleted so the two lists stay readable side by side;
-    // do not "clean it up" without checking the server first.
+    // APPROVED stays listed because `REQUOTABLE_STATUSES` still lists it — but it is unreachable
+    // from here for TWO independent reasons now, not one: D1 stops this dialog opening on an
+    // approved leg at all (`CompareLegPanel`'s `negotiateDisabledReason`), and, since review round 1
+    // of this sub-build, `requestRequote` itself refuses a leg whose decision is APPROVED with a
+    // 409 naming Reject as the remedy. The UI and the server agree; the two lists are kept
+    // readable side by side rather than trimmed. Do not "clean it up" without checking the server
+    // first.
     const quotable =
       offer.quoteStatus === "QUOTED" ||
       offer.quoteStatus === "APPROVED" ||

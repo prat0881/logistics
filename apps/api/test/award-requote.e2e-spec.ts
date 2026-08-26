@@ -311,88 +311,136 @@ describe(`${PREFIX} (e2e)`, () => {
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
-  it("APPROVED leg: request-requote -> 200; quote REQUOTED (draft retained), decision reset to DRAFT, leg walked back to RFQ_SENT, token+deadline reset, FF notified", async () => {
-    const { query, leg, rfq, quote, seededHash } = await seedLeg("approved", "APPROVED", "APPROVED", {
+  // S5.9.5 (design D1), task-10 review round 1 IMPORTANT 1 — REPLACES a test titled "APPROVED leg:
+  // request-requote -> 200; quote REQUOTED (draft retained), decision reset to DRAFT, leg walked
+  // back to RFQ_SENT, token+deadline reset, FF notified". That test pinned exactly the behaviour D1
+  // forbids: an Executive reversing a completed approval through the negotiation endpoint, with no
+  // four-eyes and no reason on the audit trail. The remedy is a checker's Reject (D2), which this
+  // endpoint's 409 now names.
+  //
+  // The positive control is in the SAME test and carries the FULL assertion set the deleted test
+  // used to own (draft retained, decision reset, leg walked back, deadline re-armed, FF notified,
+  // audit row) — so this cannot pass by refusing every re-quote, and none of that coverage was lost
+  // in the swap. The two legs differ ONLY in decision status.
+  it("S5.9.5 (D1) — an Executive's request-requote is REFUSED on an APPROVED leg and changes nothing, while the same call on a DRAFT-decision leg still succeeds", async () => {
+    const approved = await seedLeg("d1approved", "APPROVED", "APPROVED", {
       withDraft: true,
       decisionStatus: "APPROVED",
     });
-    const actorId = randomUUID();
     const comment = "Client wants a better rate on this lane, please revise.";
 
-    const res = await request(app.getHttpServer())
-      .post(`/api/queries/${query.id}/legs/${leg.id}/quotes/${quote.id}/request-requote`)
+    const refused = await request(app.getHttpServer())
+      .post(
+        `/api/queries/${approved.query.id}/legs/${approved.leg.id}/quotes/${approved.quote.id}/request-requote`,
+      )
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment })
+      .expect(409);
+    expect(refused.body.message).toBe(
+      "This leg is approved — a checker must reject it before a re-quote can be requested",
+    );
+
+    // NOTHING moved. This is the half that matters: the old behaviour did not merely allow the
+    // call, it nulled decidedByUserId/decidedAt/sentByUserId and walked the leg back.
+    const quoteAfter = await prisma.quote.findUniqueOrThrow({ where: { id: approved.quote.id } });
+    expect(quoteAfter.status).toBe("APPROVED");
+    const legAfter = await prisma.leg.findUniqueOrThrow({ where: { id: approved.leg.id } });
+    expect(legAfter.status).toBe("APPROVED");
+    const decisionAfter = await prisma.legAwardDecision.findUniqueOrThrow({
+      where: { legId: approved.leg.id },
+    });
+    expect(decisionAfter.status).toBe("APPROVED");
+    expect(decisionAfter.shortlistedQuoteId).toBe(approved.quote.id);
+    expect(decisionAfter.decidedByUserId).not.toBeNull();
+    expect(decisionAfter.decidedAt).not.toBeNull();
+    expect(decisionAfter.sentByUserId).not.toBeNull();
+    // No audit row, no forwarder email — a refused negotiation must leave no trace of one.
+    const noEvents = await prisma.awardDecisionEvent.findMany({
+      where: { legId: approved.leg.id, type: "REQUEST_REQUOTE" },
+    });
+    expect(noEvents).toHaveLength(0);
+    const noMsg = await prisma.messageLog.findFirst({
+      where: { entityType: "RFQ", entityId: approved.rfq.id, eventKey: "rfq.requote_requested" },
+    });
+    expect(noMsg).toBeNull();
+
+    // ── POSITIVE CONTROL — same call, same role, same payload; only the decision status differs ──
+    const draft = await seedLeg("d1draft", "FULLY_QUOTED", "QUOTED", {
+      withDraft: true,
+      decisionStatus: "DRAFT",
+    });
+    const actorId = randomUUID();
+
+    const ok = await request(app.getHttpServer())
+      .post(
+        `/api/queries/${draft.query.id}/legs/${draft.leg.id}/quotes/${draft.quote.id}/request-requote`,
+      )
       .set("Cookie", cookieFor(actorId))
       .send({ comment })
       .expect(200);
-
-    expect(res.body.status).toBe("REQUOTED");
+    expect(ok.body.status).toBe("REQUOTED");
 
     // quote: REQUOTED, draftJson RETAINED (the earlier price must stay visible)
-    const quoteAfter = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
-    expect(quoteAfter.status).toBe("REQUOTED");
-    expect(quoteAfter.draftJson).not.toBeNull();
-    expect((quoteAfter.draftJson as unknown as QuoteDraft).chargedWeightKg).toBe(500);
+    const okQuote = await prisma.quote.findUniqueOrThrow({ where: { id: draft.quote.id } });
+    expect(okQuote.status).toBe("REQUOTED");
+    expect(okQuote.draftJson).not.toBeNull();
+    expect((okQuote.draftJson as unknown as QuoteDraft).chargedWeightKg).toBe(500);
 
     // decision: reset to a clean DRAFT slate
-    const decisionAfter = await prisma.legAwardDecision.findUnique({ where: { legId: leg.id } });
-    expect(decisionAfter?.status).toBe("DRAFT");
-    expect(decisionAfter?.shortlistedQuoteId).toBeNull();
-    expect(decisionAfter?.shortlistedVariant).toBeNull();
-    expect(decisionAfter?.sentByUserId).toBeNull();
-    expect(decisionAfter?.decidedByUserId).toBeNull();
-    expect(decisionAfter?.decidedAt).toBeNull();
-    expect(decisionAfter?.rejectionReason).toBeNull();
-
-    // leg: reopened from APPROVED (REOPEN_AWARD -> FULLY_QUOTED) and then, S5.9.2 Q1, walked the
-    // rest of the way back to what its quotes actually justify. This leg's ONE quote is now
-    // REQUOTED, so nothing comparable is left and the honest status is RFQ_SENT — we are waiting
-    // on the forwarder again. It used to stop at FULLY_QUOTED, which is register C7's mismatch
-    // reached through the APPROVED door (LegQuoteProjector's ROLLUP_FROZEN guard skips a leg in
-    // APPROVED, so requestRequote owns this recompute — see its own comment).
-    const legAfter = await prisma.leg.findUniqueOrThrow({ where: { id: leg.id } });
-    expect(legAfter.status).toBe("RFQ_SENT");
-
-    // RFQ: deadline moved forward. S5.9 D7 — the token is deliberately NOT rotated any more
-    // (rotation protected nothing: the same token already survives the whole first round, and
-    // resolveByToken has no expiry) — the forwarder's bookmarked link must keep working across a
-    // re-quote. Only the Stage-4 Regenerate button (RfqService.reissueToken) rotates it now.
-    const rfqAfter = await prisma.rfq.findUniqueOrThrow({ where: { id: rfq.id } });
-    expect(rfqAfter.accessTokenHash).toBe(seededHash);
-    expect(rfqAfter.submissionDeadline.getTime()).toBeGreaterThan(Date.now());
-
-    // no reissue audit row — nothing was rotated
-    const reissues = await prisma.rfqTokenReissue.findMany({ where: { rfqId: rfq.id } });
-    expect(reissues).toHaveLength(0);
-
-    // fresh reminder/expiry ScheduledEvents re-armed off the NEW deadline
-    const expiry = await prisma.scheduledEvent.findFirst({
-      where: { entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.expiry", tier: "DEADLINE" },
+    const okDecision = await prisma.legAwardDecision.findUniqueOrThrow({
+      where: { legId: draft.leg.id },
     });
-    expect(expiry).not.toBeNull();
-    expect(expiry?.dueAt.getTime()).toBe(rfqAfter.submissionDeadline.getTime());
-    expect(expiry?.firedAt).toBeNull();
-    expect(expiry?.cancelledAt).toBeNull();
-    const reminder = await prisma.scheduledEvent.findFirst({
-      where: { entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.reminder" },
+    expect(okDecision.status).toBe("DRAFT");
+    expect(okDecision.shortlistedQuoteId).toBeNull();
+    expect(okDecision.shortlistedVariant).toBeNull();
+    expect(okDecision.sentByUserId).toBeNull();
+    expect(okDecision.decidedByUserId).toBeNull();
+    expect(okDecision.decidedAt).toBeNull();
+    expect(okDecision.rejectionReason).toBeNull();
+
+    // leg: walked back by the rollup (S5.9.2 Q1) — its only quote is REQUOTED, so nothing
+    // comparable is left and the honest status is RFQ_SENT, we are waiting on the forwarder again.
+    // NOTE this arrives via LegQuoteProjector, NOT via REOPEN_AWARD: the leg was FULLY_QUOTED, not
+    // APPROVED, so `wasApproved` is false. Under D1 that is now the only reachable route here.
+    const okLeg = await prisma.leg.findUniqueOrThrow({ where: { id: draft.leg.id } });
+    expect(okLeg.status).toBe("RFQ_SENT");
+
+    // RFQ: deadline moved forward, token NOT rotated (S5.9 D7), reminder/expiry re-armed off it.
+    const okRfq = await prisma.rfq.findUniqueOrThrow({ where: { id: draft.rfq.id } });
+    expect(okRfq.accessTokenHash).toBe(draft.seededHash);
+    expect(okRfq.submissionDeadline.getTime()).toBeGreaterThan(Date.now());
+    expect(await prisma.rfqTokenReissue.findMany({ where: { rfqId: draft.rfq.id } })).toHaveLength(0);
+    const okExpiry = await prisma.scheduledEvent.findFirst({
+      where: { entityType: "RFQ", entityId: draft.rfq.id, eventKey: "rfq.expiry", tier: "DEADLINE" },
     });
-    expect(reminder).not.toBeNull();
+    expect(okExpiry).not.toBeNull();
+    expect(okExpiry?.dueAt.getTime()).toBe(okRfq.submissionDeadline.getTime());
+    expect(okExpiry?.firedAt).toBeNull();
+    expect(okExpiry?.cancelledAt).toBeNull();
+    const okReminder = await prisma.scheduledEvent.findFirst({
+      where: { entityType: "RFQ", entityId: draft.rfq.id, eventKey: "rfq.reminder" },
+    });
+    expect(okReminder).not.toBeNull();
 
     // FF notified with the comment carried through
-    const msg = await prisma.messageLog.findFirst({
-      where: { entityType: "RFQ", entityId: rfq.id, eventKey: "rfq.requote_requested" },
+    const okMsg = await prisma.messageLog.findFirst({
+      where: { entityType: "RFQ", entityId: draft.rfq.id, eventKey: "rfq.requote_requested" },
     });
-    expect(msg).not.toBeNull();
-    expect(msg?.bodyRendered).toContain(comment);
-    expect(msg?.toAddress).toBe((await prisma.freightForwarder.findUniqueOrThrow({ where: { id: quote.freightForwarderId } })).email);
+    expect(okMsg).not.toBeNull();
+    expect(okMsg?.bodyRendered).toContain(comment);
+    expect(okMsg?.toAddress).toBe(
+      (await prisma.freightForwarder.findUniqueOrThrow({ where: { id: draft.quote.freightForwarderId } }))
+        .email,
+    );
 
     // audit trail
-    const events = await prisma.awardDecisionEvent.findMany({
-      where: { legId: leg.id, type: "REQUEST_REQUOTE" },
+    const okEvents = await prisma.awardDecisionEvent.findMany({
+      where: { legId: draft.leg.id, type: "REQUEST_REQUOTE" },
     });
-    expect(events).toHaveLength(1);
-    expect(events[0].reason).toBe(comment);
-    expect(events[0].actorId).toBe(actorId);
-    expect(events[0].quoteId).toBe(quote.id);
+    expect(okEvents).toHaveLength(1);
+    expect(okEvents[0].reason).toBe(comment);
+    expect(okEvents[0].actorId).toBe(actorId);
+    expect(okEvents[0].quoteId).toBe(draft.quote.id);
   });
 
   it("QUOTED leg (no approval yet): request-requote -> 200; quote REQUOTED, no REOPEN_AWARD fire, leg walked back by the rollup to RFQ_SENT, decision (if any) reset to DRAFT", async () => {
@@ -614,7 +662,14 @@ describe(`${PREFIX} (e2e)`, () => {
   //
   // Every assertion the old test made about the negotiation's own effects is kept — it now runs
   // AFTER the explicit reopen D6 requires, which is the route the product still offers.
-  it("S5.9.5 (D6) — request-requote on a generated (QUOTING_CLIENT) query is REFUSED with the lock message and changes nothing; after an explicit reopen-comparison the same call goes through", async () => {
+  // AMENDED (task-10 review round 1) — this used to run reopen-comparison and then negotiate leg 1
+  // directly. D2 is explicit that `reopenComparison` leaves leg/decision/quote statuses exactly as
+  // they are, so leg 1's decision is still APPROVED after the reopen — and the D1 guard added in
+  // review round 1 now refuses that. The full documented path out is reopen (unlock the query) THEN
+  // Reject (walk the one leg back), which is what this test now exercises end to end. Every
+  // post-negotiation assertion below is unchanged and still passes, which is the point: the extra
+  // step is the missing one, not a different destination.
+  it("S5.9.5 (D6) — request-requote on a generated (QUOTING_CLIENT) query is REFUSED with the lock message and changes nothing; after an explicit reopen-comparison AND a checker's Reject the same call goes through", async () => {
     const { query, legs } = await seedApprovedQuery("qc", [
       { amount: 83200, transitDays: 3 },
       { amount: 41600, transitDays: 5 },
@@ -656,6 +711,27 @@ describe(`${PREFIX} (e2e)`, () => {
       .post(`/api/queries/${query.id}/reopen-comparison`)
       .set("Cookie", managerCookie(randomUUID()))
       .send({ reason: "S5.9.5 e2e — reopening to retry the negotiation" })
+      .expect(200);
+
+    // D1 (review round 1) — the reopen unlocked the QUERY; it deliberately did not un-approve the
+    // LEG (D2), so negotiation is still refused until a checker rejects it. Asserted rather than
+    // assumed, so this test also pins the ordering of the two doors.
+    const stillApproved = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${legs[0].id}/quotes/${legs[0].quoteId}/request-requote`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment })
+      .expect(409);
+    expect(stillApproved.body.message).toBe(
+      "This leg is approved — a checker must reject it before a re-quote can be requested",
+    );
+
+    // D2's reversal: a checker rejects the approved leg, which returns the decision to DRAFT and
+    // the quote to QUOTED with a reason on the audit trail — the thing the old negotiation path
+    // was doing silently.
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${legs[0].id}/reject`)
+      .set("Cookie", managerCookie(randomUUID()))
+      .send({ reason: "S5.9.5 e2e — rejecting so the leg can be re-negotiated" })
       .expect(200);
 
     await request(app.getHttpServer())

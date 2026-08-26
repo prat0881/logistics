@@ -19,8 +19,25 @@ import { QueryLockService } from "./query-lock.service";
 // Quote statuses a re-quote can legally be requested against — a live offer (QUOTED), one already
 // provisionally selected (APPROVED, design §5), or one whose re-quote window closed with the
 // forwarder silent (EXPIRED, S5.9.5 D4 — their price survives the sweep now, so asking again is
-// the only way back into a conversation with them). Anything else (RFQ_SENT — no price to
-// negotiate yet; INVALID/CLOSED/REQUOTED — already not-live, or already being asked) is a 409.
+// the only way back into a conversation with them — on a leg whose decision is not APPROVED; on
+// one that is, D1's guard below means the way back is a checker's Reject first). Anything else
+// (RFQ_SENT — no price to negotiate yet; INVALID/CLOSED/REQUOTED — already not-live, or already
+// being asked) is a 409.
+//
+// `APPROVED` STAYS, deliberately (S5.9.5 review round 1 IMPORTANT 1), even though the D1 decision
+// guard added in `requestRequote` below now rejects the ordinary path to it. Two reasons, both the
+// same discipline `SENDABLE_STATUSES` keeps in award.service.ts:
+//   1. This list must stay in lock-step with the `REQUEST_REQUOTE` sources the quote machine
+//      registers (award.module.ts:85-92: QUOTED, PENDING_APPROVAL, APPROVED, EXPIRED). Removing a
+//      status here that the machine still accepts makes the two lists disagree, which is the exact
+//      drift the constant exists to prevent.
+//   2. It is not strictly dead. The decision guard reads `LegAwardDecision.status`; this one reads
+//      `Quote.status`. `approve()` writes both, but in two separate commits, and `reject()` reverses
+//      them the same way — so a partial failure between them can leave an APPROVED *quote* under a
+//      DRAFT *decision*. In that drifted row the decision guard passes and this list is what
+//      answers. Keeping it means the machine, not an `IllegalTransitionError` out of a post-commit
+//      fire, decides the outcome.
+// The reachable-in-practice members after D1 are QUOTED and EXPIRED.
 const REQUOTABLE_STATUSES: readonly string[] = [
   QuoteStatus.QUOTED,
   QuoteStatus.APPROVED,
@@ -80,10 +97,29 @@ export class NegotiationService {
     // the quote NAMED in this call, so a still-QUOTED sibling quote on the same leg would
     // otherwise sail through it and reset a decision a checker is mid-review of on a DIFFERENT,
     // already-shortlisted quote. Reject first, then re-negotiate (design §9).
+    //
+    // S5.9.5 (design D1), review round 1 IMPORTANT 1 — APPROVED is refused here too, and this is
+    // the THIRD instance of the same shape closed on this branch (register B1; D3's
+    // `@Roles(EXECUTIVE)`; this). D1's words are "Executive, Manager and Administrator alike take
+    // **no** action on a leg whose decision is `APPROVED`", and until now only the UI honoured that
+    // for negotiation. What the server accepted was worse than a stale affordance: with the leg's
+    // decision APPROVED, `REQUOTABLE_STATUSES` admits the APPROVED quote, so the accepted call fell
+    // through to `wasApproved` below and performed a COMPLETE REVERSAL of an approval — quote
+    // APPROVED -> REQUOTED, leg reopened, decision back to DRAFT with `decidedByUserId`,
+    // `decidedAt` and `sentByUserId` all nulled — carried out by the one role D2 deliberately
+    // excludes from Reject, with no four-eyes and no reason recorded anywhere a checker would read
+    // it. The remedy named in the message is the real one (D2): a checker rejects the leg, which
+    // reverses the approval with a reason on the audit trail, and negotiation is available again
+    // the moment the decision is back to DRAFT.
     const existingDecision = await this.prisma.legAwardDecision.findUnique({ where: { legId } });
     if (existingDecision?.status === AwardDecisionStatus.PENDING_APPROVAL) {
       throw new ConflictException(
         "This leg is pending approval — it must be rejected before a re-quote can be requested",
+      );
+    }
+    if (existingDecision?.status === AwardDecisionStatus.APPROVED) {
+      throw new ConflictException(
+        "This leg is approved — a checker must reject it before a re-quote can be requested",
       );
     }
 
@@ -100,6 +136,19 @@ export class NegotiationService {
       throw new ConflictException("This quote has no RFQ to re-quote against");
     }
 
+    // 🔴 EFFECTIVELY DEAD under S5.9.5 D1 — kept as a safety net, not because it fires. Traced:
+    // `LegStatus.APPROVED` has exactly one edge in (award.module.ts:108,
+    // `PENDING_APPROVAL --APPROVE--> APPROVED`) and exactly one caller for it, `AwardService.approve`,
+    // which writes `AwardDecisionStatus.APPROVED` in its own transaction and fires that leg edge
+    // straight after. So a leg at `APPROVED` carries an `APPROVED` decision, which the guard above
+    // now refuses before this line is reached.
+    //
+    // NOT claiming it is unreachable, because it is not: approve() and reject() each commit the
+    // decision write BEFORE firing the leg transition (an accepted partial-failure risk this file's
+    // own header documents), so a failure in that window can leave `leg.status = APPROVED` under a
+    // DRAFT decision. That drifted row passes the guard and lands here — which is precisely why the
+    // branch stays. Same treatment as the QUOTING_CLIENT teardown below and as the change-order
+    // teardown design D6 records: removed deliberately, if ever, never discovered.
     const wasApproved = quote.leg.status === LegStatus.APPROVED;
 
     // 1) Quote: QUOTED|APPROVED|EXPIRED -> REQUOTED. The edge has no `effect` (award.module.ts), so
@@ -204,7 +253,11 @@ export class NegotiationService {
 
       // 🔴 DEAD BRANCH under S5.9.5 D6 — kept as a safety net, not because it fires. D6 gates every
       // query-scoped write on `awardSnapshot == null`, `requestRequote` itself included (this method's own guard, at the top), so nothing can reach this
-      // line with a snapshot still frozen and the condition below is never true. Design doc D6 carries
+      // line with a snapshot still frozen and the condition below is never true.
+      // DOUBLY unreachable after review round 1's D1 guard: `generateClientQuote`'s A6 gate only
+      // freezes a snapshot once EVERY leg is APPROVED, and an APPROVED leg's decision is now
+      // refused at the top of this method — so even without the lock, a frozen snapshot could no
+      // longer coexist with a call that reaches here. Design doc D6 carries
       // the correction and the instruction: it stays because deleting it is a behaviour change nobody
       // has ruled on, it has no e2e coverage, and it must be REMOVED DELIBERATELY rather than
       // discovered. Do not "restore" reachability by relaxing the lock.

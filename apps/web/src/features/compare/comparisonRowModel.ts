@@ -14,27 +14,39 @@ export function offerKey(quoteId: string, variant: string | null): string {
   return `${quoteId}::${variant ?? "AIR"}`;
 }
 
-/** The stale-price marker for a REQUOTED offer (design §14). One constant, because it labels the
+/** The stale-price marker for a REQUOTED offer (design §14).
+ *
+ *  CORRECTED (S5.9.5 Task 10, review round 1 MINOR 4). This used to say the constant "labels the
  *  same offer in three places — `ComparisonGridColumns`'s Status row, `ComparisonGridRows`'s Status
- *  cell, and `SendForApprovalDialog`'s per-option warning (S5.9 T9 — where the S5.6 shortlist
- *  radio's inline version of this warning ended up, via `ShortlistDialog`, which T9 retired).
- *  Lives here (not `ComparisonGrid.tsx`) so `ComparisonGridColumns` can import it without a cycle
- *  back through `ComparisonGrid.tsx`; still re-exported from `ComparisonGrid.tsx`, which is how
- *  `ComparisonGrid.test.tsx` imports it. */
+ *  cell, and `SendForApprovalDialog`'s per-option warning", and that it is "still re-exported from
+ *  `ComparisonGrid.tsx`, which is how `ComparisonGrid.test.tsx` imports it". Every clause of that
+ *  was false, and the very next doc block in this file said so outright — S5.9.2 Q4 deleted BOTH
+ *  grid badges (each grid renders exactly one `ForwarderStatusBadge` per cell, which names the
+ *  status by itself), and S5.9.2 Task 3 deleted the `ComparisonGrid.tsx` re-export along with them.
+ *
+ *  The truth, verified by grep at the time of writing: `SendForApprovalDialog.tsx` is the ONLY
+ *  production consumer, importing from this module directly, and it picks between this label and
+ *  `EXPIRED_OFFER_LABEL` off `offer.quoteStatus`. It lives here rather than in `ComparisonGrid.tsx`
+ *  so a grid module could import it without a cycle — a reason that has outlived its cause but
+ *  costs nothing, since this is also where `EXPIRED_OFFER_LABEL` has to live. */
 export const STALE_OFFER_LABEL = "Re-quote requested";
 
-/** S5.9.5 (D4) — `STALE_OFFER_LABEL`'s sibling for the other stale cause. `stale` (below) now also
- *  covers `EXPIRED`: since S5.9.5 Task 2, an expired quote that still carries a price is comparable
- *  and sendable, but it is stale one step further along than a `REQUOTED` offer — the re-quote was
- *  asked for and the deadline passed with no answer.
+/** S5.9.5 (D4) — `STALE_OFFER_LABEL`'s sibling for the other stale cause. Since S5.9.5 Task 2 an
+ *  expired quote that still carries a price is comparable and sendable, but it is stale one step
+ *  further along than a `REQUOTED` offer — the re-quote was asked for and the deadline passed with
+ *  no answer.
  *
- *  **Still unconsumed — `SendForApprovalDialog.tsx` is the one place that needs it (Task 10).**
- *  This pointer used to name "S5.9.5 Task 9/10" and the two grid components as well. Task 9 has
- *  since run: it narrowed both grids to `GridCell`, and in doing so established that neither grid
- *  can consume this label at all — S5.9.2 Q4 deleted their second stale badge outright, so each
- *  now renders exactly one `ForwarderStatusBadge` per cell and that badge names the status by
- *  itself. That leaves `SendForApprovalDialog` as the sole consumer, where the label has to be
- *  picked off `offer.quoteStatus` rather than off `cell.stale` (which spans both causes since D4).
+ *  **CONSUMED as of Task 10** — by `SendForApprovalDialog.tsx`, which is its only consumer and the
+ *  one this label was written for. This paragraph used to read "Still unconsumed"; Task 10 ran and
+ *  did not update it (review round 1, MINOR 4).
+ *
+ *  Neither grid can consume it, and that is settled rather than pending: S5.9.2 Q4 deleted their
+ *  second stale badge outright, so each renders exactly one `ForwarderStatusBadge` per cell and
+ *  that badge names the status by itself; Task 9 then narrowed both to `GridCell`. In the dialog
+ *  the choice between this label and `STALE_OFFER_LABEL` is made off `offer.quoteStatus` directly.
+ *  There is no `cell.stale` flag to make it off any more — Task 10 removed that field, since
+ *  spanning both causes was exactly what made it useless to the one site that had to tell them
+ *  apart (review round 1, MINOR 5).
  *
  *  **Wording (S5.9.5 Task 9, product owner's ruling).** Task 8 first shipped this as "Forwarder
  *  unresponsive", on the stated premise that "nobody asked this forwarder for a new number". That
@@ -97,7 +109,6 @@ export interface OfferCell {
    *  The approved mark AGREES with that panel — it names the same winner the snapshot froze — so
    *  suppressing it would remove the one mark that is still true. */
   approved: boolean;
-  stale: boolean; // quoteStatus === "REQUOTED" || quoteStatus === "EXPIRED" — see EXPIRED_OFFER_LABEL
 }
 
 /** S5.9.5 (D7) — a forwarder sent an RFQ who has priced nothing comparable yet. Lives IN the grid
@@ -252,7 +263,6 @@ export function buildComparisonRowModel(
       recommended: recKey != null && key === recKey,
       sentForApproval: sentForApprovalKey != null && key === sentForApprovalKey,
       approved: approvedKey != null && key === approvedKey,
-      stale: offer.quoteStatus === "REQUOTED" || offer.quoteStatus === "EXPIRED",
     };
     const existing = groups.find((g) => g.freightForwarderId === offer.freightForwarderId);
     if (existing) existing.cells.push(cell);
