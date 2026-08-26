@@ -29,6 +29,8 @@ describe("Warehouses (e2e)", () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let jwt: JwtService;
+  let fixtureClientId: string | undefined;
+  let fixtureForwarderId: string | undefined;
 
   const cookie = (role: Role) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: `u-${role}`, role, tenantId: null })}`;
@@ -47,6 +49,8 @@ describe("Warehouses (e2e)", () => {
 
   afterAll(async () => {
     await prisma.warehouse.deleteMany({ where: { name: { startsWith: NAME } } });
+    if (fixtureClientId) await prisma.client.deleteMany({ where: { id: fixtureClientId } });
+    if (fixtureForwarderId) await prisma.freightForwarder.deleteMany({ where: { id: fixtureForwarderId } });
     await app.close();
   });
 
@@ -121,6 +125,8 @@ describe("Warehouses (e2e)", () => {
       },
     });
     const forwarder = await prisma.freightForwarder.create({ data: ffFixture() });
+    fixtureClientId = client.id;
+    fixtureForwarderId = forwarder.id;
     const clientOwned = await request(app.getHttpServer())
       .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
       .send({ ...base, name: `${NAME} client-owned` }).expect(201);
@@ -135,5 +141,72 @@ describe("Warehouses (e2e)", () => {
     const ids = res.body.items.map((w: { id: string }) => w.id);
     expect(ids).not.toContain(clientOwned.body.id);
     expect(ids).not.toContain(ffOwned.body.id);
+  });
+
+  describe("update invariant (row-after-write, not patch-alone)", () => {
+    it("rejects clearing agreementValidUntil on an OWNED warehouse via PATCH", async () => {
+      const created = await request(app.getHttpServer())
+        .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
+        .send({
+          ...base,
+          name: `${NAME} owned-patch-date`,
+          type: "OWNED",
+          agreementValidUntil: "2030-01-01T00:00:00.000Z",
+          insuranceValidUntil: "2030-01-01T00:00:00.000Z",
+        })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .patch(`/api/warehouses/${created.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
+        .send({ agreementValidUntil: null });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects clearing rateCurrency via PATCH while a handling rate remains set", async () => {
+      const created = await request(app.getHttpServer())
+        .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
+        .send({
+          ...base,
+          name: `${NAME} rate-patch-currency`,
+          rateCurrency: "AED",
+          handlingRate: 100,
+          handlingUnit: "PER_PALLET",
+        })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .patch(`/api/warehouses/${created.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
+        .send({ rateCurrency: null });
+      expect(res.status).toBe(400);
+    });
+
+    it("still allows an unrelated PATCH on a CLIENT warehouse to succeed", async () => {
+      const created = await request(app.getHttpServer())
+        .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
+        .send({ ...base, name: `${NAME} client-unrelated-patch`, type: "CLIENT" })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .patch(`/api/warehouses/${created.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
+        .send({ city: "Abu Dhabi" });
+      expect(res.status).toBe(200);
+      expect(res.body.city).toBe("Abu Dhabi");
+    });
+
+    // This is the actual hole the merge-based check closes: neither `warehouseUpdateSchema`
+    // (no superRefine) nor a patch-only superRefine could ever catch this, because the patch
+    // itself carries no dates to inspect — only the merged row (existing dates + new type) does.
+    it("rejects flipping type from CLIENT to OWNED via PATCH when no agreement dates exist yet", async () => {
+      const created = await request(app.getHttpServer())
+        .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
+        .send({ ...base, name: `${NAME} type-flip`, type: "CLIENT" })
+        .expect(201);
+      expect(created.body.agreementValidUntil).toBeFalsy();
+
+      const res = await request(app.getHttpServer())
+        .patch(`/api/warehouses/${created.body.id}`).set("Cookie", cookie(Role.ADMINISTRATOR))
+        .send({ type: "OWNED" });
+      expect(res.status).toBe(400);
+    });
   });
 });

@@ -54,10 +54,36 @@ const baseWarehouse = z.object({
 });
 
 /**
+ * The invariant is a property of the *row after the write*, not of any one payload — so it
+ * takes a loosely-typed, structural input rather than `z.infer<typeof baseWarehouse>`. That
+ * lets `warehouseCreateSchema`'s superRefine call it with a freshly-parsed create payload
+ * (every field present), and lets the Warehouses service call it with an existing DB row
+ * overlaid with a partial PATCH (Decimal/Date/enum values, not the create schema's strings) —
+ * see `WarehousesService.update`. `ctx` is narrowed to just `addIssue` (not the full
+ * `z.RefinementCtx`, which also demands a `path`) so the service can pass a bare collector
+ * instead of faking an entire RefinementCtx.
+ */
+export interface WarehouseInvariantInput {
+  type: WarehouseMasterType;
+  agreementValidUntil?: unknown;
+  insuranceValidUntil?: unknown;
+  handlingRate?: unknown;
+  storageRate?: unknown;
+  weekendWorkingFee?: unknown;
+  rateCurrency?: unknown;
+  handlingUnit?: unknown;
+  storageUnit?: unknown;
+}
+
+export interface WarehouseInvariantContext {
+  addIssue: (issue: z.IssueData) => void;
+}
+
+/**
  * Conditional requirements live here rather than in the database: the columns must stay
  * nullable so CLIENT and FF warehouses can omit them entirely.
  */
-export const warehouseCreateSchema = baseWarehouse.superRefine((v, ctx) => {
+export function refineWarehouseInvariants(v: WarehouseInvariantInput, ctx: WarehouseInvariantContext) {
   if (CONTRACTED_TYPES.includes(v.type)) {
     for (const field of ["agreementValidUntil", "insuranceValidUntil"] as const) {
       if (!v[field]) {
@@ -83,7 +109,9 @@ export const warehouseCreateSchema = baseWarehouse.superRefine((v, ctx) => {
   if (v.storageRate != null && !v.storageUnit) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["storageUnit"], message: "A storage rate needs a unit" });
   }
-});
+}
+
+export const warehouseCreateSchema = baseWarehouse.superRefine(refineWarehouseInvariants);
 
 export const warehouseUpdateSchema = baseWarehouse.partial();
 export type WarehouseCreateInput = z.input<typeof warehouseCreateSchema>;

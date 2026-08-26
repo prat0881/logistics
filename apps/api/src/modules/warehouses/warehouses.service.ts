@@ -1,10 +1,13 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { refineWarehouseInvariants } from "@svyft/shared";
 import type {
   ContactCreateInput,
   ContactUpdateInput,
   Paginated,
   WarehouseCreateInput,
+  WarehouseInvariantInput,
+  WarehouseMasterType,
   WarehouseUpdateInput,
   WarehouseVehicleInput,
 } from "@svyft/shared";
@@ -73,8 +76,37 @@ export class WarehousesService {
   }
 
   async update(id: string, input: WarehouseUpdateInput, user?: RequestUser) {
-    await this.get(id);
+    const existing = await this.get(id);
+
+    // The invariant (owned/contracted needs agreement+insurance dates; a rate needs a
+    // currency+unit) is a property of the row *after* the write, not of the patch alone: a
+    // partial-schema superRefine on the patch can't tell "type is OWNED and the dates are
+    // already set" from "type is OWNED and this patch leaves them unset". So build the
+    // post-write row here — existing values overlaid with whatever keys the patch actually
+    // supplied — and validate that, before ever touching Prisma. Only the fields the invariant
+    // reads are merged (never id/timestamps/audit/relations): everything else about the write
+    // stays a genuine partial update.
+    const merged: WarehouseInvariantInput = {
+      type: (input.type ?? existing.type) as WarehouseMasterType,
+      agreementValidUntil: "agreementValidUntil" in input ? input.agreementValidUntil : existing.agreementValidUntil,
+      insuranceValidUntil: "insuranceValidUntil" in input ? input.insuranceValidUntil : existing.insuranceValidUntil,
+      handlingRate: "handlingRate" in input ? input.handlingRate : existing.handlingRate,
+      storageRate: "storageRate" in input ? input.storageRate : existing.storageRate,
+      weekendWorkingFee: "weekendWorkingFee" in input ? input.weekendWorkingFee : existing.weekendWorkingFee,
+      rateCurrency: "rateCurrency" in input ? input.rateCurrency : existing.rateCurrency,
+      handlingUnit: "handlingUnit" in input ? input.handlingUnit : existing.handlingUnit,
+      storageUnit: "storageUnit" in input ? input.storageUnit : existing.storageUnit,
+    };
+    const issues: { path: (string | number)[]; message: string }[] = [];
+    refineWarehouseInvariants(merged, {
+      addIssue: (issue) => issues.push({ path: issue.path ?? [], message: issue.message ?? "Invalid" }),
+    });
+    if (issues.length > 0) {
+      throw new BadRequestException({ message: "Validation failed", issues });
+    }
+
     try {
+      // Still writes only `input` — the merge above exists solely to evaluate the invariant.
       return await this.prisma.warehouse.update({
         where: { id },
         data: { ...input, ...auditUpdate(user) } as Prisma.WarehouseUncheckedUpdateInput,
