@@ -7,6 +7,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ChangeMediator } from "../src/modules/changes/change-mediator";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 7: the change-order PREVIEW phase — a change-order-path request arriving WITHOUT a
 // `reason` must compute + return the blast radius and apply nothing. The APPLY half (with
@@ -74,7 +75,7 @@ describe("ChangeOrderStrategy preview phase (e2e)", () => {
 
     const mkFf = (code: string) =>
       prisma.freightForwarder.create({
-        data: {
+        data: ffFixture({
           freightForwarderCode: code,
           companyName: `${code} Co`,
           pic: "P",
@@ -83,7 +84,7 @@ describe("ChangeOrderStrategy preview phase (e2e)", () => {
           availableCountries: ["AE"],
           modes: ["AIR"],
           status: "ACTIVE",
-        },
+        }),
       });
     const ffQuoted = await mkFf(`${FF_PREFIX}QUOTED`);
     const ffSent = await mkFf(`${FF_PREFIX}SENT`);

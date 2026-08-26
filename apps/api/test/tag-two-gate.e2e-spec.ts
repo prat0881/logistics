@@ -10,6 +10,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 10 (Unit 3, FF Portal v2 ripple): buildChargeConfigSnapshot must freeze the tag two-gate
 // (design §13 / packages/shared/src/charge-config.ts resolveChargeConfig) against the SAME
@@ -151,7 +152,7 @@ describe(`${PFX}tag-two-gate (e2e)`, () => {
 
     // --- ACTIVE, DG-handling FF (F5 requires every selected FF to handle DG) ---
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PFX}A`,
         companyName: `FF-${PFX}A Co`,
         pic: "P",
@@ -162,7 +163,7 @@ describe(`${PFX}tag-two-gate (e2e)`, () => {
         status: "ACTIVE",
         handleDg: true,
         defaultCurrency: "USD",
-      },
+      }),
     });
 
     await api()

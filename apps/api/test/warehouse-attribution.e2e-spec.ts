@@ -11,6 +11,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 10 (Charge Configuration & Warehouse Attribution), Phase D: a leg that touches a
 // WAREHOUSE point cannot be distributed while warehouseHandlingIncluded is undecided (F7), and
@@ -118,7 +119,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- FF (ROAD) selected on both legs, so each has a SELECT quote (F2/F6 gate) ---
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-A`,
         companyName: `FF-${PREFIX}-A Co`,
         pic: "P",
@@ -127,7 +128,7 @@ describe(`${PREFIX} (e2e)`, () => {
         availableCountries: ["CN", "AE"],
         modes: ["ROAD"],
         status: "ACTIVE",
-      },
+      }),
     });
     await request(app.getHttpServer())
       .put(`/api/queries/${query.id}/legs/${legA.id}/ff-selection`)

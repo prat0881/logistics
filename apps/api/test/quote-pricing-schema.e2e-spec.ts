@@ -3,6 +3,7 @@ import { INestApplication } from "@nestjs/common";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { createCargoWithPackages } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 const PFX = "qp-schema-";
 
@@ -71,7 +72,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
     const packageId = packageIds[0]!;
 
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: ffCode,
         companyName: `${ffCode} Co`,
         pic: "Agent",
@@ -80,7 +81,7 @@ describe("Quote pricing schema — smoke (e2e)", () => {
         availableCountries: ["AE"],
         modes: ["AIR"],
         handleDg: false,
-      },
+      }),
     });
 
     const quote = await prisma.quote.create({

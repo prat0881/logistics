@@ -5,12 +5,32 @@ import { COUNTRY_CODES, CURRENCY_CODES } from "../reference";
 
 const statusField = z.enum(MASTER_STATUSES as [MasterStatus, ...MasterStatus[]]).optional();
 
+export const PaymentTerm = {
+  CREDIT_7: "CREDIT_7", CREDIT_15: "CREDIT_15", CREDIT_30: "CREDIT_30",
+  CREDIT_45: "CREDIT_45", CREDIT_60: "CREDIT_60", ADVANCE_100: "ADVANCE_100",
+  ADVANCE_50_BALANCE_50: "ADVANCE_50_BALANCE_50",
+  ADVANCE_30_BALANCE_70: "ADVANCE_30_BALANCE_70",
+  ADVANCE_70_BALANCE_30: "ADVANCE_70_BALANCE_30",
+  AFTER_DELIVERY_100: "AFTER_DELIVERY_100",
+} as const;
+export type PaymentTerm = (typeof PaymentTerm)[keyof typeof PaymentTerm];
+export const PAYMENT_TERMS = Object.values(PaymentTerm) as [PaymentTerm, ...PaymentTerm[]];
+
+export const PAYMENT_TERM_LABELS: Record<PaymentTerm, string> = {
+  CREDIT_7: "7 Days Credit", CREDIT_15: "15 Days Credit", CREDIT_30: "30 Days Credit",
+  CREDIT_45: "45 Days Credit", CREDIT_60: "60 Days Credit", ADVANCE_100: "100% Advance",
+  ADVANCE_50_BALANCE_50: "50% Advance : 50% After Delivery",
+  ADVANCE_30_BALANCE_70: "30% Advance : 70% After Delivery",
+  ADVANCE_70_BALANCE_30: "70% Advance : 30% After Delivery",
+  AFTER_DELIVERY_100: "100% After Delivery",
+};
+
 export const freightForwarderCreateSchema = z.object({
   companyName: z.string().min(1).max(200),
-  companyAddress: z.string().max(500).optional(),
-  city: z.string().max(120).optional(),
+  companyAddress: z.string().min(1).max(500),
+  city: z.string().min(1).max(120),
   postalCode: z.string().max(20).optional(),
-  country: z.string().max(120).optional(),
+  country: z.string().min(1).max(120),
   pic: z.string().min(1).max(160),
   contactNumber: z.string().regex(/^\+[1-9]\d{6,14}$/, "Phone must be E.164"),
   email: z.string().email(),
@@ -20,8 +40,8 @@ export const freightForwarderCreateSchema = z.object({
   vatTrnEori: z.string().max(100).optional(),
   whLocation: z.string().max(200).optional(),
   defaultCurrency: z.enum(CURRENCY_CODES).optional(),
-  paymentTerms: z.string().max(200).optional(),
-  typicalLeadTime: z.string().max(60).optional(),
+  paymentTerms: z.enum(PAYMENT_TERMS).optional(),
+  typicalLeadTime: z.number().int().min(0).max(365).optional(),
   status: statusField,
 });
 export const freightForwarderUpdateSchema = freightForwarderCreateSchema.partial();
@@ -45,7 +65,7 @@ export interface FreightForwarderDto {
   vatTrnEori: string | null;
   whLocation: string | null;
   defaultCurrency: string | null;
-  paymentTerms: string | null;
-  typicalLeadTime: string | null;
+  paymentTerms: PaymentTerm | null;
+  typicalLeadTime: number | null;
   status: MasterStatus;
 }

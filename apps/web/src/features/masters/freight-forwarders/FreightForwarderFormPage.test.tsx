@@ -62,6 +62,9 @@ describe("FreightForwarderFormPage (create)", () => {
     );
     renderForm();
     await userEvent.type(await screen.findByLabelText(/company name/i), "Acme Freight");
+    await userEvent.type(screen.getByLabelText(/street address/i), "1 Cargo Way");
+    await userEvent.type(screen.getByLabelText(/^city$/i), "Singapore");
+    await userEvent.type(screen.getByLabelText(/^country$/i), "Singapore");
     await userEvent.type(screen.getByLabelText(/person in charge/i), "Jane Doe");
     await userEvent.type(screen.getByLabelText(/contact number/i), "+15551234567");
     await userEvent.type(screen.getByLabelText(/^email$/i), "ops@acme.example");
@@ -96,6 +99,7 @@ describe("FreightForwarderFormPage (create)", () => {
     expect(await screen.findByLabelText(/street address/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/company address/i)).not.toBeInTheDocument();
     await userEvent.type(await screen.findByLabelText(/company name/i), "Acme Freight");
+    await userEvent.type(screen.getByLabelText(/street address/i), "1 Cargo Way");
     await userEvent.type(screen.getByLabelText(/person in charge/i), "Jane Doe");
     await userEvent.type(screen.getByLabelText(/contact number/i), "+15551234567");
     await userEvent.type(screen.getByLabelText(/^email$/i), "ops@acme.example");

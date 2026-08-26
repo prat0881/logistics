@@ -66,6 +66,9 @@ describe("contactCreateSchema.contactNo (strict E.164)", () => {
 
 const validFf = {
   companyName: "Acme Freight",
+  companyAddress: "1 Cargo Way",
+  city: "Singapore",
+  country: "Singapore",
   pic: "Jane Doe",
   contactNumber: "+15551234567",
   email: "ops@acme.example",

@@ -126,10 +126,10 @@ model FreightForwarder {
   tenantId             String?       @db.Uuid
   freightForwarderCode String        @unique
   companyName          String        @unique
-  companyAddress       String?
-  city                 String?
+  companyAddress       String
+  city                 String
   postalCode           String?
-  country              String?
+  country              String
   pic                  String
   contactNumber        String
   email                String
@@ -139,18 +139,54 @@ model FreightForwarder {
   vatTrnEori           String?
   whLocation           String?
   defaultCurrency      String?
-  paymentTerms         String?
-  typicalLeadTime      String?
+  paymentTerms         PaymentTerm?
+  typicalLeadTime      Int?
   status               MasterStatus  @default(ACTIVE)
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
   createdById          String?
   updatedById          String?
 
-  rfqs   Rfq[]
-  quotes Quote[]
+  rfqs     Rfq[]
+  quotes   Quote[]
+  contacts FreightForwarderContact[]
 
   @@index([tenantId])
+}
+
+enum PaymentTerm {
+  CREDIT_7
+  CREDIT_15
+  CREDIT_30
+  CREDIT_45
+  CREDIT_60
+  ADVANCE_100
+  ADVANCE_50_BALANCE_50
+  ADVANCE_30_BALANCE_70
+  ADVANCE_70_BALANCE_30
+  AFTER_DELIVERY_100
+}
+
+model FreightForwarderContact {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String?  @db.Uuid
+  freightForwarderId String   @db.Uuid
+  freightForwarder   FreightForwarder @relation(fields: [freightForwarderId], references: [id], onDelete: Cascade)
+  name               String
+  designation        String?
+  email              String
+  contactNo          String
+  whatsappAvailable  Boolean  @default(false)
+  wechatAvailable    Boolean  @default(false)
+  botimAvailable     Boolean  @default(false)
+  pocLevel           PocLevel @default(NONE)
+  status             MasterStatus @default(ACTIVE)
+  createdById        String?
+  updatedById        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([freightForwarderId])
 }
 
 model Rfq {

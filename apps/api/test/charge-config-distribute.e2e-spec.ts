@@ -12,6 +12,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 8 (Charge Configuration & Warehouse Attribution): at distribute, each quote's
 // chargeConfigSnapshot must freeze the leg's effective mandatory-to-price PLAIN charge set —
@@ -105,7 +106,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- 1 FF selected for RFQ ---
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-A`,
         companyName: `FF-${PREFIX}-A Co`,
         pic: "P",
@@ -114,7 +115,7 @@ describe(`${PREFIX} (e2e)`, () => {
         availableCountries: ["CN", "AE"],
         modes: ["AIR"],
         status: "ACTIVE",
-      },
+      }),
     });
 
     await request(app.getHttpServer())
@@ -203,7 +204,7 @@ describe(`${PREFIX} (e2e)`, () => {
       await prisma.legChargeLineSelection.create({ data: { legId: leg.id, definitionId: def.id } });
     }
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-${seq}`,
         companyName: `FF-${PREFIX}-${seq} Co`,
         pic: "P",
@@ -213,7 +214,7 @@ describe(`${PREFIX} (e2e)`, () => {
         modes: [opts.mode],
         status: "ACTIVE",
         defaultCurrency: "USD",
-      },
+      }),
     });
     await request(app.getHttpServer())
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
