@@ -25,13 +25,25 @@ export const STALE_OFFER_LABEL = "Re-quote requested";
 
 /** S5.9.5 (D4) — `STALE_OFFER_LABEL`'s sibling for the other stale cause. `stale` (below) now also
  *  covers `EXPIRED`: since S5.9.5 Task 2, an expired quote that still carries a price is comparable
- *  and sendable, but it is stale for a DIFFERENT reason than a `REQUOTED` offer — nobody asked this
- *  forwarder for a new number, they simply stopped answering before the RFQ deadline. Reusing
- *  `STALE_OFFER_LABEL`'s "Re-quote requested" text on it would claim an action nobody took. Same
- *  three consumers as `STALE_OFFER_LABEL` (`ComparisonGridColumns`, `ComparisonGridRows`,
- *  `SendForApprovalDialog`) will need to pick between the two off `offer.quoteStatus`, once those
- *  files are updated to narrow `GridCell` (S5.9.5 Task 9/10 — not this one). */
-export const EXPIRED_OFFER_LABEL = "Forwarder unresponsive";
+ *  and sendable, but it is stale one step further along than a `REQUOTED` offer — the re-quote was
+ *  asked for and the deadline passed with no answer. Same three consumers as `STALE_OFFER_LABEL`
+ *  (`ComparisonGridColumns`, `ComparisonGridRows`, `SendForApprovalDialog`) will need to pick
+ *  between the two off `offer.quoteStatus`, once those files are updated to narrow `GridCell`
+ *  (S5.9.5 Task 9/10 — not this one).
+ *
+ *  **Wording (S5.9.5 Task 9, product owner's ruling).** Task 8 first shipped this as "Forwarder
+ *  unresponsive", on the stated premise that "nobody asked this forwarder for a new number". That
+ *  premise is FALSE for a cell that carries a price, and the label is replaced along with it.
+ *  Traced: `QuoteEvent.EXPIRE` has exactly two edges into `EXPIRED` — `RFQ_SENT → EXPIRED`
+ *  (`quote.machine.ts:8`) and `REQUOTED → EXPIRED` (`award.module.ts:95`) — and the only caller is
+ *  the RFQ deadline sweep (`rfq-schedule.listener.ts:143`), which discards the draft on the
+ *  `RFQ_SENT` path only. A forwarder expired out of `RFQ_SENT` therefore has no price and renders
+ *  as a `PendingCell`, never as an offer this label can reach; a priced `EXPIRED` offer can only
+ *  have arrived via `REQUOTED`, i.e. a re-quote WAS requested and went unanswered. So the two
+ *  labels are one pair over the same subject, differing only in outcome — "Re-quote requested"
+ *  then "Re-quote unanswered" — rather than the earlier text, which named a different subject and
+ *  passed judgement on a business partner. */
+export const EXPIRED_OFFER_LABEL = "Re-quote unanswered";
 
 export interface OfferCell {
   kind: "offer";

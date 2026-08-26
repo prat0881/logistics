@@ -15,12 +15,12 @@ import {
   METRIC_CELL_CLASS,
   METRIC_ALIGN,
   RECOMMENDED_TINT,
-  RECOMMENDED_MARK,
-  SENT_FOR_APPROVAL_MARK,
-  SENT_FOR_APPROVAL_ACCESSIBLE_NAME,
+  APPROVED_TINT,
+  NOT_QUOTED_LABEL,
   type ComparisonRowModel,
   type OfferCell,
 } from "./comparisonRowModel";
+import { OfferMarks } from "./OfferMarks";
 
 /** Right-of-column border that groups a forwarder's variant columns visually (S5.7 item 1 — S5.6
  *  Task 3 deliberately shipped without one, recorded as a judgment call, which read as ambiguous
@@ -86,6 +86,28 @@ export function ComparisonGridColumns({
           <TableRow>
             <TableHead className="h-auto w-32 px-3 py-1.5">Offer</TableHead>
             {cells.map((cell) => {
+              // S5.9.5 (D7) — a pending forwarder's header slot. No variant to name (nothing was
+              // priced), so it reads `NOT_QUOTED_LABEL`, and no `offer-header-` testid: that id is
+              // the charge-breakdown affordance's, and there is nothing to break down. Its own
+              // `pending-cell-` id is what Task 10's tests key off.
+              if (cell.kind === "pending") {
+                return (
+                  <TableHead
+                    key={cell.key}
+                    className={cn(
+                      "h-auto px-2 py-1.5 align-bottom",
+                      METRIC_ALIGN.columns,
+                      lastInGroup.has(cell.key) && GROUP_SEPARATOR,
+                    )}
+                  >
+                    <div data-testid={`pending-cell-${cell.key}`} className="w-full px-1 py-0.5">
+                      <span className="block text-xs font-medium text-muted-foreground">
+                        {NOT_QUOTED_LABEL}
+                      </span>
+                    </div>
+                  </TableHead>
+                );
+              }
               const variantText = cell.offer.variant ? rateVariantLabel(cell.offer.variant) : "—";
               // The header (and the button inside it) take `METRIC_ALIGN.columns`, NOT a
               // `text-center` literal (final whole-branch review): the metric cells below derive
@@ -101,6 +123,10 @@ export function ComparisonGridColumns({
                     "h-auto px-2 py-1.5 align-bottom",
                     METRIC_ALIGN.columns,
                     cell.recommended && RECOMMENDED_TINT,
+                    // Last, so `cn`'s tailwind-merge resolves a cell that is BOTH recommended and
+                    // approved in favour of the approval — the checker's decision outranks the
+                    // engine's opinion, and the model lets the two coexist on one cell.
+                    cell.approved && APPROVED_TINT,
                     lastInGroup.has(cell.key) && GROUP_SEPARATOR,
                   )}
                 >
@@ -121,74 +147,14 @@ export function ComparisonGridColumns({
                     >
                       <span className="block text-xs font-medium">
                         {variantText}
-                        {/* S5.9.1 R1, Step 4 — the reason text comes from `model.recommendedReason`,
-                            not `leg.recommendation.reason` directly: once a decision snapshot is in
-                            play, the live reason may no longer describe the offer this mark is
-                            pointing at (see `buildComparisonRowModel`'s doc comment). Gating on
-                            `cell.recommended` alone would do here (the model guarantees a non-null
-                            reason whenever a cell is flagged), but the extra check keeps this render
-                            from ever asserting an accessible name it can't back with real text. */}
-                        {cell.recommended && model.recommendedReason && (
-                          <span
-                            data-testid={`offer-recommended-${cell.key}`}
-                            aria-label={`Recommended — ${model.recommendedReason}`}
-                            title={model.recommendedReason}
-                            className="ml-1 text-emerald-600"
-                          >
-                            {RECOMMENDED_MARK}
-                          </span>
-                        )}
-                        {/* S5.9.1 Task 5 — a DIFFERENT glyph/colour from the `★` above (never a
-                            second use of it): recommended and sent-for-approval are independent
-                            signals, so an offer that is both renders both marks side by side. See
-                            `comparisonRowModel.ts`'s doc comment on `SENT_FOR_APPROVAL_MARK`. */}
-                        {cell.sentForApproval && (
-                          <span
-                            data-testid={`offer-sent-for-approval-${cell.key}`}
-                            aria-label={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
-                            title={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
-                            className="ml-1 text-primary"
-                          >
-                            {SENT_FOR_APPROVAL_MARK}
-                          </span>
-                        )}
+                        <OfferMarks cell={cell} recommendedReason={model.recommendedReason} />
                       </span>
                     </button>
                   ) : (
                     <div data-testid={`offer-header-${cell.key}`} className="w-full px-1 py-0.5">
                       <span className="block text-xs font-medium text-muted-foreground">
                         {variantText}
-                        {/* S5.9.1 R1, Step 4 — the reason text comes from `model.recommendedReason`,
-                            not `leg.recommendation.reason` directly: once a decision snapshot is in
-                            play, the live reason may no longer describe the offer this mark is
-                            pointing at (see `buildComparisonRowModel`'s doc comment). Gating on
-                            `cell.recommended` alone would do here (the model guarantees a non-null
-                            reason whenever a cell is flagged), but the extra check keeps this render
-                            from ever asserting an accessible name it can't back with real text. */}
-                        {cell.recommended && model.recommendedReason && (
-                          <span
-                            data-testid={`offer-recommended-${cell.key}`}
-                            aria-label={`Recommended — ${model.recommendedReason}`}
-                            title={model.recommendedReason}
-                            className="ml-1 text-emerald-600"
-                          >
-                            {RECOMMENDED_MARK}
-                          </span>
-                        )}
-                        {/* S5.9.1 Task 5 — a DIFFERENT glyph/colour from the `★` above (never a
-                            second use of it): recommended and sent-for-approval are independent
-                            signals, so an offer that is both renders both marks side by side. See
-                            `comparisonRowModel.ts`'s doc comment on `SENT_FOR_APPROVAL_MARK`. */}
-                        {cell.sentForApproval && (
-                          <span
-                            data-testid={`offer-sent-for-approval-${cell.key}`}
-                            aria-label={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
-                            title={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
-                            className="ml-1 text-primary"
-                          >
-                            {SENT_FOR_APPROVAL_MARK}
-                          </span>
-                        )}
+                        <OfferMarks cell={cell} recommendedReason={model.recommendedReason} />
                       </span>
                     </div>
                   )}
@@ -211,11 +177,17 @@ export function ComparisonGridColumns({
                     "px-2 py-2",
                     METRIC_CELL_CLASS[metric.id],
                     METRIC_ALIGN.columns,
-                    cell.recommended && RECOMMENDED_TINT,
+                    cell.kind === "offer" && cell.recommended && RECOMMENDED_TINT,
+                    // Last of the two tints — see the header's identical pair for why.
+                    cell.kind === "offer" && cell.approved && APPROVED_TINT,
                     lastInGroup.has(cell.key) && GROUP_SEPARATOR,
                   )}
                 >
-                  {metric.render(cell)}
+                  {/* S5.9.5 (D7) — a pending cell has nothing to measure, so it never reaches
+                      `metric.render`, which is typed against `OfferCell` alone precisely so this
+                      site cannot forget. Em-dash, the same "no value" glyph an unpriced offer's
+                      own metrics already use. */}
+                  {cell.kind === "pending" ? "—" : metric.render(cell)}
                 </TableCell>
               ))}
             </TableRow>
@@ -228,7 +200,8 @@ export function ComparisonGridColumns({
                 data-testid={`offer-status-${cell.key}`}
                 className={cn(
                   "px-2 py-2 text-center",
-                  cell.recommended && RECOMMENDED_TINT,
+                  cell.kind === "offer" && cell.recommended && RECOMMENDED_TINT,
+                  cell.kind === "offer" && cell.approved && APPROVED_TINT,
                   lastInGroup.has(cell.key) && GROUP_SEPARATOR,
                 )}
               >
@@ -237,8 +210,19 @@ export function ComparisonGridColumns({
                       here is gone: it duplicated `ForwarderStatusBadge`, which already reads
                       "RFQ-Resent" for a `REQUOTED` offer (renamed for exactly this reason). Two
                       badges saying the same thing was the duplication the product owner asked
-                      about — one status, one badge. */}
-                  <ForwarderStatusBadge status={cell.offer.quoteStatus} />
+                      about — one status, one badge.
+                      S5.9.5 (D7) — a pending cell reads its own `forwarder.quoteStatus` here (RFQ
+                      Sent / Expired / Invalid), which is why `NOT_QUOTED_LABEL` in the variant
+                      slot above is deliberately NOT a status name: this badge already carries the
+                      precise one. It is the only place ON THIS SCREEN that still does, now that
+                      the list below the grid which used to carry the same badge is gone —
+                      `NegotiateDialog` renders its own copy from the same `pendingForwarders`
+                      entry, but that is a dialog the user has to open. */}
+                  <ForwarderStatusBadge
+                    status={
+                      cell.kind === "pending" ? cell.forwarder.quoteStatus : cell.offer.quoteStatus
+                    }
+                  />
                 </div>
               </TableCell>
             ))}

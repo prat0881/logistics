@@ -12,6 +12,10 @@ import {
   METRIC_ALIGN,
   RECOMMENDATION_FOOTNOTE,
   SENT_FOR_APPROVAL_FOOTNOTE,
+  APPROVED_FOOTNOTE,
+  NOT_QUOTED_LABEL,
+  offerKey,
+  pendingKey,
 } from "./comparisonRowModel";
 import type { ViewMode } from "./useViewMode";
 
@@ -771,6 +775,99 @@ describe.each(["columns", "rows"] as const)(
   },
 );
 
+// ── S5.9.5 Task 9 (D7/D8) — a forwarder who never priced anything belongs IN the table, and the
+// approved offer carries its own `✔`. Both off `PARITY_LEG`, the fixture every other parity suite
+// in this file keys off, so a view that implements one orientation and forgets the other fails
+// here. `PENDING_FF_*` are deliberately NOT any of PARITY_LEG's three offering forwarders: Task 1
+// subtracts any quote that produced an offer from `pendingForwarders`, so a forwarder in both
+// lists is not a shape the server can emit and a fixture that used one would be testing the row
+// model's defensive branch instead of D7. ─────────────────────────────────────────────────────
+describe("ComparisonGrid — pending forwarders and the approved mark (S5.9.5 D7/D8)", () => {
+  const PENDING_FF_ID = "ff-silent";
+  const PENDING_FF_NAME = "Silent Forwarder";
+  const PRICED_QUOTE = "q1";
+  const WINNER_QUOTE = "q1";
+
+  const legWithOnePending: LegComparisonDto = {
+    ...PARITY_LEG,
+    pendingForwarders: [
+      {
+        freightForwarderId: PENDING_FF_ID,
+        freightForwarderName: PENDING_FF_NAME,
+        quoteStatus: "RFQ_SENT",
+      },
+    ],
+  };
+
+  const legWithApprovedDecision: LegComparisonDto = {
+    ...PARITY_LEG,
+    decision: {
+      legId: PARITY_LEG.legId,
+      status: "APPROVED",
+      shortlistedQuoteId: WINNER_QUOTE,
+      shortlistedVariant: "DEDICATED",
+      recommendedQuoteId: WINNER_QUOTE,
+      recommendedVariant: "DEDICATED",
+      overrideReason: null,
+      rejectionReason: null,
+      sentByUserId: "u1",
+      sentForApprovalAt: "2026-08-14T09:00:00.000Z",
+      decidedByUserId: "u2",
+      decidedAt: "2026-08-15T09:00:00.000Z",
+    },
+  };
+
+  it("S5.9.5 (D7) — a forwarder who never quoted renders IN the table, not in a list below it", () => {
+    render(<ComparisonGrid leg={legWithOnePending} />);
+    // Positive controls FIRST, so the absence assertion below cannot pass by the grid failing to
+    // render — and so a mutation that restores the deleted list reddens on the absence itself
+    // rather than tripping over an earlier assertion (mutation 2, task-9-report.md).
+    expect(screen.getByTestId("comparison-grid")).toBeInTheDocument();
+    expect(screen.getByTestId(`pending-cell-${pendingKey(PENDING_FF_ID)}`)).toHaveTextContent(
+      NOT_QUOTED_LABEL,
+    );
+    // The forwarder is named on screen — measured: exactly ONE node in the columns view, its
+    // group header. `getAllByText` rather than `getByText` is deliberate and is about the MUTATION,
+    // not about the current DOM: restoring the deleted list puts a second copy of the name on the
+    // page, and `getByText` would then throw "found multiple elements" HERE, one line before the
+    // assertion that mutation is supposed to redden. `getAllByText` keeps this line green under
+    // that mutation so the failure lands on the `pending-forwarders` absence below, where it
+    // belongs (mutation 2, task-9-report.md).
+    expect(screen.getAllByText(PENDING_FF_NAME).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("pending-forwarders")).not.toBeInTheDocument();
+  });
+
+  it("S5.9.5 (D8) — the approved offer carries its mark and its footnote, in BOTH orientations", () => {
+    for (const viewMode of ["columns", "rows"] as const) {
+      const { unmount } = render(
+        <ComparisonGrid leg={legWithApprovedDecision} viewMode={viewMode} />,
+      );
+      expect(
+        screen.getByTestId(`offer-approved-${offerKey(WINNER_QUOTE, "DEDICATED")}`),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("comparison-footnote")).toHaveTextContent(APPROVED_FOOTNOTE);
+      unmount();
+    }
+  });
+
+  it("S5.9.5 — a pending cell has no charge-breakdown affordance", () => {
+    render(<ComparisonGrid leg={legWithOnePending} onSelectOffer={vi.fn()} />);
+    expect(
+      screen.queryByTestId(`offer-header-${pendingKey(PENDING_FF_ID)}`),
+    ).not.toBeInTheDocument();
+    // Positive control: the priced offer in the same fixture DOES have one.
+    expect(
+      screen.getByTestId(`offer-header-${offerKey(PRICED_QUOTE, "DEDICATED")}`),
+    ).toBeInTheDocument();
+    // Mutation-3 control (see task-9-report.md). Deleting `cell.approved &&` from `OfferMarks`
+    // could not be caught by the D8 test above — that one only asserts the mark IS there on the
+    // cell that earns it, which an always-on mark satisfies. This fixture's decision is `null`, so
+    // NO cell earns the mark, and the absence below is what actually reddens. It rides on the two
+    // positive controls immediately above rather than standing alone.
+    expect(document.querySelector('[data-testid^="offer-approved-"]')).toBeNull();
+  });
+});
+
 // ── S5.9.1 R6 — `METRIC_CELL_CLASS` used to be `text-right` unconditionally, which is correct in
 // the rows view (a metric is a column, right-aligned under a right-aligned header) but wrong in
 // the columns view (a metric is a row under a CENTRED offer header, so the number hugs the right
@@ -960,12 +1057,19 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
     expect(screen.queryByTestId("offer-stale-quote-3::DEDICATED")).not.toBeInTheDocument();
   });
 
-  it("lists the pending forwarder and the awaiting-re-quote note", () => {
+  // S5.9.5 (D7) — rewritten: the "Awaiting response" list below the table is gone and the pending
+  // forwarder is a real cell IN the table now. The awaiting-re-quote note is a DIFFERENT thing and
+  // is untouched by D7, which is exactly why both halves stay in one test — a change that deleted
+  // the note along with the list would still fail here.
+  it("shows the pending forwarder as a grid cell, and keeps the awaiting-re-quote note", () => {
     renderPanel();
 
-    const pending = screen.getByTestId("pending-forwarders");
-    expect(within(pending).getByText("Pending Forwarder")).toBeInTheDocument();
-    expect(within(pending).getByText("RFQ Sent")).toBeInTheDocument();
+    const pendingCell = screen.getByTestId(`pending-cell-${pendingKey("ff4")}`);
+    expect(pendingCell).toHaveTextContent(NOT_QUOTED_LABEL);
+    expect(screen.getByText("Pending Forwarder")).toBeInTheDocument();
+    // The forwarder's own status still reads precisely, now from the cell's Status slot rather
+    // than from a badge in the deleted list.
+    expect(screen.getByTestId(`offer-status-${pendingKey("ff4")}`)).toHaveTextContent("RFQ Sent");
 
     expect(screen.getByText(/awaiting revised quote/i)).toBeInTheDocument();
   });
@@ -1061,9 +1165,14 @@ describe("ComparisonGrid (rendered through CompareLegPanel's body)", () => {
         decidedAt: "2026-08-14T10:00:00.000Z",
       },
     };
-    vi.stubGlobal("fetch", mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })));
+    vi.stubGlobal(
+      "fetch",
+      mockFetch(() => ({ status: 401, body: { message: "Unauthorized" } })),
+    );
     render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
         <AuthProvider>
           <CompareLegPanel
             queryId="q1"
@@ -1200,31 +1309,47 @@ describe("ComparisonGrid edge cases", () => {
     expect(screen.queryByText(RECOMMENDATION_FOOTNOTE)).not.toBeInTheDocument();
   });
 
-  it("shows the empty-grid message and the pending list for a leg with zero offers", () => {
-    const emptyLeg: LegComparisonDto = {
-      legId: "leg-empty",
-      legCode: "LEG-EMPTY",
-      mode: "ROAD",
-      origin: "Pune",
-      destination: "Delhi",
-      offers: [],
-      pendingForwarders: [
-        {
-          freightForwarderId: "ffX",
-          freightForwarderName: "Only Pending Forwarder",
-          quoteStatus: "RFQ_SENT",
-        },
-      ],
-      awaitingReQuote: false,
-      recommendation: null,
-      decision: null,
-      timeline: [],
-    };
+  // S5.9.5 (D7) — split in two, because `groups.length === 0` changed meaning. It used to mean
+  // "nobody has priced" (pending forwarders lived outside the model); it now means "no forwarders
+  // at all on this leg", since a pending forwarder becomes a group of its own. The old single test
+  // asserted BOTH the empty state and a pending forwarder's name from ONE fixture, a combination
+  // that is no longer reachable.
+  const legNoOffersOnePending: LegComparisonDto = {
+    legId: "leg-empty",
+    legCode: "LEG-EMPTY",
+    mode: "ROAD",
+    origin: "Pune",
+    destination: "Delhi",
+    offers: [],
+    pendingForwarders: [
+      {
+        freightForwarderId: "ffX",
+        freightForwarderName: "Only Pending Forwarder",
+        quoteStatus: "RFQ_SENT",
+      },
+    ],
+    awaitingReQuote: false,
+    recommendation: null,
+    decision: null,
+    timeline: [],
+  };
 
-    renderPanel(emptyLeg);
+  it("renders a real table — not the empty state — for a leg whose only forwarder never priced", () => {
+    renderPanel(legNoOffersOnePending);
 
-    expect(screen.getByText("No comparable quotes yet.")).toBeInTheDocument();
     expect(screen.getByText("Only Pending Forwarder")).toBeInTheDocument();
+    expect(screen.getByTestId(`pending-cell-${pendingKey("ffX")}`)).toHaveTextContent(
+      NOT_QUOTED_LABEL,
+    );
+    // The empty state would be actively wrong here — three forwarders can be sent an RFQ and none
+    // reply, and "No forwarders on this leg yet." is a false statement about that leg.
+    expect(screen.queryByText("No forwarders on this leg yet.")).not.toBeInTheDocument();
+  });
+
+  it("shows the empty-grid message only when the leg has no forwarders at all", () => {
+    renderPanel({ ...legNoOffersOnePending, pendingForwarders: [] });
+
+    expect(screen.getByText("No forwarders on this leg yet.")).toBeInTheDocument();
   });
 
   // ── final review M1 ───────────────────────────────────────────────────────────────────────

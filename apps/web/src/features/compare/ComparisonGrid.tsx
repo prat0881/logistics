@@ -1,9 +1,9 @@
 import type { LegComparisonDto } from "@svyft/shared";
-import { ForwarderStatusBadge } from "@/features/rfq-workspace/statusBadges";
 import {
   buildComparisonRowModel,
   RECOMMENDATION_FOOTNOTE,
   SENT_FOR_APPROVAL_FOOTNOTE,
+  APPROVED_FOOTNOTE,
   type OfferCell,
 } from "./comparisonRowModel";
 import { ComparisonGridColumns } from "./ComparisonGridColumns";
@@ -40,8 +40,9 @@ export interface ComparisonGridProps {
  * reshaped by S5.7 T1/T2). Builds the `ComparisonRowModel` (grouping, recommendation, staleness —
  * all pure and unit-tested in `comparisonRowModel.test.ts`) and dispatches to whichever orientation
  * `viewMode` selects — `ComparisonGridColumns` or `ComparisonGridRows` — plus the leg-level
- * "awaiting response" / "awaiting re-quote" notices that sit outside the table and are identical
- * either way.
+ * "awaiting re-quote" notice that sits outside the table and is identical either way. (The
+ * "awaiting response" roster that used to sit beside it is gone — S5.9.5 D7 moved every pending
+ * forwarder INTO the table; see the comment at that notice below.)
  *
  * Purely read-only (S5.9 T9) — the maker's per-offer `Select` affordance (S5.7 T4) that used to
  * live in a Shortlist row/column here is gone. `CompareLegPanel` now opens one
@@ -66,17 +67,20 @@ export function ComparisonGrid({
   // page for the `★` to refer to. Gating on whether some cell actually carries the flag keeps the
   // footnote and the mark(s) it explains appearing/disappearing together, which is the whole point
   // of "explain the mark, only when the mark exists" (Step 6's own doc comment below).
-  const hasRecommendedCell = model.cells.some((c) => c.recommended);
+  const hasRecommendedCell = model.cells.some((c) => c.kind === "offer" && c.recommended);
   // S5.9.1 Task 5 — same "gate the footnote on an ACTUAL flagged cell" reasoning as
   // `hasRecommendedCell` above, applied to the new mark.
-  const hasSentForApprovalCell = model.cells.some((c) => c.sentForApproval);
-  // Requirement 5 — the two explanations share ONE line rather than growing a second stray one:
-  // joined into a single string (not two sibling JSX nodes) so the `<p>` below carries exactly one
+  const hasSentForApprovalCell = model.cells.some((c) => c.kind === "offer" && c.sentForApproval);
+  // S5.9.5 (D8) — and again for the `✔`. Same gate, same reason.
+  const hasApprovedCell = model.cells.some((c) => c.kind === "offer" && c.approved);
+  // Requirement 5 — the explanations share ONE line rather than growing a stray one each:
+  // joined into a single string (not sibling JSX nodes) so the `<p>` below carries exactly one
   // text node, and `RECOMMENDATION_FOOTNOTE` alone still round-trips unchanged through
   // `screen.getByText` in the (still-common) case where only the recommendation applies.
   const footnote = [
     hasRecommendedCell && RECOMMENDATION_FOOTNOTE,
     hasSentForApprovalCell && SENT_FOR_APPROVAL_FOOTNOTE,
+    hasApprovedCell && APPROVED_FOOTNOTE,
   ]
     .filter((x): x is string => Boolean(x))
     .join("  ");
@@ -87,8 +91,14 @@ export function ComparisonGrid({
 
   return (
     <div className="space-y-4" data-testid="comparison-grid">
+      {/* S5.9.5 (D7) — `groups.length === 0` changed MEANING with the row model, so the copy
+          changed with it. A pending forwarder is now a group of its own, so this is no longer
+          "nobody has priced" (which is exactly what "No comparable quotes yet." said) — it is "no
+          forwarders at all on this leg". The old string is actively wrong for a leg where three
+          forwarders were sent an RFQ and none replied: that leg now renders a real table of
+          "Not quoted" cells, and would have read as having nothing on it. */}
       {model.groups.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No comparable quotes yet.</p>
+        <p className="text-sm text-muted-foreground">No forwarders on this leg yet.</p>
       ) : viewMode === "rows" ? (
         <ComparisonGridRows
           model={model}
@@ -117,31 +127,17 @@ export function ComparisonGrid({
         </p>
       )}
 
-      {(leg.pendingForwarders.length > 0 || leg.awaitingReQuote) && (
+      {/* S5.9.5 (D7) — the "Awaiting response" list that used to sit here is gone; every forwarder
+          at RFQ_SENT and beyond is a cell IN the table above, `NOT_QUOTED_LABEL` in its variant
+          slot and its own `ForwarderStatusBadge` in its Status slot. This note is a DIFFERENT
+          thing (a leg-level warning about a re-quote in flight, not a per-forwarder roster) and D7
+          does not touch it, so its wrapper condition narrows to `awaitingReQuote` alone. */}
+      {leg.awaitingReQuote && (
         <div className="space-y-2 text-sm">
-          {leg.pendingForwarders.length > 0 && (
-            <div data-testid="pending-forwarders" className="space-y-1">
-              <p className="font-medium text-muted-foreground">Awaiting response</p>
-              <ul className="space-y-1">
-                {leg.pendingForwarders.map((pf) => (
-                  <li
-                    key={pf.freightForwarderId}
-                    data-testid={`pending-ff-${pf.freightForwarderId}`}
-                    className="flex items-center gap-2"
-                  >
-                    <span>{pf.freightForwarderName}</span>
-                    <ForwarderStatusBadge status={pf.quoteStatus} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {leg.awaitingReQuote && (
-            <p className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-warning">
-              Awaiting revised quote — the re-quoted offer above is excluded from the recommendation
-              until the forwarder responds.
-            </p>
-          )}
+          <p className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-warning">
+            Awaiting revised quote — the re-quoted offer above is excluded from the recommendation
+            until the forwarder responds.
+          </p>
         </div>
       )}
     </div>

@@ -16,12 +16,12 @@ import {
   METRIC_CELL_CLASS,
   METRIC_ALIGN,
   RECOMMENDED_TINT,
-  RECOMMENDED_MARK,
-  SENT_FOR_APPROVAL_MARK,
-  SENT_FOR_APPROVAL_ACCESSIBLE_NAME,
+  APPROVED_TINT,
+  NOT_QUOTED_LABEL,
   type ComparisonRowModel,
   type OfferCell,
 } from "./comparisonRowModel";
+import { OfferMarks } from "./OfferMarks";
 
 /** The rows-view equivalent of `ComparisonGridColumns`'s `GROUP_SEPARATOR` (design §39 — forwarder
  *  rows are "grouped and banded"; S5.7 shipped the columns rule but no rows counterpart, so
@@ -91,8 +91,17 @@ export function ComparisonGridRows({
                 </TableCell>
               </TableRow>
               {group.cells.map((cell, indexInGroup) => {
-                const variantText = cell.offer.variant ? rateVariantLabel(cell.offer.variant) : "—";
                 const isFirstInGroup = indexInGroup === 0;
+                // S5.9.5 (D7) — the two tints are read off an OFFER cell only; a pending cell earns
+                // neither (nothing to recommend, nothing to approve). Hoisted so the four
+                // `className` sites below stay readable rather than repeating the narrow.
+                const recommended = cell.kind === "offer" && cell.recommended;
+                const approved = cell.kind === "offer" && cell.approved;
+                // Ordered so `cn`'s tailwind-merge resolves the background conflicts: the band
+                // first, then the recommendation over it, then the approval over that — the
+                // checker's decision outranks the engine's opinion, and the model lets one cell
+                // carry both.
+                const tints = cn(recommended && RECOMMENDED_TINT, approved && APPROVED_TINT);
 
                 return (
                   <TableRow
@@ -102,14 +111,27 @@ export function ComparisonGridRows({
                       groupIndex % 2 === 1 && GROUP_BAND,
                       isFirstInGroup && groupIndex > 0 && GROUP_TOP_RULE,
                       // Last, so `cn`'s tailwind-merge resolves the background conflict in favour of
-                      // the recommendation rather than the band.
-                      cell.recommended && RECOMMENDED_TINT,
+                      // the recommendation/approval rather than the band.
+                      tints,
                     )}
                   >
-                    <TableCell className={cn("px-3 py-2", cell.recommended && RECOMMENDED_TINT)}>
-                      {/* Same guard as the columns header: an unpriced offer has nothing to expand
-                          (see ComparisonGridColumns's doc comment) — no click affordance at all. */}
-                      {cell.offer.priced ? (
+                    <TableCell className={cn("px-3 py-2", tints)}>
+                      {/* S5.9.5 (D7) — a pending forwarder's variant slot: `NOT_QUOTED_LABEL`, no
+                          button, and no `offer-header-` testid (that id is the charge-breakdown
+                          affordance's, and there is nothing to break down). Its own `pending-cell-`
+                          id matches the columns view's, so Task 10's tests key off one contract in
+                          both orientations. */}
+                      {cell.kind === "pending" ? (
+                        <div
+                          data-testid={`pending-cell-${cell.key}`}
+                          className="px-1 py-0.5 text-xs font-medium text-muted-foreground"
+                        >
+                          {NOT_QUOTED_LABEL}
+                        </div>
+                      ) : /* Same guard as the columns header: an unpriced offer has nothing to
+                             expand (see ComparisonGridColumns's doc comment) — no click affordance
+                             at all. */
+                      cell.offer.priced ? (
                         <button
                           type="button"
                           data-testid={`offer-header-${cell.key}`}
@@ -117,66 +139,16 @@ export function ComparisonGridRows({
                           onClick={() => onOpenBreakdown(cell)}
                           className="w-fit rounded px-1 py-0.5 text-left text-xs font-medium hover:bg-muted/50"
                         >
-                          {variantText}
-                          {/* S5.9.1 R1, Step 4 — reads `model.recommendedReason`, not
-                              `leg.recommendation.reason` directly; see
-                              `ComparisonGridColumns.tsx`'s identical comment and
-                              `buildComparisonRowModel`'s doc comment for why. */}
-                          {cell.recommended && model.recommendedReason && (
-                            <span
-                              data-testid={`offer-recommended-${cell.key}`}
-                              aria-label={`Recommended — ${model.recommendedReason}`}
-                              title={model.recommendedReason}
-                              className="ml-1 text-emerald-600"
-                            >
-                              {RECOMMENDED_MARK}
-                            </span>
-                          )}
-                          {/* S5.9.1 Task 5 — same mark and the same doc comment as
-                              `ComparisonGridColumns.tsx`'s identical block. */}
-                          {cell.sentForApproval && (
-                            <span
-                              data-testid={`offer-sent-for-approval-${cell.key}`}
-                              aria-label={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
-                              title={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
-                              className="ml-1 text-primary"
-                            >
-                              {SENT_FOR_APPROVAL_MARK}
-                            </span>
-                          )}
+                          {cell.offer.variant ? rateVariantLabel(cell.offer.variant) : "—"}
+                          <OfferMarks cell={cell} recommendedReason={model.recommendedReason} />
                         </button>
                       ) : (
                         <div
                           data-testid={`offer-header-${cell.key}`}
                           className="px-1 py-0.5 text-xs font-medium text-muted-foreground"
                         >
-                          {variantText}
-                          {/* S5.9.1 R1, Step 4 — reads `model.recommendedReason`, not
-                              `leg.recommendation.reason` directly; see
-                              `ComparisonGridColumns.tsx`'s identical comment and
-                              `buildComparisonRowModel`'s doc comment for why. */}
-                          {cell.recommended && model.recommendedReason && (
-                            <span
-                              data-testid={`offer-recommended-${cell.key}`}
-                              aria-label={`Recommended — ${model.recommendedReason}`}
-                              title={model.recommendedReason}
-                              className="ml-1 text-emerald-600"
-                            >
-                              {RECOMMENDED_MARK}
-                            </span>
-                          )}
-                          {/* S5.9.1 Task 5 — same mark and the same doc comment as
-                              `ComparisonGridColumns.tsx`'s identical block. */}
-                          {cell.sentForApproval && (
-                            <span
-                              data-testid={`offer-sent-for-approval-${cell.key}`}
-                              aria-label={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
-                              title={SENT_FOR_APPROVAL_ACCESSIBLE_NAME}
-                              className="ml-1 text-primary"
-                            >
-                              {SENT_FOR_APPROVAL_MARK}
-                            </span>
-                          )}
+                          {cell.offer.variant ? rateVariantLabel(cell.offer.variant) : "—"}
+                          <OfferMarks cell={cell} recommendedReason={model.recommendedReason} />
                         </div>
                       )}
                     </TableCell>
@@ -188,22 +160,34 @@ export function ComparisonGridRows({
                           "px-3 py-2",
                           METRIC_CELL_CLASS[metric.id],
                           METRIC_ALIGN.rows,
-                          cell.recommended && RECOMMENDED_TINT,
+                          tints,
                         )}
                       >
-                        {metric.render(cell)}
+                        {/* S5.9.5 (D7) — see the columns view's identical guard: `metric.render` is
+                            typed against `OfferCell` alone, and a pending cell has nothing to
+                            measure. */}
+                        {cell.kind === "pending" ? "—" : metric.render(cell)}
                       </TableCell>
                     ))}
                     <TableCell
                       data-testid={`offer-status-${cell.key}`}
-                      className={cn("px-3 py-2 text-center", cell.recommended && RECOMMENDED_TINT)}
+                      className={cn("px-3 py-2 text-center", tints)}
                     >
                       <div className="flex flex-wrap items-center justify-center gap-1">
                         {/* S5.9.2 Q4 (PO ruling) — same removal as `ComparisonGridColumns.tsx`'s
                             identical block: `ForwarderStatusBadge` already reads "RFQ-Resent" for
                             a `REQUOTED` offer, so the second `STALE_OFFER_LABEL` badge here just
-                            duplicated it. */}
-                        <ForwarderStatusBadge status={cell.offer.quoteStatus} />
+                            duplicated it.
+                            S5.9.5 (D7) — and a pending cell reads its own `forwarder.quoteStatus`;
+                            see `ComparisonGridColumns.tsx`'s identical block for why that is what
+                            lets `NOT_QUOTED_LABEL` avoid being a status name. */}
+                        <ForwarderStatusBadge
+                          status={
+                            cell.kind === "pending"
+                              ? cell.forwarder.quoteStatus
+                              : cell.offer.quoteStatus
+                          }
+                        />
                       </div>
                     </TableCell>
                   </TableRow>
