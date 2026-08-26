@@ -2,6 +2,7 @@ import { Module, type OnModuleInit } from "@nestjs/common";
 import { StatusModule } from "../status/status.module";
 import { StatusRegistry } from "../status/status.registry";
 import { ChangesModule } from "../changes/changes.module";
+import { QueryLockModule } from "../award/query-lock.module";
 import { ImpactRegistry } from "../changes/impact.registry";
 import { RfqNumberService } from "./rfq-number.service";
 import { RfqTokenService } from "./rfq-token.service";
@@ -19,7 +20,7 @@ import { EligibilityService } from "./eligibility.service";
 import { RfqService } from "./rfq.service";
 
 @Module({
-  imports: [StatusModule, ChangesModule, FreightForwardersModule, CommsModule],
+  imports: [StatusModule, ChangesModule, FreightForwardersModule, CommsModule, QueryLockModule],
   controllers: [RfqController],
   providers: [RfqNumberService, RfqTokenService, LegQuoteProjector, EligibilityService, RfqService, RfqScheduleListener, RfqNotificationsService],
   // LegQuoteProjector is exported (S5.9.2 Task 1, Q1) for NegotiationService's one call to

@@ -22,6 +22,7 @@ import { PackageService } from "../src/modules/cargo/package.service";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import type { RequestUser } from "../src/modules/auth/types";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { QUERY_LOCKED_MESSAGE } from "../src/modules/award/query-lock.service";
 
 // S5.5 Task 4 (design §10.2) — the payoff of the change-order reversal loop. A post-RFQ
 // change-order field edit that reopens an AWARDED leg must undo the award on it (the leg's
@@ -233,7 +234,22 @@ describe("change-order reversal of awards (e2e, design §10.2)", () => {
     await app.close(); // MANDATORY — otherwise jest hangs on the schedule cron
   });
 
-  it("a change-order edit that reopens an APPROVED leg reverses ONLY that leg's award and tears down QUOTING_CLIENT, leaving a sibling APPROVED leg untouched", async () => {
+  // S5.9.5 (design D6) — REWRITTEN. This test used to drive the change-order edit straight at a
+  // query sitting in QUOTING_CLIENT and assert that the frozen awardSnapshot was silently torn
+  // down as a side effect. D6 changes that deliberately: a locked query refuses EVERY write
+  // except reopen-comparison and the quotation builder, so the edit is refused, and D6 states
+  // the intended trade — "a user correcting a mistake must reopen explicitly rather than
+  // discovering their client quotation silently torn down by an edit".
+  //
+  // The listener under test is NOT weakened: after the explicit reopen, the SAME edit runs and
+  // every original assertion about the award reversal (decision -> DRAFT, the REOPEN event and
+  // its reason, the untouched sibling, the derived rollup) is asserted unchanged. What is no
+  // longer asserted is the snapshot teardown INSIDE the listener — with the edit refused while
+  // locked, reopen has already cleared the snapshot by the time the listener runs, so that
+  // branch is no longer reachable from this (or, as far as the S5.9.5 endpoint inventory found,
+  // any) product path. D6 nonetheless instructs that the teardown stay in place; it is left
+  // untouched and is flagged in the task-5 report rather than removed here.
+  it("S5.9.5 (D6) — a change-order edit is REFUSED while the query is being quoted to the client; after an explicit reopen the same edit reverses ONLY that leg's award, leaving a sibling APPROVED leg untouched", async () => {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-main`, assignedUserId: execId, incoterms: "FOB" },
     });
@@ -257,6 +273,43 @@ describe("change-order reversal of awards (e2e, design §10.2)", () => {
     expect(beforeB.status).toBe("APPROVED");
 
     const REASON = "client corrected the packing list for L1 post-award";
+
+    // --- D6: while the query is locked, the edit is refused and nothing moves ---
+    await expect(
+      packageService.update(query.id, a.cargoId, a.pkgId, { grossWt: 340, reason: REASON }, actorUser),
+    ).rejects.toMatchObject({ status: 409, response: { message: QUERY_LOCKED_MESSAGE } });
+    const duringLock = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(duringLock.awardSnapshot).not.toBeNull();
+    expect(duringLock.status).toBe("QUOTING_CLIENT");
+    expect(
+      (await prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: a.leg.id } })).status,
+    ).toBe("APPROVED");
+    expect((await prisma.quote.findUniqueOrThrow({ where: { id: a.quote.id } })).status).toBe(
+      QuoteStatus.APPROVED,
+    );
+
+    // --- the door out (D6's first exception), then the SAME edit ---
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/reopen-comparison`)
+      .set("Cookie", cookieFor(randomUUID(), Role.EXECUTIVE))
+      .send()
+      .expect(200);
+    // Reopen deliberately does NOT un-approve legs (D2), so the fixture the listener reacts to is
+    // exactly the one the original test set up — minus the snapshot.
+    expect(
+      (await prisma.legAwardDecision.findUniqueOrThrow({ where: { legId: a.leg.id } })).status,
+    ).toBe("APPROVED");
+    // reopen-comparison writes its OWN per-leg REOPEN AwardDecisionEvent (award.service.ts), on
+    // every leg of the query — so the listener's event can only be identified as a DELTA against
+    // what already exists here, not by a bare count.
+    const preEditEventIds = new Set(
+      (await prisma.awardDecisionEvent.findMany({ where: { queryId: query.id }, select: { id: true } }))
+        .map((e) => e.id),
+    );
+    const newEventsFor = async (legId: string) =>
+      (await prisma.awardDecisionEvent.findMany({ where: { legId } })).filter(
+        (e) => !preEditEventIds.has(e.id),
+      );
 
     // Drive the REAL change-order path — the same mediated PackageService.update() boundary the
     // controller uses. This alone (SB6's already-fixed cascade, Task 3) invalidates quote A and
@@ -287,9 +340,7 @@ describe("change-order reversal of awards (e2e, design §10.2)", () => {
       "pre-existing override reason — must survive the reversal untouched",
     );
 
-    const reopenEventsA = await prisma.awardDecisionEvent.findMany({
-      where: { legId: a.leg.id, type: "REOPEN" },
-    });
+    const reopenEventsA = (await newEventsFor(a.leg.id)).filter((e) => e.type === "REOPEN");
     expect(reopenEventsA).toHaveLength(1);
     expect(reopenEventsA[0].queryId).toBe(query.id);
     expect(reopenEventsA[0].reason).toBe(REASON);
@@ -302,13 +353,11 @@ describe("change-order reversal of awards (e2e, design §10.2)", () => {
     expect(decisionBAfter.sentByUserId).not.toBeNull();
     const legBAfter = await prisma.leg.findUniqueOrThrow({ where: { id: b.leg.id } });
     expect(legBAfter.status).toBe("APPROVED");
-    const reopenEventsB = await prisma.awardDecisionEvent.findMany({
-      where: { legId: b.leg.id, type: "REOPEN" },
-    });
-    expect(reopenEventsB).toHaveLength(0);
+    expect(await newEventsFor(b.leg.id)).toHaveLength(0);
 
-    // --- QUOTING_CLIENT teardown: the whole query's frozen snapshot named a winner on the now-
-    // reopened leg, so it's torn down and the query rolls back OUT of QUOTING_CLIENT ---
+    // --- off QUOTING_CLIENT. The snapshot is null because the REOPEN above cleared it, not
+    // because the listener tore it down — see this test's header. What the listener still owns
+    // here is the ROLLUP: leg A moved, so the query's derived status must follow it. ---
     const queryAfter = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
     expect(queryAfter.awardSnapshot).toBeNull();
     expect(queryAfter.status).not.toBe("QUOTING_CLIENT");

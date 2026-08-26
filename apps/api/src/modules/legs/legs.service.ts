@@ -24,6 +24,7 @@ import { assertApplied } from "../changes/assert-applied";
 import { StatusService } from "../status/status.service";
 import type { RequestUser } from "../auth/types";
 import { warehousePointIds, findWarehouseYesConflict } from "../rfq/warehouse.util";
+import { QueryLockService } from "../award/query-lock.service";
 
 @Injectable()
 export class LegsService {
@@ -32,6 +33,7 @@ export class LegsService {
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
     private readonly status: StatusService,
+    private readonly lock: QueryLockService,
   ) {}
 
   private async assertQueryExists(queryId: string): Promise<void> {
@@ -124,6 +126,10 @@ export class LegsService {
   }
 
   async create(queryId: string, input: LegSaveInput, user: RequestUser) {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.assertQueryExists(queryId);
     await this.assertPointRef(queryId, input.originPointId);
     await this.assertPointRef(queryId, input.destinationPointId);
@@ -170,6 +176,10 @@ export class LegsService {
   }
 
   async update(queryId: string, legId: string, input: LegSaveInput, user: RequestUser) {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const existing = await this.load(queryId, legId);
     if (input.originPointId !== undefined) await this.assertPointRef(queryId, input.originPointId);
     if (input.destinationPointId !== undefined)
@@ -254,6 +264,10 @@ export class LegsService {
   }
 
   async remove(queryId: string, legId: string, user: RequestUser) {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.load(queryId, legId);
     const result = await this.mediator.apply(
       { entity: "leg", id: legId, action: "@delete", queryId, actorId: user.userId },

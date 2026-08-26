@@ -7,6 +7,7 @@ import { FxRatesModule } from "../fx-rates/fx-rates.module";
 import { RfqModule } from "../rfq/rfq.module";
 import { CommsModule } from "../comms/comms.module";
 import { PrismaModule } from "../../prisma/prisma.module";
+import { QueryLockModule } from "./query-lock.module";
 import { AwardController } from "./award.controller";
 import { AwardService } from "./award.service";
 import { NegotiationService } from "./negotiation.service";
@@ -48,7 +49,7 @@ import { AwardChangeOrderListener } from "./award-change-order.listener";
 // award-workflow-maker/checker.e2e-spec.ts run green against them. Left as a warning on the file
 // that DEFINES the state machine, it described a machine that no longer exists.
 @Module({
-  imports: [StatusModule, ComparisonModule, FxRatesModule, PrismaModule, RfqModule, CommsModule],
+  imports: [StatusModule, ComparisonModule, FxRatesModule, PrismaModule, RfqModule, CommsModule, QueryLockModule],
   controllers: [AwardController],
   providers: [AwardService, NegotiationService, AwardChangeOrderListener],
 })

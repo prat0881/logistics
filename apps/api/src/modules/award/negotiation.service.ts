@@ -14,6 +14,7 @@ import { LegQuoteProjector } from "../rfq/leg-quote.projector";
 import { RfqService } from "../rfq/rfq.service";
 import { QueryStatusProjector } from "../status/query-status.projector";
 import { StatusService } from "../status/status.service";
+import { QueryLockService } from "./query-lock.service";
 
 // Quote statuses a re-quote can legally be requested against — a live offer (QUOTED), one already
 // provisionally selected (APPROVED, design §5), or one whose re-quote window closed with the
@@ -42,6 +43,7 @@ export class NegotiationService {
     private readonly dispatcher: NotificationDispatcher,
     private readonly projector: QueryStatusProjector,
     private readonly legRollup: LegQuoteProjector,
+    private readonly lock: QueryLockService,
   ) {}
 
   async requestRequote(
@@ -51,6 +53,10 @@ export class NegotiationService {
     input: RequestRequoteInput,
     user: RequestUser,
   ): Promise<Quote> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     // Ownership scoping mirrors sendForApproval/requireDecidable's `{ id, queryId }` pattern
     // (award.service.ts) — a mismatched queryId OR legId in the URL must 404, not silently
     // thread the wrong query/leg into the fires/audit trail below.

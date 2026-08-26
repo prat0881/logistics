@@ -36,6 +36,7 @@ import { NotificationDispatcher } from "../comms/notification-dispatcher.service
 import { FxRatesService } from "../fx-rates/fx-rates.service";
 import { QueryStatusProjector } from "../status/query-status.projector";
 import { StatusService } from "../status/status.service";
+import { QueryLockService } from "./query-lock.service";
 
 // Quote statuses that still might yield a NEW comparable price if we wait longer — the leg
 // hasn't heard back (RFQ_SENT), is mid-negotiation (REQUOTED), or needs re-distribution
@@ -121,6 +122,7 @@ export class AwardService {
     private readonly projector: QueryStatusProjector,
     private readonly fxRates: FxRatesService,
     private readonly dispatcher: NotificationDispatcher,
+    private readonly lock: QueryLockService,
   ) {}
 
   // S5.9 Task 3 (register B3) — the ONE remaining write for a leg's shortlisted offer. Only
@@ -396,6 +398,10 @@ export class AwardService {
     input: SendForApprovalInput,
     user: RequestUser,
   ): Promise<LegAwardDecision> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     // A1 (offer validity) + D3 (recommendation snapshot) — see the boundary note above. `&&
     // o.priced` keeps a never-quoted, zero-freight variant placeholder (comparison.service.ts
     // emits one per `variantsForMode` slot unconditionally) from passing A1. NOTE (review round
@@ -766,6 +772,10 @@ export class AwardService {
   // this transaction resolves, then sees the real outcome.
   async approve(queryId: string, legId: string, user: RequestUser): Promise<LegAwardDecision> {
     const { decision, quoteId } = await this.prisma.$transaction(async (tx) => {
+      // S5.9.5 (D6) — a locked query refuses every write. Inside the transaction, on `tx`,
+      // because the transaction is this method's FIRST operation: the check then shares the
+      // snapshot the rest of the decision is read and written under.
+      await this.lock.assertUnlocked(queryId, tx);
       await this.lockLeg(tx, queryId, legId);
       const { decision } = await this.requireDecidable(tx, legId, user);
 
@@ -979,6 +989,10 @@ export class AwardService {
   ): Promise<LegAwardDecision> {
     const { decision, returnToFullyQuoted, quoteEvent, quoteNeedsReturn, legNeedsReturn } =
       await this.prisma.$transaction(async (tx) => {
+        // S5.9.5 (D6) — a locked query refuses every write. Inside the transaction, on `tx`,
+        // because the transaction is this method's FIRST operation: the check then shares the
+        // snapshot the rest of the decision is read and written under.
+        await this.lock.assertUnlocked(queryId, tx);
         await this.lockLeg(tx, queryId, legId);
         const { decision } = await this.requireRejectable(tx, legId, user);
 
@@ -1222,6 +1236,10 @@ export class AwardService {
   // rewritten on top of getComparison is an open question nobody has evaluated; it is not being
   // claimed either way.
   async generateClientQuote(queryId: string, user: RequestUser): Promise<Query> {
+    // S5.9.5 (D6) — a locked query refuses every write, and generate is NOT one of the two
+    // exceptions: re-generating over a frozen snapshot would silently replace the cost basis a
+    // DRAFT quotation was already priced from. Reopen first. First, before any other read.
+    await this.lock.assertUnlocked(queryId);
     // MIN-3 (task-4 review) — 404 a nonexistent query explicitly (mirrors reopenComparison
     // below), so it stays distinct from a real, zero-leg query (a 409 next).
     const query = await this.prisma.query.findUnique({ where: { id: queryId }, select: { id: true } });

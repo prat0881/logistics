@@ -31,6 +31,7 @@ import { QueryStatusProjector } from "../status/query-status.projector";
 import { LegsService } from "../legs/legs.service";
 import { RoutingService } from "../routing/routing.service";
 import { shapeCargo } from "../cargo/cargo-shape";
+import { QueryLockService } from "../award/query-lock.service";
 
 // Reusable derived-on-read graph shape (§4.5): cargos/checklist/files (Plan 4) + points/legs
 // (Plan 5, incl. each leg's legPackages join so `shapeQuery` can compute per-leg roll-ups).
@@ -87,6 +88,7 @@ export class QueriesService {
     private readonly legs: LegsService,
     private readonly routing: RoutingService,
     private readonly events: EventEmitter2,
+    private readonly lock: QueryLockService,
   ) {}
 
   // ── List (GET /queries) ────────────────────────────────────────────────────────
@@ -401,6 +403,10 @@ export class QueriesService {
   // an empty patch is a no-op read. The uow applies the whole validated patch + re-syncs
   // dgIndicator inside the strategy's transaction (Free path → apply → revalidate → log).
   async patch(id: string, input: QuerySaveInput, user: RequestUser) {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(id);
     const existing = await this.prisma.query.findUnique({ where: { id }, select: { id: true } });
     if (!existing) throw new NotFoundException("Query not found");
 
@@ -450,6 +456,10 @@ export class QueriesService {
   // rfqReadyAt milestone and let the projector roll the query up to RFQ_READY (never hand-write
   // status). Idempotent: a re-submit finds zero DRAFT legs, fires nothing, and just re-projects.
   async createQuery(id: string, user: RequestUser) {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(id);
     // F6 (dangerous-goods -> MSDS) is a per-PACKAGE finding now (Task 2 moved
     // collectCreateFindings's 2nd arg to PackageForValidation[]) — load the query's packages
     // (+ each package's item tags, to compute the package's *effective* tag set) instead of the
@@ -538,6 +548,10 @@ export class QueriesService {
   // per-item boolean flip on the 9 rows seeded at create. Missing/empty checklist (no such
   // query) → 404; any itemKey not among the query's own rows → 400 before any write.
   async patchChecklist(id: string, input: ChecklistPatchInput) {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(id);
     const existing = await this.prisma.queryChecklistItem.findMany({
       where: { queryId: id },
       select: { itemKey: true },

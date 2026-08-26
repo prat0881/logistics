@@ -9,6 +9,7 @@ import { ImpactRegistry } from "../changes/impact.registry";
 import { assertApplied } from "../changes/assert-applied";
 import { QueriesService } from "../queries/queries.service";
 import { shapeItem } from "./cargo-shape";
+import { QueryLockService } from "../award/query-lock.service";
 
 @Injectable()
 export class ItemService {
@@ -17,6 +18,7 @@ export class ItemService {
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
     private readonly queries: QueriesService,
+    private readonly lock: QueryLockService,
   ) {}
 
   // Verifies the parent package exists under this exact (queryId, cargoId) scope — 404 if
@@ -57,6 +59,10 @@ export class ItemService {
     input: ItemCreateInput,
     user: RequestUser,
   ): Promise<ItemDto> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.assertPackageRef(queryId, cargoId, packageId);
 
     const hasProduct = input.product != null && input.product.trim().length > 0;
@@ -123,6 +129,10 @@ export class ItemService {
     input: ItemUpdateInput,
     user: RequestUser,
   ): Promise<ItemDto> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.assertPackageRef(queryId, cargoId, packageId);
     const existing = await this.load(packageId, iid);
 
@@ -170,6 +180,10 @@ export class ItemService {
     iid: string,
     user: RequestUser,
   ): Promise<void> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.assertPackageRef(queryId, cargoId, packageId);
     await this.load(packageId, iid);
     const result = await this.mediator.apply(

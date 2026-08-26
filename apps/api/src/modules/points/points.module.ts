@@ -1,13 +1,14 @@
 // apps/api/src/modules/points/points.module.ts
 import { Module, type OnModuleInit } from "@nestjs/common";
 import { ChangesModule } from "../changes/changes.module";
+import { QueryLockModule } from "../award/query-lock.module";
 import { ImpactRegistry } from "../changes/impact.registry";
 import { PointsController } from "./points.controller";
 import { PointsService } from "./points.service";
 import { pointImpactMap } from "./point.impact";
 
 @Module({
-  imports: [ChangesModule],
+  imports: [ChangesModule, QueryLockModule],
   controllers: [PointsController],
   providers: [PointsService],
   exports: [PointsService],

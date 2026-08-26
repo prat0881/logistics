@@ -21,6 +21,7 @@ import { assertApplied } from "../changes/assert-applied";
 import { FilesService, type MsdsUpload } from "../files/files.service";
 import { QueriesService } from "../queries/queries.service";
 import { shapePackage } from "./cargo-shape";
+import { QueryLockService } from "../award/query-lock.service";
 
 const ITEM_ORDER: Prisma.ItemOrderByWithRelationInput[] = [
   { rowIndex: "asc" },
@@ -36,6 +37,7 @@ export class PackageService {
     private readonly impacts: ImpactRegistry,
     private readonly files: FilesService,
     private readonly queries: QueriesService,
+    private readonly lock: QueryLockService,
   ) {}
 
   // Verifies the parent cargo exists *and* belongs to this query. Bad ref -> BadRequestException
@@ -114,6 +116,10 @@ export class PackageService {
     input: PackageCreateInput,
     user: RequestUser,
   ): Promise<PackageDto> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const cargo = await this.assertCargoRef(queryId, cargoId);
     await this.assertPackageNoFree(queryId, input.packageNo);
 
@@ -188,6 +194,10 @@ export class PackageService {
     count: number,
     user: RequestUser,
   ): Promise<PackageDto[]> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const source = await this.prisma.package.findFirst({
       where: { id: pid, queryId },
       include: { items: { orderBy: ITEM_ORDER } },
@@ -307,6 +317,10 @@ export class PackageService {
     input: PackageUpdateInput,
     user: RequestUser,
   ): Promise<PackageDto> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const existing = await this.load(queryId, cargoId, pid);
     const { reason, ...patch } = input;
     const fields = Object.keys(patch);
@@ -392,6 +406,10 @@ export class PackageService {
   // Mediated @delete. Item cascades via the schema's onDelete: Cascade (Package -> Item), so no
   // extra cleanup is needed here.
   async remove(queryId: string, cargoId: string, pid: string, user: RequestUser): Promise<void> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.load(queryId, cargoId, pid);
     const result = await this.mediator.apply(
       { entity: "package", id: pid, action: "@delete", queryId, actorId: user.userId },
@@ -415,6 +433,10 @@ export class PackageService {
     file: MsdsUpload | undefined,
     user: RequestUser,
   ): Promise<PackageDto> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.load(queryId, cargoId, pid);
     const asset = await this.files.storeMsds(queryId, file, user.userId); // 400s a non-PDF/no-file
     let shaped: PackageDto | undefined;

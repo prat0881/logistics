@@ -13,6 +13,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { ScheduledEventService } from "../src/modules/comms/scheduled-event.service";
+import { QUERY_LOCKED_MESSAGE } from "../src/modules/award/query-lock.service";
 
 // S5.5 Task 2 (design §10.1) — the negotiation core: POST .../quotes/:quoteId/request-requote.
 // CHANGED (S5.9.5 Task 4, design D3) — Executive-ONLY now (@Roles(Role.EXECUTIVE)), not
@@ -599,13 +600,21 @@ describe(`${PREFIX} (e2e)`, () => {
       .expect(401);
   });
 
-  // Whole-branch review, task 2 — a real cross-task bug: request-requote on a leg that's part
-  // of an ALREADY-GENERATED (QUOTING_CLIENT) query must tear down that frozen awardSnapshot,
-  // exactly as the §10.2 change-order reversal listener does for its own reopen path. Without
-  // this, deriveQueryStatus's `quotingClient` milestone short-circuits ahead of the leg rollup
-  // and the query keeps reporting QUOTING_CLIENT with a stale client-facing total naming a
-  // quote that's now REQUOTED and a decision that's now DRAFT.
-  it("QUOTING_CLIENT teardown — request-requote on a generated query's leg winner clears awardSnapshot and rolls the query OFF QUOTING_CLIENT (to RFQ_SENT, not back to QUOTING_CLIENT); the untouched leg is unaffected", async () => {
+  // S5.9.5 (design D6) — REWRITTEN. This test used to assert that request-requote on an
+  // ALREADY-GENERATED (QUOTING_CLIENT) query silently tore the frozen awardSnapshot down and
+  // rolled the query off QUOTING_CLIENT (the "teardown" the whole-branch review of S5.9 added to
+  // negotiation.service.ts). D6 deliberately changes that: a locked query refuses EVERY write
+  // except reopen-comparison and the quotation builder, so the negotiation never runs and the
+  // teardown inside negotiation.service.ts is unreachable from this entry point — D6 names that
+  // consequence and accepts it, on the grounds that "a user correcting a mistake must reopen
+  // explicitly rather than discovering their client quotation silently torn down by an edit".
+  //
+  // The teardown code itself is NOT removed here (that is a separate decision, and D6's sibling
+  // instruction is to keep the identical teardown in award-change-order.listener.ts).
+  //
+  // Every assertion the old test made about the negotiation's own effects is kept — it now runs
+  // AFTER the explicit reopen D6 requires, which is the route the product still offers.
+  it("S5.9.5 (D6) — request-requote on a generated (QUOTING_CLIENT) query is REFUSED with the lock message and changes nothing; after an explicit reopen-comparison the same call goes through", async () => {
     const { query, legs } = await seedApprovedQuery("qc", [
       { amount: 83200, transitDays: 3 },
       { amount: 41600, transitDays: 5 },
@@ -622,18 +631,42 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(beforeRequote.status).toBe("QUOTING_CLIENT");
     expect(beforeRequote.awardSnapshot).not.toBeNull();
 
-    // --- negotiate leg 1's winner ---
+    // --- D6: the lock refuses it, and NOTHING moves ---
     const comment = "Client wants a sharper rate before we send the quotation";
+    const refused = await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/legs/${legs[0].id}/quotes/${legs[0].quoteId}/request-requote`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send({ comment })
+      .expect(409);
+    expect(refused.body.message).toBe(QUERY_LOCKED_MESSAGE);
+
+    const stillLocked = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    expect(stillLocked.awardSnapshot).not.toBeNull();
+    expect(stillLocked.status).toBe("QUOTING_CLIENT");
+    const quote1Refused = await prisma.quote.findUniqueOrThrow({ where: { id: legs[0].quoteId } });
+    expect(quote1Refused.status).toBe("APPROVED");
+    const decision1Refused = await prisma.legAwardDecision.findUnique({ where: { legId: legs[0].id } });
+    expect(decision1Refused?.status).toBe("APPROVED");
+
+    // --- the door out, then the SAME negotiation ---
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/reopen-comparison`)
+      .set("Cookie", cookieFor(randomUUID()))
+      .send()
+      .expect(200);
+
     await request(app.getHttpServer())
       .post(`/api/queries/${query.id}/legs/${legs[0].id}/quotes/${legs[0].quoteId}/request-requote`)
       .set("Cookie", cookieFor(randomUUID()))
       .send({ comment })
       .expect(200);
 
-    // --- the query rolled OFF QUOTING_CLIENT, snapshot cleared. S5.9.2 Q1/Q2: leg1 now walks
-    //     all the way back to RFQ_SENT (its only quote is REQUOTED — nothing comparable left),
-    //     so leastAdvanced(RFQ_SENT, APPROVED) = RFQ_SENT -> QueryStatus.RFQ_SENT. It used to
-    //     read QUOTED off a leg1 parked at FULLY_QUOTED, which claimed a live price we were in
+    // --- the query is off QUOTING_CLIENT. The snapshot is null because REOPEN cleared it (not
+    //     because the negotiation tore it down — under D6 the negotiation never sees a locked
+    //     query at all). What the negotiation still owns is the ROLLUP below: S5.9.2 Q1/Q2, leg1
+    //     walks all the way back to RFQ_SENT (its only quote is REQUOTED — nothing comparable
+    //     left), so leastAdvanced(RFQ_SENT, APPROVED) = RFQ_SENT -> QueryStatus.RFQ_SENT. It used
+    //     to read QUOTED off a leg1 parked at FULLY_QUOTED, which claimed a live price we were in
     //     fact waiting on a forwarder to re-send. ---
     const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
     expect(updated.awardSnapshot).toBeNull();

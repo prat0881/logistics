@@ -30,6 +30,7 @@ import { loadLegForRfq, type LegRfqContext } from "./leg-context";
 import { buildManifestSnapshot } from "./manifest";
 import { buildChargeConfigSnapshot } from "./charge-config.snapshot";
 import { warehousePointIds, findWarehouseYesConflict } from "./warehouse.util";
+import { QueryLockService } from "../award/query-lock.service";
 
 @Injectable()
 export class RfqService {
@@ -43,6 +44,7 @@ export class RfqService {
     private readonly commsSettings: CommsSettingsService,
     private readonly scheduled: ScheduledEventService,
     private readonly dispatcher: NotificationDispatcher,
+    private readonly lock: QueryLockService,
   ) {}
 
   async setFfSelection(
@@ -51,6 +53,10 @@ export class RfqService {
     ffIds: string[],
     user: RequestUser,
   ): Promise<{ selected: string[] }> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const leg = await this.prisma.leg.findFirst({
       where: { id: legId, queryId },
       select: { id: true },
@@ -111,6 +117,10 @@ export class RfqService {
     input: DistributeInput,
     user: RequestUser,
   ): Promise<DistributeResult> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const query = await this.prisma.query.findUnique({
       where: { id: queryId },
       select: { id: true, incoterms: true },
@@ -165,6 +175,10 @@ export class RfqService {
     user: RequestUser,
   ): Promise<ReissueTokenResult> {
     return this.prisma.$transaction(async (tx) => {
+      // S5.9.5 (D6) — a locked query refuses every write. Inside the transaction, on `tx`,
+      // because the transaction is this method's FIRST operation: sharing the transaction's
+      // snapshot means the token cannot be rotated by a call that read `awardSnapshot` outside it.
+      await this.lock.assertUnlocked(queryId, tx);
       const rfq = await tx.rfq.findUnique({
         where: { queryId_freightForwarderId: { queryId, freightForwarderId } },
         select: { id: true, rfqNumber: true },
@@ -298,6 +312,10 @@ export class RfqService {
     input: DistributeInput,
     user: RequestUser,
   ): Promise<DistributeResult> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const ctx = await loadLegForRfq(this.prisma, queryId, legId);
     const query = await this.prisma.query.findUnique({
       where: { id: queryId },

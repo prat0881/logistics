@@ -7,6 +7,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
 import type { RequestUser } from "../auth/types";
+import { QueryLockService } from "../award/query-lock.service";
 
 @Injectable()
 export class PointsService {
@@ -14,6 +15,7 @@ export class PointsService {
     private readonly prisma: PrismaService,
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
+    private readonly lock: QueryLockService,
   ) {}
 
   private async assertQueryExists(queryId: string): Promise<void> {
@@ -28,6 +30,10 @@ export class PointsService {
   }
 
   async create(queryId: string, input: PointSaveInput, user: RequestUser) {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.assertQueryExists(queryId);
     const id = randomUUID();
     let created: unknown;
@@ -50,6 +56,10 @@ export class PointsService {
   }
 
   async update(queryId: string, pointId: string, input: PointUpdateInput, user: RequestUser) {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.load(queryId, pointId);
     // `reason` is ChangeRequest metadata, not a point column — strip it before it can reach
     // `fields`/highestImpactField or the Prisma patch (Task 10, SB6 §7.2).
@@ -85,6 +95,10 @@ export class PointsService {
   }
 
   async remove(queryId: string, pointId: string, user: RequestUser) {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.load(queryId, pointId);
 
     // Guard: a point still used by a leg cannot be deleted. Without this the
