@@ -14,6 +14,8 @@ import { FreightForwardersListPage } from "@/features/masters/freight-forwarders
 import { FreightForwarderFormPage } from "@/features/masters/freight-forwarders/FreightForwarderFormPage";
 import { WarehousesListPage } from "@/features/masters/warehouses/WarehousesListPage";
 import { WarehouseFormPage } from "@/features/masters/warehouses/WarehouseFormPage";
+import { ChargeCatalogueListPage } from "@/features/masters/charge-catalogue/ChargeCatalogueListPage";
+import { ChargeLineFormPage } from "@/features/masters/charge-catalogue/ChargeLineFormPage";
 import { ConfigPage } from "@/features/admin/ConfigPage";
 import { QueriesListPage } from "@/features/query-list/QueriesListPage";
 import { QueryWizardPage } from "@/features/query-wizard/QueryWizardPage";
@@ -172,6 +174,30 @@ export function App() {
         element={
           <Protected>
             <WarehouseFormPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/charge-catalogue"
+        element={
+          <Protected>
+            <ChargeCatalogueListPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/charge-catalogue/new"
+        element={
+          <Protected>
+            <ChargeLineFormPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/charge-catalogue/:id"
+        element={
+          <Protected>
+            <ChargeLineFormPage />
           </Protected>
         }
       />

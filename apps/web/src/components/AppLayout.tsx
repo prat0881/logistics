@@ -33,6 +33,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <Link to="/masters/warehouses" className="text-muted-foreground hover:text-foreground">
             Warehouses
           </Link>
+          <Link to="/masters/charge-catalogue" className="text-muted-foreground hover:text-foreground">
+            Charge Catalogue
+          </Link>
           {isAdmin && (
             <Link to="/admin/config" className="text-muted-foreground hover:text-foreground">
               Config

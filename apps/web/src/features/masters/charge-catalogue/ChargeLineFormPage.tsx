@@ -1,0 +1,209 @@
+import { useEffect, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  chargeLineCreateSchema,
+  categoriesForMode,
+  chargeVariantsForMode,
+  FREIGHT_MODES,
+  type ChargeCategory,
+  type ChargeLineCreateInput,
+  type FreightMode,
+} from "@svyft/shared";
+import { ApiError, postJson, patchJson } from "@/lib/api";
+import { useChargeCatalogueAdmin } from "../useMasters";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+const CATEGORY_LABELS: Record<ChargeCategory, string> = {
+  ORIGIN: "Origin Charges",
+  FREIGHT: "Freight Charges",
+  DESTINATION: "Destination Charges",
+  ADDITIONAL: "Additional Charges",
+};
+
+// Mirrors ChargeLineInputType from packages/shared/src/charge-config.ts (a do-not-touch file
+// for this build) — kept as a local literal list rather than importing CHARGE_LINE_INPUT_TYPES
+// so this screen never needs that module's export surface to change.
+const INPUT_TYPES = ["PLAIN", "TRUCKING", "WAREHOUSE_STAGING", "HEAVY_WEIGHT_CALC"] as const;
+const INPUT_TYPE_LABELS: Record<(typeof INPUT_TYPES)[number], string> = {
+  PLAIN: "Plain amount",
+  TRUCKING: "Trucking (type / basis / amount)",
+  WAREHOUSE_STAGING: "Warehouse staging",
+  HEAVY_WEIGHT_CALC: "Heavy-weight calculation",
+};
+
+export function ChargeLineFormPage() {
+  const { id } = useParams();
+  const isEdit = Boolean(id);
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // No single-row GET exists for this resource (by design — see task-13 report); the admin
+  // list is the only source of an existing row's current values, same shape ContactList uses
+  // for its owner-scoped list.
+  const admin = useChargeCatalogueAdmin();
+  const existing = admin.data?.find((l) => l.id === id);
+
+  const {
+    register,
+    handleSubmit,
+    control,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<ChargeLineCreateInput>({
+    resolver: zodResolver(chargeLineCreateSchema),
+    defaultValues: { mode: "ROAD", isAdditional: false, inputType: "PLAIN" },
+  });
+
+  useEffect(() => {
+    if (existing && existing.category) {
+      reset({
+        mode: existing.mode,
+        variant: existing.variant,
+        category: existing.category,
+        label: existing.label,
+        isAdditional: existing.isAdditional,
+        inputType: existing.inputType as ChargeLineCreateInput["inputType"],
+        sortOrder: existing.sortOrder,
+      });
+    }
+  }, [existing, reset]);
+
+  // mode drives both the category and variant option lists — categoriesForMode/
+  // chargeVariantsForMode read the same mode-scoping the API validates against, so the form
+  // never duplicates that rule locally.
+  const mode = (useWatch({ control, name: "mode" }) ?? "ROAD") as FreightMode;
+
+  async function onSubmit(values: ChargeLineCreateInput) {
+    setSubmitError(null);
+    try {
+      if (id) {
+        // chargeLineUpdateSchema is .strict() and picks only label/sortOrder/isActive/
+        // inputType — mode/variant/category/isAdditional are immutable after creation and
+        // must never be sent, or the API 400s.
+        await patchJson(`/api/charge-line-definitions/${id}`, {
+          label: values.label,
+          sortOrder: values.sortOrder,
+          inputType: values.inputType,
+        });
+      } else {
+        await postJson("/api/charge-line-definitions", values);
+      }
+      await qc.invalidateQueries({ queryKey: ["charge-catalogue-admin"] });
+      navigate("/masters/charge-catalogue");
+    } catch (err) {
+      setSubmitError(err instanceof ApiError ? err.message : "Could not save this charge line");
+    }
+  }
+
+  return (
+    <div className="max-w-md space-y-8">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" aria-label="Charge line form">
+        <h1 className="font-display text-xl font-semibold tracking-tight">
+          {isEdit ? "Edit charge line" : "New charge line"}
+        </h1>
+        {submitError && (
+          <p role="alert" className="text-sm text-destructive">
+            {submitError}
+          </p>
+        )}
+        {isEdit && (
+          <div className="space-y-1">
+            <Label htmlFor="key">Key</Label>
+            <p id="key" className="font-mono text-sm text-muted-foreground">
+              {existing?.key ?? (admin.isLoading ? "Loading…" : "")}
+            </p>
+          </div>
+        )}
+        <div className="space-y-1">
+          <Label htmlFor="mode">Mode</Label>
+          <select
+            id="mode"
+            disabled={isEdit}
+            {...register("mode")}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          >
+            {FREIGHT_MODES.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="category">Category</Label>
+          <select
+            id="category"
+            key={mode}
+            disabled={isEdit}
+            {...register("category")}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          >
+            {categoriesForMode(mode).map((c) => (
+              <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
+            ))}
+          </select>
+          {isEdit && (
+            <p className="text-sm text-muted-foreground">
+              Category is fixed after creation — it determines how quotes group this charge.
+            </p>
+          )}
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="variant">Variant</Label>
+          <select
+            id="variant"
+            key={mode}
+            disabled={isEdit}
+            {...register("variant")}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          >
+            {chargeVariantsForMode(mode).map((v) => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="label">Label</Label>
+          <Input id="label" {...register("label")} />
+          {errors.label && (
+            <p role="alert" className="text-sm text-destructive">{errors.label.message}</p>
+          )}
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" disabled={isEdit} {...register("isAdditional")} />
+          Additional charge
+        </label>
+        {isEdit && (
+          <p className="text-sm text-muted-foreground">
+            Additional is fixed after creation, along with category above.
+          </p>
+        )}
+        <div className="space-y-1">
+          <Label htmlFor="inputType">Input type</Label>
+          <select
+            id="inputType"
+            {...register("inputType")}
+            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+          >
+            {INPUT_TYPES.map((t) => (
+              <option key={t} value={t}>{INPUT_TYPE_LABELS[t]}</option>
+            ))}
+          </select>
+        </div>
+        {isEdit && (
+          <div className="space-y-1">
+            <Label htmlFor="sortOrder">Sort order</Label>
+            <Input id="sortOrder" type="number" {...register("sortOrder", { valueAsNumber: true })} />
+          </div>
+        )}
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Saving…" : "Save"}
+        </Button>
+      </form>
+    </div>
+  );
+}
