@@ -93,19 +93,38 @@ export function FreightForwarderFormPage() {
               <Input id="companyName" {...register("companyName")} />
               {err("companyName")}
             </div>
+            <div className="space-y-1 sm:col-span-2">
+              {id && (
+                <p className="text-sm text-muted-foreground">
+                  Person in charge, contact number and email are managed as the primary
+                  contact below.
+                </p>
+              )}
+            </div>
             <div className="space-y-1">
               <Label htmlFor="pic">Person in charge</Label>
-              <Input id="pic" {...register("pic")} />
+              {/* Read-only once the record exists: pic/contactNumber/email are derived from
+                  the primary contact (FreightForwardersService.syncPrimaryContactColumns is
+                  their sole writer after create) — editing them here would be silently
+                  reverted by the next unrelated contact write. Plain HTML `disabled`, not
+                  react-hook-form's register-option `disabled`, so the loaded value still
+                  round-trips through validation/submit unchanged rather than being dropped. */}
+              <Input id="pic" disabled={Boolean(id)} {...register("pic")} />
               {err("pic")}
             </div>
             <div className="space-y-1">
               <Label htmlFor="contactNumber">Contact number</Label>
-              <Input id="contactNumber" placeholder="+15551234567" {...register("contactNumber")} />
+              <Input
+                id="contactNumber"
+                placeholder="+15551234567"
+                disabled={Boolean(id)}
+                {...register("contactNumber")}
+              />
               {err("contactNumber")}
             </div>
             <div className="space-y-1">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" {...register("email")} />
+              <Input id="email" disabled={Boolean(id)} {...register("email")} />
               {err("email")}
             </div>
           </div>

@@ -59,23 +59,52 @@ describe("FF Contacts (e2e)", () => {
     paymentTerms: "CREDIT_30",
   };
 
+  it("auto-seeds a PRIMARY contact matching pic/contactNumber/email on create", async () => {
+    const ff = await request(app.getHttpServer())
+      .post("/api/freight-forwarders")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ ...base, companyName: `${NAME} seed` })
+      .expect(201);
+
+    // create() seeds the primary contact in the same transaction as the forwarder row, so the
+    // "every forwarder has exactly one PRIMARY contact" invariant holds from row 0 — not only
+    // for rows the migration backfilled — and update() (which no longer writes these columns
+    // itself) always has a contact row for syncPrimaryContactColumns to read from.
+    const contacts = await prisma.freightForwarderContact.findMany({
+      where: { freightForwarderId: ff.body.id },
+    });
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0]).toMatchObject({
+      name: base.pic,
+      email: base.email,
+      contactNo: base.contactNumber,
+      pocLevel: "PRIMARY",
+    });
+  });
+
   it("rewrites the snapshot columns when the primary contact changes", async () => {
     const ff = await request(app.getHttpServer())
       .post("/api/freight-forwarders")
       .set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send(base)
+      .send({ ...base, companyName: `${NAME} rewrite` })
       .expect(201);
 
+    // create() already seeded a PRIMARY contact from pic/contactNumber/email — a forwarder's
+    // contact info is now changed by editing that contact, not by adding a second primary
+    // (which would 409; see the conflict test below).
+    const seeded = await prisma.freightForwarderContact.findFirstOrThrow({
+      where: { freightForwarderId: ff.body.id, pocLevel: "PRIMARY" },
+    });
+
     await request(app.getHttpServer())
-      .post(`/api/freight-forwarders/${ff.body.id}/contacts`)
+      .patch(`/api/freight-forwarders/${ff.body.id}/contacts/${seeded.id}`)
       .set("Cookie", cookie(Role.ADMINISTRATOR))
       .send({
         name: "Priya Nair",
         email: "priya@example.com",
         contactNo: "+971509876543",
-        pocLevel: "PRIMARY",
       })
-      .expect(201);
+      .expect(200);
 
     const row = await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } });
     expect(row?.pic).toBe("Priya Nair");
@@ -107,12 +136,8 @@ describe("FF Contacts (e2e)", () => {
       .send({ ...base, companyName: `${NAME} conflict` })
       .expect(201);
 
-    await request(app.getHttpServer())
-      .post(`/api/freight-forwarders/${ff.body.id}/contacts`)
-      .set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ name: "First", email: "first@example.com", contactNo: "+971500000001", pocLevel: "PRIMARY" })
-      .expect(201);
-
+    // create() already seeded a PRIMARY contact — a second one conflicts immediately, no
+    // setup step needed.
     const conflict = await request(app.getHttpServer())
       .post(`/api/freight-forwarders/${ff.body.id}/contacts`)
       .set("Cookie", cookie(Role.ADMINISTRATOR))
@@ -124,32 +149,102 @@ describe("FF Contacts (e2e)", () => {
       where: { freightForwarderId: ff.body.id, pocLevel: "PRIMARY" },
     });
     expect(primaries).toHaveLength(1);
-    expect(primaries[0].name).toBe("First");
+    expect(primaries[0].name).toBe(base.pic);
   });
 
-  it("keeps the last-known snapshot columns (not nulled) once the primary contact is deleted", async () => {
+  it("keeps the last-known snapshot columns (not nulled) once the only contact is deleted", async () => {
     const ff = await request(app.getHttpServer())
       .post("/api/freight-forwarders")
       .set("Cookie", cookie(Role.ADMINISTRATOR))
       .send({ ...base, companyName: `${NAME} delete-primary` })
       .expect(201);
 
-    const contact = await request(app.getHttpServer())
-      .post(`/api/freight-forwarders/${ff.body.id}/contacts`)
-      .set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ name: "Only Primary", email: "only@example.com", contactNo: "+971500000003", pocLevel: "PRIMARY" })
-      .expect(201);
+    const seeded = await prisma.freightForwarderContact.findFirstOrThrow({
+      where: { freightForwarderId: ff.body.id, pocLevel: "PRIMARY" },
+    });
 
     await request(app.getHttpServer())
-      .delete(`/api/freight-forwarders/${ff.body.id}/contacts/${contact.body.id}`)
+      .delete(`/api/freight-forwarders/${ff.body.id}/contacts/${seeded.id}`)
       .set("Cookie", cookie(Role.ADMINISTRATOR))
       .expect(204);
 
     const row = await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } });
-    // No primary remains; the columns are NOT NULL with no other source of truth, so they
+    // No contact remains at all (not even a non-primary fallback candidate), so the columns
     // keep their last-known values rather than being nulled or replaced.
-    expect(row?.pic).toBe("Only Primary");
-    expect(row?.email).toBe("only@example.com");
-    expect(row?.contactNumber).toBe("+971500000003");
+    expect(row?.pic).toBe(base.pic);
+    expect(row?.email).toBe(base.email);
+    expect(row?.contactNumber).toBe(base.contactNumber);
+  });
+
+  it("demoting the primary to NONE still syncs from it as the oldest remaining active contact", async () => {
+    const ff = await request(app.getHttpServer())
+      .post("/api/freight-forwarders")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ ...base, companyName: `${NAME} demote` })
+      .expect(201);
+
+    const seeded = await prisma.freightForwarderContact.findFirstOrThrow({
+      where: { freightForwarderId: ff.body.id, pocLevel: "PRIMARY" },
+    });
+
+    // Demote to NONE and change the contact's details in the same write. No other contact
+    // exists, so syncPrimaryContactColumns falls back to this one anyway (the oldest
+    // remaining ACTIVE contact, not just PRIMARY ones) — proving the fallback actually re-runs
+    // on a demote rather than leaving the columns pointed at stale pre-demotion values.
+    await request(app.getHttpServer())
+      .patch(`/api/freight-forwarders/${ff.body.id}/contacts/${seeded.id}`)
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({
+        pocLevel: "NONE",
+        name: "Demoted But Present",
+        email: "demoted@example.com",
+        contactNo: "+971500000077",
+      })
+      .expect(200);
+
+    const row = await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } });
+    expect(row?.pic).toBe("Demoted But Present");
+    expect(row?.email).toBe("demoted@example.com");
+    expect(row?.contactNumber).toBe("+971500000077");
+  });
+
+  it("adding a SECONDARY contact does not change the snapshot columns", async () => {
+    const ff = await request(app.getHttpServer())
+      .post("/api/freight-forwarders")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ ...base, companyName: `${NAME} secondary-noop` })
+      .expect(201);
+
+    const before = await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } });
+
+    await request(app.getHttpServer())
+      .post(`/api/freight-forwarders/${ff.body.id}/contacts`)
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ name: "Sec One", email: "sec@example.com", contactNo: "+971500000055", pocLevel: "SECONDARY" })
+      .expect(201);
+
+    const after = await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } });
+    expect(after?.pic).toBe(before?.pic);
+    expect(after?.email).toBe(before?.email);
+    expect(after?.contactNumber).toBe(before?.contactNumber);
+  });
+
+  it("PATCHing a forwarder cannot change pic/contactNumber/email (stripped server-side)", async () => {
+    const ff = await request(app.getHttpServer())
+      .post("/api/freight-forwarders")
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ ...base, companyName: `${NAME} patch-noop` })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/api/freight-forwarders/${ff.body.id}`)
+      .set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send({ pic: "Should Not Land", contactNumber: "+971500099999", email: "nope@example.com" })
+      .expect(200);
+
+    const row = await prisma.freightForwarder.findUnique({ where: { id: ff.body.id } });
+    expect(row?.pic).toBe(base.pic);
+    expect(row?.contactNumber).toBe(base.contactNumber);
+    expect(row?.email).toBe(base.email);
   });
 });

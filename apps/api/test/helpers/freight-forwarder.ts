@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 
 // Task 5 (master-data expansion): companyAddress/city/country became required (NOT NULL, no
@@ -10,14 +11,13 @@ import type { Prisma } from "@prisma/client";
 // so call sites only state what they actually care about.
 //
 // freightForwarderCode/companyName are both globally @unique, so the defaults here are minted
-// per-call (module-level counter + timestamp) to avoid cross-file collisions on a shared test
-// DB — but callers that assert on the code/name, or that need a stable value to search/re-fetch
-// by, should still pass their own via `overrides`.
+// per-call via randomUUID() — not Date.now()+counter, which two jest workers starting in the
+// same millisecond can both mint identically on their first call, colliding on both unique
+// columns at once. Callers that assert on the code/name, or that need a stable value to
+// search/re-fetch by, should still pass their own via `overrides`.
 
-let fixtureSeq = 0;
 function mintSuffix(): string {
-  fixtureSeq += 1;
-  return `${Date.now().toString(36)}-${fixtureSeq}`;
+  return randomUUID();
 }
 
 export function ffFixture(

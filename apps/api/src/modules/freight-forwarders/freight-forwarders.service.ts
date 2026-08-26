@@ -58,9 +58,27 @@ export class FreightForwardersService {
           update: { lastNumber: { increment: 1 } },
         });
         const freightForwarderCode = `FF-${String(row.lastNumber).padStart(4, "0")}`;
-        return tx.freightForwarder.create({
+        const ff = await tx.freightForwarder.create({
           data: { freightForwarderCode, ...input, ...auditCreate(user) },
         });
+        // Seed the primary contact from the pic/contactNumber/email the create schema still
+        // requires, in the same transaction. Without this, the "every forwarder has exactly
+        // one PRIMARY contact" invariant only held for rows the migration backfilled — every
+        // newly-created forwarder had populated columns but an empty contact list. This makes
+        // the invariant hold from row 0, and it's also what makes update() safe to stop
+        // writing these columns (below): there's now always a contact row for
+        // syncPrimaryContactColumns to read from.
+        await tx.freightForwarderContact.create({
+          data: {
+            freightForwarderId: ff.id,
+            name: ff.pic,
+            email: ff.email,
+            contactNo: ff.contactNumber,
+            pocLevel: "PRIMARY",
+            ...auditCreate(user),
+          },
+        });
+        return ff;
       });
     } catch (e) {
       throw this.mapUnique(e, "A freight forwarder with that company name already exists");
@@ -69,11 +87,18 @@ export class FreightForwardersService {
 
   async update(id: string, input: FreightForwarderUpdateInput, user?: RequestUser) {
     await this.get(id);
+    // pic/contactNumber/email are derived — syncPrimaryContactColumns (below) is their sole
+    // writer. Dropped from every update so an admin editing forwarder details can never race
+    // with, or be silently reverted by, an unrelated contact write (the bug this whole
+    // create()-seeds/update()-strips split exists to close). They stay on the *create*
+    // schema/DTO: creation still needs them (the columns are NOT NULL) and rfq.service.ts
+    // still reads them — only this write path ignores them now.
+    const data: Prisma.FreightForwarderUpdateInput = { ...input, ...auditUpdate(user) };
+    delete data.pic;
+    delete data.contactNumber;
+    delete data.email;
     try {
-      return await this.prisma.freightForwarder.update({
-        where: { id },
-        data: { ...input, ...auditUpdate(user) },
-      });
+      return await this.prisma.freightForwarder.update({ where: { id }, data });
     } catch (e) {
       throw this.mapUnique(e, "A freight forwarder with that company name already exists");
     }
@@ -88,27 +113,35 @@ export class FreightForwardersService {
   }
 
   /**
-   * Keeps the four columns rfq.service.ts snapshots (pic, contactNumber, email, whLocation)
-   * aligned with the primary contact. Phase 1 of the parallel change — the RFQ payload keeps
-   * reading columns while the contact table becomes the source of truth. Retired in the
-   * Stage-4 pass; see the design doc §2.2.
+   * Keeps the three columns rfq.service.ts snapshots — pic, contactNumber, email — aligned
+   * with the primary contact. `whLocation` is a fourth column rfq.service.ts also reads, but
+   * this function does not touch it: it tracks warehouses, which don't exist until Task 6;
+   * Task 14 wires it to the warehouse relation. Phase 1 of the parallel change — the RFQ
+   * payload keeps reading columns while the contact table becomes the source of truth.
+   * Retired in the Stage-4 pass; see the design doc §2.2.
    *
-   * When no primary contact remains (e.g. the primary was just deleted, or demoted via an
-   * update), this is a deliberate no-op: pic/contactNumber/email are NOT NULL on
-   * FreightForwarder, there is no other authoritative source to fall back to, and
-   * ContactList has no UI yet to reassign a primary (known gap, not this task's to fix). The
-   * columns keep their last-known values rather than being nulled or replaced with a
-   * placeholder — "the last real contact we had" is a better snapshot for the RFQ payload
-   * than a fabricated one.
+   * Fallback: if no PRIMARY remains (just deleted, or demoted via an update), fall back to
+   * the oldest remaining ACTIVE contact rather than leaving the columns naming someone who's
+   * gone — an RFQ addressed to a departed contact is worse than one addressed to a still-active
+   * contact who just isn't flagged primary. Only when there is no contact left at all —
+   * PRIMARY or otherwise — do the columns keep their last-known values: pic/contactNumber/email
+   * are NOT NULL on FreightForwarder with no other source of truth, and ContactList has no UI
+   * yet to reassign a primary (known gap, not this task's to fix).
    */
   private async syncPrimaryContactColumns(tx: Prisma.TransactionClient, ffId: string) {
     const primary = await tx.freightForwarderContact.findFirst({
       where: { freightForwarderId: ffId, pocLevel: "PRIMARY" },
     });
-    if (!primary) return;
+    const source =
+      primary ??
+      (await tx.freightForwarderContact.findFirst({
+        where: { freightForwarderId: ffId, status: "ACTIVE" },
+        orderBy: { createdAt: "asc" },
+      }));
+    if (!source) return;
     await tx.freightForwarder.update({
       where: { id: ffId },
-      data: { pic: primary.name, contactNumber: primary.contactNo, email: primary.email },
+      data: { pic: source.name, contactNumber: source.contactNo, email: source.email },
     });
   }
 

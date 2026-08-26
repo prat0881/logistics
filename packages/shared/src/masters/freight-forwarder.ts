@@ -44,7 +44,15 @@ export const freightForwarderCreateSchema = z.object({
   typicalLeadTime: z.number().int().min(0).max(365).optional(),
   status: statusField,
 });
-export const freightForwarderUpdateSchema = freightForwarderCreateSchema.partial();
+// pic/contactNumber/email are derived once a forwarder exists: FreightForwardersService's
+// syncPrimaryContactColumns is their sole writer after create(), which seeds the primary
+// contact from these same three fields. Omitted here (not just made optional) so the update
+// DTO can't carry them at all — editing a forwarder's contact details happens through its
+// contact list, in exactly one place. They stay on the *create* schema above: creation still
+// needs them (the columns are NOT NULL) and rfq.service.ts still reads them off the row.
+export const freightForwarderUpdateSchema = freightForwarderCreateSchema
+  .omit({ pic: true, contactNumber: true, email: true })
+  .partial();
 export type FreightForwarderCreateInput = z.infer<typeof freightForwarderCreateSchema>;
 export type FreightForwarderUpdateInput = z.infer<typeof freightForwarderUpdateSchema>;
 
