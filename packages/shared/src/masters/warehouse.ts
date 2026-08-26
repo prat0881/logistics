@@ -136,7 +136,25 @@ export interface WarehouseDto {
   capacity: string;
   capacityUnit: (typeof CAPACITY_UNITS)[number];
   capabilities: (typeof WAREHOUSE_CAPABILITIES)[number][];
+  // Contract & rate fields (WarehousesService.get returns the full Prisma row — Decimal columns
+  // serialise to string over JSON, same as `capacity` above; DateTime columns serialise to an
+  // ISO string). Widening this DTO to expose them is not a schema change: the columns were
+  // already on the wire, only this interface was omitting them — which is exactly what let
+  // WarehouseFormPage's edit-mode `reset()` silently drop them on every PATCH.
+  agreementValidUntil: string | null;
+  insuranceValidUntil: string | null;
+  isBonded: boolean;
+  weekendWorking: boolean;
+  weekendWorkingFee: string | null;
+  workingEmployees: number | null;
+  forkLiftCount: number | null;
+  dipTrayCount: number | null;
   freeStorageDays: number;
+  rateCurrency: string | null;
+  handlingRate: string | null;
+  handlingUnit: (typeof HANDLING_UNITS)[number] | null;
+  storageRate: string | null;
+  storageUnit: (typeof STORAGE_UNITS)[number] | null;
   status: MasterStatus;
   contacts?: ContactDto[];
   vehicles?: { id: string; tonnage: string; quantity: number }[];

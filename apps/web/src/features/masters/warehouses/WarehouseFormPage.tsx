@@ -1,24 +1,23 @@
-import { useEffect } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
+import { useEffect, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   warehouseCreateSchema,
   WAREHOUSE_MASTER_TYPES,
   CAPACITY_UNITS,
-  HANDLING_UNITS,
-  STORAGE_UNITS,
   WAREHOUSE_CAPABILITIES,
   CONTRACTED_TYPES,
-  CURRENCIES,
   warehouseVehicleSchema,
   type WarehouseCreateInput,
   type WarehouseVehicleInput,
+  type CurrencyCode,
 } from "@svyft/shared";
-import { postJson, patchJson } from "@/lib/api";
+import { postJson, patchJson, ApiError } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useWarehouse } from "../useMasters";
 import { ContactList } from "../ContactList";
+import { ContractAndRatesSection } from "./ContractAndRatesSection";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,19 +26,9 @@ const selectClass =
   "h-10 w-full rounded-md border border-border bg-card px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 const sectionTitleClass = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
 
-// Converts a plain <input type="date"> value ("YYYY-MM-DD") to the ISO datetime string the
-// schema's z.string().datetime() expects, and back. Warehouses don't have a per-record
-// timezone (unlike legs/points), so midnight UTC is the simplest, unambiguous round trip —
-// there's no ZonedDateTimeField-style "zone" concept to anchor this to.
-function dateToIso(v: string): string | undefined {
-  return v ? `${v}T00:00:00.000Z` : undefined;
-}
-function isoToDate(v: string | null | undefined): string {
-  return v ? v.slice(0, 10) : "";
-}
-
 function VehicleSubForm({ id }: { id: string }) {
   const qc = useQueryClient();
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -48,34 +37,42 @@ function VehicleSubForm({ id }: { id: string }) {
   } = useForm<WarehouseVehicleInput>({ resolver: zodResolver(warehouseVehicleSchema) });
 
   async function onAdd(values: WarehouseVehicleInput) {
-    await postJson(`/api/warehouses/${id}/vehicles`, values);
-    reset();
-    await qc.invalidateQueries({ queryKey: ["warehouse", id] });
+    setSubmitError(null);
+    try {
+      await postJson(`/api/warehouses/${id}/vehicles`, values);
+      reset();
+      await qc.invalidateQueries({ queryKey: ["warehouse", id] });
+    } catch (err) {
+      setSubmitError(err instanceof ApiError ? err.message : "Failed to add vehicle");
+    }
   }
 
   return (
-    <form onSubmit={handleSubmit(onAdd)} className="flex flex-wrap items-end gap-3" aria-label="Add vehicle">
-      <div className="space-y-1">
-        <Label htmlFor="vehicle-tonnage">Tonnage</Label>
-        <Input id="vehicle-tonnage" placeholder="10T" {...register("tonnage")} />
-        {errors.tonnage && (
-          <p role="alert" className="text-sm text-destructive">{errors.tonnage.message}</p>
-        )}
+    <form onSubmit={handleSubmit(onAdd)} className="space-y-3" aria-label="Add vehicle">
+      {submitError && <p role="alert" className="text-sm text-destructive">{submitError}</p>}
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="vehicle-tonnage">Tonnage</Label>
+          <Input id="vehicle-tonnage" placeholder="10T" {...register("tonnage")} />
+          {errors.tonnage && (
+            <p role="alert" className="text-sm text-destructive">{errors.tonnage.message}</p>
+          )}
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="vehicle-quantity">Quantity</Label>
+          <Input
+            id="vehicle-quantity"
+            type="number"
+            {...register("quantity", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+          />
+          {errors.quantity && (
+            <p role="alert" className="text-sm text-destructive">{errors.quantity.message}</p>
+          )}
+        </div>
+        <Button type="submit" disabled={isSubmitting} variant="outline">
+          Add vehicle
+        </Button>
       </div>
-      <div className="space-y-1">
-        <Label htmlFor="vehicle-quantity">Quantity</Label>
-        <Input
-          id="vehicle-quantity"
-          type="number"
-          {...register("quantity", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-        />
-        {errors.quantity && (
-          <p role="alert" className="text-sm text-destructive">{errors.quantity.message}</p>
-        )}
-      </div>
-      <Button type="submit" disabled={isSubmitting} variant="outline">
-        Add vehicle
-      </Button>
     </form>
   );
 }
@@ -111,7 +108,27 @@ export function WarehouseFormPage() {
         capacity: Number(d.capacity),
         capacityUnit: d.capacityUnit,
         capabilities: d.capabilities ?? [],
+        // Contract & rate fields — every one of these must be loaded, not just the ones the
+        // Contract section renders. Skipping any of them means an unrelated edit on an existing
+        // record silently overwrites it back to the field's `.default()`/`undefined` on the
+        // next PATCH: `isBonded` is the sharpest case (compliance data quietly cleared to
+        // `false`), and leaving the dates unloaded blanks the Contract section entirely and
+        // makes every re-submit of an OWNED/CONTRACTED record fail the "Required for owned and
+        // contracted warehouses" invariant the server would otherwise have accepted.
+        agreementValidUntil: d.agreementValidUntil ?? undefined,
+        insuranceValidUntil: d.insuranceValidUntil ?? undefined,
+        isBonded: d.isBonded,
+        weekendWorking: d.weekendWorking,
+        weekendWorkingFee: d.weekendWorkingFee != null ? Number(d.weekendWorkingFee) : undefined,
+        workingEmployees: d.workingEmployees ?? undefined,
+        forkLiftCount: d.forkLiftCount ?? undefined,
+        dipTrayCount: d.dipTrayCount ?? undefined,
         freeStorageDays: d.freeStorageDays,
+        rateCurrency: (d.rateCurrency ?? undefined) as CurrencyCode | undefined,
+        handlingRate: d.handlingRate != null ? Number(d.handlingRate) : undefined,
+        handlingUnit: d.handlingUnit ?? undefined,
+        storageRate: d.storageRate != null ? Number(d.storageRate) : undefined,
+        storageUnit: d.storageUnit ?? undefined,
         status: d.status,
       });
     }
@@ -123,9 +140,12 @@ export function WarehouseFormPage() {
     navigate("/masters/warehouses");
   }
 
-  const errorMessages = Object.values(errors)
-    .map((e) => (e as { message?: string } | undefined)?.message)
-    .filter((m): m is string => Boolean(m));
+  const err = (name: keyof WarehouseCreateInput) =>
+    errors[name] ? (
+      <p role="alert" className="text-sm text-destructive">
+        {errors[name]?.message as string}
+      </p>
+    ) : null;
 
   return (
     <div className="max-w-2xl space-y-8">
@@ -133,20 +153,6 @@ export function WarehouseFormPage() {
         <h1 className="font-display text-xl font-semibold tracking-tight">
           {id ? "Edit warehouse" : "New warehouse"}
         </h1>
-
-        {errorMessages.length > 0 && (
-          <div
-            role="alert"
-            className="space-y-1 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
-          >
-            <p className="font-medium">Fix the following before saving:</p>
-            <ul className="list-disc space-y-0.5 pl-5">
-              {errorMessages.map((m, i) => (
-                <li key={i}>{m}</li>
-              ))}
-            </ul>
-          </div>
-        )}
 
         {existing.data?.freightForwarderId || existing.data?.clientId ? (
           <p className="text-sm text-muted-foreground">
@@ -161,6 +167,7 @@ export function WarehouseFormPage() {
             <div className="space-y-1">
               <Label htmlFor="name">Warehouse name</Label>
               <Input id="name" {...register("name")} />
+              {err("name")}
             </div>
             <div className="space-y-1">
               <Label htmlFor="type">Type of warehouse</Label>
@@ -174,6 +181,7 @@ export function WarehouseFormPage() {
                   </option>
                 ))}
               </select>
+              {err("type")}
             </div>
             <div className="space-y-1">
               <Label htmlFor="status">Status</Label>
@@ -191,18 +199,22 @@ export function WarehouseFormPage() {
             <div className="space-y-1">
               <Label htmlFor="streetAddress">Street address</Label>
               <Input id="streetAddress" {...register("streetAddress")} />
+              {err("streetAddress")}
             </div>
             <div className="space-y-1">
               <Label htmlFor="city">City</Label>
               <Input id="city" {...register("city")} />
+              {err("city")}
             </div>
             <div className="space-y-1">
               <Label htmlFor="country">Country</Label>
               <Input id="country" {...register("country")} />
+              {err("country")}
             </div>
             <div className="space-y-1">
               <Label htmlFor="pinCode">Pin code</Label>
               <Input id="pinCode" {...register("pinCode")} />
+              {err("pinCode")}
             </div>
           </div>
         </section>
@@ -216,18 +228,9 @@ export function WarehouseFormPage() {
                 id="capacity"
                 type="number"
                 step="any"
-                {...register("capacity", {
-                  // `capacity` is required (z.number().positive()), unlike the optional numeric
-                  // fields below. Mapping a blank box to `undefined` makes zod report
-                  // `invalid_type` for it — and a ZodEffects refinement (the agreement/insurance
-                  // date invariant below) is SKIPPED entirely whenever the base object parse
-                  // aborts, which `invalid_type` does but `too_small` does not. Mapping blank to
-                  // 0 instead keeps the object parse merely "dirty": capacity correctly reports
-                  // "must be greater than 0" AND the invariant issue still surfaces, instead of
-                  // the invariant being silently swallowed behind capacity's own error.
-                  setValueAs: (v: string) => (v === "" ? 0 : Number(v)),
-                })}
+                {...register("capacity", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
               />
+              {err("capacity")}
             </div>
             <div className="space-y-1">
               <Label htmlFor="capacityUnit">Capacity unit</Label>
@@ -253,158 +256,50 @@ export function WarehouseFormPage() {
           </fieldset>
         </section>
 
-        {isContracted && (
-          <section className="space-y-3">
-            <h2 className={sectionTitleClass}>Contract &amp; rates</h2>
-            <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="agreementValidUntil">Agreement valid until</Label>
-                <Controller
-                  control={control}
-                  name="agreementValidUntil"
-                  render={({ field }) => (
-                    <Input
-                      id="agreementValidUntil"
-                      type="date"
-                      value={isoToDate(field.value as string | undefined)}
-                      onChange={(e) => field.onChange(dateToIso(e.target.value))}
-                    />
-                  )}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="insuranceValidUntil">Insurance valid until</Label>
-                <Controller
-                  control={control}
-                  name="insuranceValidUntil"
-                  render={({ field }) => (
-                    <Input
-                      id="insuranceValidUntil"
-                      type="date"
-                      value={isoToDate(field.value as string | undefined)}
-                      onChange={(e) => field.onChange(dateToIso(e.target.value))}
-                    />
-                  )}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="freeStorageDays">Free storage days</Label>
-                <Input
-                  id="freeStorageDays"
-                  type="number"
-                  {...register("freeStorageDays", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-                />
-              </div>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" {...register("isBonded")} /> Bonded warehouse
-              </label>
-              <div className="space-y-1">
-                <Label htmlFor="workingEmployees">Working employees</Label>
-                <Input
-                  id="workingEmployees"
-                  type="number"
-                  {...register("workingEmployees", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="forkLiftCount">Forklift count</Label>
-                <Input
-                  id="forkLiftCount"
-                  type="number"
-                  {...register("forkLiftCount", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="dipTrayCount">Dip tray count</Label>
-                <Input
-                  id="dipTrayCount"
-                  type="number"
-                  {...register("dipTrayCount", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-                />
-              </div>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" {...register("weekendWorking")} /> Weekend working
-              </label>
-              <div className="space-y-1">
-                <Label htmlFor="weekendWorkingFee">Weekend working fee</Label>
-                <Input
-                  id="weekendWorkingFee"
-                  type="number"
-                  step="any"
-                  {...register("weekendWorkingFee", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-                />
-              </div>
+        {/*
+          Headcount/equipment and weekend-working are operational facts of the physical site,
+          not contract or rate terms — CONTRACTED_TYPES' own docstring scopes that constant to
+          "contract and rate fields", and the API accepts these four for every warehouse type.
+          Gating them behind isContracted would make it impossible to record staffing or
+          equipment for a CLIENT/FF warehouse through this form, so they stay visible always.
+        */}
+        <section className="space-y-3">
+          <h2 className={sectionTitleClass}>Operations</h2>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="workingEmployees">Working employees</Label>
+              <Input
+                id="workingEmployees"
+                type="number"
+                {...register("workingEmployees", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+              />
+              {err("workingEmployees")}
             </div>
+            <div className="space-y-1">
+              <Label htmlFor="forkLiftCount">Forklift count</Label>
+              <Input
+                id="forkLiftCount"
+                type="number"
+                {...register("forkLiftCount", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+              />
+              {err("forkLiftCount")}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="dipTrayCount">Dip tray count</Label>
+              <Input
+                id="dipTrayCount"
+                type="number"
+                {...register("dipTrayCount", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+              />
+              {err("dipTrayCount")}
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" {...register("weekendWorking")} /> Weekend working
+            </label>
+          </div>
+        </section>
 
-            <h3 className="text-sm font-medium text-foreground">Rate card</h3>
-            <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="rateCurrency">Rate currency</Label>
-                <select
-                  id="rateCurrency"
-                  {...register("rateCurrency", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
-                  className={selectClass}
-                >
-                  <option value="">—</option>
-                  {CURRENCIES.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.code} — {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div />
-              <div className="space-y-1">
-                <Label htmlFor="handlingRate">Handling rate</Label>
-                <Input
-                  id="handlingRate"
-                  type="number"
-                  step="any"
-                  {...register("handlingRate", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="handlingUnit">Handling unit</Label>
-                <select
-                  id="handlingUnit"
-                  {...register("handlingUnit", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
-                  className={selectClass}
-                >
-                  <option value="">—</option>
-                  {HANDLING_UNITS.map((u) => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="storageRate">Storage rate</Label>
-                <Input
-                  id="storageRate"
-                  type="number"
-                  step="any"
-                  {...register("storageRate", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="storageUnit">Storage unit</Label>
-                <select
-                  id="storageUnit"
-                  {...register("storageUnit", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
-                  className={selectClass}
-                >
-                  <option value="">—</option>
-                  {STORAGE_UNITS.map((u) => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </section>
-        )}
+        {isContracted && <ContractAndRatesSection control={control} register={register} errors={errors} />}
 
         {id && (
           <p className="text-sm text-muted-foreground">
