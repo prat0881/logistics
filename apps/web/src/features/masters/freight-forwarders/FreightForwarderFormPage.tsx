@@ -198,7 +198,18 @@ export function FreightForwarderFormPage() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="whLocation">Warehouse location</Label>
-              <Input id="whLocation" {...register("whLocation")} />
+              {/* Read-only once the record exists: whLocation is derived from the assigned
+                  warehouses (FreightForwardersService.setWarehouses is its sole writer after
+                  create) — editing it here would be silently reverted by the next warehouse
+                  assignment, and worse, could itself blank out a value the picker had just set
+                  (see setWarehouses's update() comment). Same disabled-once-id pattern as
+                  pic/contactNumber/email above. */}
+              <Input id="whLocation" disabled={Boolean(id)} {...register("whLocation")} />
+              {id && (
+                <p className="text-sm text-muted-foreground">
+                  Set by the warehouses assigned below.
+                </p>
+              )}
             </div>
             <div className="space-y-1">
               <Label htmlFor="paymentTerms">Payment terms</Label>

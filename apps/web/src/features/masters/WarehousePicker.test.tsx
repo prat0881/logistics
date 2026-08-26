@@ -142,4 +142,177 @@ describe("WarehousePicker", () => {
 
     await waitFor(() => expect(captured.body).toEqual({ warehouseIds: [] }));
   });
+
+  it("does not discard a checked-but-unsaved selection when the parent re-renders with a content-equal but different assigned array", async () => {
+    // Simulates the real trigger: the parent hands us `ownedWarehouses.data ?? []`, and every
+    // parent re-render — an unrelated form field changing, or a window-focus refetch that
+    // resolves to identical content — can produce a fresh array *reference* for the same
+    // *content*. A fix keyed on that reference (not the ids it holds) would wipe the user's
+    // still-unsaved checkbox change right here.
+    stubFetch((url) => {
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return {
+          status: 200,
+          body: { items: [warehouse({ id: "u1", name: "Unassigned WH" })], total: 1, page: 1, pageSize: 100 },
+        };
+      }
+      return { status: 404 };
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <WarehousePicker
+          ownerPath="freight-forwarders"
+          ownerId="ff1"
+          assigned={[warehouse({ id: "a1", name: "Assigned WH" })]}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Unassigned WH" }));
+    expect(screen.getByRole("checkbox", { name: "Unassigned WH" })).toBeChecked();
+
+    // A brand-new array, freshly allocated, but the same ids as before — exactly what
+    // `ownedWarehouses.data ?? []` produces across an unrelated re-render or an
+    // identical-content refetch.
+    rerender(
+      <QueryClientProvider client={qc}>
+        <WarehousePicker
+          ownerPath="freight-forwarders"
+          ownerId="ff1"
+          assigned={[warehouse({ id: "a1", name: "Assigned WH" })]}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("checkbox", { name: "Unassigned WH" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Assigned WH" })).toBeChecked();
+  });
+
+  it("resets the selection when the assigned set actually changes", async () => {
+    // The other half of the same fix: a content-based signature must still reset `selected`
+    // when the assignment genuinely changes underneath the component (e.g. after a save), not
+    // just skip every reset unconditionally.
+    stubFetch((url) => {
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
+      }
+      return { status: 404 };
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <WarehousePicker
+          ownerPath="freight-forwarders"
+          ownerId="ff1"
+          assigned={[warehouse({ id: "a1", name: "Assigned WH" })]}
+        />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("checkbox", { name: "Assigned WH" })).toBeChecked();
+
+    rerender(
+      <QueryClientProvider client={qc}>
+        <WarehousePicker ownerPath="freight-forwarders" ownerId="ff1" assigned={[]} />
+      </QueryClientProvider>,
+    );
+
+    // "Assigned WH" no longer appears at all (it's neither assigned nor in the unassigned pool
+    // in this fixture) — the real assertion is that the component picked up the change.
+    expect(screen.queryByRole("checkbox", { name: "Assigned WH" })).not.toBeInTheDocument();
+  });
+
+  it("shows a truncation hint when the unassigned pool exceeds what was fetched, and searching re-queries the server rather than filtering client-side", async () => {
+    const requestedUrls: string[] = [];
+    stubFetch((url) => {
+      requestedUrls.push(url);
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        if (url.includes("q=Foo")) {
+          return { status: 200, body: { items: [warehouse({ id: "f1", name: "Foo WH" })], total: 1, page: 1, pageSize: 100 } };
+        }
+        return {
+          status: 200,
+          body: { items: [warehouse({ id: "u1", name: "Unassigned WH" })], total: 150, page: 1, pageSize: 100 },
+        };
+      }
+      return { status: 404 };
+    });
+    renderPicker({ ownerId: "ff1", assigned: [] });
+
+    expect(await screen.findByText(/showing 1 of 150 unassigned warehouses/i)).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText(/search warehouses by name/i), "Foo");
+    expect(await screen.findByRole("checkbox", { name: "Foo WH" })).toBeInTheDocument();
+    expect(requestedUrls.some((u) => u.includes("q=Foo"))).toBe(true);
+  });
+
+  it("does not show a truncation hint once every unassigned warehouse has been fetched", async () => {
+    stubFetch((url) => {
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 200, body: { items: [warehouse({ id: "u1", name: "Unassigned WH" })], total: 1, page: 1, pageSize: 100 } };
+      }
+      return { status: 404 };
+    });
+    renderPicker({ ownerId: "ff1", assigned: [] });
+
+    await screen.findByRole("checkbox", { name: "Unassigned WH" });
+    expect(screen.queryByText(/showing .* of .* unassigned warehouses/i)).not.toBeInTheDocument();
+  });
+
+  it("on save, invalidates the master Warehouses list and the owner's own cached record, not just its own unassigned-pool query", async () => {
+    stubFetch((url, init) => {
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
+      }
+      if (init?.method === "PUT") return { status: 200, body: [] };
+      return { status: 404 };
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    render(
+      <QueryClientProvider client={qc}>
+        <WarehousePicker
+          ownerPath="freight-forwarders"
+          ownerId="ff1"
+          assigned={[warehouse({ id: "a1", name: "Assigned WH" })]}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /save warehouses/i }));
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+
+    const invalidatedKeys = spy.mock.calls.map((call) => (call[0] as { queryKey?: unknown[] })?.queryKey);
+    // The master Warehouses list (useWarehouses) is keyed ["warehouses", q, page, pageSize] —
+    // only a bare ["warehouses"] prefix invalidation reaches it, an exact
+    // ["warehouses","unassigned",search] does not.
+    expect(invalidatedKeys).toContainEqual(["warehouses"]);
+    // FreightForwarderFormPage's own cached record (useFreightForwarder) is keyed
+    // ["freight-forwarder", id] — this is what makes the read-only whLocation field refresh.
+    expect(invalidatedKeys).toContainEqual(["freight-forwarder", "ff1"]);
+    expect(invalidatedKeys).toContainEqual(["freight-forwarders", "ff1", "warehouses"]);
+  });
+
+  it("invalidates the client's own cached record ([\"client\", id]) when saving from a client's picker", async () => {
+    stubFetch((url, init) => {
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
+      }
+      if (init?.method === "PUT") return { status: 200, body: [] };
+      return { status: 404 };
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    render(
+      <QueryClientProvider client={qc}>
+        <WarehousePicker ownerPath="clients" ownerId="c1" assigned={[]} />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /save warehouses/i }));
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+
+    const invalidatedKeys = spy.mock.calls.map((call) => (call[0] as { queryKey?: unknown[] })?.queryKey);
+    expect(invalidatedKeys).toContainEqual(["client", "c1"]);
+  });
 });

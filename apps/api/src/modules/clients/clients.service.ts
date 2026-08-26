@@ -9,6 +9,7 @@ import type {
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { auditCreate, auditUpdate } from "../../common/audit";
+import { mapOwnershipRace } from "../../common/ownership-race";
 import type { RequestUser } from "../auth/types";
 
 @Injectable()
@@ -146,29 +147,36 @@ export class ClientsService {
    */
   async setWarehouses(clientId: string, warehouseIds: string[], user?: RequestUser) {
     await this.get(clientId);
-    return this.prisma.$transaction(async (tx) => {
-      const contested = await tx.warehouse.findFirst({
-        where: {
-          id: { in: warehouseIds },
-          OR: [
-            { clientId: { not: null, notIn: [clientId] } },
-            { freightForwarderId: { not: null } },
-          ],
-        },
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const contested = await tx.warehouse.findFirst({
+          where: {
+            id: { in: warehouseIds },
+            OR: [
+              { clientId: { not: null, notIn: [clientId] } },
+              { freightForwarderId: { not: null } },
+            ],
+          },
+        });
+        if (contested) {
+          throw new ConflictException(`${contested.name} is already assigned to another record`);
+        }
+        await tx.warehouse.updateMany({
+          where: { clientId, id: { notIn: warehouseIds } },
+          data: { clientId: null, ...auditUpdate(user) },
+        });
+        await tx.warehouse.updateMany({
+          where: { id: { in: warehouseIds } },
+          data: { clientId, ...auditUpdate(user) },
+        });
+        return tx.warehouse.findMany({ where: { clientId }, orderBy: { name: "asc" } });
       });
-      if (contested) {
-        throw new ConflictException(`${contested.name} is already assigned to another record`);
-      }
-      await tx.warehouse.updateMany({
-        where: { clientId, id: { notIn: warehouseIds } },
-        data: { clientId: null, ...auditUpdate(user) },
-      });
-      await tx.warehouse.updateMany({
-        where: { id: { in: warehouseIds } },
-        data: { clientId, ...auditUpdate(user) },
-      });
-      return tx.warehouse.findMany({ where: { clientId }, orderBy: { name: "asc" } });
-    });
+    } catch (e) {
+      // See FreightForwardersService.setWarehouses's identical catch: the contested check
+      // above already throws ConflictException directly for the same-request case; this only
+      // re-maps the DB-level CHECK-constraint violation a genuine concurrent race can produce.
+      throw mapOwnershipRace(e);
+    }
   }
 
   private mapUnique(e: unknown, fallback: string) {

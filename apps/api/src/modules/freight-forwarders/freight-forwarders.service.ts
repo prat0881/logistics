@@ -11,6 +11,7 @@ import type {
 import { resolveCountryCode } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { auditCreate, auditUpdate } from "../../common/audit";
+import { mapOwnershipRace } from "../../common/ownership-race";
 import type { RequestUser } from "../auth/types";
 
 @Injectable()
@@ -88,15 +89,22 @@ export class FreightForwardersService {
   async update(id: string, input: FreightForwarderUpdateInput, user?: RequestUser) {
     await this.get(id);
     // pic/contactNumber/email are derived — syncPrimaryContactColumns (below) is their sole
-    // writer. Dropped from every update so an admin editing forwarder details can never race
-    // with, or be silently reverted by, an unrelated contact write (the bug this whole
-    // create()-seeds/update()-strips split exists to close). They stay on the *create*
-    // schema/DTO: creation still needs them (the columns are NOT NULL) and rfq.service.ts
-    // still reads them — only this write path ignores them now.
+    // writer. whLocation is derived too — setWarehouses (Task 14) is its sole writer, from the
+    // assigned warehouses. All four are dropped from every update so an admin editing forwarder
+    // details can never race with, or be silently reverted by, an unrelated contact/warehouse
+    // write (the bug this whole create()-seeds/update()-strips split exists to close — without
+    // this, the form's stale cached whLocation, e.g. "" right after the picker assigns a
+    // warehouse but before this page's own query refetches, would blank out a value the
+    // picker had just correctly set). They stay on the *create* schema/DTO: creation still
+    // needs pic/contactNumber/email (the columns are NOT NULL) and rfq.service.ts still reads
+    // all four — only this write path ignores them now. freightForwarderUpdateSchema already
+    // omits all four so `input` can't carry them, but the delete stays defence in depth against
+    // a caller that bypasses the schema.
     const data: Prisma.FreightForwarderUpdateInput = { ...input, ...auditUpdate(user) };
     delete data.pic;
     delete data.contactNumber;
     delete data.email;
+    delete data.whLocation;
     try {
       return await this.prisma.freightForwarder.update({ where: { id }, data });
     } catch (e) {
@@ -133,43 +141,51 @@ export class FreightForwardersService {
    */
   async setWarehouses(ffId: string, warehouseIds: string[], user?: RequestUser) {
     await this.get(ffId);
-    return this.prisma.$transaction(async (tx) => {
-      const contested = await tx.warehouse.findFirst({
-        where: {
-          id: { in: warehouseIds },
-          OR: [
-            { freightForwarderId: { not: null, notIn: [ffId] } },
-            { clientId: { not: null } },
-          ],
-        },
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const contested = await tx.warehouse.findFirst({
+          where: {
+            id: { in: warehouseIds },
+            OR: [
+              { freightForwarderId: { not: null, notIn: [ffId] } },
+              { clientId: { not: null } },
+            ],
+          },
+        });
+        if (contested) {
+          throw new ConflictException(`${contested.name} is already assigned to another record`);
+        }
+        await tx.warehouse.updateMany({
+          where: { freightForwarderId: ffId, id: { notIn: warehouseIds } },
+          data: { freightForwarderId: null, ...auditUpdate(user) },
+        });
+        await tx.warehouse.updateMany({
+          where: { id: { in: warehouseIds } },
+          data: { freightForwarderId: ffId, ...auditUpdate(user) },
+        });
+        const assigned = await tx.warehouse.findMany({
+          where: { freightForwarderId: ffId },
+          orderBy: { name: "asc" },
+        });
+        // Phase 1 dual-write, the counterpart to syncPrimaryContactColumns: rfq.service.ts
+        // snapshots whLocation into the RFQ payload, so it tracks the assigned warehouses until
+        // the Stage-4 pass repoints that read at this relation. Retired with it.
+        await tx.freightForwarder.update({
+          where: { id: ffId },
+          data: {
+            whLocation: assigned.map((w) => w.name).join(", ") || null,
+            ...auditUpdate(user),
+          },
+        });
+        return assigned;
       });
-      if (contested) {
-        throw new ConflictException(`${contested.name} is already assigned to another record`);
-      }
-      await tx.warehouse.updateMany({
-        where: { freightForwarderId: ffId, id: { notIn: warehouseIds } },
-        data: { freightForwarderId: null, ...auditUpdate(user) },
-      });
-      await tx.warehouse.updateMany({
-        where: { id: { in: warehouseIds } },
-        data: { freightForwarderId: ffId, ...auditUpdate(user) },
-      });
-      const assigned = await tx.warehouse.findMany({
-        where: { freightForwarderId: ffId },
-        orderBy: { name: "asc" },
-      });
-      // Phase 1 dual-write, the counterpart to syncPrimaryContactColumns: rfq.service.ts
-      // snapshots whLocation into the RFQ payload, so it tracks the assigned warehouses until
-      // the Stage-4 pass repoints that read at this relation. Retired with it.
-      await tx.freightForwarder.update({
-        where: { id: ffId },
-        data: {
-          whLocation: assigned.map((w) => w.name).join(", ") || null,
-          ...auditUpdate(user),
-        },
-      });
-      return assigned;
-    });
+    } catch (e) {
+      // Same-request conflicts are caught above by the contested check and thrown as
+      // ConflictException directly (unaffected by this catch, since it's already the right
+      // shape). This catch only re-maps the DB-level CHECK-constraint violation a genuine
+      // concurrent race can still produce — see mapOwnershipRace.
+      throw mapOwnershipRace(e);
+    }
   }
 
   /**
