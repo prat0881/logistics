@@ -2652,6 +2652,103 @@ git commit -m "feat(masters): assign warehouses to forwarders and clients"
 
 ---
 
+### Task 15: Contact editing and deletion
+
+**Runs after Task 5 and before Task 8**, out of numeric order: Task 8 reuses `ContactList` for the Warehouse screen, and this must land first so the fix happens once rather than three times.
+
+Added after Task 4's review found the component is add-only. Once a record has a primary contact there is no UI path to change who it is: the API refuses promotion while an incumbent exists, and only PATCH can demote. The endpoints already exist — `@Patch(":id/contacts/:contactId")` and `@Delete(":id/contacts/:contactId")` on the clients controller, and their equivalents on freight-forwarders — so this is web-only.
+
+**Files:**
+- Modify: `apps/web/src/features/masters/ContactList.tsx`, `ContactList.test.tsx`
+- Modify: `apps/web/src/lib/api.ts` only if it lacks a `deleteJson` helper
+
+**Interfaces:**
+- Consumes: `contactUpdateSchema`, `ContactDto`, `PocLevel`, `POC_LEVELS`.
+- Produces: `ContactList` gains per-row edit and delete. Props are unchanged — still `{ ownerPath, ownerId }` — so Tasks 8 and 14 need no adjustment.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `apps/web/src/features/masters/ContactList.test.tsx`, alongside the existing cases:
+
+```tsx
+it("edits a contact in place and sends only the changed fields", async () => {
+  const captured = captureRequest();   // the file's existing helper
+  renderList({ ownerId: "c1", contacts: [contact({ id: "k1", name: "Asha Menon", pocLevel: "NONE" })] });
+
+  await userEvent.click(screen.getByRole("button", { name: /edit asha menon/i }));
+  const level = screen.getByLabelText(/poc level/i);
+  await userEvent.selectOptions(level, "PRIMARY");
+  await userEvent.click(screen.getByRole("button", { name: /save contact/i }));
+
+  await waitFor(() => expect(captured.method).toBe("PATCH"));
+  expect(captured.url).toBe("/api/clients/c1/contacts/k1");
+  expect(captured.body).toEqual({ pocLevel: "PRIMARY" });
+});
+
+it("surfaces the 409 when promoting a second contact, naming what to do about it", async () => {
+  mockResponse(409, { message: "This client already has a primary contact" });
+  renderList({ ownerId: "c1", contacts: [contact({ id: "k2", name: "Ravi Kumar", pocLevel: "NONE" })] });
+
+  await userEvent.click(screen.getByRole("button", { name: /edit ravi kumar/i }));
+  await userEvent.selectOptions(screen.getByLabelText(/poc level/i), "PRIMARY");
+  await userEvent.click(screen.getByRole("button", { name: /save contact/i }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(/already has a primary contact/i);
+  expect(screen.getByRole("alert")).toHaveTextContent(/demote/i);
+});
+
+it("asks before deleting, and does not call the API when cancelled", async () => {
+  const captured = captureRequest();
+  renderList({ ownerId: "c1", contacts: [contact({ id: "k3", name: "Mei Lin" })] });
+
+  await userEvent.click(screen.getByRole("button", { name: /remove mei lin/i }));
+  await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+  expect(captured.method).toBeUndefined();
+
+  await userEvent.click(screen.getByRole("button", { name: /remove mei lin/i }));
+  await userEvent.click(screen.getByRole("button", { name: /^remove$/i }));
+  await waitFor(() => expect(captured.method).toBe("DELETE"));
+  expect(captured.url).toBe("/api/clients/c1/contacts/k3");
+});
+```
+
+- [ ] **Step 2: Run them and watch them fail**
+
+Run: `pnpm --filter @svyft/web test ContactList`
+Expected: FAIL — no edit or remove buttons exist.
+
+- [ ] **Step 3: Add edit and delete**
+
+Each row gains two buttons, labelled with the contact's name so they are distinguishable when several rows exist — `aria-label={\`Edit ${c.name}\`}` and `aria-label={\`Remove ${c.name}\`}`. Clicking Edit swaps that row for an inline form seeded from the contact; Save sends **only the changed fields** as a PATCH, which is what `contactUpdateSchema.partial()` expects. Sending the whole contact back would work but would overwrite fields another user changed in the meantime.
+
+Delete opens a confirmation with Cancel and Remove; only Remove issues the request. Do not use `window.confirm` — it cannot be asserted reliably in jsdom and it is not styleable.
+
+Reuse the existing `submitError` state for both operations; do not add a second error mechanism. When the server rejects a promotion, append the remedy to its message, because the server cannot know the UI has an edit affordance now:
+
+```tsx
+const PROMOTION_HINT = " Demote the current primary contact first, then set this one.";
+setSubmitError(err instanceof ApiError
+  ? err.message + (err.status === 409 ? PROMOTION_HINT : "")
+  : "Could not save this contact");
+```
+
+- [ ] **Step 4: Run the tests and watch them pass**
+
+Run: `pnpm --filter @svyft/web test ContactList`
+Expected: PASS — the three new cases plus the three existing ones, six in total.
+
+- [ ] **Step 5: Verify the component did not grow past its purpose**
+
+`ContactList.tsx` was 79 lines before Task 4's fixes. If it is now beyond roughly 200, split the inline edit form into `ContactRow.tsx` in the same directory, keeping `ContactList` responsible for the collection and `ContactRow` for one contact's display and editing. Do not split further than that.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git branch --show-current
+git add apps/web/src
+git commit -m "feat(masters): edit and remove contacts, not just add"
+```
+
 ## Done when
 
 - `pnpm run ci` is green.
