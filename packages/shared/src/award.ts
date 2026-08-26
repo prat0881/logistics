@@ -39,6 +39,15 @@ export interface OfferDto {
 export interface PendingForwarderDto {
   freightForwarderId: string;
   freightForwarderName: string;
+  /** The Quote row behind this entry. S5.9.5 final review (MINOR): an EXPIRED pending forwarder is
+   *  RE-ASKABLE — the server's `REQUOTABLE_STATUSES` admits `EXPIRED` and the quote machine has the
+   *  `EXPIRED --request_requote--> REQUOTED` edge (D4) — but `request-requote` is keyed by quoteId,
+   *  and without it here `NegotiateDialog` had nothing to POST, so the only UI route to re-ask a
+   *  forwarder who never answered did not exist. Carried for EVERY pending entry rather than just
+   *  the expired ones: this is the id of the row the entry was built from, and making it
+   *  conditional would only move the question of which statuses are actionable into the DTO, where
+   *  it does not belong (the server's own status guard is what decides, and it 409s the rest). */
+  quoteId: string;
   quoteStatus: QuoteStatus; // RFQ_SENT (awaiting) | EXPIRED | INVALID | CLOSED — NOT REQUOTED (that's an offer, see awaitingReQuote)
 }
 export interface RecommendationDto {

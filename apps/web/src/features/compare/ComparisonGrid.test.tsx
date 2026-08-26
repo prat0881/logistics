@@ -151,6 +151,7 @@ const LEG: LegComparisonDto = {
     {
       freightForwarderId: "ff4",
       freightForwarderName: "Pending Forwarder",
+      quoteId: "quote-4",
       quoteStatus: "RFQ_SENT",
     },
   ],
@@ -794,6 +795,7 @@ describe("ComparisonGrid — pending forwarders and the approved mark (S5.9.5 D7
       {
         freightForwarderId: PENDING_FF_ID,
         freightForwarderName: PENDING_FF_NAME,
+        quoteId: "quote-pending",
         quoteStatus: "RFQ_SENT",
       },
     ],
@@ -1379,6 +1381,7 @@ describe("ComparisonGrid edge cases", () => {
       {
         freightForwarderId: "ffX",
         freightForwarderName: "Only Pending Forwarder",
+        quoteId: "quote-x",
         quoteStatus: "RFQ_SENT",
       },
     ],
@@ -1408,8 +1411,11 @@ describe("ComparisonGrid edge cases", () => {
 
   // ── final review M1 ───────────────────────────────────────────────────────────────────────
   it("suppresses the recommendation tint and the star mark once the award is locked", () => {
-    // Post-generate, the WINNING quote is APPROVED — a status COMPARABLE_STATUSES excludes from
-    // `offers` — so whatever `recommendation` still points at is ranked among the losers only.
+    // Post-generate, the WINNING quote is APPROVED — a status `buildRecommendation`
+    // (comparison.service.ts) never RANKS — so whatever `recommendation` still points at is ranked
+    // among the losers only. (CORRECTED, S5.9.5 D8: this used to say APPROVED was excluded from
+    // `offers` by COMPARABLE_STATUSES. D8 put it in that list. The conclusion is untouched; only
+    // the cause was false.)
     renderPanel(LEG, { locked: true });
 
     expect(screen.getByTestId("offer-header-quote-1::DEDICATED").closest("th")).not.toHaveClass(

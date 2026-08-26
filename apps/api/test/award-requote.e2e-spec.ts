@@ -401,7 +401,11 @@ describe(`${PREFIX} (e2e)`, () => {
     // leg: walked back by the rollup (S5.9.2 Q1) — its only quote is REQUOTED, so nothing
     // comparable is left and the honest status is RFQ_SENT, we are waiting on the forwarder again.
     // NOTE this arrives via LegQuoteProjector, NOT via REOPEN_AWARD: the leg was FULLY_QUOTED, not
-    // APPROVED, so `wasApproved` is false. Under D1 that is now the only reachable route here.
+    // APPROVED, so `wasApproved` is false. CORRECTED (final whole-branch review, MINOR) — this used
+    // to add "under D1 that is now the only reachable route here", which is false: D1's guard reads
+    // the DECISION, `wasApproved` reads the LEG, and in the drifted DRAFT/APPROVED/APPROVED triple
+    // (register C12) the REOPEN_AWARD route runs. See this file's own "register C12" test, which
+    // exercises exactly that route.
     const okLeg = await prisma.leg.findUniqueOrThrow({ where: { id: draft.leg.id } });
     expect(okLeg.status).toBe("RFQ_SENT");
 

@@ -189,8 +189,20 @@ function LegSectionBody({
         {/* Review round 1, MINOR 3 — a forwarder who SUBMITTED and then lost keeps their own
             submitted prices on screen. That summary is their commercial record, not a
             competitor's, and losing it was an unintended side effect of putting this branch
-            first. The reason still renders ABOVE it, which is what the ordering was for. */}
-        {leg.status === "QUOTED" ? (
+            first. The reason still renders ABOVE it, which is what the ordering was for.
+
+            WIDENED (final whole-branch review, MINOR): the condition was `status === "QUOTED"`,
+            which dropped the summary for exactly the forwarders D4 went to the trouble of keeping
+            a price for. A loser whose own quote is REQUOTED (they submitted, we asked for a
+            revision, then the leg went elsewhere) or EXPIRED-with-a-draft (D4 scenario B: same,
+            and the window then closed) submitted a real price too, and it is still on the row.
+            `leg.draft` is the discriminator for those two — `AlreadySubmittedSummary` falls back
+            to `draftFromDto` when it is null, which for a never-submitted forwarder would render
+            a blank, zeroed "Quote submitted" card, so RFQ_SENT and draft-less EXPIRED still get
+            the manifest alone. QUOTED keeps its unconditional arm: a QUOTED quote always carries
+            the submission the status names. */}
+        {leg.status === "QUOTED" ||
+        ((leg.status === "REQUOTED" || leg.status === "EXPIRED") && leg.draft != null) ? (
           <AlreadySubmittedSummary leg={leg} rfq={rfq} />
         ) : (
           <CargoManifestTable cargo={leg.manifest.cargo} />

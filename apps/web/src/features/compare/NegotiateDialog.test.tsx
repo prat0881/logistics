@@ -90,7 +90,12 @@ const LEG: LegComparisonDto = {
     },
   ],
   pendingForwarders: [
-    { freightForwarderId: "ff-orion", freightForwarderName: "Orion Shipping", quoteStatus: "RFQ_SENT" },
+    {
+      freightForwarderId: "ff-orion",
+      freightForwarderName: "Orion Shipping",
+      quoteId: "quote-orion",
+      quoteStatus: "RFQ_SENT",
+    },
   ],
   awaitingReQuote: true,
   recommendation: null,
@@ -151,6 +156,24 @@ const LEG_WITH_EXPIRED: LegComparisonDto = {
       validUntil: "2026-08-20T12:00:00.000Z",
       quoteStatus: "EXPIRED",
       charges: [],
+    },
+  ],
+};
+
+// S5.9.5 final whole-branch review (MINOR) — the OTHER kind of EXPIRED: design scenario A, a
+// forwarder who was sent the RFQ and never submitted anything, so they arrive as a
+// `pendingForwarders` entry rather than an offer. The server can re-ask them (EXPIRED is in
+// `REQUOTABLE_STATUSES` and the quote machine carries `EXPIRED --request_requote--> REQUOTED`),
+// which is why the DTO carries their `quoteId`.
+const LEG_WITH_EXPIRED_PENDING: LegComparisonDto = {
+  ...LEG,
+  pendingForwarders: [
+    ...LEG.pendingForwarders,
+    {
+      freightForwarderId: "ff-vega",
+      freightForwarderName: "Vega Freight",
+      quoteId: "quote-vega",
+      quoteStatus: "EXPIRED",
     },
   ],
 };
@@ -289,6 +312,26 @@ describe("NegotiateDialog", () => {
     // Positive control in the same test: the REQUOTED sibling keeps the old treatment, so a bug
     // that enables every forwarder cannot pass this.
     expect(screen.getByRole("checkbox", { name: /zenith/i })).toBeDisabled();
+  });
+
+  // S5.9.5 final whole-branch review (MINOR) — the pending list told EVERY entry "Hasn't quoted
+  // yet — nothing to re-quote." For an EXPIRED one both clauses are false: they WERE asked, and
+  // the window closed on them. It also left the product with no route at all to re-ask a forwarder
+  // who never answered, even though D4 built that capability server-side.
+  it("S5.9.5 — an EXPIRED forwarder who never quoted is re-askable, while an RFQ_SENT one still is not", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderDialog(qc, { onOpenChange: vi.fn(), leg: LEG_WITH_EXPIRED_PENDING });
+
+    expect(await screen.findByRole("checkbox", { name: /vega/i })).toBeEnabled();
+    // ...and the false sentence is gone from their row.
+    const vegaRow = screen.getByRole("checkbox", { name: /vega/i }).closest("li")!;
+    expect(within(vegaRow).queryByText(/hasn't quoted yet/i)).not.toBeInTheDocument();
+
+    // POSITIVE CONTROL, same list — the RFQ_SENT pending forwarder is still disabled and still
+    // told exactly that, so this is not a blanket "enable every pending forwarder".
+    const orionRow = screen.getByRole("checkbox", { name: /orion/i }).closest("li")!;
+    expect(within(orionRow).getByRole("checkbox")).toBeDisabled();
+    expect(within(orionRow).getByText(/hasn't quoted yet/i)).toBeInTheDocument();
   });
 
   // ── final review IMPORTANT #4 — design item 6 (§89): "a checkbox per forwarder, showing each

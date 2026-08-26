@@ -41,15 +41,18 @@ function noteTooLong(value: string): boolean {
 interface Candidate {
   freightForwarderId: string;
   freightForwarderName: string;
-  /** The one Quote covering every variant this forwarder priced — `null` for a forwarder that
-   *  never quoted at all (a `pendingForwarders` entry), which is therefore never selectable. */
-  quoteId: string | null;
+  /** The one Quote covering every variant this forwarder priced — or, for a `pendingForwarders`
+   *  entry, the quote row that entry was built from. Non-null for EVERY candidate since S5.9.5's
+   *  final review: `PendingForwarderDto` carries a `quoteId` now, which is what lets an EXPIRED
+   *  pending forwarder be re-asked. Selectability is decided by `eligible`, never by this being
+   *  null — it used to be both, and that coupling is what hid the missing capability. */
+  quoteId: string;
   eligible: boolean;
   /** Only set when `!eligible` — always rendered next to the (disabled) checkbox, never hidden. */
   reason?: string;
   /** The forwarder's quote status, shown as the SAME `ForwarderStatusBadge` the grid uses (design
-   *  §89). For an eligible forwarder this is the status of the quote `quoteId` points at; for a
-   *  `pendingForwarders` entry it's that entry's own status (`RFQ_SENT`). */
+   *  §89). For an offer-derived candidate this is the status of the quote `quoteId` points at; for
+   *  a `pendingForwarders` entry it's that entry's own status (`RFQ_SENT`, `EXPIRED`, …). */
   quoteStatus: QuoteStatus;
   /** Every PRICED offer this forwarder has on the leg, in read-model order. A list, not one
    *  number, because one Quote fans out into one offer per variant — "Bridge's current price" is
@@ -72,18 +75,22 @@ interface Candidate {
  * exactly that regression (asserts 2 calls off a 4-offer/1-pending fixture, not 4 or 5).
  *
  * A forwarder is eligible when it has AT LEAST ONE offer whose `quoteStatus` is in the server's
- * `REQUOTABLE_STATUSES` — `QUOTED`, `APPROVED` or (S5.9.5 D4) `EXPIRED`. REQUOTED forwarders (an
- * offer exists, but a revised one is already pending) and `pendingForwarders` (sent the RFQ, never
- * comparably quoted) are both included, disabled, with their own reason text — never hidden.
+ * `REQUOTABLE_STATUSES` — `QUOTED`, `APPROVED` or (S5.9.5 D4) `EXPIRED` — or is a
+ * `pendingForwarders` entry whose own status is `EXPIRED`, which the same server list admits (see
+ * the pending loop below: a forwarder who never answered can still be re-asked, and until the
+ * final whole-branch review nothing in the UI could do it). REQUOTED forwarders (an offer exists,
+ * but a revised one is already pending) and the remaining pending statuses are included, disabled,
+ * with their own reason text — never hidden.
  *
  * PENDING_APPROVAL is ALSO ineligible, with its own reason text (design decision D5, S5.9 code
  * review round 2): negotiate stays REFUSED while a leg is under review — the maker must reject
- * the leg back to QUOTED first, matching the server's own gate: the LEG-level decision guard at
- * `negotiation.service.ts:114-124`, which loads the leg's `LegAwardDecision` and 409s when it is
- * `PENDING_APPROVAL` — or, since S5.9.5 D1, `APPROVED` — BEFORE `REQUOTABLE_STATUSES` (`:126`) is
- * ever consulted. (Those citations read `:69-74` and `:76` until review round 1 of Task 10; both
- * had drifted well before that task, and the guard moved again when D1's `APPROVED` arm was added
- * to it.) That guard is NOT
+ * the leg back to QUOTED first, matching the server's own gate: the LEG-level decision guard in
+ * `NegotiationService.requestRequote`, which loads the leg's `LegAwardDecision` and 409s when it is
+ * `PENDING_APPROVAL` — or, since S5.9.5 D1, `APPROVED` — BEFORE `REQUOTABLE_STATUSES` is ever
+ * consulted. (Line numbers dropped in the final whole-branch review: this citation has been
+ * corrected twice already, in Task 10's review round 1 and again when D1's `APPROVED` arm moved
+ * the guard, which is enough evidence that a line number is the wrong way to point at it.)
+ * That guard is NOT
  * redundant with `REQUOTABLE_STATUSES` — the latter only gates the quote NAMED in a given call,
  * so a still-QUOTED sibling quote on the same leg would sail straight past it and let a maker
  * reset a decision a checker is mid-review of on a different, already-shortlisted quote. An
@@ -98,13 +105,22 @@ function buildCandidates(leg: LegComparisonDto): Candidate[] {
     // Mirrors negotiation.service.ts's REQUOTABLE_STATUSES exactly (S5.9.5 D4). EXPIRED is new:
     // after D4 an expired quote can still carry the forwarder's real submitted price, and
     // re-negotiating is the deliberate act that reopens their portal with a fresh deadline.
-    // APPROVED stays listed because `REQUOTABLE_STATUSES` still lists it — but it is unreachable
-    // from here for TWO independent reasons now, not one: D1 stops this dialog opening on an
-    // approved leg at all (`CompareLegPanel`'s `negotiateDisabledReason`), and, since review round 1
-    // of this sub-build, `requestRequote` itself refuses a leg whose decision is APPROVED with a
-    // 409 naming Reject as the remedy. The UI and the server agree; the two lists are kept
-    // readable side by side rather than trimmed. Do not "clean it up" without checking the server
-    // first.
+    // APPROVED stays listed because `REQUOTABLE_STATUSES` still lists it — and, CORRECTED in the
+    // final whole-branch review (IMPORTANT 1), because this arm IS REACHABLE. The previous version
+    // of this comment said it was unreachable "for TWO independent reasons": D1 stopping the dialog
+    // opening on an approved leg (`CompareLegPanel`'s `negotiateDisabledReason`) and
+    // `requestRequote` refusing an APPROVED decision. Both of those gate on the DECISION's status;
+    // this arm gates on the QUOTE's (`offer.quoteStatus`), and the two can drift apart — `approve()`
+    // commits the decision in its own transaction and fires the quote/leg transitions afterwards,
+    // and register C12 records the resulting `decision = DRAFT` / `leg = APPROVED` /
+    // `quote = APPROVED` triple as observed, not theoretical.
+    //
+    // In that triple this arm fires and everything downstream of it works: the decision is DRAFT so
+    // `negotiateDisabledReason` is null and the dialog opens, the offer is in `leg.offers` because
+    // D8 put APPROVED into `COMPARABLE_STATUSES`, and both server guards pass (the decision is
+    // DRAFT; `REQUOTABLE_STATUSES` admits the APPROVED quote) — which is exactly how an Executive
+    // clears that wedge in one click. `negotiation.service.ts`'s own doc on `REQUOTABLE_STATUSES`
+    // says the same thing from the server side; keep the two readings identical.
     const quotable =
       offer.quoteStatus === "QUOTED" ||
       offer.quoteStatus === "APPROVED" ||
@@ -150,12 +166,30 @@ function buildCandidates(leg: LegComparisonDto): Candidate[] {
   }
   for (const pending of leg.pendingForwarders) {
     if (!byForwarder.has(pending.freightForwarderId)) {
+      // S5.9.5 final whole-branch review, MINOR. Every pending forwarder used to be ineligible
+      // with "Hasn't quoted yet — nothing to re-quote." For an EXPIRED one that is FALSE on both
+      // clauses: they WERE asked, and the window closed on them without an answer. Worse, it left
+      // the product with NO route at all to re-ask a forwarder who never answered — even though
+      // D4 built exactly that capability on the server (`REQUOTABLE_STATUSES` admits `EXPIRED`,
+      // and the quote machine carries `EXPIRED --request_requote--> REQUOTED`, added so a
+      // forwarder could not be frozen out). A pending EXPIRED entry and a priced EXPIRED offer are
+      // the same status reached from different sides (design's scenarios A and B); the server
+      // treats them alike, and so does this list now.
+      //
+      // The other pending statuses stay ineligible, each with its own true sentence: RFQ_SENT is
+      // genuinely "not yet" (and the server 409s it — there is no price to negotiate against),
+      // while INVALID/CLOSED have no `request_requote` edge at all.
+      const reAskable = pending.quoteStatus === "EXPIRED";
       byForwarder.set(pending.freightForwarderId, {
         freightForwarderId: pending.freightForwarderId,
         freightForwarderName: pending.freightForwarderName,
-        quoteId: null,
-        eligible: false,
-        reason: "Hasn't quoted yet — nothing to re-quote.",
+        quoteId: pending.quoteId,
+        eligible: reAskable,
+        reason: reAskable
+          ? undefined
+          : pending.quoteStatus === "RFQ_SENT"
+            ? "Hasn't quoted yet — nothing to re-quote."
+            : "This forwarder's quote is no longer open.",
         quoteStatus: pending.quoteStatus,
         prices: [],
       });
@@ -236,11 +270,11 @@ export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: Neg
     if (!canSubmit) return;
     const note = sharedNote.trim();
     const targets: RequoteTarget[] = selectedCandidates.map((c) => ({
-      quoteId: c.quoteId as string,
+      quoteId: c.quoteId,
       freightForwarderName: c.freightForwarderName,
       comment: note,
     }));
-    const idByQuoteId = new Map(selectedCandidates.map((c) => [c.quoteId as string, c.freightForwarderId]));
+    const idByQuoteId = new Map(selectedCandidates.map((c) => [c.quoteId, c.freightForwarderId]));
 
     const outcome = await batch.run(targets);
     setResults(outcome);

@@ -485,6 +485,7 @@ describe("buildComparisonRowModel", () => {
     const pendingForwarder = (o: Partial<PendingForwarderDto> = {}): PendingForwarderDto => ({
       freightForwarderId: PENDING_FF_ID,
       freightForwarderName: "Waiting Co",
+      quoteId: "q-pending",
       quoteStatus: "RFQ_SENT",
       ...o,
     });
@@ -523,12 +524,19 @@ describe("buildComparisonRowModel", () => {
       ],
     };
 
+    // The recommendation SNAPSHOT is deliberately populated (final whole-branch review, MINOR).
+    // Without it `recommendedQuoteId` is null, so `recKey` is null whether or not `locked` is
+    // consulted — which made the star-suppression half of the `locked` test below structurally
+    // incapable of failing. With the snapshot set, `locked: false` would put the star on this very
+    // cell, so removing the `locked` term genuinely reddens it.
     const legWithApprovedDecision: LegComparisonDto = {
       ...leg([offer({ quoteId: WINNER_QUOTE, variant: "FCL", variantLabel: "FCL" })]),
       decision: decision({
         status: "APPROVED",
         shortlistedQuoteId: WINNER_QUOTE,
         shortlistedVariant: "FCL",
+        recommendedQuoteId: WINNER_QUOTE,
+        recommendedVariant: "FCL",
         decidedByUserId: "u2",
         decidedAt: "2026-08-15T09:00:00.000Z",
       }),
@@ -582,6 +590,17 @@ describe("buildComparisonRowModel", () => {
       expect(cell.recommended).toBe(false);
       expect(cell.sentForApproval).toBe(false);
       expect(model.recommendedKey).toBeNull();
+    });
+
+    it("S5.9.5 — control for the line above: UNLOCKED, the same fixture DOES carry the star", () => {
+      // Without this the suppression assertions above prove nothing about `locked`: they would
+      // hold for any fixture whose decision has no recommendation snapshot. Here the snapshot names
+      // this cell, so the only thing standing between it and a `★` is the `locked` term itself.
+      const model = buildComparisonRowModel(legWithApprovedDecision, false);
+      const cell = asOffer(model.cells.find((c) => c.key === offerKey(WINNER_QUOTE, "FCL"))!);
+      expect(cell.recommended).toBe(true);
+      expect(model.recommendedKey).toBe(offerKey(WINNER_QUOTE, "FCL"));
+      expect(cell.approved).toBe(true); // …and the approved mark coexists with it (D8)
     });
   });
 

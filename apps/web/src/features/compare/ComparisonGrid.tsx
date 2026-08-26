@@ -23,9 +23,17 @@ export interface ComparisonGridProps {
   onSelectOffer?: (quoteId: string, variant: string | null) => void;
   /** `true` once the query is QUOTING_CLIENT (an award snapshot exists). The grid stays fully
    *  readable, but the engine's live recommendation is SUPPRESSED: the winning quote is `APPROVED`
-   *  by then, `COMPARABLE_STATUSES` excludes it from `offers`, and `buildRecommendation` therefore
-   *  re-ranks whatever is left — i.e. the losers — so a "Recommended" flag here would name a
-   *  forwarder the award panel directly below contradicts (final review M1). Defaults to `false`. */
+   *  by then and `buildRecommendation` (comparison.service.ts) still never RANKS an `APPROVED`
+   *  offer, so the live recommendation re-ranks whatever is left — i.e. the losers — and a
+   *  "Recommended" flag here would name a forwarder the award panel directly below contradicts
+   *  (final review M1). Defaults to `false`.
+   *
+   *  CORRECTED (S5.9.5 D8) — this used to give the cause as `COMPARABLE_STATUSES` excluding the
+   *  winner from `offers`. D8 put `APPROVED` INTO that list, so the winner is in `offers` now; the
+   *  conclusion is unchanged, only the mechanism behind it. Same correction as the four sibling
+   *  sites (`comparisonRowModel`'s `locked` rationale, `PENDING_STATUSES`, `award.ts`, and
+   *  `QuotingClientPanel.test.tsx`) — `buildRecommendation`'s own filter is the surviving cause
+   *  everywhere. */
   locked?: boolean;
   /** Offers-as-columns (default) vs offers-as-rows (S5.7 T2). Optional and defaulted so every
    *  existing caller/test that doesn't pass it keeps rendering exactly as it did before T2 —

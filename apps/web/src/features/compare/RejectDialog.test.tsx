@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { LegComparisonDto } from "@svyft/shared";
 import { renderWithProviders } from "@/test/renderWithProviders";
@@ -49,7 +49,7 @@ const LEG: LegComparisonDto = {
   timeline: [],
 };
 
-function renderDialog({ impl }: { impl?: () => unknown } = {}) {
+function renderDialog({ impl, leg = LEG }: { impl?: () => unknown; leg?: LegComparisonDto } = {}) {
   postJsonMock.mockImplementation(() => {
     if (impl) {
       const result = impl();
@@ -60,13 +60,41 @@ function renderDialog({ impl }: { impl?: () => unknown } = {}) {
   });
 
   const onOpenChange = vi.fn();
-  renderWithProviders(<RejectDialog open onOpenChange={onOpenChange} queryId="q1" leg={LEG} />, {
+  renderWithProviders(<RejectDialog open onOpenChange={onOpenChange} queryId="q1" leg={leg} />, {
     user: { id: "manager-1", name: "Manager", email: "m@x.com", role: "MANAGER" },
   });
   return { onOpenChange };
 }
 
 describe("RejectDialog", () => {
+  // ── S5.9.5 final whole-branch review, MINOR ───────────────────────────────────────────────
+  it("says the approval is being reversed when the decision is APPROVED, and does not say so otherwise", () => {
+    // D2 gave reject() a second mode: on an APPROVED decision it REVERSES the approval, and D1
+    // makes it the only door out. The dialog's description covered only the PENDING_APPROVAL mode,
+    // so a checker undoing a decision was told only that the maker gets it back to revise.
+    const approvedLeg: LegComparisonDto = {
+      ...LEG,
+      decision: {
+        ...LEG.decision!,
+        status: "APPROVED",
+        decidedByUserId: "manager-1",
+        decidedAt: "2026-08-15T09:00:00.000Z",
+      },
+    };
+    renderDialog({ leg: approvedLeg });
+    expect(screen.getByText(/reverses the approval on this leg/i)).toBeInTheDocument();
+    // Vocabulary rule D5 — "Approved", never "Awarded", on a reversal that is itself the proof
+    // approval is provisional.
+    expect(screen.queryByText(/award/i)).not.toBeInTheDocument();
+    cleanup();
+
+    // POSITIVE CONTROL — the original mode. The reversal sentence must be absent, or the new arm
+    // would be indistinguishable from unconditionally rewording the copy.
+    renderDialog();
+    expect(screen.queryByText(/reverses the approval/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/sends the leg back to the maker to revise/i)).toBeInTheDocument();
+  });
+
   it("does not call the mutation just by rendering open", () => {
     renderDialog();
     expect(postJson).not.toHaveBeenCalled();

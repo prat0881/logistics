@@ -259,8 +259,13 @@ sweep — reachable from two source states.
 | **B** | Quoted → negotiated → silent, deadline passed | **kept** | Priced cell — real total, transit, valid-until — Expired badge, rankable and approvable |
 
 A already happens today (in the list below the table; D7 moves it into the table). **B is the only
-new scenario.** A third machine path, `APPROVED → REQUOTED → EXPIRED`, becomes unreachable under D1;
-rows already in that shape in production render like B.
+new scenario.** A third machine path, `APPROVED → REQUOTED → EXPIRED`, is left *practically*
+unreachable by D1 — but not unreachable, and an earlier draft of this line claimed it was.
+**CORRECTED (final whole-branch review).** D1's guard reads the leg's `LegAwardDecision`, while the
+`APPROVED --request_requote--> REQUOTED` edge is reached off the QUOTE's own status via
+`REQUOTABLE_STATUSES`. In the drifted `decision = DRAFT` / `leg = APPROVED` / `quote = APPROVED`
+shape that register **C12** records, the guard passes and that path runs. Rows in that shape —
+whether they arrive that way or already sit that way in production — render like B.
 
 Nothing else produces `Expired`. It is a quote-level status only — no leg and no query ever shows it.
 

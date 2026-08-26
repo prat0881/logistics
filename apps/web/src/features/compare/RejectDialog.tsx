@@ -79,9 +79,18 @@ export function RejectDialog({ open, onOpenChange, queryId, leg }: RejectDialogP
               returns to Fully/Partially Quoted — so the enum was both raw and pointing at the
               wrong entity. What the checker actually needs to know is the consequence: the maker
               gets it back to revise. */}
+          {/* S5.9.5 final whole-branch review, MINOR — the copy described only the
+              PENDING_APPROVAL mode. D2 gave `reject()` a second mode: on a leg whose decision is
+              already APPROVED, Reject is how an approval is REVERSED, and it is the only door out
+              (D1). A checker clicking Reject there is undoing a decision, not returning work, and
+              the dialog said nothing about it. Read off the DECISION's status, the same source
+              `CheckerPanel` gates the button on and the same one the server's reject mode keys on
+              — never the leg's or the quote's, which can lag it (register C12). */}
           <DialogDescription>
-            {leg.origin} → {leg.destination}. This sends the leg back to the maker to revise — the
-            reason below is their only on-screen cue for what to change.
+            {leg.origin} → {leg.destination}.{" "}
+            {leg.decision?.status === "APPROVED"
+              ? "This reverses the approval on this leg and sends it back to the maker to revise — the reason below is their only on-screen cue for what to change."
+              : "This sends the leg back to the maker to revise — the reason below is their only on-screen cue for what to change."}
           </DialogDescription>
         </DialogHeader>
 

@@ -352,6 +352,10 @@ export class ComparisonService {
       .map((q) => ({
         freightForwarderId: q.freightForwarderId,
         freightForwarderName: ffNameById.get(q.freightForwarderId) ?? "",
+        // S5.9.5 final review (MINOR) — the quote id an EXPIRED pending forwarder can be
+        // re-asked through; see `PendingForwarderDto.quoteId` for why it is carried for all of
+        // them, not just the expired ones.
+        quoteId: q.id,
         quoteStatus: q.status,
       }));
 

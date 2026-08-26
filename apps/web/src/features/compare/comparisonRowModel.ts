@@ -52,9 +52,11 @@ export const STALE_OFFER_LABEL = "Re-quote requested";
  *  unresponsive", on the stated premise that "nobody asked this forwarder for a new number". That
  *  premise is FALSE for a cell that carries a price, and the label is replaced along with it.
  *  Traced: `QuoteEvent.EXPIRE` has exactly two edges into `EXPIRED` — `RFQ_SENT → EXPIRED`
- *  (`quote.machine.ts:8`) and `REQUOTED → EXPIRED` (`award.module.ts:95`) — and the only caller is
- *  the RFQ deadline sweep (`rfq-schedule.listener.ts:143`), which discards the draft on the
- *  `RFQ_SENT` path only. A forwarder expired out of `RFQ_SENT` therefore has no price and renders
+ *  (`quote.machine.ts`) and `REQUOTED → EXPIRED` (`award.module.ts`) — and the only caller is the
+ *  RFQ deadline sweep (`RfqScheduleListener.onExpiry`, rfq-schedule.listener.ts), which discards
+ *  the draft on the `RFQ_SENT` path only. (Line numbers dropped in the final whole-branch review:
+ *  the sweep citation pointed at the `q.status === RFQ_SENT` guard rather than the `EXPIRE` fire
+ *  a few lines below it, and a line number is exactly the kind of citation that rots silently.) A forwarder expired out of `RFQ_SENT` therefore has no price and renders
  *  as a `PendingCell`, never as an offer this label can reach; a priced `EXPIRED` offer can only
  *  have arrived via `REQUOTED`, i.e. a re-quote WAS requested and went unanswered. So the two
  *  labels are one pair over the same subject, differing only in outcome — "Re-quote requested"

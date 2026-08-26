@@ -243,8 +243,8 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         status: "REQUOTED", // change-order re-ask: earlier price stays visible, but unranked
         submittedAt: t0,
         // Deliberately the BEST possible offer in the pool (1-day transit beats A/B's 3, and
-        // 8,320 INR ≈ $100 undercuts both on price too) — if the QUOTED-only ranking filter were
-        // missing, THIS would win outright (no tie-break even needed). Asserting the recommendation
+        // 8,320 INR ≈ $100 undercuts both on price too) — if the ranking filter did not exclude
+        // REQUOTED, THIS would win outright (no tie-break even needed). Asserting the recommendation
         // stays FF-B below therefore proves the exclusion is real (status-based), not a coincidence
         // of these numbers happening to lose anyway.
         draftJson: roadDraft(leg.id, origin.id, "INR", 8320, 1) as unknown as Prisma.InputJsonValue,
@@ -292,9 +292,12 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     expect(offerRequoted!.usdTotal).toBe(toUsd(8320, "INR", { unitsPerUsd: 83.2 })); // = 100
     // ...but is NOT "pending" (it has a comparable price, just a stale one)...
     expect(pendingIds).not.toContain(ffRequoted.id);
-    // ...and is excluded from the recommendation (QUOTED-only ranking) despite being the
-    // objectively best offer on the leg (fastest transit AND cheapest) — proves the exclusion is
-    // status-based, not an artifact of it losing on merit.
+    // ...and is excluded from the recommendation despite being the objectively best offer on the
+    // leg (fastest transit AND cheapest) — which proves the exclusion is status-based, not an
+    // artifact of it losing on merit. (CORRECTED, S5.9.5 D4: the ranking is no longer "QUOTED-only"
+    // — `buildRecommendation` ranks QUOTED *and* EXPIRED now. REQUOTED is still excluded, and for
+    // its own stated reason: we are waiting on a revised number, so we must not recommend the old
+    // one. That is the exclusion under test here.)
     expect(legDto.recommendation.quoteId).not.toBe(offerRequoted!.quoteId);
     expect(legDto.recommendation.quoteId).toBe(offerB!.quoteId);
     // ...and flips the leg-level "awaiting a revised quote" flag.

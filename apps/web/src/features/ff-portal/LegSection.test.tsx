@@ -271,6 +271,46 @@ describe("LegSection leg-closed branch (S5.9.5 D5)", () => {
     expect(screen.queryByRole("button", { name: /save draft/i })).not.toBeInTheDocument();
   });
 
+  it("keeps the price of a losing forwarder whose own quote is REQUOTED or EXPIRED, and shows no summary when they never submitted", () => {
+    // Final whole-branch review, MINOR. The closed branch gated its summary on
+    // `status === "QUOTED"`, which dropped it for precisely the forwarders D4 preserved a price
+    // for: a REQUOTED one (submitted, asked to revise, then lost the leg) and D4's scenario-B
+    // EXPIRED one (same, and the window then closed). Both still hold a real submitted number on
+    // the row, and both were shown a bare manifest instead.
+    for (const status of ["REQUOTED", "EXPIRED"] as const) {
+      const { unmount } = renderLeg({
+        ...requotedLegWithDraft,
+        status,
+        closedReason: CLOSED,
+      } as unknown as FfPortalLegDto);
+      const reason = screen.getByText(CLOSED);
+      const summary = screen.getByText(/quote submitted/i);
+      // The retained draft's own chargeable weight, read off the summary's own cell rather than
+      // by substring — the card's chrome renders either way, so only a real number proves the
+      // draft (and not `draftFromDto`'s blank fallback) is what was rendered.
+      expect(screen.getByTestId("total-chargeable").querySelector("dd")?.textContent).toBe(
+        "1250.000",
+      );
+      expect(reason.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      unmount();
+    }
+
+    // POSITIVE CONTROL — the same two statuses with NO retained draft. `AlreadySubmittedSummary`
+    // falls back to `draftFromDto`, so widening this branch on status alone would render a blank,
+    // zeroed "Quote submitted" card to a forwarder who never submitted anything. It must not.
+    for (const status of ["REQUOTED", "EXPIRED"] as const) {
+      const { unmount } = renderLeg({
+        ...leg,
+        status,
+        draft: null,
+        closedReason: CLOSED,
+      } as unknown as FfPortalLegDto);
+      expect(screen.getByText(CLOSED)).toBeInTheDocument();
+      expect(screen.queryByText(/quote submitted/i)).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it("the collapsed header does not contradict the body it hides", () => {
     // Review round 1, MINOR 2 — a closed loser's own quote is still RFQ_SENT, whose badge reads
     // "Open for quoting". Collapsed, that was the only thing on screen, and it said the opposite

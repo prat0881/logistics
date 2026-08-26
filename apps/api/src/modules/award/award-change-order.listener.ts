@@ -89,13 +89,23 @@ export class AwardChangeOrderListener {
         // Prisma.DbNull convention as reopenComparison (a nullable Json column -> SQL NULL, not
         // the JSON null literal, which would read back truthy and defeat the projector's `!!`
         // check).
-        // 🔴 DEAD BRANCH under S5.9.5 D6 — kept as a safety net, not because it fires. D6 gates every
-        // query-scoped write on `awardSnapshot == null`, including the change-order field edit that emits the event this
-        // listener consumes, so nothing can reach this
-        // line with a snapshot still frozen and the condition below is never true. Design doc D6 carries
-        // the correction and the instruction: it stays because deleting it is a behaviour change nobody
-        // has ruled on, it has no e2e coverage, and it must be REMOVED DELIBERATELY rather than
-        // discovered. Do not "restore" reachability by relaxing the lock.
+        // 🔴 EFFECTIVELY DEAD under S5.9.5 D6 — kept as a safety net, not because it fires in any
+        // flow we exercise. D6 gates every query-scoped write on `awardSnapshot == null`, the
+        // change-order field edit that emits the event this listener consumes included, so the
+        // ordinary route here cannot arrive with a snapshot still frozen.
+        //
+        // NOT claiming the condition is NEVER true, and this file will not make that claim — its
+        // siblings (`approve`/`reject` in award.service.ts) explicitly refuse to, for the reason
+        // that applies here too. The lock check and this read are separated by a commit and an
+        // `emitAsync`, with no lock held on `Query` and READ COMMITTED isolation: a
+        // `generate-client-quote` that commits inside that window freezes a snapshot this
+        // transaction then sees. Narrow, unexercised, and exactly the kind of window an absolute
+        // claim in a comment would talk a later reader out of checking.
+        //
+        // Design doc D6 carries the correction and the instruction: it stays because deleting it
+        // is a behaviour change nobody has ruled on, it has no e2e coverage, and it must be
+        // REMOVED DELIBERATELY rather than discovered. Do not "restore" reachability by relaxing
+        // the lock.
         const query = await tx.query.findUnique({
           where: { id: event.queryId },
           select: { awardSnapshot: true },
