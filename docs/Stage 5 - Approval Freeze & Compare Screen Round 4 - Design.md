@@ -142,8 +142,21 @@ rightly keep running while LEG-2 is open.
 
 "Locked" means `Query.awardSnapshot != null` — i.e. `QUOTING_CLIENT` or
 `AWAITING_CLIENT_DECISION`. While locked, **every** write on the query is refused server-side except
-`reopen-comparison`. This is the wide reading, confirmed explicitly: it covers leg, cargo and query
+the two named below. This is the wide reading, confirmed explicitly: it covers leg, cargo and query
 field edits, not only the compare-screen actions.
+
+**Two exceptions, and only two:**
+
+1. `reopen-comparison` — the door out.
+2. **Every write under `queries/:id/quotation`** (`PATCH`, `POST issue`, `POST revise`). A query is
+   locked *precisely so that the client quotation can be composed and issued* — `QUOTING_CLIENT`
+   only exists because `generate-client-quote` froze the snapshot, and `AWAITING_CLIENT_DECISION`
+   is reached *by* issuing. Blocking these would make the lock forbid the only work the locked
+   state exists to allow. **This exception was missed in the first draft of this design and caught
+   while enumerating the endpoints; it is not optional.**
+
+The FF portal needs no exception: a locked query has every leg `APPROVED`, and D5 already closes an
+approved leg's portal.
 
 Consequences, both accepted:
 
