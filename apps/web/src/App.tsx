@@ -35,6 +35,18 @@ function AdminOnly({ children }: { children: ReactNode }) {
   return user?.role === Role.ADMINISTRATOR ? <>{children}</> : <Navigate to="/" replace />;
 }
 
+// GET /api/charge-line-definitions/admin is gated to Administrator OR Manager (not
+// Administrator-only like AdminOnly above) — the charge catalogue screen needs the matching
+// gate, or an Executive reaches a route whose only data source 403s.
+function AdminOrManagerOnly({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  return user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER ? (
+    <>{children}</>
+  ) : (
+    <Navigate to="/" replace />
+  );
+}
+
 export function App() {
   return (
     <Routes>
@@ -181,7 +193,9 @@ export function App() {
         path="/masters/charge-catalogue"
         element={
           <Protected>
-            <ChargeCatalogueListPage />
+            <AdminOrManagerOnly>
+              <ChargeCatalogueListPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
@@ -189,7 +203,9 @@ export function App() {
         path="/masters/charge-catalogue/new"
         element={
           <Protected>
-            <ChargeLineFormPage />
+            <AdminOrManagerOnly>
+              <ChargeLineFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
@@ -197,7 +213,9 @@ export function App() {
         path="/masters/charge-catalogue/:id"
         element={
           <Protected>
-            <ChargeLineFormPage />
+            <AdminOrManagerOnly>
+              <ChargeLineFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />

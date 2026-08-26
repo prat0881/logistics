@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
@@ -104,5 +104,63 @@ describe("ChargeLineFormPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
     expect(screen.queryByText("charge catalogue list")).not.toBeInTheDocument();
+  });
+
+  it("keeps the submitted category and variant in sync with what is displayed after changing mode twice", async () => {
+    // Regression test for a real bug found in review: selecting a category/variant under one
+    // mode, then changing Mode twice, left react-hook-form's internally-validated value stuck
+    // on the stale, now-invalid selection while the <select> itself visually fell back to some
+    // in-range option (the browser's own reaction to its selected <option> disappearing) — so
+    // Save silently did nothing (a validation error with no rendered message for these two
+    // fields). Proves the fix: what's displayed is exactly what gets POSTed.
+    // Does not use the shared renderForm() helper — it re-stubs global fetch with its own
+    // narrower handler, which would silently overwrite the POST-capturing mock below.
+    const posts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "ADMINISTRATOR" } } };
+        if (url.endsWith("/api/charge-line-definitions/admin"))
+          return { status: 200, body: [] };
+        if (url.endsWith("/api/charge-line-definitions") && init?.method === "POST") {
+          posts.push(JSON.parse(init.body as string));
+          return { status: 201, body: { id: "new-id" } };
+        }
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/masters/charge-catalogue/new"]}>
+            <Routes>
+              <Route path="/masters/charge-catalogue/new" element={<ChargeLineFormPage />} />
+              <Route path="/masters/charge-catalogue" element={<p>charge catalogue list</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    await userEvent.selectOptions(await screen.findByLabelText(/mode/i), "AIR");
+    await userEvent.selectOptions(screen.getByLabelText(/category/i), "DESTINATION");
+    await userEvent.selectOptions(screen.getByLabelText(/variant/i), "DIRECT");
+    // Second mode change: Road has neither Destination (category) nor Direct (variant) —
+    // both selections above become invalid the moment this fires.
+    await userEvent.selectOptions(screen.getByLabelText(/mode/i), "ROAD");
+
+    const displayedCategory = (screen.getByLabelText(/category/i) as HTMLSelectElement).value;
+    const displayedVariant = (screen.getByLabelText(/variant/i) as HTMLSelectElement).value;
+    expect(["FREIGHT", "ADDITIONAL"]).toContain(displayedCategory);
+    expect(["DEDICATED", "GROUPAGE", "BOTH"]).toContain(displayedVariant);
+
+    await userEvent.type(screen.getByLabelText(/^label$/i), "Mode Switch Regression");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].category).toBe(displayedCategory);
+    expect(posts[0].variant).toBe(displayedVariant);
+    expect(posts[0].mode).toBe("ROAD");
   });
 });
