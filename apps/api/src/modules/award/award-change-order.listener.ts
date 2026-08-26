@@ -18,6 +18,9 @@ import type { ChangeOrderReopenedEvent } from "../changes/change-order.strategy"
 //       generateClientQuote), that frozen snapshot named a winner on the now-reopened leg and is
 //       stale too — clear it exactly as AwardService.reopenComparison does (award.service.ts) so
 //       the query rolls back out of QUOTING_CLIENT via the normal projector recompute.
+//       🔴 (b) IS DEAD under S5.9.5 D6 and is described above as originally built, not as live
+//       behaviour — the field edit that emits this event is now itself refused while the snapshot
+//       is frozen. See the marker at the branch itself.
 //
 // Registered as a bare provider in AwardModule — system-internal, no controller route (Global
 // Constraint, S5.5 plan). `ChangeOrderReopenedEvent` is imported `type`-only: no DI coupling to
@@ -86,6 +89,13 @@ export class AwardChangeOrderListener {
         // Prisma.DbNull convention as reopenComparison (a nullable Json column -> SQL NULL, not
         // the JSON null literal, which would read back truthy and defeat the projector's `!!`
         // check).
+        // 🔴 DEAD BRANCH under S5.9.5 D6 — kept as a safety net, not because it fires. D6 gates every
+        // query-scoped write on `awardSnapshot == null`, including the change-order field edit that emits the event this
+        // listener consumes, so nothing can reach this
+        // line with a snapshot still frozen and the condition below is never true. Design doc D6 carries
+        // the correction and the instruction: it stays because deleting it is a behaviour change nobody
+        // has ruled on, it has no e2e coverage, and it must be REMOVED DELIBERATELY rather than
+        // discovered. Do not "restore" reachability by relaxing the lock.
         const query = await tx.query.findUnique({
           where: { id: event.queryId },
           select: { awardSnapshot: true },

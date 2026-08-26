@@ -185,9 +185,18 @@ export class AwardService {
     // code `PrismaExceptionFilter` maps to 400. This raw query bypasses that entirely: a
     // malformed `legId`/`queryId` reaches Postgres itself, which rejects the `::uuid` cast with
     // its own `22P02`, wrapped by `$queryRaw` in a Prisma error code the filter does NOT map —
-    // falling through to a bare 500. `approve`/`reject` call this as their very first operation
-    // (no prior typed read to catch it), so validate the shape ourselves first and 400
-    // identically to what a typed Prisma call would have done.
+    // falling through to a bare 500. So validate the shape ourselves first and 400 identically to
+    // what a typed Prisma call would have done.
+    //
+    // CORRECTED (S5.9.5 Task 5 review) — this used to justify itself with "`approve`/`reject` call
+    // this as their very first operation (no prior typed read to catch it)". That premise is now
+    // false: D6 put `QueryLockService.assertUnlocked(queryId, tx)` ahead of this call in both, and
+    // it IS a typed `query.findUnique`, so a malformed `queryId` now 400s there (P2023 ->
+    // `PrismaExceptionFilter`) and never reaches this line. The SURVIVING reason is `legId`:
+    // nothing upstream of this raw query reads it typed, in `approve`/`reject` or anywhere else,
+    // so this is still the only thing standing between a malformed `legId` and a 500. `queryId` is
+    // kept in the same check because it is re-interpolated into the `::uuid` cast below regardless
+    // of who validated it first — belt and braces on one line, not a second mechanism.
     if (!UUID_SCHEMA.safeParse(legId).success || !UUID_SCHEMA.safeParse(queryId).success) {
       throw new BadRequestException("Invalid identifier");
     }
@@ -773,8 +782,16 @@ export class AwardService {
   async approve(queryId: string, legId: string, user: RequestUser): Promise<LegAwardDecision> {
     const { decision, quoteId } = await this.prisma.$transaction(async (tx) => {
       // S5.9.5 (D6) — a locked query refuses every write. Inside the transaction, on `tx`,
-      // because the transaction is this method's FIRST operation: the check then shares the
-      // snapshot the rest of the decision is read and written under.
+      // because the transaction is this method's FIRST operation, so the check and the writes below
+      // are one unit of work that rolls back together.
+      //
+      // It does NOT serialise against a concurrent `generate-client-quote`: nothing in this repo sets
+      // `isolationLevel` (grep — there is none), so Prisma runs on the connection default, READ
+      // COMMITTED, where every statement takes its own snapshot rather than the transaction sharing
+      // one; and `assertUnlocked` is a plain `findUnique` that takes no lock on the `Query` row. A
+      // generate committing between this SELECT and the writes below is a race this guard does not
+      // close. The placement costs nothing and is the right shape; the guarantee is just narrower
+      // than "shares the transaction's snapshot" claimed.
       await this.lock.assertUnlocked(queryId, tx);
       await this.lockLeg(tx, queryId, legId);
       const { decision } = await this.requireDecidable(tx, legId, user);
@@ -990,8 +1007,16 @@ export class AwardService {
     const { decision, returnToFullyQuoted, quoteEvent, quoteNeedsReturn, legNeedsReturn } =
       await this.prisma.$transaction(async (tx) => {
         // S5.9.5 (D6) — a locked query refuses every write. Inside the transaction, on `tx`,
-        // because the transaction is this method's FIRST operation: the check then shares the
-        // snapshot the rest of the decision is read and written under.
+        // because the transaction is this method's FIRST operation, so the check and the writes below
+        // are one unit of work that rolls back together.
+        //
+        // It does NOT serialise against a concurrent `generate-client-quote`: nothing in this repo sets
+        // `isolationLevel` (grep — there is none), so Prisma runs on the connection default, READ
+        // COMMITTED, where every statement takes its own snapshot rather than the transaction sharing
+        // one; and `assertUnlocked` is a plain `findUnique` that takes no lock on the `Query` row. A
+        // generate committing between this SELECT and the writes below is a race this guard does not
+        // close. The placement costs nothing and is the right shape; the guarantee is just narrower
+        // than "shares the transaction's snapshot" claimed.
         await this.lock.assertUnlocked(queryId, tx);
         await this.lockLeg(tx, queryId, legId);
         const { decision } = await this.requireRejectable(tx, legId, user);

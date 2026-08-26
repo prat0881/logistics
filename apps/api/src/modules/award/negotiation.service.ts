@@ -159,7 +159,11 @@ export class NegotiationService {
 
     // 3) Decision: reset to a clean DRAFT slate (the basis changed) + audit event, PLUS —
     // whole-branch review, task 2 — tear down QUOTING_CLIENT if this query had already been
-    // generated (Query.awardSnapshot set by generateClientQuote). generateClientQuote's A6 gate
+    // generated (Query.awardSnapshot set by generateClientQuote).
+    // 🔴 That teardown is DEAD under S5.9.5 D6: this method now refuses a locked query outright
+    // (the `assertUnlocked` at the top), so it can never run against a frozen snapshot. The rest
+    // of this paragraph is the reasoning it was BUILT on, preserved for the reader who wonders why
+    // it exists; it is not a claim that it still fires. See the marker at the branch itself. generateClientQuote's A6 gate
     // requires EVERY leg APPROVED before it will freeze a snapshot, so `wasApproved` above can
     // only be true here if this query really could be QUOTING_CLIENT — a frozen snapshot naming
     // this leg's now-REQUOTED "winner" (decision now DRAFT) would otherwise survive untouched,
@@ -198,6 +202,12 @@ export class NegotiationService {
         },
       });
 
+      // 🔴 DEAD BRANCH under S5.9.5 D6 — kept as a safety net, not because it fires. D6 gates every
+      // query-scoped write on `awardSnapshot == null`, `requestRequote` itself included (this method's own guard, at the top), so nothing can reach this
+      // line with a snapshot still frozen and the condition below is never true. Design doc D6 carries
+      // the correction and the instruction: it stays because deleting it is a behaviour change nobody
+      // has ruled on, it has no e2e coverage, and it must be REMOVED DELIBERATELY rather than
+      // discovered. Do not "restore" reachability by relaxing the lock.
       const query = await tx.query.findUnique({
         where: { id: queryId },
         select: { awardSnapshot: true },

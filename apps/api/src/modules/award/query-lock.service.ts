@@ -11,10 +11,18 @@ export const QUERY_LOCKED_MESSAGE =
 /**
  * QueryLockService — the ONE definition of "this query is locked" (S5.9.5 design D6).
  *
- * Locked means `Query.awardSnapshot != null`, which is exactly the condition
- * `query-status.projector.ts` reads to derive QUOTING_CLIENT and, once a letter is issued,
- * AWAITING_CLIENT_DECISION. Before this service five sites checked that column ad hoc; the point
- * of centralising is that a new write cannot be added without a single, obvious call to make.
+ * Locked means `Query.awardSnapshot != null`. That is exactly the condition
+ * `query-status.projector.ts` reads to derive QUOTING_CLIENT (`quotingClient: !!q.awardSnapshot`)
+ * — and NOT how it derives AWAITING_CLIENT_DECISION, which comes from a different persisted fact
+ * entirely: `awaitingClientDecision: issued > 0`, off `quotation.count({queryId, status:
+ * "ISSUED"})`. The two states merely CO-OCCUR, because `issue()` leaves the snapshot alone and
+ * `reopenComparison` clears the snapshot and supersedes the issued row together. So the lock
+ * covers both statuses, but by co-occurrence, not because one column drives both. (Corrected in
+ * review — the original wording here derived AWAITING_CLIENT_DECISION from `awardSnapshot`, which
+ * the projector does not do.)
+ *
+ * Before this service five sites checked that column ad hoc; the point of centralising is that a
+ * new write cannot be added without a single, obvious call to make.
  *
  * Two callers deliberately do NOT use this — see D6:
  *   - `reopenComparison` is the door out and asserts the OPPOSITE (it 409s when NOT locked).

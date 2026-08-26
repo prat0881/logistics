@@ -176,8 +176,16 @@ export class RfqService {
   ): Promise<ReissueTokenResult> {
     return this.prisma.$transaction(async (tx) => {
       // S5.9.5 (D6) — a locked query refuses every write. Inside the transaction, on `tx`,
-      // because the transaction is this method's FIRST operation: sharing the transaction's
-      // snapshot means the token cannot be rotated by a call that read `awardSnapshot` outside it.
+      // because the transaction is this method's FIRST operation, so the check and the writes below
+      // are one unit of work that rolls back together.
+      //
+      // It does NOT serialise against a concurrent `generate-client-quote`: nothing in this repo sets
+      // `isolationLevel` (grep — there is none), so Prisma runs on the connection default, READ
+      // COMMITTED, where every statement takes its own snapshot rather than the transaction sharing
+      // one; and `assertUnlocked` is a plain `findUnique` that takes no lock on the `Query` row. A
+      // generate committing between this SELECT and the writes below is a race this guard does not
+      // close. The placement costs nothing and is the right shape; the guarantee is just narrower
+      // than "shares the transaction's snapshot" claimed.
       await this.lock.assertUnlocked(queryId, tx);
       const rfq = await tx.rfq.findUnique({
         where: { queryId_freightForwarderId: { queryId, freightForwarderId } },
