@@ -1598,6 +1598,48 @@ const quotable =
 
 The `ineligibleReason` chain also needs an `EXPIRED` arm removed — an expired offer is now eligible, so the fallback "Already awaiting a revised quote." must no longer be reachable for it.
 
+- [ ] **Step 5b: A priced-EXPIRED offer must be selectable in `SendForApprovalDialog` (ADDED after Task 9)**
+
+**Why.** Task 2 made a priced-`EXPIRED` offer sendable server-side, and Task 8 widened `stale` to
+cover `EXPIRED` as well as `REQUOTED`. `SendForApprovalDialog.tsx` reads `cell.stale` in three
+places (`~:226`, `~:245`, `~:249`) and therefore now, for an expired offer:
+
+- labels it `STALE_OFFER_LABEL` — "Re-quote requested", which is **false**; nobody is waiting on a
+  re-quote, the window closed unanswered;
+- prints "while a re-quote is outstanding", also false;
+- sets `disabled={cell.stale}` on its radio, making the offer **unselectable**.
+
+That last one undoes Task 2's entire purpose from the UI: the server accepts the send, and the only
+screen that can issue it refuses to offer the choice. Design D4's scenario table says a priced
+`EXPIRED` offer is "rankable **and approvable**".
+
+**Fix.** Split the two cases rather than widening the copy:
+
+- Label from the offer's own status: `REQUOTED` → `STALE_OFFER_LABEL`, `EXPIRED` →
+  `EXPIRED_OFFER_LABEL` ("Re-quote unanswered"). That constant currently has **zero consumers**;
+  this is the one it was written for.
+- `disabled` must key on `REQUOTED` only, not on `stale`. An expired offer is selectable.
+- The accompanying sentence must say, for the expired case, what is actually true: the forwarder did
+  not answer the re-quote before the deadline, this is their last submitted price, and sending it is
+  a deliberate choice.
+
+**Test** in `SendForApprovalDialog.test.tsx`:
+
+```tsx
+it("S5.9.5 — a priced EXPIRED offer is selectable and labelled 'Re-quote unanswered'; a REQUOTED one is neither", () => {
+  render(<SendForApprovalDialog open leg={legWithExpiredAndRequotedOffers} … />);
+  const expired = screen.getByRole("radio", { name: new RegExp(EXPIRED_OFFER_LABEL, "i") });
+  expect(expired).toBeEnabled();
+  // Positive control in the same test — the REQUOTED sibling keeps the old treatment, so a bug
+  // that enables every offer, or that relabels every offer, cannot pass.
+  const requoted = screen.getByRole("radio", { name: new RegExp(STALE_OFFER_LABEL, "i") });
+  expect(requoted).toBeDisabled();
+});
+```
+
+Mutation-prove: revert `disabled` to `cell.stale` → the `toBeEnabled()` half reddens and the
+`toBeDisabled()` half stays green. Revert.
+
 - [ ] **Step 6: Build `ReopenDialog` and wire it up**
 
 `ReopenDialog.tsx` mirrors `RejectDialog.tsx` exactly — `react-hook-form` + `zodResolver(reopenComparisonSchema)`, a required `reason` textarea, an inline `role="alert"` field error, the same in-flight close guard. Its copy must state the consequence, the way `RejectDialog`'s does: reopening supersedes an issued client quotation and discards a draft one.
