@@ -1,6 +1,6 @@
 # Stage 5 — Session Handoff
 
-_Last updated: 2026-08-25 (S5.6 + S5.7 + S5.8 + S5.9 + S5.9.1 + S5.9.2 + S5.9.3 + **S5.9.4 all COMPLETE**. **All open points are consolidated in the register below** — start there.)_
+_Last updated: 2026-08-27 (S5.6 through S5.9.4 complete, plus **S5.9.5 — built, reviewed, ci green, ONE product ruling outstanding before merge**. **All open points are consolidated in the register below** — start there.)_
 
 ## Current stage & branch
 - **Stage 5 — Compare Quotes & Award.** Branch `feat/stage-5-fx-master` → **PR #52** (OPEN, **not merged** — you merge manually).
@@ -13,9 +13,15 @@ _Last updated: 2026-08-25 (S5.6 + S5.7 + S5.8 + S5.9 + S5.9.1 + S5.9.2 + S5.9.3 
 
 ## ▶ Start here (fresh session)
 
-**State:** everything through S5.9.4 is built, reviewed and **pushed**; PR #52 is OPEN and mergeable and *you* merge it manually. `pnpm run ci` is green at the tip. Nothing is half-finished — there is no in-flight task to resume.
+**State:** everything through **S5.9.5** is built and reviewed; PR #52 is OPEN and *you* merge it manually. `pnpm run ci` is green at the tip. Nothing is half-finished — there is no in-flight task to resume. S5.9.5's commits are on the branch but **not yet pushed**.
 
-**The one open item I would do next is C8** (register below): `GET /api/queries/:id/emails` returns the rendered invitation email — including the working portal link — with no `@Roles`, for any query. That link is an unauthenticated bearer credential for the `@Public` forwarder portal, so any authenticated Executive can read another forwarder's frozen manifest and **submit a quote as them**. It predates this branch and the product owner ruled it stays its own item; the fix is small.
+**S5.9.5 landed while you slept** — 10 tasks, subagent-driven, per-task review with 8 fix rounds, then the opus whole-branch review and one fix wave. `pnpm run ci` is green. **It is NOT ready to merge: one product ruling is outstanding — register A6 below. Read that first.**
+
+The whole-branch review kept its perfect record: it found a Critical that all ten task reviews had passed, and this one was a hole *this sub-build opened* rather than an inherited one (a priced-EXPIRED offer free-pathed a cargo edit, so the client letter could be priced against superseded cargo). Fixed and adversarially re-verified.
+
+**After A6 is answered, the next open item is still C8** — unchanged and untouched by this sub-build.
+
+**C8** — `GET /api/queries/:id/emails` returns the rendered invitation email — including the working portal link — with no `@Roles`, for any query. That link is an unauthenticated bearer credential for the `@Public` forwarder portal, so any authenticated Executive can read another forwarder's frozen manifest and **submit a quote as them**. It predates this branch and the product owner ruled it stays its own item; the fix is small.
 
 **How work has been run here, and why it kept paying off:** every sub-build was subagent-driven — a fresh implementer per task, a task-scoped review, then an **opus whole-branch review at the end**. That last pass found a real defect on *every single* sub-build that all the task-scoped reviews had passed. Do not skip it.
 
@@ -43,6 +49,7 @@ _Last updated: 2026-08-25 (S5.6 + S5.7 + S5.8 + S5.9 + S5.9.1 + S5.9.2 + S5.9.3 
 | **S5.9.4** | **Quotation Concurrency Hardening** — closes register **C10** (a save racing a send could rewrite an already-issued quotation) and **C11** (that fix's sibling guard refusing a legitimate send after a no-op save) | ✅ COMPLETE — 1 task + review round, ci green (full detail in the register's C10/C11 rows) |
 
 Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **opus whole-branch review**). S5.4's reviews caught 5 real defects before merge; S5.5's caught the `StatusRegistry` init-order issue + the request-requote/`QUOTING_CLIENT` teardown seam. S5.9's caught the `REQUOTED` portal dead-end (see its own section — found and fixed, no frontend coverage existed for it). All findings fixed or adjudicated.
+| **S5.9.5** | **Approval Freeze & Compare Screen Round 4** — approval becomes a real freeze (no action on an approved leg but Reject), a locked query refuses every write but Reopen and the quotation, the approved forwarder stays visible and marked, every RFQ-sent forwarder appears in the grid, and an unanswered re-quote keeps its price | ✅ BUILT — 10 tasks, per-task review + 8 fix rounds, opus whole-branch review + one fix wave, `pnpm run ci` green. **⚠️ ONE PRODUCT RULING OUTSTANDING (see A6) before this merges** |
 
 ## Decisions made (why) — **please review**
 - **S5.4 RBAC — generate = Manager+ ONLY, no four-eyes (your O4 call).** The design self-contradicted (§4/§11/§13 tables said four-eyes on generate; §16 O4 said no). You chose **O4**. Design doc §4/§11/§13/D9/§12/§15 all aligned to it. approve/reject keep four-eyes; generate is Manager+ only.
@@ -76,9 +83,10 @@ Everything still open across S5.4–S5.9.3, in one place so nothing is lost betw
 | :-- | :-- | :-- | :-- |
 | **A1** | **What is a quotation "valid until"?** Currently the **earliest `validUntil` across the winning quotes** — never promising the client longer than the forwarders promised us. | No such field exists on the query or the award. The final review ruled the current rule correct, but it is the one commercial assumption made on your behalf. | S5.8 Q2 |
 | **A2** | **How should charges be grouped for the client-facing breakdown?** | S5.7's charge dialog shows three rolled-up subtotals because the itemised lines never leave the server. Exposing them is easy; **which grouping** is a business call. Blocks B5. | S5.7 C2 |
-| **A3** | **Is Reopen meant to be actionable?** `reopenComparison` deliberately leaves every decision `APPROVED`, so after a reopen there is **no path to revise a shortlist** — reject 409s and the reopen already happened. | Either Reopen should also reset decisions to `DRAFT`, or the UI should say plainly that it only unfreezes the snapshot. The misleading copy was fixed; the flow question stands. | S5.6 |
-| **A4** | **Should the earlier price survive a re-quote that expires?** §10.1 promises the FF's earlier price "stays visible, badged stale", but the expiry sweep clears `draftJson`, so if the FF ignores the request the original offer is **lost** with no fallback. | Intended business rule, or a gap? | S5.5 |
+| **A3** | ✅ **CLOSED BY S5.9.5 (D2).** It is actionable, and the answer was neither of the two this row offered. Reopen still leaves every status alone; **Reject** is what walks a leg back — it gained a second mode that reverses an APPROVED decision (quote → `QUOTED` via the previously-never-fired `UNAPPROVE`, leg → its honest rollup, decision → `DRAFT`), with four-eyes deliberately NOT applying so the Manager who approved may reverse it. Reject on an approved leg is available whenever the query is not locked, so a leg approved by mistake before any client quotation exists is no longer stuck. | | S5.6 |
+| **A4** | ✅ **CLOSED BY S5.9.5 (D4) — yes, it survives.** The expiry sweep no longer discards `draftJson` for a `REQUOTED` quote (it still does for `RFQ_SENT`, which really is an unfinished draft). The quote still EXPIRES, so the forwarder's silence stays visible instead of reading as pending forever, and `EXPIRED` joined `COMPARABLE_STATUSES`, the engine's ranking, `REQUOTABLE_STATUSES` and `SENDABLE_STATUSES`. **But see A6** — what survives is the forwarder's LAST SAVED state, not provably their submitted price. | | S5.5 |
 | **A5** | **Should query status surface approval progress?** Shortlist → send → approve → every leg approved all happen **inside `QUOTED`** without the status changing once. | A query at `QUOTED` may have nothing shortlisted or be one click from a client quote. Cheapest fix isn't a new status — it's a "2 of 3 legs approved" indicator, and the data is already in the read model. **Still open by choice after S5.9**: the whole approval flow (`PENDING_APPROVAL` leg/quote statuses, the maker/checker screens) was built and rebuilt this sub-build without touching query-level status — a query reads plain "Quoted" throughout send/approve/reject exactly as before. | Status review |
+| **A6** | **🔴 BLOCKS THE S5.9.5 MERGE. Design D4 rests on a premise that is false, and I stopped rather than choose for you.** D4 says an unanswered re-quote keeps the forwarder's price — and the code now keeps whatever is in `Quote.draftJson`. But that column is **not** provably their submitted price: `FfPortalService.saveDraft` writes it with no status guard, `quoteDraftSchema` deliberately accepts blanks, and the portal exposes "Save draft" as an unvalidated button. So: you negotiate → the forwarder opens the reopened portal, edits, saves a draft, goes silent → the sweep now KEEPS that partially-typed, modified, never-submitted number, and S5.9.5 makes it comparable, **rankable** (it can take the ★) and **approvable**, priced straight into the client letter. Before this sub-build the same partial draft existed but was stale-badged, unranked, and refused by the send guard. **Two options, neither needing a migration:** (a) snapshot the submitted price at `requestRequote` time into a column the portal cannot overwrite — correct, but it is a schema change; (b) retain the draft only when it is provably untouched since the re-quote was requested — `Quote.updatedAt` plus the `REQUEST_REQUOTE` audit event (or its `StatusTransition` row) already answer that, so it needs no migration, but it silently narrows D4 in cases where the forwarder merely looked. Task 7 DID close the narrower halves: the winner's own post-freeze rewrite, and any `PENDING_APPROVAL` write. The D4 premise itself is open. | S5.9.5 whole-branch review, Critical 2 |
 
 ### B · Backend follow-ups — bundle these into ONE API task
 All are API-shape changes on the same feature. **B1, B2 and B3 were closed by S5.9** (see section D below for how); what's left needs its own trip.
@@ -449,3 +457,47 @@ Closes **C10** and **C11**; the full reasoning, the pinning tests and the mutati
 - **(S5.9)** A `StatusService.fire` call MUST happen **after** an outer transaction commits, never inside one that holds a row lock on the same row `fire` needs — `fire` opens its own transaction on a different pool connection, so firing from inside a lock-holding transaction self-deadlocks until Prisma's 5s interactive-transaction timeout (P2028).
 - **(S5.9)** To serialize two HTTP-triggered mutations that must not race on the same row, take the **same** `SELECT … FOR UPDATE` lock, in the same order, in both call paths — mutual exclusion is a property of the shared lock helper (`lockLeg`), not of either caller individually, and needs no dedicated concurrency test once that's true.
 - **(S5.9)** A plain function component (no `forwardRef`) silently breaks under Radix's `asChild`/`Slot` pattern — React drops the ref with only a dev-console warning, not a crash, so it can ship unnoticed. Any `components/ui/*` primitive that might become a `TooltipTrigger`/`PopoverTrigger`/etc. child should be `forwardRef` from the start (`Button` already was; `Badge` wasn't, until S5.9 T10).
+
+---
+
+## S5.9.5 (Approval Freeze & Compare Screen Round 4) — ✅ BUILT, ci green, **one product ruling outstanding (A6)**
+
+Design of record: `docs/Stage 5 - Approval Freeze & Compare Screen Round 4 - Design.md` (D1–D8).
+Plan: `docs/plans/stage-5/Stage 5 - S5.9.5 - … - Implementation Plan.md`. Commits `c0c299a..df9b28c`.
+
+### What you asked for, and what the code now does
+
+| Your point | Where it landed |
+| :-- | :-- |
+| Approved FF's quotation not visible after approval | D8 — `COMPARABLE_STATUSES` gained `APPROVED`. It was the *same* defect S5.9 had already fixed once for `PENDING_APPROVAL` and left broken for approve. |
+| RFQ-sent FFs belong in the table, not a line under it | D7 — they are grid cells reading "Not quoted"; the "Awaiting response" list is deleted. |
+| Highlight approved / recommended / shortlisted | D8 — `✔` approved (its own tint), `★` recommended, `⚑` shortlisted. Approved replaces `⚑` by construction, and `locked` deliberately does NOT suppress `✔` (it agrees with the frozen award panel rather than contradicting it). |
+| Leg status → Approved | Already worked; verified end to end and left alone. |
+| No action on an approved leg | D1 — every control visible-and-disabled with a reason, except Reject. **This superseded your earlier "Negotiate should be allowed" ruling from the same session**; recorded as a deliberate reversal in the design so nobody restores it as a bug fix. |
+| Reopen, then reject, to undo an approval | D2 — Reject gained a reversal mode; reopen is Manager/Admin only and now takes a required reason. |
+| Negotiation is Executive-only | D3 — the UI had enforced it since S5.9.1; the **server never had**. Now `@Roles(EXECUTIVE)`. |
+| An unanswered re-quote must not destroy the price | D4 — closed. **But see A6.** |
+| Auto-cancel other FFs on approval | D5 — no `Cancelled` status; the portal closes the leg instead. `PENDING_APPROVAL` deliberately does NOT close it. |
+| Nothing but reopen once a client quotation exists | D6 — a shared `QueryLockService` gates every query-scoped write. **Two exceptions:** reopen, and everything under `queries/:id/quotation` — the locked state exists so the quotation can be composed and issued, so gating those would forbid the only work it allows. |
+
+### No new statuses anywhere
+Deliberate, and worth stating because the original points implied several. `QuoteStatus`, `LegStatus`, `QueryStatus` are all unchanged. What is new lives one level down: three leg edges (`APPROVED --return.full/return.partial-->`), four quote edges (`EXPIRED --request_requote-->`, `EXPIRED --send_for_approval-->`, `PENDING_APPROVAL|APPROVED --return_expired--> EXPIRED`, `EXPIRED --invalidate--> INVALID`), and the first-ever firing of the already-registered `UNAPPROVE`. **No migration.**
+
+### What the reviews caught that the tasks did not
+The opus whole-branch review kept its perfect record across every Stage-5 sub-build — and this time the Critical was a hole **this sub-build opened**, not an inherited one:
+
+- **A priced-`EXPIRED` offer free-pathed a cargo edit.** `downstreamWork` excluded `EXPIRED` as "gone stale", which was safe for the whole life of that comment *because an EXPIRED quote could never carry a price*. D4 changed exactly that. So: negotiate → silence → sweep keeps the price → edit the cargo → **no invalidation** → send → approve → the client letter is priced against superseded cargo. Fixed by extending the invariant this codebase had already established twice (`APPROVED` in S5.3, `PENDING_APPROVAL` in S5.9), via a shared `LIVE_QUOTE_WHERE` so the two consumers cannot drift again, plus the missing `EXPIRED --invalidate--> INVALID` edge. An *unpriced* EXPIRED quote still free-paths, tested in both directions.
+- **An Executive could reverse an approval without a checker.** `request-requote`'s leg guard covered `PENDING_APPROVAL` only while `REQUOTABLE_STATUSES` admitted `APPROVED` — so an Executive could POST it on an approved leg and null `decidedByUserId`/`decidedAt`/`sentByUserId`. A back-door onto the one action D2 reserves for checkers, with no four-eyes and no reason on the audit trail. Third instance on this branch of "a UI rule the server never shared" (cf. B1, D3).
+- **A shut-out forwarder still got "please submit your quote" reminders** against a portal that 409s them.
+- Register **C12 was factually wrong** — it claimed the `DRAFT/APPROVED/APPROVED` wedge needs DB surgery; an Executive's Negotiate walks all three rows out. Corrected, and the exit is now tested.
+
+### The signature defect, quantified
+Of ~30 findings across 10 task reviews, 8 fix rounds, the whole-branch review and its fix wave, **the large majority were comments asserting mechanisms nobody traced** — including one false claim found propagated to three separate sites, one that claimed a transaction-isolation guarantee the code lacks (no `isolationLevel` is set anywhere; Prisma runs READ COMMITTED), and one written *by* a task while it was tracing that very code. Two rounds also went to assertions no single mutation could redden. The final re-review's summary is worth carrying forward: *the branch's signature defect is now confined to citations and rationales rather than logic — but it is not extinct.*
+
+### Deferred, non-blocking — for the next trip
+- Three rotted comment cross-references introduced by the fix wave itself: five sites citing `award.ts:52-60` (a +9-line docblock in the same wave pushed the target to 66-67), `ComparisonGrid.tsx:33`'s "four sibling sites" list (names one file that carries no such correction and omits two that do), and `LegSection.test.tsx:227` pointing at `ff-portal.service.ts` for a constant the wave moved to `leg-closure.ts`. Best fixed by applying the wave's own policy — drop line numbers from symbolic references.
+- `NO_RESPONSE` can now read as a lie: a query whose only quotes are `EXPIRED` derives "No response" while the compare screen shows a ranked, sendable price. Self-clears on send.
+- Two over-long comment lines prettier does not rewrap; `RfqPrintView` does not surface `closedReason`.
+
+### Register movement
+**A3 and A4 closed.** **A6 added — the merge blocker.** **C12 corrected** (it had claimed a recoverable wedge was terminal). C4 amended in spirit: `EXPIRED` is now comparable, rankable, sendable and invalidatable; `AWAITING_CLIENT_DECISION` now gates writes. **C8 untouched and still open.**
