@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { MASTER_STATUSES, type MasterStatus } from "./contacts";
+import {
+  MASTER_STATUSES,
+  contactUpsertSchema,
+  atMostOnePrimary,
+  PRIMARY_DUPLICATE_MESSAGE,
+  type MasterStatus,
+} from "./contacts";
 import { FREIGHT_MODES, type FreightMode } from "../config";
 import { COUNTRY_CODES, CURRENCY_CODES } from "../reference";
 
@@ -43,6 +49,11 @@ export const freightForwarderCreateSchema = z.object({
   paymentTerms: z.enum(PAYMENT_TERMS).optional(),
   typicalLeadTime: z.number().int().min(0).max(365).optional(),
   status: statusField,
+  contacts: z
+    .array(contactUpsertSchema)
+    .refine(atMostOnePrimary, { message: PRIMARY_DUPLICATE_MESSAGE })
+    .optional(),
+  warehouseIds: z.array(z.string().uuid()).optional(),
 });
 // pic/contactNumber/email are derived once a forwarder exists: FreightForwardersService's
 // syncPrimaryContactColumns is their sole writer after create(), which seeds the primary

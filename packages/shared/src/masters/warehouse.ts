@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { CURRENCY_CODES } from "../reference";
-import { MASTER_STATUSES, type MasterStatus, type ContactDto } from "./contacts";
+import {
+  MASTER_STATUSES,
+  contactUpsertSchema,
+  exactlyOnePrimary,
+  atMostOnePrimary,
+  PRIMARY_REQUIRED_MESSAGE,
+  PRIMARY_DUPLICATE_MESSAGE,
+  type MasterStatus,
+  type ContactDto,
+} from "./contacts";
 
 // Named WAREHOUSE_MASTER_TYPES / WarehouseMasterType, not WAREHOUSE_TYPES / WarehouseType:
 // packages/shared/src/points.ts already exports WAREHOUSE_TYPES / WarehouseType for a Point's
@@ -111,17 +120,41 @@ export function refineWarehouseInvariants(v: WarehouseInvariantInput, ctx: Wareh
   }
 }
 
-export const warehouseCreateSchema = baseWarehouse.superRefine(refineWarehouseInvariants);
-
-export const warehouseUpdateSchema = baseWarehouse.partial();
-export type WarehouseCreateInput = z.input<typeof warehouseCreateSchema>;
-export type WarehouseUpdateInput = z.input<typeof warehouseUpdateSchema>;
-
 export const warehouseVehicleSchema = z.object({
   tonnage: z.string().min(1),
   quantity: z.number().int().positive(),
 });
 export type WarehouseVehicleInput = z.infer<typeof warehouseVehicleSchema>;
+
+export const warehouseVehicleUpsertSchema = warehouseVehicleSchema.extend({
+  id: z.string().uuid().optional(),
+});
+export type WarehouseVehicleUpsert = z.output<typeof warehouseVehicleUpsertSchema>;
+
+// Child fields are added to the object BEFORE superRefine is applied below — chaining
+// superRefine off a narrower object and extending afterwards would silently drop the
+// agreement/insurance-date invariant for owned and contracted warehouses.
+export const warehouseCreateSchema = baseWarehouse
+  .extend({
+    contacts: z
+      .array(contactUpsertSchema)
+      .min(1)
+      .refine(exactlyOnePrimary, { message: PRIMARY_REQUIRED_MESSAGE }),
+    vehicles: z.array(warehouseVehicleUpsertSchema).optional(),
+  })
+  .superRefine(refineWarehouseInvariants);
+
+// NOT `warehouseCreateSchema.partial()`: see clientUpdateSchema in client.ts for why — the
+// create-time min(1)/exactly-one rule must not survive onto the update array.
+export const warehouseUpdateSchema = baseWarehouse.partial().extend({
+  contacts: z
+    .array(contactUpsertSchema)
+    .refine(atMostOnePrimary, { message: PRIMARY_DUPLICATE_MESSAGE })
+    .optional(),
+  vehicles: z.array(warehouseVehicleUpsertSchema).optional(),
+});
+export type WarehouseCreateInput = z.input<typeof warehouseCreateSchema>;
+export type WarehouseUpdateInput = z.input<typeof warehouseUpdateSchema>;
 
 export interface WarehouseDto {
   id: string;

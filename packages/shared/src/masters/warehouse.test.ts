@@ -10,6 +10,14 @@ const base = {
   pinCode: "00000",
   capacity: 5000,
   capacityUnit: "CBM" as const,
+  contacts: [
+    {
+      name: "Asha Menon",
+      email: "asha@example.com",
+      contactNo: "+971501234567",
+      pocLevel: "PRIMARY" as const,
+    },
+  ],
 };
 
 describe("warehouseCreateSchema", () => {

@@ -29,6 +29,34 @@ export const contactUpdateSchema = contactCoreSchema.partial();
 export type ContactCreateInput = z.input<typeof contactCreateSchema>;
 export type ContactUpdateInput = z.input<typeof contactUpdateSchema>;
 
+/**
+ * A contact as it arrives inside a parent's composite create/update payload. `id` present means
+ * "update this existing row"; absent means "create". A contact omitted from the array is
+ * deleted — see reconcileContacts on the API side.
+ */
+export const contactUpsertSchema = contactCoreSchema.extend({
+  id: z.string().uuid().optional(),
+});
+export type ContactUpsertInput = z.input<typeof contactUpsertSchema>;
+/** Post-parse shape: every `.default()` applied. Services should use THIS, not the input type,
+ *  so `pocLevel` is always a real value and never needs a `?? "NONE"` fallback. */
+export type ContactUpsert = z.output<typeof contactUpsertSchema>;
+
+const primaryCount = (contacts: { pocLevel?: PocLevel }[]): number =>
+  contacts.filter((c) => c.pocLevel === PocLevel.PRIMARY).length;
+
+/** Create-time rule: a new Client/Warehouse must name exactly one primary contact. */
+export const exactlyOnePrimary = (contacts: { pocLevel?: PocLevel }[]): boolean =>
+  primaryCount(contacts) === 1;
+
+/** Update-time rule: never two, but zero is allowed — a record that pre-dates the rule stays
+ *  editable and is nudged by a banner instead of blocked (design C4). */
+export const atMostOnePrimary = (contacts: { pocLevel?: PocLevel }[]): boolean =>
+  primaryCount(contacts) <= 1;
+
+export const PRIMARY_REQUIRED_MESSAGE = "Exactly one contact must be marked Primary";
+export const PRIMARY_DUPLICATE_MESSAGE = "Only one contact can be marked Primary";
+
 export interface ContactDto {
   id: string;
   name: string;

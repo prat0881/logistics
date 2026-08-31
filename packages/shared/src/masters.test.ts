@@ -9,6 +9,14 @@ describe("masters schemas", () => {
         country: "IN",
         streetAddress: "1 Raffles Place",
         city: "Singapore",
+        contacts: [
+          {
+            name: "Asha Menon",
+            email: "asha@example.com",
+            contactNo: "+971501234567",
+            pocLevel: "PRIMARY",
+          },
+        ],
       }).success,
     ).toBe(true);
   });
