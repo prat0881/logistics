@@ -10,6 +10,7 @@ import type {
 import { PrismaService } from "../../prisma/prisma.service";
 import { auditCreate, auditUpdate } from "../../common/audit";
 import { mapOwnershipRace } from "../../common/ownership-race";
+import { reconcileContacts, type ContactDelegate } from "../../common/reconcile-contacts";
 import type { RequestUser } from "../auth/types";
 
 @Injectable()
@@ -55,7 +56,15 @@ export class ClientsService {
     return client;
   }
 
+  /**
+   * One transaction for the parent row, its contacts and its warehouse links (design C1): the
+   * three used to be three separate requests from three buttons, so a failure halfway left a
+   * client with no contact. The children are split off the payload before the Prisma write —
+   * `Client` has no `contacts`/`warehouseIds` scalar columns, so passing them straight through
+   * would be read as an (invalid) nested write.
+   */
   async create(input: ClientCreateInput, user?: RequestUser) {
+    const { contacts, warehouseIds, ...fields } = input;
     try {
       return await this.prisma.$transaction(async (tx) => {
         const row = await tx.codeSequence.upsert({
@@ -64,22 +73,47 @@ export class ClientsService {
           update: { lastNumber: { increment: 1 } },
         });
         const clientCode = `CL-${String(row.lastNumber).padStart(4, "0")}`;
-        return tx.client.create({ data: { clientCode, ...input, ...auditCreate(user) } });
+        const client = await tx.client.create({
+          data: { clientCode, ...fields, ...auditCreate(user) },
+        });
+        await reconcileContacts({
+          delegate: tx.clientContact as unknown as ContactDelegate,
+          ownerKey: "clientId",
+          ownerId: client.id,
+          contacts,
+          user,
+        });
+        if (warehouseIds) await this.setWarehousesTx(tx, client.id, warehouseIds, user);
+        return client;
       });
     } catch (e) {
-      throw this.mapUnique(e, "A client with that company name already exists");
+      throw this.mapUnique(mapOwnershipRace(e), "A client with that company name already exists");
     }
   }
 
   async update(id: string, input: ClientUpdateInput, user?: RequestUser) {
     await this.get(id);
+    const { contacts, warehouseIds, ...fields } = input;
     try {
-      return await this.prisma.client.update({
-        where: { id },
-        data: { ...input, ...auditUpdate(user) },
+      return await this.prisma.$transaction(async (tx) => {
+        const client = await tx.client.update({
+          where: { id },
+          data: { ...fields, ...auditUpdate(user) },
+        });
+        if (contacts) {
+          await reconcileContacts({
+            delegate: tx.clientContact as unknown as ContactDelegate,
+            ownerKey: "clientId",
+            ownerId: id,
+            contacts,
+            user,
+          });
+        }
+        if (warehouseIds) await this.setWarehousesTx(tx, id, warehouseIds, user);
+        return client;
       });
     } catch (e) {
-      throw this.mapUnique(e, "A client with that company name already exists");
+      throw this.mapUnique(mapOwnershipRace(e), "A client with that company name already exists");
     }
   }
 
@@ -148,35 +182,48 @@ export class ClientsService {
   async setWarehouses(clientId: string, warehouseIds: string[], user?: RequestUser) {
     await this.get(clientId);
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        const contested = await tx.warehouse.findFirst({
-          where: {
-            id: { in: warehouseIds },
-            OR: [
-              { clientId: { not: null, notIn: [clientId] } },
-              { freightForwarderId: { not: null } },
-            ],
-          },
-        });
-        if (contested) {
-          throw new ConflictException(`${contested.name} is already assigned to another record`);
-        }
-        await tx.warehouse.updateMany({
-          where: { clientId, id: { notIn: warehouseIds } },
-          data: { clientId: null, ...auditUpdate(user) },
-        });
-        await tx.warehouse.updateMany({
-          where: { id: { in: warehouseIds } },
-          data: { clientId, ...auditUpdate(user) },
-        });
-        return tx.warehouse.findMany({ where: { clientId }, orderBy: { name: "asc" } });
-      });
+      return await this.prisma.$transaction((tx) =>
+        this.setWarehousesTx(tx, clientId, warehouseIds, user),
+      );
     } catch (e) {
       // See FreightForwardersService.setWarehouses's identical catch: the contested check
-      // above already throws ConflictException directly for the same-request case; this only
+      // in setWarehousesTx already throws ConflictException directly for the same-request
+      // case; this only
       // re-maps the DB-level CHECK-constraint violation a genuine concurrent race can produce.
       throw mapOwnershipRace(e);
     }
+  }
+
+  /**
+   * The body of setWarehouses, taking the caller's transaction client so the composite
+   * create/update can reuse the same contested-ownership logic inside *their* transaction
+   * rather than duplicating it. The public setWarehouses above (PUT /:id/warehouses,
+   * design C8) opens its own transaction around this and keeps its own error mapping.
+   */
+  private async setWarehousesTx(
+    tx: Prisma.TransactionClient,
+    clientId: string,
+    warehouseIds: string[],
+    user?: RequestUser,
+  ) {
+    const contested = await tx.warehouse.findFirst({
+      where: {
+        id: { in: warehouseIds },
+        OR: [{ clientId: { not: null, notIn: [clientId] } }, { freightForwarderId: { not: null } }],
+      },
+    });
+    if (contested) {
+      throw new ConflictException(`${contested.name} is already assigned to another record`);
+    }
+    await tx.warehouse.updateMany({
+      where: { clientId, id: { notIn: warehouseIds } },
+      data: { clientId: null, ...auditUpdate(user) },
+    });
+    await tx.warehouse.updateMany({
+      where: { id: { in: warehouseIds } },
+      data: { clientId, ...auditUpdate(user) },
+    });
+    return tx.warehouse.findMany({ where: { clientId }, orderBy: { name: "asc" } });
   }
 
   private mapUnique(e: unknown, fallback: string) {
@@ -186,7 +233,13 @@ export class ClientsService {
       // it reports the column list instead. Verified against the live error shape: P2002's
       // meta.target here is ["clientId"], never the index name "ClientContact_one_primary".
       // The Client model's own unique constraint (companyName) never reports "clientId", so
-      // this check is unambiguous between the two callers of mapUnique.
+      // this check is unambiguous between the callers of mapUnique.
+      //
+      // This branch now serves ONLY addContact/updateContact — the standalone POST/PATCH
+      // /:id/contacts endpoints, which stay live (design C8) and whose 409 message two e2e
+      // specs assert (clients.e2e-spec.ts, clients-address.e2e-spec.ts). The composite
+      // create/update path never reaches it: reconcileContacts raises the same conflict
+      // itself, before the write, where it can name the rule instead of the column.
       const target = String((e.meta as { target?: string | string[] })?.target ?? "");
       if (target.includes("clientId")) {
         return new ConflictException("This client already has a primary contact");

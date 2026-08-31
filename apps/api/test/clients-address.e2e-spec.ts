@@ -9,6 +9,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { clientCreateBody } from "./helpers/client";
 
 const NAME = "Client Address E2E";
 
@@ -54,13 +55,15 @@ describe("Client address + contacts (e2e)", () => {
     const res = await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({
-        companyName: NAME,
-        country: "India",
-        streetAddress: "12 Marine Drive",
-        city: "Mumbai",
-        postalCode: "400020",
-      })
+      .send(
+        clientCreateBody({
+          companyName: NAME,
+          country: "India",
+          streetAddress: "12 Marine Drive",
+          city: "Mumbai",
+          postalCode: "400020",
+        }),
+      )
       .expect(201);
     expect(res.body.city).toBe("Mumbai");
     expect(res.body.postalCode).toBe("400020");
@@ -70,8 +73,23 @@ describe("Client address + contacts (e2e)", () => {
     const client = await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ companyName: `${NAME} primary`, country: "India", streetAddress: "1 A Road", city: "Pune" })
+      .send(
+        clientCreateBody({
+          companyName: `${NAME} primary`,
+          country: "India",
+          streetAddress: "1 A Road",
+          city: "Pune",
+        }),
+      )
       .expect(201);
+
+    // The composite create now seeds a PRIMARY contact of its own (design C1). This test is
+    // about the *standalone* POST /:id/contacts endpoint's one-primary rule, so clear the
+    // seeded primary first and let the two contacts below contest the index between them.
+    await prisma.clientContact.updateMany({
+      where: { clientId: client.body.id },
+      data: { pocLevel: "NONE" },
+    });
 
     const contact = (name: string) => ({
       name, email: `${name.replace(/\W/g, "")}@example.com`, contactNo: "+919812345678", pocLevel: "PRIMARY",

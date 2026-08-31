@@ -9,6 +9,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { clientCreateBody } from "./helpers/client";
 
 const NAME = "Audit Columns E2E";
 
@@ -51,12 +52,14 @@ describe("Master audit columns (e2e)", () => {
     const created = await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.ADMINISTRATOR, ADMIN_USER_ID))
-      .send({
-        companyName: NAME,
-        country: "United Arab Emirates",
-        streetAddress: "1 Test Road",
-        city: "Test City",
-      })
+      .send(
+        clientCreateBody({
+          companyName: NAME,
+          country: "United Arab Emirates",
+          streetAddress: "1 Test Road",
+          city: "Test City",
+        }),
+      )
       .expect(201);
 
     const afterCreate = await prisma.client.findUnique({ where: { id: created.body.id } });
