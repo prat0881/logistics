@@ -57,7 +57,7 @@ Beyond the six points in the brief, the audit found:
 | C3 | **Every Client, FF and Warehouse has exactly one PRIMARY contact after create** | User's rule, applied uniformly. The *payload* differs: Client and Warehouse must carry it in `contacts`; FF may instead supply it through `pic`/`contactNumber`/`email` (C5), which `create()` already converts into a PRIMARY row. The invariant is the same; only the input path differs. |
 | C4 | **Never required on update; records without one get a warning banner, not a block** | User's call. A hard block would make every pre-existing row un-editable until someone fixed it — the fix being blocked behind the very screen that's blocking. |
 | C5 | **FF keeps `pic`/`contactNumber`/`email` on the form; they mirror the primary contact row** | User's call. As those fields are filled, the contacts table shows a live PRIMARY row reflecting them; on edit they stay disabled and mirror whichever contact is primary. No double entry, no schema change, and it makes Stage-4 item 1 a deletion rather than a redesign. |
-| C6 | **Charge Catalogue: Input type restricted, Sort order becomes reordering** | See §6. Both columns leave the list table. |
+| C6 | **Charge Catalogue: Input type restricted to its two working values; Sort order hidden entirely** | See §6. Both columns leave the list table; Sort order also leaves the form. No new endpoint, no migration. §6.3 records why adding reordering later needs neither. |
 | C7 | **`syncPrimaryContactColumns` remains the sole writer of FF's derived columns** | The handoff names "two writers, no reconciliation" as a defect that recurred *twice* on this exact code. The composite transaction writes contacts, then calls the existing sync — it never sets those columns from form values. |
 | C8 | **The standalone child endpoints stay** | `/:id/contacts`, `/:id/warehouses`, `/:id/vehicles` keep their routes, RBAC and specs. The UI stops calling them; nothing else changes. |
 | C9 | **No `tagKey` field is added to the charge form** | The expansion design specified one ("Tag, when the line is tag-driven"); the build never had it. Stage-4 item 3 may remove the two-gate and `tagKey` with it. Building it now risks building something Stage 4 deletes. |
@@ -199,36 +199,96 @@ two production clients.
 
 ## 6. Charge Catalogue: Input type and Sort order
 
-**Input type** decides the forwarder's input widget and how the line is priced. But
-`resolveChargeConfig` filters the catalogue to `PLAIN` and `HEAVY_WEIGHT_CALC` only
-(`charge-config.ts:79`), and `quote-engine.ts:240` skips anything else. `TRUCKING` and
-`WAREHOUSE_STAGING` lines are seeded through separate FF-portal endpoints, never through the
-matrix. The admin form offers all four, so **two of the four values silently create a charge line
-that no RFQ will ever show** — saved successfully, invisible forever.
+Both columns are load-bearing, but for different reasons, and neither should be a control the
+admin operates. This section records the full trace so the question does not have to be
+re-litigated.
 
-Fix: the create dropdown offers **Plain** and **Heavy-weight calculation** only. An existing row
-carrying `TRUCKING` or `WAREHOUSE_STAGING` renders it read-only with a note that the line is
-seeded through the portal, not the matrix.
+### 6.1 Input type — a structural marker, not a setting
 
-**Sort order** orders the FF portal's charge list (`charge-config.ts:87`), orders both catalogue
-queries, and is **frozen onto the quote** at distribute (`charge-config.snapshot.ts:27`) — so it
-is real. But the service already auto-assigns `max + 10` within the mode+category group
-(`charge-catalogue.service.ts:82`), the field appears only on edit, and `reference-seed.ts:168`
-records fractional values being silently truncated to `Int`. An absolute hand-typed integer is
-the wrong control for "third in this group".
+`inputType` records **which pricing structure a charge line belongs to**. Across the ~70 seeded
+definitions it is non-default on exactly three rows:
 
-Fix: the typed field is replaced by **↑ / ↓ actions within the mode+category group**, backed by a
-new `PATCH /api/charge-line-definitions/reorder` taking an ordered id list and rewriting
-`sortOrder` in one transaction, gated `@Roles(ADMINISTRATOR, MANAGER)` like every other write on
-that controller. Reordering is scoped to a group because that is the only frame in which the
-number is meaningful. The endpoint rejects an id list that spans more than one mode+category
-group, so a reorder can never renumber rows the user was not looking at.
+| Value | Rows | Meaning |
+|---|---|---|
+| `PLAIN` | ~67 | A flat amount box in the forwarder's charge matrix |
+| `HEAVY_WEIGHT_CALC` | 1 — `AIR_MAIN_HEAVY_WEIGHT` | Renders piece weight / airline limit / rate-per-excess-kg instead of one amount box (`ChargeMatrix.tsx:137`) |
+| `TRUCKING` | 1 — `ROAD_CORE_TRUCKING` | **Never in the charge matrix.** Priced through `draft.trucking` |
+| `WAREHOUSE_STAGING` | 1 — `ROAD_WH_HANDLING` | **Never in the charge matrix.** Priced through `draft.warehouse` |
 
-Both columns leave the list table. Input type renders as a badge beside the label only when it is
-not `PLAIN`.
+Four consumers read it: the filter in `resolveChargeConfig` (`charge-config.ts:79`), the widget
+switch in `ChargeMatrix`, two validation branches in `quote-engine.ts:235-240`, and the client
+re-reading it off `seededCharges` (`LegSection.tsx:313`). It is also frozen onto every quote as
+`ResolvedChargeLine.inputType`.
 
-**Must survive the rework:** the list page's `.filter(l => l.category != null)`, which hides
-`ROAD_WH_HANDLING` while warehousing is deferred (Stage-4 item 6).
+**Dropping it entirely is not available.** Without the filter, the trucking and warehouse lines
+render as flat-amount rows *in addition to* their real per-endpoint rate rows — the same charge
+counted twice in the quote total. Without the widget switch, the air heavy-weight line gets one
+amount box and its formula has no inputs.
+
+**But it must not stay a free-choice dropdown.** The trucking and warehouse rate rows are
+generated from the **leg's endpoints** in `seedQuoteDraft`, never from catalogue rows. No code
+path anywhere instantiates a second trucking or staging line from a new catalogue entry. So an
+admin selecting `TRUCKING` today does not hit a filter edge case — they create a row that
+**nothing in the system will ever read**, saved successfully and invisible forever.
+
+**Decision:** the form offers **Plain** and **Heavy-weight calculation** only. A row already
+carrying `TRUCKING` or `WAREHOUSE_STAGING` renders it read-only with a note that the line prices
+through the portal's rate rows, not the matrix. The column leaves the list table and renders as a
+badge beside the label only when it is not `PLAIN`.
+
+### 6.2 Sort order — required by the system, not by the user
+
+**Correcting the record:** an earlier draft of this design said `sortOrder` is frozen onto the
+quote at distribute. It is not. `ResolvedChargeLine` carries `definitionKey`, `role`, `inputType`,
+`zone` and `label` and no ordering field (`charge-config.ts:46`). The `sortOrder: i` written in
+`ff-portal.service.ts:540` is a different column on `ChargeLine`, set to the draft array index.
+
+Its only effect is to `.sort()` the snapshot's `lines` array (`charge-config.ts:87`), and that
+array order becomes the row order of the forwarder's charge matrix. The number itself is never
+stored on a quote.
+
+**Dropping it entirely is not free.** `findMany` with no `orderBy` returns heap order, which
+shifts after any update — forwarders would see charges shuffled, and differently between two
+RFQs. It would have to be replaced by something, not simply deleted.
+
+**But the user never needs to see it.** `sortOrder` predates `category`: when it was designed
+there was no grouping column, and the masters expansion added ORIGIN/FREIGHT/DESTINATION/
+ADDITIONAL only in August 2026. Category now does the coarse ordering; `sortOrder` decides
+position only *within* a group. Meanwhile the service already auto-assigns `max + 10` within the
+mode+category group (`charge-catalogue.service.ts:82`), the field surfaces only on edit, and
+`reference-seed.ts:168` records fractional values being silently truncated to `Int`. A hand-typed
+absolute integer is the wrong control for "third in this group".
+
+**Decision (user, 2026-08-31): keep the column, hide it completely.** It leaves the list table
+*and* the edit form. The service keeps assigning it on create. Nobody types it. No new endpoint,
+no migration, and the seeded order is preserved exactly.
+
+**Accepted cost:** a newly created charge line always lands at the **end of its category group**.
+There is no way to place it mid-group until reordering is built.
+
+### 6.3 Adding reordering later — the upgrade path, for the record
+
+Recorded at the user's request, because the decision above was taken on the understanding that it
+does not paint us into a corner. It does not:
+
+- **No schema change.** `sortOrder` stays exactly as it is. Hiding the field and a future
+  reordering UI need the identical column; hiding changes nothing about storage.
+- **No change to any existing endpoint.** `chargeLineUpdateSchema` already picks `sortOrder` as a
+  patchable field (`masters/charge-catalogue.ts:117`), so reordering is implementable *today* with
+  N existing `PATCH /api/charge-line-definitions/:id` calls and no API work at all.
+- **The only optional addition** is a `PATCH /api/charge-line-definitions/reorder` taking an
+  ordered id list and rewriting the group in one transaction — worth adding purely for atomicity,
+  gated `@Roles(ADMINISTRATOR, MANAGER)` like every other write on that controller, and rejecting
+  an id list spanning more than one mode+category group so a reorder can never renumber rows the
+  user was not looking at. Strictly additive: nothing existing changes.
+
+So the sequence is hide-now, reorder-later-if-business-asks, with no rework of anything shipped in
+between.
+
+### 6.4 Must survive the rework
+
+The list page's `.filter(l => l.category != null)`, which hides `ROAD_WH_HANDLING` while
+warehousing is deferred (Stage-4 item 6).
 
 ## 7. What this touches, and what it must not
 
@@ -239,7 +299,9 @@ on `clientCreateSchema` and `vesselCreateSchema`, `WarehouseVehicle`. This branc
 `prisma migrate dev`, which the handoff warns would propose **dropping the three partial unique
 indexes** the one-primary rule depends on.
 
-The one new endpoint (`/charge-line-definitions/reorder`) writes an existing column.
+**No new endpoint either.** An earlier draft of this design proposed
+`PATCH /charge-line-definitions/reorder`; §6.2 supersedes it. The API surface is unchanged apart
+from the composite create/update payloads in §4.4.
 
 ### 7.2 Do not touch
 
@@ -287,12 +349,13 @@ before the Stage-4 pass starts.
 
 - **Web (vitest):** per screen — draft-then-save (no network before Save), the primary-contact
   block, the advisory banner on a record loaded without one, dialog add/edit/remove, PRIMARY
-  auto-demotion, the FF mirror, charge-line reordering.
+  auto-demotion, the FF mirror, and the Charge Catalogue form offering only Plain and
+  Heavy-weight while rendering an existing `TRUCKING`/`WAREHOUSE_STAGING` row read-only.
   Auth-gated assertions must await the role-gated element itself, never "data loaded then assert
   role-gated UI" — that race caused PR #54's CI failure and 17 files share the shape.
 - **API (e2e):** composite create and update for all three masters; reconcile ordering (a payload
   that both demotes and promotes in one request must succeed); the query-before-write 409 with
-  its correct message; charge-line reorder.
+  its correct message.
 - **Full `pnpm run ci`** plus `tsc` per task — vitest's esbuild does not type-check, so type
   errors otherwise pile up silently in test files.
 
