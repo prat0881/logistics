@@ -4,9 +4,22 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { ContactsSection, type ContactDraft } from "./ContactsSection";
 
-function Harness({ initial = [] as ContactDraft[] }) {
+function Harness({
+  initial = [] as ContactDraft[],
+  lockedFirstRow = false,
+}: {
+  initial?: ContactDraft[];
+  lockedFirstRow?: boolean;
+}) {
   const [value, setValue] = useState<ContactDraft[]>(initial);
-  return <ContactsSection value={value} onChange={setValue} ownerNoun="client" />;
+  return (
+    <ContactsSection
+      value={value}
+      onChange={setValue}
+      ownerNoun="client"
+      lockedFirstRow={lockedFirstRow}
+    />
+  );
 }
 
 const asha: ContactDraft = {
@@ -15,6 +28,14 @@ const asha: ContactDraft = {
   email: "asha@example.com",
   contactNo: "+971501234567",
   pocLevel: "PRIMARY",
+};
+
+const rahul: ContactDraft = {
+  id: "9e0c4c1a-2a3b-4d5e-8f6a-1b2c3d4e5f60",
+  name: "Rahul Sethi",
+  email: "rahul@example.com",
+  contactNo: "+971509998888",
+  pocLevel: "SECONDARY",
 };
 
 describe("ContactsSection", () => {
@@ -85,7 +106,31 @@ describe("ContactsSection", () => {
     await userEvent.type(screen.getByLabelText(/email/i), "n@example.com");
     await userEvent.type(screen.getByLabelText(/phone/i), "+971501112224");
     await userEvent.click(screen.getByRole("button", { name: /save contact/i }));
+
+    // Not just "fetch wasn't called" — the save must have actually landed in the draft, or
+    // this test would also pass if validation silently swallowed the submission.
+    const table = screen.getByRole("table", { name: /contacts/i });
+    expect(within(table).getByText("Nobody")).toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+
+  describe("lockedFirstRow", () => {
+    it("renders row 0 as plain text, not a button, while later rows stay selectable", () => {
+      render(<Harness initial={[asha, rahul]} lockedFirstRow />);
+      expect(screen.queryByRole("button", { name: /asha menon/i })).not.toBeInTheDocument();
+      expect(screen.getByText("Asha Menon")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /rahul sethi/i })).toBeInTheDocument();
+    });
+
+    // The off-by-one this guards against: row 0 being unselectable must not shift which
+    // record row 1's button opens. If a future refactor of the row ternary mis-indexes,
+    // this catches it by asserting on data unique to the second contact.
+    it("opens the dialog on value[1], not value[0], when row 1 is selected", async () => {
+      render(<Harness initial={[asha, rahul]} lockedFirstRow />);
+      await userEvent.click(screen.getByRole("button", { name: /rahul sethi/i }));
+      expect(screen.getByLabelText(/^name$/i)).toHaveValue("Rahul Sethi");
+      expect(screen.getByLabelText(/email/i)).toHaveValue("rahul@example.com");
+    });
   });
 });
