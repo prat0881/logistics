@@ -5,7 +5,7 @@ import type { OfferChargeLineDto } from "@svyft/shared";
  * `undefined`, and today it is always `[]`: `comparison.service.ts`'s `buildCharges` emits at most
  * three FLAT aggregate lines per offer (Freight / Additional Charges / Warehousing — the last two
  * are each a single sum over many origin/destination/ad-hoc or warehouse rows; see the design's
- * C2). The itemised detail behind those sums lives in each quote's `draftJson` but is collapsed by
+ * C2). The itemised detail behind those sums lives in each quote's `submittedJson` but is collapsed by
  * `computeQuoteTotals` before it reaches the browser, and this task is FRONTEND ONLY — it cannot
  * add a backend read model to un-collapse it.
  *

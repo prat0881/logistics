@@ -115,6 +115,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
         status: "APPROVED",
         submittedAt: new Date(),
         draftJson: roadDraft(leg.id, origin.id, "INR", 8320, quoteValidityUntil) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 8320, quoteValidityUntil) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -189,6 +190,7 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
           status: "APPROVED",
           submittedAt: new Date(),
           draftJson: roadDraft(leg.id, originId, "INR", 8320) as unknown as Prisma.InputJsonValue,
+          submittedJson: roadDraft(leg.id, originId, "INR", 8320) as unknown as Prisma.InputJsonValue,
         },
       });
       built.push({ legId: leg.id, quoteId: quote.id, ffId: ff.id });
@@ -323,6 +325,41 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     const rows = await prisma.quotation.findMany({ where: { queryId: query.id } });
     expect(rows).toHaveLength(1);
     expect(rows[0].version).toBe(1);
+  });
+
+  // ── S5.9.6 (register A6) — the client letter's cost lines come from the SUBMITTED offer ─────
+  it("S5.9.6 (A6) — the client letter prices its cost lines and validUntil off submittedJson, not the winner's live draft", async () => {
+    // Same real route as award-generate.e2e-spec.ts's A6 test: submit → re-quote asked → the
+    // forwarder half-edits the reopened portal and saves (`saveDraft` admits REQUOTED and writes
+    // `draftJson` verbatim) → silence → the preserved offer is sent for approval and approved.
+    // `buildInitialDraft` reads the winning quote directly (NOT the frozen `awardSnapshot`), so
+    // before the split the letter's cost lines were built from whatever that forwarder last had
+    // saved. Two independent fields are moved by the half-edit — the amount AND the validity —
+    // and both are asserted, because `buildInitialDraft` reads the draft object twice.
+    const { query, quote, leg } = await mkAwardedQuery("a6");
+    const origin = await prisma.point.findFirstOrThrow({
+      where: { queryId: query.id, type: "PICKUP" },
+    });
+    await prisma.quote.update({
+      where: { id: quote.id },
+      data: {
+        draftJson: roadDraft(
+          leg.id,
+          origin.id,
+          "INR",
+          4160, // half the submitted price -> $50 instead of $100
+          "2050-06-01T00:00:00.000Z", // and a different validity
+        ) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    expect(res.body.pricing.costTotalUsd).toBe(100); // NOT 50
+    expect(res.body.validUntil).toBe("2099-01-01T00:00:00.000Z"); // NOT 2050-06-01
   });
 
   it("is idempotent — a second GET returns the same draft, not a second one", async () => {

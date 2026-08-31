@@ -57,9 +57,9 @@ const OUTSTANDING_QUOTE_STATUSES: readonly QuoteStatus[] = [
 // EXPIRED is here because D4 preserves a re-quoted forwarder's retained price through the expiry
 // sweep (rfq-schedule.listener.ts — read its note on what that price is and is not) and promises it
 // stays approvable, not merely visible. It is self-limiting the same way the comparison is: an
-// EXPIRED quote with no `draftJson` never reaches this guard at all. CORRECTED (review round 1) —
-// the reason is NOT that `o.priced` evaluates false. `buildLeg` skips any quote with no
-// `draftJson` (comparison.service.ts), so no offer row is emitted for it in the first place and
+// EXPIRED quote with no `submittedJson` never reaches this guard at all. CORRECTED (review round
+// 1) — the reason is NOT that `o.priced` evaluates false. `buildLeg` skips any quote with no
+// `submittedJson` (comparison.service.ts, S5.9.6), so no offer row is emitted for it and
 // the pre-transaction `!offer` check 400s (see the `getComparison` block below).
 const SENDABLE_STATUSES: readonly QuoteStatus[] = [QuoteStatus.QUOTED, QuoteStatus.EXPIRED];
 
@@ -1249,15 +1249,15 @@ export class AwardService {
   // `ComparisonService.getComparison` for pricing, because COMPARABLE_STATUSES excluded APPROVED
   // and every winning quote IS APPROVED by the time this runs, so getComparison "would emit zero
   // offers". That is no longer true: D8 put APPROVED in COMPARABLE_STATUSES, so an approved
-  // winner carrying a draftJson now DOES produce offers there. (The comment also cited a
+  // winner carrying a submittedJson now DOES produce offers there. (The comment also cited a
   // "line-51" comment that had already moved before this correction — don't re-add line numbers
   // for another file.)
   //
   // What is unchanged is what the loop below actually does, stated here as behaviour rather than
-  // as an impossibility: each winner is priced DIRECTLY off its own draftJson via
+  // as an impossibility: each winner is priced DIRECTLY off its own submittedJson via
   // computeQuoteTotals — the same engine comparison.service.ts's buildLeg uses, but targeted at
   // the single shortlisted variant instead of every variantsForMode column, and gated by this
-  // method's own A6/A7 409s (no draftJson, no such variant, or no FX rate on file are each a hard
+  // method's own A6/A7 409s (no submittedJson, no such variant, or no FX rate on file are each a hard
   // refusal here, where getComparison would simply emit a null usdTotal). Whether it COULD now be
   // rewritten on top of getComparison is an open question nobody has evaluated; it is not being
   // claimed either way.
@@ -1328,19 +1328,22 @@ export class AwardService {
         select: {
           id: true,
           freightForwarderId: true,
-          draftJson: true,
+          // S5.9.6 (register A6) — the SUBMITTED offer, not `draftJson` (the forwarder's
+          // scratchpad, which `FfPortalService.saveDraft` can overwrite at any writable status).
+          // The client letter is priced off this snapshot, so it must be the number they offered.
+          submittedJson: true,
           rfq: { select: { currency: true } },
         },
       });
 
       // Defensive (task-4 review MIN-1): the two lookups below are safe only by cross-request
-      // invariant (a submitted, APPROVED quote always carries a draftJson with the shortlisted
+      // invariant (a submitted, APPROVED quote always carries a submittedJson with the shortlisted
       // variant's column priced). If that invariant is ever violated, fail clean (409) instead
       // of an unhandled TypeError (500) on a financial endpoint.
-      if (!quote.draftJson) {
+      if (!quote.submittedJson) {
         throw new ConflictException("winning quote is not priceable");
       }
-      const draft = quote.draftJson as unknown as QuoteDraft;
+      const draft = quote.submittedJson as unknown as QuoteDraft;
       const totals = computeQuoteTotals(draft);
       const variantKey = decision.shortlistedVariant ?? AIR_VARIANT_KEY;
       const vt = totals.variants.find((t) => t.key === variantKey);

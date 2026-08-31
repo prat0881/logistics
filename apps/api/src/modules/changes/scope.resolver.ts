@@ -14,7 +14,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // scope-leg is "live" — the ONE definition of that now lives in `live-quotes.ts`
 // (`LIVE_QUOTE_WHERE`), shared with change-order.strategy.ts's own quote load so the two halves
 // of the fork cannot disagree about what a live commitment is. Read that file for which statuses
-// count, and for why EXPIRED counts only when it carries a `draftJson` (S5.9.5).
+// count, and for why EXPIRED counts only when it carries a `submittedJson` (S5.9.5, re-keyed off
+// the scratchpad column by S5.9.6).
 //
 // SB6 (Task 3) makes this real; previously (Stage 3, no downstream artifacts yet) this was
 // hardcoded false so every change stayed Free-path.

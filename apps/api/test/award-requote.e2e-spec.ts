@@ -19,7 +19,7 @@ import { QUERY_LOCKED_MESSAGE } from "../src/modules/award/query-lock.service";
 // CHANGED (S5.9.5 Task 4, design D3) — Executive-ONLY now (@Roles(Role.EXECUTIVE)), not
 // Executive+: a Manager/Administrator's route to a revised price is Reject-with-a-reason, and
 // negotiating with a forwarder is always the Executive's call. See the "D3 — role gate" test
-// below. Fires quote REQUEST_REQUOTE (QUOTED|APPROVED -> REQUOTED, retaining draftJson), resets
+// below. Fires quote REQUEST_REQUOTE (QUOTED|APPROVED -> REQUOTED, retaining both JSON columns), resets
 // the leg's LegAwardDecision to DRAFT (+ reopens the leg via REOPEN_AWARD if it was APPROVED),
 // reissues the FF's portal token, resets the RFQ deadline + re-arms the reminder/expiry
 // ScheduledEvents, and notifies the FF with the negotiation comment.
@@ -156,6 +156,7 @@ describe(`${PREFIX} (e2e)`, () => {
           ? {
               submittedAt: new Date(),
               draftJson: roadDraft(leg.id, origin.id, 83200, 3) as unknown as Prisma.InputJsonValue,
+              submittedJson: roadDraft(leg.id, origin.id, 83200, 3) as unknown as Prisma.InputJsonValue,
             }
           : {}),
       },
@@ -185,7 +186,7 @@ describe(`${PREFIX} (e2e)`, () => {
   }
 
   // A query with N legs, EACH already fully APPROVED (leg APPROVED, quote APPROVED with a
-  // draftJson, LegAwardDecision APPROVED+shortlisted) — the state generate-client-quote's A6
+  // submitted price, LegAwardDecision APPROVED+shortlisted) — the state generate-client-quote's A6
   // gate requires before it will freeze a real awardSnapshot. Mirrors
   // award-generate.e2e-spec.ts's seedQuery (not importable — scoped inside that file's own
   // describe block), trimmed to just what the snapshot-teardown regression needs.
@@ -235,6 +236,12 @@ describe(`${PREFIX} (e2e)`, () => {
           status: "APPROVED" as never,
           submittedAt: new Date(),
           draftJson: roadDraft(
+            leg.id,
+            origin.id,
+            spec.amount,
+            spec.transitDays,
+          ) as unknown as Prisma.InputJsonValue,
+          submittedJson: roadDraft(
             leg.id,
             origin.id,
             spec.amount,
@@ -380,11 +387,16 @@ describe(`${PREFIX} (e2e)`, () => {
       .expect(200);
     expect(ok.body.status).toBe("REQUOTED");
 
-    // quote: REQUOTED, draftJson RETAINED (the earlier price must stay visible)
+    // quote: REQUOTED, BOTH JSON columns retained (the REQUEST_REQUOTE edge has no effect).
+    // S5.9.6 (A6) re-aimed this: "the earlier price must stay visible" is a claim about
+    // `submittedJson`, which is what the compare grid prices — `draftJson` surviving only pre-fills
+    // the reopened portal. Both are asserted because both behaviours are wanted, but they are no
+    // longer the same guarantee.
     const okQuote = await prisma.quote.findUniqueOrThrow({ where: { id: draft.quote.id } });
     expect(okQuote.status).toBe("REQUOTED");
+    expect(okQuote.submittedJson).not.toBeNull();
+    expect((okQuote.submittedJson as unknown as QuoteDraft).chargedWeightKg).toBe(500);
     expect(okQuote.draftJson).not.toBeNull();
-    expect((okQuote.draftJson as unknown as QuoteDraft).chargedWeightKg).toBe(500);
 
     // decision: reset to a clean DRAFT slate
     const okDecision = await prisma.legAwardDecision.findUniqueOrThrow({
@@ -494,7 +506,8 @@ describe(`${PREFIX} (e2e)`, () => {
     // reaches), keeping its price so the forwarder is not asked to start from nothing.
     const quoteAfter = await prisma.quote.findUniqueOrThrow({ where: { id: wedged.quote.id } });
     expect(quoteAfter.status).toBe("REQUOTED");
-    expect(quoteAfter.draftJson).not.toBeNull();
+    expect(quoteAfter.submittedJson).not.toBeNull(); // the price they offered (S5.9.6, A6)
+    expect(quoteAfter.draftJson).not.toBeNull(); // ...and the scratchpad that pre-fills their portal
     // Row 2 — the leg leaves APPROVED via REOPEN_AWARD (`wasApproved`), then falls to its honest
     // target: its only quote is REQUOTED, so nothing comparable is left.
     expect((await prisma.leg.findUniqueOrThrow({ where: { id: wedged.leg.id } })).status).toBe(
@@ -628,8 +641,8 @@ describe(`${PREFIX} (e2e)`, () => {
   // query. Rfq is @@unique([queryId, freightForwarderId]), so that is ONE shared Rfq carrying TWO
   // quotes and a SINGLE onExpiry pass has to get both halves right — the same fixture shape, and
   // the same reason for it, as ff-portal-requote-submit.e2e-spec.ts's shared-Rfq sweep test.
-  it("S5.9.5 (D4) — the expiry sweep keeps a REQUOTED quote's submitted price, and still discards an RFQ_SENT draft", async () => {
-    // legA / ffPriced: QUOTED with a real draftJson, then negotiated through the real endpoint so
+  it("S5.9.5 (D4) — the expiry sweep keeps a REQUOTED quote's submitted price and its portal pre-fill, and still discards an RFQ_SENT draft", async () => {
+    // legA / ffPriced: QUOTED with a real submitted price, then negotiated through the real endpoint so
     // it is REQUOTED for exactly the reason D4 is about — we asked for a better price.
     const { query, leg: legA, ff, rfq, quote: pricedQuote } = await seedLeg(
       "sweep",
@@ -696,12 +709,19 @@ describe(`${PREFIX} (e2e)`, () => {
 
     const requoted = await prisma.quote.findUniqueOrThrow({ where: { id: pricedQuote.id } });
     expect(requoted.status).toBe("EXPIRED"); // the window really did close
-    expect(requoted.draftJson).not.toBeNull(); // ...but the price survived
-    expect((requoted.draftJson as unknown as QuoteDraft).chargedWeightKg).toBe(500);
+    // S5.9.6 (A6) re-aimed the surviving guarantee. This test used to assert that `draftJson`
+    // survived and CALLED that "the price survived". It is not: `submittedJson` is the price, and
+    // this sweep never writes that column for either status. The `draftJson` assertion is kept
+    // below on its own (narrower) merit — the retention it pins is portal PRE-FILL, so a forwarder
+    // asked again after their window closed opens onto their previous numbers, not a blank matrix.
+    expect(requoted.submittedJson).not.toBeNull(); // the price survived
+    expect((requoted.submittedJson as unknown as QuoteDraft).chargedWeightKg).toBe(500);
+    expect(requoted.draftJson).not.toBeNull(); // and the pre-fill survived too
 
     const neverSubmitted = await prisma.quote.findUniqueOrThrow({ where: { id: draftQuote.id } });
     expect(neverSubmitted.status).toBe("EXPIRED");
     expect(neverSubmitted.draftJson).toBeNull(); // still discarded
+    expect(neverSubmitted.submittedJson).toBeNull(); // and there was never a price to keep
   });
 
   // S5.9.5 (D4) — the other half of price-preservation: keeping the price would freeze the
@@ -721,7 +741,8 @@ describe(`${PREFIX} (e2e)`, () => {
 
     const after = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
     expect(after.status).toBe("REQUOTED");
-    expect(after.draftJson).not.toBeNull(); // re-negotiating does not discard it either
+    expect(after.submittedJson).not.toBeNull(); // re-negotiating does not discard the price either
+    expect(after.draftJson).not.toBeNull(); // ...nor the pre-fill
 
     // "reopens the forwarder's portal" concretely: a fresh submission window plus a re-armed
     // DEADLINE timer, so the RFQ is live again rather than a closed one they can still see.
@@ -902,6 +923,7 @@ describe(`${PREFIX} (e2e)`, () => {
         status: "QUOTED",
         submittedAt: new Date(),
         draftJson: roadDraft(leg.id, origin.id, 50000, 4) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, 50000, 4) as unknown as Prisma.InputJsonValue,
       },
     });
 

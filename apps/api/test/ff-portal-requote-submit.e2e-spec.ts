@@ -374,16 +374,18 @@ describe(`${PREFIX} (e2e)`, () => {
     expect(quoteA.status).toBe("RFQ_SENT");
     expect(quoteB.status).toBe("RFQ_SENT");
 
-    // Flip quoteB to REQUOTED with a retained draft (same direct-seed convention as the submit
-    // test above). On a REQUOTED quote this stands for the forwarder's LAST SAVED state — usually
-    // their earlier submitted price, but see rfq-schedule.listener.ts for why the sweep cannot
-    // prove that. S5.9.5 D4 preserves it either way, and the assertions below check it by
-    // identity, so an arbitrary placeholder object is all this test needs.
+    // Flip quoteB to REQUOTED carrying BOTH JSON columns (same direct-seed convention as the
+    // submit test above), with DIFFERENT values so the two assertions below cannot pass for each
+    // other's reason. S5.9.6 (A6) split them: `submittedJson` is the price they offered, and a
+    // REQUOTED quote's `draftJson` is only their last saved state — see rfq-schedule.listener.ts
+    // for why the sweep can never prove those are equal. The assertions check by identity, so
+    // arbitrary placeholder objects are all this test needs.
     await prisma.quote.update({
       where: { id: quoteB.id },
       data: {
         status: "REQUOTED",
         draftJson: { note: "revised bid in progress" },
+        submittedJson: { note: "the price they actually submitted" },
         submittedAt: new Date(),
       },
     });
@@ -411,6 +413,7 @@ describe(`${PREFIX} (e2e)`, () => {
     // Regression: the pre-existing RFQ_SENT sweep still works.
     expect(quoteAAfter.status).toBe("EXPIRED");
     expect(quoteAAfter.draftJson).toBeNull();
+    expect(quoteAAfter.submittedJson).toBeNull(); // never submitted, so there was never a price
 
     // THE FIX under test: REQUOTED is now swept too, in the same pass.
     expect(quoteBAfter.status).toBe("EXPIRED");
@@ -419,6 +422,14 @@ describe(`${PREFIX} (e2e)`, () => {
     // strictly worse than doing nothing. The sweep now discards the draft ONLY for RFQ_SENT
     // (quoteA above is the still-green control for that), and this file's shared-Rfq fixture is
     // what proves both branches are taken in ONE onExpiry pass.
+    //
+    // RE-AIMED (S5.9.6, register A6). The guarantee this line was written for — "the forwarder's
+    // submitted price survives the sweep" — is now carried by `submittedJson`, which the sweep
+    // never writes for EITHER status; that is the first assertion below and it is the one that
+    // preserves the original purpose. The `draftJson` assertion is NARROWED and kept: what it pins
+    // is portal PRE-FILL (resolveScope serves this column, so a re-negotiated forwarder opens onto
+    // their previous numbers rather than a blank matrix), not provenance.
+    expect(quoteBAfter.submittedJson).toEqual({ note: "the price they actually submitted" });
     expect(quoteBAfter.draftJson).toEqual({ note: "revised bid in progress" });
   });
 });

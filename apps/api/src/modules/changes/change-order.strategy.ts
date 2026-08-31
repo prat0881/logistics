@@ -70,7 +70,7 @@ export class ChangeOrderStrategy {
       // `LIVE_QUOTE_WHERE` (live-quotes.ts) is the SAME predicate scope.resolver.ts's
       // `downstreamWork` uses to arm this fork — one definition, imported by both, rather than
       // the two hand-copied status lists that used to sit here and there. Read that file for
-      // which statuses are live and for why EXPIRED is live only when it carries a `draftJson`.
+      // which statuses are live and for why EXPIRED is live only when it carries a `submittedJson`.
       where: { legId: { in: legIds }, ...LIVE_QUOTE_WHERE },
       select: { id: true, freightForwarderId: true, legId: true, status: true },
     });

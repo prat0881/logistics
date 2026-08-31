@@ -293,13 +293,16 @@ export class FfPortalService {
     // ── write guards (S5.9.5 D5) — `saveDraft` accepts EXACTLY what `submit` accepts, in the same
     // order. The brief for this task specified `submit` only; guarding this second call site too
     // is a deliberate widening, because this write is not confined to the leg it names: alongside
-    // `Quote.draftJson` it upserts `Rfq.currency` and `Rfq.quoteValidityUntil`, all three of which
-    // are read LIVE by code that runs AFTER a query is locked —
-    //   * `quotation.service.ts`'s `buildInitialDraft` prices the client quotation's cost lines and
-    //     `validUntil` off the WINNING quote's `draftJson`, and it runs lazily on the first
-    //     `GET queries/:id/quotation`, i.e. after `generateClientQuote` froze `awardSnapshot`; and
-    //   * `comparison.service.ts` reads `rfq.currency` / `rfq.quoteValidityUntil` live on every
-    //     read of the compare grid.
+    // `Quote.draftJson` it upserts `Rfq.currency` and `Rfq.quoteValidityUntil`, which are read
+    // LIVE by code that runs AFTER a query is locked — `comparison.service.ts` takes each offer's
+    // `currency` (and hence its USD conversion) from `rfq.currency` on every read of the compare
+    // grid, so this write can still re-denominate a price it did not itself produce.
+    //
+    // S5.9.6 NARROWED THIS, honestly: the bullet that used to head this list said
+    // `quotation.service.ts`'s `buildInitialDraft` prices the client quotation's cost lines and
+    // `validUntil` off the WINNING quote's `draftJson`. It no longer does — it reads
+    // `submittedJson`, which this method never writes. So the `draftJson` limb of the argument is
+    // gone; what survives is the `Rfq` limb above, and it is enough on its own to keep the guard.
     // The leg-closed guard alone does NOT cover that: `generateClientQuote` requires every leg to be
     // APPROVED with a shortlisted winner (award.service.ts's A6), so a locked query's every leg has
     // a winner — and `closedReasons` deliberately excludes the winner's own leg. Without the status

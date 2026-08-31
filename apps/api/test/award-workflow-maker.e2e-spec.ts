@@ -167,6 +167,12 @@ describe("award workflow — maker endpoints (e2e)", () => {
                   ff.draft.amount,
                   ff.draft.transitDays,
                 ) as unknown as Prisma.InputJsonValue,
+                submittedJson: roadDraft(
+                  leg.id,
+                  origin.id,
+                  ff.draft.amount,
+                  ff.draft.transitDays,
+                ) as unknown as Prisma.InputJsonValue,
               }
             : {}),
         },

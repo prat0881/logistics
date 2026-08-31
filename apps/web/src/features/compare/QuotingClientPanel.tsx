@@ -50,7 +50,8 @@ export interface QuotingClientPanelProps {
  * winner (which every leg's winner is by the time this panel can render — see
  * `award.service.ts#generateClientQuote`'s own doc comment) and a lookup scoped to the live
  * comparison missed EVERY time. D8 added `APPROVED` to that list, so an approved winner usually
- * does produce an offer now — but only usually: `buildLeg` skips any quote with no `draftJson`,
+ * does produce an offer now — but only usually: `buildLeg` skips any quote with no
+ * `submittedJson` (S5.9.6),
  * and the whole point of a frozen snapshot is that it must not depend on what the live read model
  * happens to still carry. `forwarderNames` is the source that does not depend on status at all,
  * which is why it stays the one used here.

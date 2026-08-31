@@ -622,22 +622,28 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     expect(msg).not.toBeNull();
   });
   // ── S5.9.5 final whole-branch review, CRITICAL 1 ────────────────────────────────────────────
-  it("a PRICED expired offer makes a cargo edit a change-order and is invalidated, while an UNPRICED expired one still free-paths", async () => {
+  it("a SUBMITTED-price expired offer makes a cargo edit a change-order and is invalidated, while an unpriced one — and one holding only an abandoned scratchpad (S5.9.6 A6) — still free-path", async () => {
     // WHY THIS EXISTS. `downstreamWork` (scope.resolver.ts) counted only RFQ_SENT/QUOTED/
     // PENDING_APPROVAL/APPROVED as live, with EXPIRED excluded as "gone stale". That was safe for
     // the whole life of that exclusion BECAUSE an expired quote never carried a price — the
-    // deadline sweep nulled `draftJson` on its way past. S5.9.5 D4 changed exactly that (the sweep
-    // now KEEPS the draft for a quote expiring out of REQUOTED) and D8 then made such an offer
+    // deadline sweep discarded the draft on its way past. S5.9.5 D4 changed exactly that (the sweep
+    // now discards only for a quote still at RFQ_SENT) and D8 then made such an offer
     // comparable, rankable, sendable and approvable. So a cargo edit on a leg whose only quote was
     // a priced EXPIRED offer took the FREE path: no invalidation, no change order, no reopen — and
     // the offer stayed on the grid, ★-ranked and selectable, to be approved and priced into the
-    // client letter straight off a `draftJson` written against superseded cargo.
+    // client letter straight off a price written against superseded cargo.
     //
-    // The two halves below are ONE test on purpose: the fix is a DISTINCTION, and each half is the
-    // other's control. Widening the live set to all of EXPIRED (dropping the `draftJson` term)
-    // reddens the second half — an ordinary never-answered expiry would start demanding a reason
-    // and raising change orders where the product has always free-pathed. Leaving EXPIRED out
-    // altogether reddens the first.
+    // The three halves below are ONE test on purpose: the fix is a DISTINCTION, and each half is
+    // the others' control. Widening the live set to all of EXPIRED (dropping the `submittedJson`
+    // term) reddens halves 2 and 3 — an ordinary never-answered expiry would start demanding a
+    // reason and raising change orders where the product has always free-pathed. Leaving EXPIRED
+    // out altogether reddens half 1.
+    //
+    // HALF 3 is S5.9.6 (register A6): before the column split, the live-quote predicate keyed on
+    // `draftJson`, so a forwarder who half-edited a reopened portal and went silent was treated as
+    // having a live commercial commitment. They never submitted that number and it appears nowhere
+    // on the compare screen, so the edit must free-path exactly as half 2 does. That half and half
+    // 1 differ in EXACTLY one column, `submittedJson`.
     const query = await prisma.query.create({
       data: { queryCode: CODE4, assignedUserId: execId4, incoterms: "FOB" },
     });
@@ -674,9 +680,11 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
 
     const priced = await mkLeg("EXPPRICED");
     const unpriced = await mkLeg("EXPEMPTY");
+    const scratch = await mkLeg("EXPSCRATCH");
 
     const ffPriced = await mkFf(`${FF_PREFIX}E-PRICED`);
     const ffUnpriced = await mkFf(`${FF_PREFIX}E-EMPTY`);
+    const ffScratch = await mkFf(`${FF_PREFIX}E-SCRATCH`);
 
     const rfqPriced = await prisma.rfq.create({
       data: {
@@ -690,7 +698,9 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     });
 
     // Scenario B of the design's "Where Expired appears" table: quoted → negotiated → silent →
-    // swept. `draftJson` survived the sweep, so this row is a real, acceptable, actionable price.
+    // swept. They submitted this price, so this row is a real, acceptable, actionable one. Both
+    // JSON columns are set, exactly as `submit` leaves them and as the sweep leaves a REQUOTED
+    // quote — `submittedJson` is the offer, `draftJson` the scratchpad kept for portal pre-fill.
     const quotePriced = await prisma.quote.create({
       data: {
         queryId: query.id,
@@ -698,9 +708,11 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
         freightForwarderId: ffPriced.id,
         rfqId: rfqPriced.id,
         status: QuoteStatus.EXPIRED,
+        submittedAt: new Date(),
         grandTotal: FF_A_GRAND_TOTAL,
         totalChargeableWeightT: 1.5,
         draftJson: { legId: priced.leg.id, chargedWeightKg: 500 } as unknown as Prisma.InputJsonValue,
+        submittedJson: { legId: priced.leg.id, chargedWeightKg: 500 } as unknown as Prisma.InputJsonValue,
         manifestSnapshot: oldSnapshot(priced.leg.id, priced.packageId) as unknown as Prisma.InputJsonValue,
       },
     });
@@ -717,6 +729,21 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       },
     });
     expect(quoteUnpriced.draftJson).toBeNull(); // the fixture really is the unpriced shape
+    expect(quoteUnpriced.submittedJson).toBeNull();
+
+    // S5.9.6 (A6): asked to re-quote, typed into the reopened portal, hit Save draft, went silent.
+    // A scratchpad, never an offer — and one column away from `quotePriced` above.
+    const quoteScratch = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: scratch.leg.id,
+        freightForwarderId: ffScratch.id,
+        status: QuoteStatus.EXPIRED,
+        draftJson: { legId: scratch.leg.id, chargedWeightKg: 500 } as unknown as Prisma.InputJsonValue,
+        manifestSnapshot: oldSnapshot(scratch.leg.id, scratch.packageId) as unknown as Prisma.InputJsonValue,
+      },
+    });
+    expect(quoteScratch.submittedJson).toBeNull(); // the fixture really is the scratchpad-only shape
 
     // ── HALF 1: the priced expired offer is a live commitment ────────────────────────────────
     const pricedRes = await mediator.apply(
@@ -798,5 +825,35 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
       where: { queryId: query.id, changeType: "change-order" },
     });
     expect(allChangeOrders).toHaveLength(1); // still only HALF 1's
+
+    // ── HALF 3 (S5.9.6, A6): a scratchpad is not a commitment ────────────────────────────────
+    // Same no-`reason` preview shape as HALF 2, for the same reason.
+    const scratchRes = await mediator.apply(
+      {
+        entity: "package",
+        id: scratch.packageId,
+        field: "grossWt",
+        queryId: query.id,
+        actorId,
+      },
+      async (tx) => {
+        await tx.package.update({
+          where: { id: scratch.packageId },
+          data: { grossWt: NEW_GROSS_WT },
+        });
+      },
+    );
+    expect(scratchRes.path).toBe("free");
+    expect(scratchRes.needsConfirmation).toBeUndefined();
+    expect(
+      Number((await prisma.package.findUnique({ where: { id: scratch.packageId } }))?.grossWt),
+    ).toBe(NEW_GROSS_WT);
+    expect((await prisma.quote.findUnique({ where: { id: quoteScratch.id } }))?.status).toBe(
+      QuoteStatus.EXPIRED,
+    );
+    expect((await prisma.leg.findUnique({ where: { id: scratch.leg.id } }))?.status).toBe("RFQ_SENT");
+    expect(
+      await prisma.changeLog.count({ where: { queryId: query.id, changeType: "change-order" } }),
+    ).toBe(1); // STILL only HALF 1's
   });
 });

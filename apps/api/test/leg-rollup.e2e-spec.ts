@@ -144,6 +144,7 @@ describe(`${PFX} leg rollup freeze (e2e)`, () => {
         status: QuoteStatus.QUOTED,
         submittedAt: new Date(),
         draftJson: roadDraft(leg.id) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id) as unknown as Prisma.InputJsonValue,
       },
     });
 

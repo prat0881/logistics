@@ -23,32 +23,44 @@ const UNCONDITIONALLY_LIVE: readonly QuoteStatus[] = [
  *
  * **EXPIRED is conditional, and the condition is the whole point (S5.9.5).** `EXPIRED` was
  * excluded outright for the whole life of the two lists, and that was SAFE only because an
- * expired quote never carried a price: the deadline sweep nulled `draftJson` on its way past
- * (`rfq-schedule.listener.ts`). S5.9.5 D4 changed exactly that — the sweep now KEEPS `draftJson`
- * for a quote expiring out of `REQUOTED`, and D8 then made such an offer comparable, rankable
+ * expired quote never carried a price: the deadline sweep discarded the draft on its way past
+ * (`rfq-schedule.listener.ts`). S5.9.5 D4 changed exactly that — the sweep now discards only for a
+ * quote still at `RFQ_SENT`, so a quote expiring out of `REQUOTED` (i.e. one that already
+ * submitted a price once) keeps it, and D8 then made such an offer comparable, rankable
  * (`buildRecommendation`), sendable (`SENDABLE_STATUSES`) and approvable (the
  * `EXPIRED --send_for_approval--> PENDING_APPROVAL` edge). A priced EXPIRED offer is therefore a
  * live commitment in every sense the other four are, and a field edit on its leg must invalidate
  * it — the same invariant this codebase already established for `APPROVED` (S5.3) and for
  * `PENDING_APPROVAL` (S5.9 §4.4). Left out, a cargo edit on a leg whose only quote is a priced
  * EXPIRED offer takes the Free path: no invalidation, no change order, no reopen, and the client
- * is then quoted straight off that superseded `draftJson`.
+ * is then quoted straight off that superseded price.
  *
- * An EXPIRED quote with NO `draftJson` — the ordinary "we asked, they never answered" case, which
- * is the overwhelming majority of expired rows — is NOT a commitment and must stay excluded.
+ * An EXPIRED quote with NO submitted price — the ordinary "we asked, they never answered" case,
+ * which is the overwhelming majority of expired rows — is NOT a commitment and must stay excluded.
  * Admitting it would start raising change orders (and demanding a reason) for edits that have
  * always been Free-path across the whole product, which is a behaviour regression, not a fix.
- * `draftJson` is the right discriminator rather than a new column because it is already the one
- * the read side uses: `ComparisonService.buildLeg` skips any quote without it, so "carries a
- * `draftJson`" is exactly "produces an offer on the compare screen".
  *
- * `Prisma.DbNull` (not `JsonNull`): `draftJson` is a NULLABLE Json column and the sweep clears it
- * to SQL NULL, so this asks for `draftJson IS NOT NULL`.
+ * **S5.9.6 (register A6) — the discriminator is `submittedJson`, and it had to move.** This arm
+ * was written against `draftJson` when that column meant both "the forwarder's scratchpad" and
+ * "the price they submitted". The stated justification was that it is the same column the read
+ * side gates on, so "carries a draft" ⇔ "produces an offer on the compare screen". S5.9.6 split
+ * the column, and `ComparisonService.buildLeg`'s gate — along with `generateClientQuote`'s winner
+ * pricing and the client letter's cost lines — moved to `submittedJson`. Keying this predicate on
+ * the scratchpad would therefore have broken the very equivalence it was justified by, in the
+ * direction that hurts: an EXPIRED quote holding only an abandoned half-edit (saved into a
+ * reopened portal, never submitted) shows NO offer anywhere on the screen, yet would have been
+ * treated as a live commercial commitment — raising a change order, demanding a reason, and firing
+ * INVALIDATE on a row nobody ever priced. It must free-path exactly as an unpriced expiry does.
+ * Both directions are pinned by `downstream-work.e2e-spec.ts` and `change-order-apply.e2e-spec.ts`.
+ *
+ * `Prisma.DbNull` (not `JsonNull`): `submittedJson` is a NULLABLE Json column that is only ever
+ * written by `FfPortalService.submit` and cleared to SQL NULL by `RfqService.distribute`, so this
+ * asks for `submittedJson IS NOT NULL`.
  */
 export const LIVE_QUOTE_WHERE: Prisma.QuoteWhereInput = {
   OR: [
     { status: { in: [...UNCONDITIONALLY_LIVE] } },
-    { status: QuoteStatus.EXPIRED, draftJson: { not: Prisma.DbNull } },
+    { status: QuoteStatus.EXPIRED, submittedJson: { not: Prisma.DbNull } },
   ],
 };
 

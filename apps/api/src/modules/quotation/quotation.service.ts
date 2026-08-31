@@ -752,7 +752,13 @@ export class QuotationService {
         where: { id: { in: forwarderIds } },
         select: { id: true, companyName: true },
       }),
-      this.prisma.quote.findMany({ where: { id: { in: quoteIds } }, select: { id: true, draftJson: true } }),
+      // S5.9.6 (register A6) — `submittedJson`, not `draftJson`: the client letter's cost lines
+      // and `validUntil` must come from the price the forwarder submitted, never from whatever
+      // they last had saved in their portal.
+      this.prisma.quote.findMany({
+        where: { id: { in: quoteIds } },
+        select: { id: true, submittedJson: true },
+      }),
     ]);
     const legCodeById = new Map(legs.map((l) => [l.id, l.legCode]));
     const forwarderNameById = new Map(forwarders.map((f) => [f.id, f.companyName]));
@@ -761,21 +767,21 @@ export class QuotationService {
     const stakedLegs: StoredQuotationLeg[] = snapshot.legs.map((leg) => {
       const quote = quoteById.get(leg.winningQuoteId);
       // Defensive, not expected in practice: an APPROVED winning quote always carries a
-      // draftJson (award.service.ts's generateClientQuote already proved it priceable before
+      // submittedJson (award.service.ts's generateClientQuote already proved it priceable before
       // ever freezing the snapshot). Fail clean (409) rather than an unhandled TypeError on a
       // financial endpoint if that invariant is ever violated.
-      if (!quote?.draftJson) {
+      if (!quote?.submittedJson) {
         throw new ConflictException(`winning quote for leg ${leg.legId} is not priceable`);
       }
-      const draftJson = quote.draftJson as unknown as QuoteDraft;
-      const groups = buildQuotationCostLines(draftJson, leg.variant, leg.currency, leg.unitsPerUsd);
+      const submitted = quote.submittedJson as unknown as QuoteDraft;
+      const groups = buildQuotationCostLines(submitted, leg.variant, leg.currency, leg.unitsPerUsd);
       return {
         legId: leg.legId,
         legCode: legCodeById.get(leg.legId) ?? leg.legId,
         forwarderName: forwarderNameById.get(leg.freightForwarderId) ?? leg.freightForwarderId,
         variantLabel: leg.variant ? rateVariantLabel(leg.variant) : null,
         groups,
-        validUntil: draftJson.quoteValidityUntil ?? null,
+        validUntil: submitted.quoteValidityUntil ?? null,
       };
     });
 

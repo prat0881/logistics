@@ -118,6 +118,65 @@ a client quotation's "valid until" means) is unchanged and still open.
 
 **Accepted consequence — the `EXPIRED` badge now does two jobs.** See D8.
 
+#### ⚠️ AMENDED BY S5.9.6 — D4's premise was FALSE, and the fix is a column split
+
+Closes register **A6**.
+
+**The false premise.** D4 above says, of a `REQUOTED` quote, that "`draftJson` holds the forwarder's
+already-submitted earlier price, the only thing keeping their offer on the compare screen". Neither
+half was true.
+
+*Not their submitted price.* `FfPortalService.saveDraft` writes `draftJson` verbatim with **no
+version hash and no guard beyond leg-closure and status**, and `WRITABLE_QUOTE_STATUSES` admits
+`REQUOTED` on purpose — a forwarder asked to revise has to be able to type. `quoteDraftSchema`
+accepts blanks deliberately, and the portal exposes *Save draft* as an ordinary button. So the
+sequence that broke it needs nothing exotic: the forwarder submits 5,000 → an executive asks for a
+better number → the forwarder opens the reopened portal, edits it down to 4,200 with a surcharge
+still blank, hits Save draft, and goes silent → the sweep keeps that row → and **4,200 appeared on
+the compare screen as a ranked, ★-recommendable, approvable offer that nobody had ever offered.**
+Approve it and the client letter is priced from it. Before S5.9.5 the same half-edit existed but was
+stale-badged, unranked and refused by the send guard; D4 is what made it actionable.
+
+*And not the only thing keeping the offer visible* — that was a claim about which column the read
+side happened to gate on, not about provenance, and S5.9.6 makes it plainly false.
+
+**What the product owner chose, and what was rejected.** The ruling was **the column split**
+(register A6 option (a)): `Quote.submittedJson`, written by `FfPortalService.submit` and by nothing
+else. Two alternatives were on the table and were **not** taken:
+
+- *"Retain only if untouched"* — key the sweep's retention on whether the draft moved since the
+  re-quote was requested (`Quote.updatedAt` against the `REQUEST_REQUOTE` audit event). It needs no
+  migration, which was its whole appeal, but it silently narrows D4: a forwarder who merely opened
+  the portal and saved without changing anything loses their price, and the rule is invisible to
+  everyone who did not read this paragraph. It also fixes only the sweep — the same conflation
+  reaches `generateClientQuote` and the client letter by other routes.
+- *A submission-history table* — one row per submitted bid, the compare screen reading the latest.
+  Strictly more information (it would have made the legacy gap below recoverable), but a new table,
+  a new write path and a new read model for a defect that one nullable column closes. Rejected as
+  disproportionate; it remains the right shape if per-submission history is ever wanted for its own
+  sake.
+
+**What each column means now** — this is the durable half of this amendment:
+
+| Column | Written by | Meaning | Read by |
+| --- | --- | --- | --- |
+| `Quote.draftJson` | `FfPortalService.saveDraft` (any writable status), and `submit` (seeded with what was just sent) | The forwarder's **scratchpad**. Their last saved state, and nothing more. May be half-typed, blank, or a revision they never sent. | The FF portal only — `resolveScope` serves it as the portal's `draft`, which is the pre-fill, preview and print view the forwarder sees. Cleared for an `RFQ_SENT` quote by the expiry sweep and by `RfqService.distribute`; cleared for a refreshing quote by the change-order re-freeze. |
+| `Quote.submittedJson` | `FfPortalService.submit` **alone** | The **offer**. What this forwarder actually put on the table, at the moment they put it there. | Everything that prices something a human acts on: `ComparisonService.buildLeg` (the grid — its existence gate *and* its numbers), `AwardService.generateClientQuote` (the winner frozen into `Query.awardSnapshot`), `QuotationService.buildInitialDraft` (the client letter's cost lines and `validUntil`), and `LIVE_QUOTE_WHERE`'s `EXPIRED` arm (whether an expired quote is a live commercial commitment). Cleared only by `RfqService.distribute`, when a quote re-enters distribution. |
+
+**D4's *behaviour* is unchanged.** The sweep still keeps a `REQUOTED` quote's `draftJson` and still
+discards an `RFQ_SENT` one's. Only the reason survives differently: retention is now about **portal
+pre-fill** — a re-negotiated forwarder opens onto their previous numbers rather than a blank matrix
+— and is no longer a provenance claim of any kind. Every bullet in D4 above that reads "`draftJson`"
+as a stand-in for "the submitted price" should be read as `submittedJson`; the self-limiting
+argument for `EXPIRED ∈ COMPARABLE_STATUSES` still holds, and holds more tightly, because the gate
+it rests on is now the submission itself.
+
+**What the fix cannot do.** For rows written *before* the migration there is no record of the
+submitted price other than `draftJson`, so the backfill copied the last saved state. For a legacy
+`REQUOTED` row whose draft had already been overwritten, that value is wrong and **the true
+submitted price is unrecoverable** — no column and no log holds it. Rows written after the migration
+are exact.
+
 ### D5 — No `Cancelled` status; the portal closes instead
 
 The original ask was to auto-cancel outstanding RFQs on approval and show the forwarder as

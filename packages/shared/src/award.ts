@@ -115,7 +115,7 @@ export interface ComparisonDto {
   //
   // S5.9.5 (D8) CORRECTION — this used to say `COMPARABLE_STATUSES` (comparison.service.ts)
   // excludes APPROVED, so `offers`/`pendingForwarders` could never name a winner on its own leg.
-  // APPROVED is now IN that list, so an approved winner carrying a `draftJson` does appear in its
+  // APPROVED is now IN that list, so an approved winner carrying a `submittedJson` does appear in its
   // leg's `offers`. This map is kept, and is still the right lookup, for the reason below rather
   // than that one: it is status-unfiltered BY CONSTRUCTION, so resolving a snapshot's
   // `freightForwarderId` never depends on which statuses those two lists happen to admit today.
@@ -150,7 +150,7 @@ export type ReopenComparisonInput = z.infer<typeof reopenComparisonSchema>;
 
 // ── Stage 5 (S5.4 Task 4) — the frozen award snapshot ───────────────────────────
 // Persisted verbatim onto `Query.awardSnapshot` (Json?) by AwardService.generateClientQuote:
-// one row per leg's winning (APPROVED) offer, priced directly from its own submitted `draftJson`
+// one row per leg's winning (APPROVED) offer, priced directly from its own `submittedJson`
 // — `generateClientQuote` loads each winning quote and runs `computeQuoteTotals(draft)` itself,
 // never reading back through `getComparison`. (S5.9.5 D8 CORRECTION: the reason once given here
 // for that — "COMPARABLE_STATUSES deliberately excludes APPROVED, so getComparison can't be

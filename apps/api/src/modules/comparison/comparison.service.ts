@@ -51,7 +51,11 @@ const QUOTE_SELECT = {
   legId: true,
   freightForwarderId: true,
   status: true,
-  draftJson: true,
+  // S5.9.6 (register A6) — the OFFER, written by `FfPortalService.submit` alone. NOT `draftJson`:
+  // that column is the forwarder's scratchpad, which `saveDraft` overwrites verbatim at any
+  // writable status, so a half-typed edit on a reopened (REQUOTED) portal used to arrive here as
+  // a ranked, approvable price nobody had offered.
+  submittedJson: true,
   submittedAt: true,
   rfq: { select: { currency: true, quoteValidityUntil: true } },
 } satisfies Prisma.QuoteSelect;
@@ -73,10 +77,11 @@ type AwardDecisionEventRow = AwardDecisionEvent;
 // APPROVED and EXPIRED are S5.9.5 (design D8/D4):
 //   APPROVED — the winning offer must not vanish from the grid the moment a checker approves it.
 //     This is the same defect this list already fixed once for PENDING_APPROVAL.
-//   EXPIRED  — after D4 the expiry sweep no longer discards a REQUOTED quote's `draftJson`, so an
-//     EXPIRED quote can now carry a real, submitted price. Admitting EXPIRED here is SELF-LIMITING:
-//     `buildLeg` below skips any quote with no `draftJson`, so an ordinary forwarder who never
-//     submitted still produces no offer. Only one holding a real price does.
+//   EXPIRED  — a quote expiring out of REQUOTED has already submitted a price once, so an EXPIRED
+//     quote can carry a real, submitted price. Admitting EXPIRED here is SELF-LIMITING:
+//     `buildLeg` below skips any quote with no `submittedJson`, so an ordinary forwarder who never
+//     submitted still produces no offer. Only one holding a real price does. (S5.9.6, register A6:
+//     that gate used to be `draftJson`, which also admitted a never-submitted scratchpad.)
 const COMPARABLE_STATUSES: readonly QuoteStatus[] = [
   QuoteStatus.QUOTED,
   QuoteStatus.REQUOTED,
@@ -298,9 +303,12 @@ export class ComparisonService {
 
     for (const q of legQuotes) {
       if (!COMPARABLE_STATUSES.includes(q.status)) continue;
-      const draftJson = q.draftJson;
-      if (!draftJson) continue;
-      const draft = draftJson as unknown as QuoteDraft;
+      // S5.9.6 (A6) — the gate AND the priced value are both `submittedJson`, which is written
+      // only by `FfPortalService.submit`. That is what makes "this quote produces an offer" mean
+      // "this forwarder submitted this price", rather than "this forwarder has something saved".
+      const submittedJson = q.submittedJson;
+      if (!submittedJson) continue;
+      const draft = submittedJson as unknown as QuoteDraft;
 
       const totals = computeQuoteTotals(draft);
       // The quote's OWN Rfq currency is the source of truth (upserted at FF-submit time) — not

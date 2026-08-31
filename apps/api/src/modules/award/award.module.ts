@@ -25,7 +25,7 @@ import { AwardChangeOrderListener } from "./award-change-order.listener";
 // and the public `shortlist` method are gone, and one transactional `send-for-approval` call
 // names the offer it acts on.
 // S5.4 Task 4: FxRatesModule added for FxRatesService (generateClientQuote prices each leg's
-// winner directly off its own draftJson + the FX table — getComparison can't be reused there,
+// winner directly off its own submittedJson + the FX table — getComparison can't be reused there,
 // see award.service.ts). QueryStatusProjector needs no new import — StatusModule already
 // exports it.
 // S5.5 Task 2: NegotiationService (request-requote, negotiation.service.ts) needs RfqService
@@ -109,7 +109,7 @@ export class AwardModule implements OnModuleInit {
       // (changes/live-quotes.ts) now admits it and this fire can reach an EXPIRED row.
       //
       // Only priced EXPIRED quotes ever get here: the filter that selects them requires a non-null
-      // `draftJson`, so an ordinary never-answered expiry keeps free-pathing exactly as it always
+      // `submittedJson` (S5.9.6), so an ordinary never-answered expiry keeps free-pathing as it always
       // has. This edge does not itself encode that distinction — an edge is a machine fact, not a
       // policy — it just has to exist for the ones that do arrive.
       { from: QuoteStatus.EXPIRED, on: QuoteEvent.INVALIDATE, to: QuoteStatus.INVALID, kind: "reopen" },

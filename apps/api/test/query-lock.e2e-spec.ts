@@ -481,6 +481,7 @@ describe("S5.9.5 (D6) — a locked query refuses every write except Reopen and t
             ? {
                 submittedAt: new Date(),
                 draftJson: roadDraft(leg.id, opts.originId) as unknown as Prisma.InputJsonValue,
+                submittedJson: roadDraft(leg.id, opts.originId) as unknown as Prisma.InputJsonValue,
               }
             : {}),
         },

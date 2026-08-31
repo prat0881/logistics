@@ -142,30 +142,27 @@ export class RfqScheduleListener {
       for (const q of openQuotes) {
         try {
           // S5.9.5 (D4, register A4) — discard the draft ONLY for a quote that was still RFQ_SENT.
-          // For RFQ_SENT it is unambiguously a never-submitted draft; for REQUOTED it is not, and
-          // nulling it destroyed a real, acceptable price as a direct consequence of asking for a
-          // better one — doing nothing would have kept it. `requestRequote` deliberately retains it
-          // (negotiation.service.ts fires the status change with no `effect` precisely so it
-          // survives), and it is the only thing keeping that offer on the compare screen.
           //
-          // WHAT IS AND IS NOT GUARANTEED (review round 1) — on a REQUOTED quote `draftJson` is the
-          // forwarder's LAST SAVED STATE, which equals their already-submitted earlier price ONLY
-          // if they have not touched the reopened portal since. Nothing enforces that:
-          // `FfPortalService.saveDraft` writes `draftJson` verbatim with NO status guard
-          // (`quoteForLeg` checks leg membership only, and `resolveByToken` scopes on
-          // `NOT status: SELECT`, so a REQUOTED quote is in scope), `quoteDraftSchema` accepts
-          // blanks on purpose, and the portal offers Save-draft as an explicit control pre-filled
-          // from the retained price (web LegSection.tsx). Contrast `submit`, which DOES gate on
-          // status and on a stale-page version hash — Save-draft has neither. So: negotiate → the
-          // FF edits the reopened portal → Save draft → goes silent → this sweep, and what we keep
-          // is a partially-typed, MODIFIED, never-submitted bid.
+          // WHAT THIS IS NOT (S5.9.6, register A6). The original reason given here was that the
+          // retained `draftJson` "is the only thing keeping that offer on the compare screen".
+          // That is now FALSE, and it was never a provenance claim to begin with: `draftJson` is
+          // the forwarder's SCRATCHPAD — `FfPortalService.saveDraft` overwrites it verbatim with
+          // no status guard and no version hash, and `quoteDraftSchema` accepts blanks on purpose,
+          // so on a REQUOTED quote it is merely their LAST SAVED STATE, which may be a
+          // half-typed, modified, never-submitted bid. S5.9.6 moved the offer to `submittedJson`
+          // (written by `submit` alone). The compare grid, the winner pricing and the client
+          // letter's cost lines all read THAT column now, so what keeps a re-quoted forwarder's
+          // offer on the compare screen through an expiry is `submittedJson`, which this sweep
+          // does not touch at all — for RFQ_SENT or for REQUOTED.
           //
-          // Retaining it anyway is a deliberate BIAS toward keeping a price over losing one, not a
-          // claim of provenance. Anything downstream that needs "this is what they actually
-          // submitted" must establish that itself. The real repair is to snapshot the submitted
-          // price at `requestRequote` time, or to key retention on whether the draft was touched
-          // since the request — both need a schema change and are registered for the human, not
-          // decided here.
+          // WHY THE RETENTION STILL EARNS ITS KEEP — PORTAL PRE-FILL, nothing more. `resolveScope`
+          // (ff-portal.service.ts) returns `draftJson` as the portal's `draft`, falling back to a
+          // blank `seedQuoteDraft` matrix when it is null. A forwarder who is re-negotiated after
+          // their window closed, then asked again, must open onto their previous numbers rather
+          // than retype everything from scratch. For RFQ_SENT there is nothing worth pre-filling
+          // (never submitted, and the blank seed is exactly the right starting point), so the
+          // discard there stays. `requestRequote` retains the draft for the same pre-fill reason
+          // (negotiation.service.ts fires the status change with no `effect`).
           //
           // The quote still EXPIRES either way: the window really did close and the forwarder's
           // silence must be visible rather than reading as still-pending forever (design D4).

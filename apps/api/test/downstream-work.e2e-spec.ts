@@ -13,11 +13,17 @@ const PFX = "p9-downstream-work-";
 // pre-RFQ SELECT quote, or an already-invalidated INVALID one, does NOT count.
 //
 // CORRECTED (S5.9.5 final whole-branch review, CRITICAL 1) — this used to say EXPIRED does not
-// count either, full stop. That is only true of an expired quote with NO `draftJson`. Since D4
-// the deadline sweep KEEPS the draft of a quote expiring out of REQUOTED, and such an offer is
-// comparable, rankable, sendable and approvable, so it IS live. Both directions are pinned
-// below, and the change-order cascade end of the same distinction is pinned by
+// count either, full stop. That is only true of an expired quote that carries no SUBMITTED price.
+// A quote expiring out of REQUOTED has already submitted one, and such an offer is comparable,
+// rankable, sendable and approvable, so it IS live. All three directions are pinned below, and
+// the change-order cascade end of the same distinction is pinned by
 // `change-order-apply.e2e-spec.ts`.
+//
+// UPDATED S5.9.6 (register A6) — the discriminator moved from `draftJson` to `submittedJson`,
+// which added a THIRD case that did not previously exist as a distinct shape: an EXPIRED quote
+// holding a `draftJson` but NO `submittedJson`, i.e. an abandoned half-edit saved into a reopened
+// portal by a forwarder who never submitted it. It shows no offer anywhere on the compare screen,
+// so it is not a commitment and must free-path. `legExpiredScratchOnlyId` pins it.
 //
 // Task 2 already guarantees the classifier only ever emits leg-typed scope for downstream-bearing
 // entities, but the resolver must not assume that — it filters for type === "leg" on its own.
@@ -31,6 +37,7 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
   let legQuotedId: string;
   let legStaleId: string;
   let legExpiredPricedId: string;
+  let legExpiredScratchOnlyId: string;
   const ffIds: string[] = [];
 
   async function mkFf(code: string) {
@@ -68,6 +75,9 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
     legQuotedId = (await prisma.leg.create({ data: { queryId, legCode: "L-QUOTED" } })).id;
     legStaleId = (await prisma.leg.create({ data: { queryId, legCode: "L-STALE" } })).id;
     legExpiredPricedId = (await prisma.leg.create({ data: { queryId, legCode: "L-EXP-PRICED" } })).id;
+    legExpiredScratchOnlyId = (
+      await prisma.leg.create({ data: { queryId, legCode: "L-EXP-SCRATCH" } })
+    ).id;
 
     // A quote requires a real FreightForwarder (hard FK, onDelete: Restrict) and the
     // (legId, freightForwarderId) pair is unique, so each quote below gets its own FF.
@@ -77,6 +87,7 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
     const ffExpired = await mkFf(`${PFX}ff-expired`);
     const ffInvalid = await mkFf(`${PFX}ff-invalid`);
     const ffExpiredPriced = await mkFf(`${PFX}ff-exp-priced`);
+    const ffExpiredScratch = await mkFf(`${PFX}ff-exp-scratch`);
 
     await prisma.quote.create({
       data: { queryId, legId: legSentId, freightForwarderId: ffSent.id, status: QuoteStatus.RFQ_SENT },
@@ -96,14 +107,31 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
       data: { queryId, legId: legStaleId, freightForwarderId: ffInvalid.id, status: QuoteStatus.INVALID },
     });
     // S5.9.5 D4's scenario B: quoted -> negotiated -> silent -> swept, with the submitted price
-    // KEPT. Same status as legStaleId's expired quote; the ONLY difference is the draft.
+    // KEPT. The real post-sweep shape, so BOTH columns are set exactly as `submit` left them:
+    // `submittedJson` is the offer, `draftJson` the scratchpad the sweep does not discard for a
+    // REQUOTED quote (it pre-fills the portal if the forwarder is asked again).
     await prisma.quote.create({
       data: {
         queryId,
         legId: legExpiredPricedId,
         freightForwarderId: ffExpiredPriced.id,
         status: QuoteStatus.EXPIRED,
+        submittedAt: new Date(),
         draftJson: { legId: legExpiredPricedId, chargedWeightKg: 500 },
+        submittedJson: { legId: legExpiredPricedId, chargedWeightKg: 500 },
+      },
+    });
+    // S5.9.6 (A6): the shape that made the split necessary — a forwarder who was asked to re-quote,
+    // typed into the reopened portal, hit Save draft, and went silent. Differs from the fixture
+    // above in EXACTLY one column (`submittedJson`), so the two assertions cannot pass for each
+    // other's reason. They never offered this number, so it is not a commercial commitment.
+    await prisma.quote.create({
+      data: {
+        queryId,
+        legId: legExpiredScratchOnlyId,
+        freightForwarderId: ffExpiredScratch.id,
+        status: QuoteStatus.EXPIRED,
+        draftJson: { legId: legExpiredScratchOnlyId, chargedWeightKg: 500 },
       },
     });
   });
@@ -127,14 +155,20 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
     await expect(resolver.downstreamWork([{ type: "leg", id: legStaleId }])).resolves.toBe(false);
   });
 
-  // S5.9.5 CRITICAL 1 — the two halves of the EXPIRED distinction, side by side. The fixtures
-  // differ in exactly one column (`draftJson`), so neither assertion can pass for the other's
-  // reason, and dropping the `draftJson` term from LIVE_QUOTE_WHERE reddens the one above while
-  // dropping the EXPIRED arm altogether reddens the one below.
+  // S5.9.5 CRITICAL 1 / S5.9.6 A6 — the halves of the EXPIRED distinction, side by side. The two
+  // fixtures differ in exactly one column (`submittedJson`), so neither assertion can pass for the
+  // other's reason: dropping the EXPIRED arm from LIVE_QUOTE_WHERE reddens the first, and
+  // re-keying that arm on `draftJson` (as it was before S5.9.6) reddens the second.
   it("is TRUE when the scope leg's only quote is an EXPIRED one that still carries a submitted price", async () => {
     await expect(resolver.downstreamWork([{ type: "leg", id: legExpiredPricedId }])).resolves.toBe(
       true,
     );
+  });
+
+  it("S5.9.6 (A6) — is FALSE when the EXPIRED quote carries only an abandoned scratchpad and no submitted price", async () => {
+    await expect(
+      resolver.downstreamWork([{ type: "leg", id: legExpiredScratchOnlyId }]),
+    ).resolves.toBe(false);
   });
 
   it("is false for a non-leg scope, even carrying the id of a live-quoted leg", async () => {

@@ -152,7 +152,10 @@ export class NegotiationService {
     const wasApproved = quote.leg.status === LegStatus.APPROVED;
 
     // 1) Quote: QUOTED|APPROVED|EXPIRED -> REQUOTED. The edge has no `effect` (award.module.ts), so
-    // draftJson is untouched — the earlier price stays visible, exactly as design §10.1 wants.
+    // neither JSON column is touched. `submittedJson` surviving is what keeps the earlier price
+    // visible on the compare screen, exactly as design §10.1 wants (S5.9.6, register A6 — that
+    // used to be attributed to `draftJson`); `draftJson` surviving is what pre-fills the reopened
+    // portal with their previous numbers instead of a blank matrix.
     // S5.9.5 (D4): that also holds for the EXPIRED source, so re-negotiating a price the expiry
     // sweep preserved does not discard it either.
     await this.status.fire("quote", quoteId, QuoteEvent.REQUEST_REQUOTE, {

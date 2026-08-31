@@ -13,13 +13,13 @@ _Last updated: 2026-08-27 (S5.6 through S5.9.4 complete, plus **S5.9.5 — built
 
 ## ▶ Start here (fresh session)
 
-**State:** everything through **S5.9.5** is built and reviewed; PR #52 is OPEN and *you* merge it manually. `pnpm run ci` is green at the tip. Nothing is half-finished — there is no in-flight task to resume. S5.9.5's commits are on the branch but **not yet pushed**.
+**State:** everything through **S5.9.6** is built and reviewed; PR #52 is OPEN and *you* merge it manually. `pnpm run ci` is green at the tip. Nothing is half-finished — there is no in-flight task to resume. S5.9.5's and S5.9.6's commits are on the branch but **not yet pushed**.
 
-**S5.9.5 landed while you slept** — 10 tasks, subagent-driven, per-task review with 8 fix rounds, then the opus whole-branch review and one fix wave. `pnpm run ci` is green. **It is NOT ready to merge: one product ruling is outstanding — register A6 below. Read that first.**
+**S5.9.5 landed while you slept** — 10 tasks, subagent-driven, per-task review with 8 fix rounds, then the opus whole-branch review and one fix wave. `pnpm run ci` is green. **A6 — the ruling that blocked it — is now CLOSED by S5.9.6 (see that section, and the register row).**
 
 The whole-branch review kept its perfect record: it found a Critical that all ten task reviews had passed, and this one was a hole *this sub-build opened* rather than an inherited one (a priced-EXPIRED offer free-pathed a cargo edit, so the client letter could be priced against superseded cargo). Fixed and adversarially re-verified.
 
-**After A6 is answered, the next open item is still C8** — unchanged and untouched by this sub-build.
+**A6 is answered (S5.9.6). The next open item is C8** — unchanged and untouched by these sub-builds.
 
 **C8** — `GET /api/queries/:id/emails` returns the rendered invitation email — including the working portal link — with no `@Roles`, for any query. That link is an unauthenticated bearer credential for the `@Public` forwarder portal, so any authenticated Executive can read another forwarder's frozen manifest and **submit a quote as them**. It predates this branch and the product owner ruled it stays its own item; the fix is small.
 
@@ -84,9 +84,9 @@ Everything still open across S5.4–S5.9.3, in one place so nothing is lost betw
 | **A1** | **What is a quotation "valid until"?** Currently the **earliest `validUntil` across the winning quotes** — never promising the client longer than the forwarders promised us. | No such field exists on the query or the award. The final review ruled the current rule correct, but it is the one commercial assumption made on your behalf. | S5.8 Q2 |
 | **A2** | **How should charges be grouped for the client-facing breakdown?** | S5.7's charge dialog shows three rolled-up subtotals because the itemised lines never leave the server. Exposing them is easy; **which grouping** is a business call. Blocks B5. | S5.7 C2 |
 | **A3** | ✅ **CLOSED BY S5.9.5 (D2).** It is actionable, and the answer was neither of the two this row offered. Reopen still leaves every status alone; **Reject** is what walks a leg back — it gained a second mode that reverses an APPROVED decision (quote → `QUOTED` via the previously-never-fired `UNAPPROVE`, leg → its honest rollup, decision → `DRAFT`), with four-eyes deliberately NOT applying so the Manager who approved may reverse it. Reject on an approved leg is available whenever the query is not locked, so a leg approved by mistake before any client quotation exists is no longer stuck. | | S5.6 |
-| **A4** | ✅ **CLOSED BY S5.9.5 (D4) — yes, it survives.** The expiry sweep no longer discards `draftJson` for a `REQUOTED` quote (it still does for `RFQ_SENT`, which really is an unfinished draft). The quote still EXPIRES, so the forwarder's silence stays visible instead of reading as pending forever, and `EXPIRED` joined `COMPARABLE_STATUSES`, the engine's ranking, `REQUOTABLE_STATUSES` and `SENDABLE_STATUSES`. **But see A6** — what survives is the forwarder's LAST SAVED state, not provably their submitted price. | | S5.5 |
+| **A4** | ✅ **CLOSED BY S5.9.5 (D4) — yes, it survives.** The expiry sweep no longer discards `draftJson` for a `REQUOTED` quote (it still does for `RFQ_SENT`, which really is an unfinished draft). The quote still EXPIRES, so the forwarder's silence stays visible instead of reading as pending forever, and `EXPIRED` joined `COMPARABLE_STATUSES`, the engine's ranking, `REQUOTABLE_STATUSES` and `SENDABLE_STATUSES`. **A6 (closed by S5.9.6) corrected what "the price" means here:** what the sweep preserves is `submittedJson`, the price they actually submitted — the `draftJson` it also retains is only the forwarder's last saved state, kept for portal pre-fill. | | S5.5 |
 | **A5** | **Should query status surface approval progress?** Shortlist → send → approve → every leg approved all happen **inside `QUOTED`** without the status changing once. | A query at `QUOTED` may have nothing shortlisted or be one click from a client quote. Cheapest fix isn't a new status — it's a "2 of 3 legs approved" indicator, and the data is already in the read model. **Still open by choice after S5.9**: the whole approval flow (`PENDING_APPROVAL` leg/quote statuses, the maker/checker screens) was built and rebuilt this sub-build without touching query-level status — a query reads plain "Quoted" throughout send/approve/reject exactly as before. | Status review |
-| **A6** | **🔴 BLOCKS THE S5.9.5 MERGE. Design D4 rests on a premise that is false, and I stopped rather than choose for you.** D4 says an unanswered re-quote keeps the forwarder's price — and the code now keeps whatever is in `Quote.draftJson`. But that column is **not** provably their submitted price: `FfPortalService.saveDraft` writes it with no status guard, `quoteDraftSchema` deliberately accepts blanks, and the portal exposes "Save draft" as an unvalidated button. So: you negotiate → the forwarder opens the reopened portal, edits, saves a draft, goes silent → the sweep now KEEPS that partially-typed, modified, never-submitted number, and S5.9.5 makes it comparable, **rankable** (it can take the ★) and **approvable**, priced straight into the client letter. Before this sub-build the same partial draft existed but was stale-badged, unranked, and refused by the send guard. **Two options, neither needing a migration:** (a) snapshot the submitted price at `requestRequote` time into a column the portal cannot overwrite — correct, but it is a schema change; (b) retain the draft only when it is provably untouched since the re-quote was requested — `Quote.updatedAt` plus the `REQUEST_REQUOTE` audit event (or its `StatusTransition` row) already answer that, so it needs no migration, but it silently narrows D4 in cases where the forwarder merely looked. Task 7 DID close the narrower halves: the winner's own post-freeze rewrite, and any `PENDING_APPROVAL` write. The D4 premise itself is open. | S5.9.5 whole-branch review, Critical 2 |
+| **A6** | ✅ **CLOSED BY S5.9.6 — the column split.** The premise D4 rested on was false: `Quote.draftJson` was the forwarder's SCRATCHPAD (`FfPortalService.saveDraft` writes it verbatim, no version hash, and `WRITABLE_QUOTE_STATUSES` admits `REQUOTED` on purpose), so a half-edited 4,200 saved into a reopened portal and abandoned arrived on the compare screen as a ranked, ★-recommendable, approvable offer nobody had offered — and would have priced the client letter. **The ruling was option (a).** New nullable column `Quote.submittedJson`, written by `FfPortalService.submit` **alone** and cleared only by `RfqService.distribute`; `draftJson` keeps its scratchpad job and its one reader, the FF portal's own pre-fill/preview/print (`resolveScope`). Every reader that prices something a human acts on moved to `submittedJson`: `ComparisonService.buildLeg` (the grid — the existence gate *and* the numbers), `AwardService.generateClientQuote` (the frozen `awardSnapshot` winner), `QuotationService.buildInitialDraft` (the client letter's cost lines and `validUntil`), and `LIVE_QUOTE_WHERE`'s `EXPIRED` arm (an expired quote holding only an abandoned scratchpad is NOT a live commercial commitment and keeps free-pathing a cargo edit). Option (b), "retain only if untouched", was rejected: no migration, but it silently narrows D4 for a forwarder who merely looked, and it fixes only the sweep. A submission-history table was rejected as disproportionate. **D4's behaviour is unchanged** — the sweep still keeps a `REQUOTED` quote's `draftJson`, now for portal pre-fill rather than as any claim of provenance. ⚠️ **The one thing the fix cannot do:** for legacy `REQUOTED` rows whose draft had already been overwritten before the migration, the true submitted value is **unrecoverable** — no column and no log holds it, and the backfill copied the last saved state. Only rows written after the migration are exact. Detail: the S5.9.6 amendment under D4 in the design doc. | S5.9.5 whole-branch review, Critical 2 |
 
 ### B · Backend follow-ups — bundle these into ONE API task
 All are API-shape changes on the same feature. **B1, B2 and B3 were closed by S5.9** (see section D below for how); what's left needs its own trip.
@@ -460,7 +460,7 @@ Closes **C10** and **C11**; the full reasoning, the pinning tests and the mutati
 
 ---
 
-## S5.9.5 (Approval Freeze & Compare Screen Round 4) — ✅ BUILT, ci green, **one product ruling outstanding (A6)**
+## S5.9.5 (Approval Freeze & Compare Screen Round 4) — ✅ BUILT, ci green (**A6, its outstanding ruling, was closed afterwards by S5.9.6 — see below**)
 
 Design of record: `docs/Stage 5 - Approval Freeze & Compare Screen Round 4 - Design.md` (D1–D8).
 Plan: `docs/plans/stage-5/Stage 5 - S5.9.5 - … - Implementation Plan.md`. Commits `c0c299a..df9b28c`.
@@ -476,7 +476,7 @@ Plan: `docs/plans/stage-5/Stage 5 - S5.9.5 - … - Implementation Plan.md`. Comm
 | No action on an approved leg | D1 — every control visible-and-disabled with a reason, except Reject. **This superseded your earlier "Negotiate should be allowed" ruling from the same session**; recorded as a deliberate reversal in the design so nobody restores it as a bug fix. |
 | Reopen, then reject, to undo an approval | D2 — Reject gained a reversal mode; reopen is Manager/Admin only and now takes a required reason. |
 | Negotiation is Executive-only | D3 — the UI had enforced it since S5.9.1; the **server never had**. Now `@Roles(EXECUTIVE)`. |
-| An unanswered re-quote must not destroy the price | D4 — closed. **But see A6.** |
+| An unanswered re-quote must not destroy the price | D4 — closed. **Amended by S5.9.6:** D4's premise was false and A6 is now closed by the `submittedJson` column split; the behaviour is unchanged. |
 | Auto-cancel other FFs on approval | D5 — no `Cancelled` status; the portal closes the leg instead. `PENDING_APPROVAL` deliberately does NOT close it. |
 | Nothing but reopen once a client quotation exists | D6 — a shared `QueryLockService` gates every query-scoped write. **Two exceptions:** reopen, and everything under `queries/:id/quotation` — the locked state exists so the quotation can be composed and issued, so gating those would forbid the only work it allows. |
 
@@ -501,3 +501,71 @@ Of ~30 findings across 10 task reviews, 8 fix rounds, the whole-branch review an
 
 ### Register movement
 **A3 and A4 closed.** **A6 added — the merge blocker.** **C12 corrected** (it had claimed a recoverable wedge was terminal). C4 amended in spirit: `EXPIRED` is now comparable, rankable, sendable and invalidatable; `AWAITING_CLIENT_DECISION` now gates writes. **C8 untouched and still open.**
+
+---
+
+## S5.9.6 (Submitted Price Provenance) — ✅ BUILT, ci green, **closes register A6**
+
+Design of record: the **S5.9.6 amendment under D4** in `docs/Stage 5 - Approval Freeze & Compare Screen Round 4 - Design.md`
+(no separate design doc — this sub-build exists only to close A6 against that decision).
+Plan: `.superpowers/sdd/Stage 5 - S5.9.6 - Submitted Price Provenance - Implementation Plan/`. Two tasks.
+
+### The defect, in one sentence
+`Quote.draftJson` meant two things at once — the forwarder's scratchpad while they type, and the price
+they submitted — so a half-edited "Save draft" on a reopened (`REQUOTED`) portal became a ranked,
+approvable offer nobody had ever offered, and priced the client letter.
+
+### What shipped
+- **Task 1 — the column and its writers.** `Quote.submittedJson Json?` plus a hand-written migration
+  (`prisma/migrations/20260831000000_quote_submitted_json/`) backfilling from `draftJson` where
+  `submittedAt IS NOT NULL` and the status is not `RFQ_SENT`. `FfPortalService.submit` writes both
+  columns from one value; `RfqService.distribute` clears both.
+- **Task 2 — the readers.** Everything that prices something a human acts on now reads
+  `submittedJson`: `ComparisonService.buildLeg` (the grid's existence gate *and* its numbers),
+  `AwardService.generateClientQuote` (the winner frozen into `awardSnapshot`),
+  `QuotationService.buildInitialDraft` (the client letter's cost lines and `validUntil`), and — a
+  fourth reader the plan had not listed — `LIVE_QUOTE_WHERE`'s `EXPIRED` arm in
+  `changes/live-quotes.ts`.
+
+### The reader that deliberately did NOT move
+`FfPortalService.resolveScope` still serves `draftJson` as the portal's `draft` (via
+`RfqTokenService`), falling back to a blank `seedQuoteDraft` matrix when it is null. That is the
+forwarder's own scratchpad and their re-quote pre-fill, and it stays on `draftJson` permanently.
+
+### `LIVE_QUOTE_WHERE` — why the fourth reader had to move too
+That predicate decides Free-path vs change-order (`ScopeResolver.downstreamWork`) and what the
+cascade invalidates (`ChangeOrderStrategy`). S5.9.5 gave it an `EXPIRED` arm gated on `draftJson`,
+justified explicitly by the equivalence "carries a draft ⇔ produces an offer on the compare screen".
+The split broke that equivalence, so leaving the arm on `draftJson` would have made an EXPIRED quote
+holding only an abandoned half-edit a *live commercial commitment* — raising a change order,
+demanding a reason and firing `INVALIDATE` on a row that shows no offer anywhere. It now keys on
+`submittedJson`. Both directions are pinned in `downstream-work.e2e-spec.ts` and
+`change-order-apply.e2e-spec.ts`, whose fixtures differ in exactly that one column.
+
+### The sweep's comment, rewritten (not its behaviour)
+`rfq-schedule.listener.ts` still keeps a `REQUOTED` quote's `draftJson` and still discards an
+`RFQ_SENT` one's. Its stated reason — "it is the only thing keeping that offer on the compare
+screen" — became false the moment `buildLeg` moved. The surviving reason is **portal pre-fill**: a
+re-negotiated forwarder opens onto their previous numbers rather than a blank matrix. The comment now
+says that, and says plainly that it is no longer a provenance claim.
+
+### ⚠️ What the fix cannot do — legacy rows
+For rows written before the migration there is no record of the submitted price other than
+`draftJson`, so the backfill copied the **last saved state**. For a legacy `REQUOTED` row whose draft
+had already been overwritten by a half-edit, that value is wrong and the true submitted price is
+**unrecoverable** — no column and no log holds it. Only rows written after the migration are exact.
+Keeping a possibly-wrong price rather than blanking every legacy `REQUOTED` offer was a deliberate
+bias, recorded in the migration's own SQL comments.
+
+### Residual, NOT closed — registered here rather than fixed
+`FfPortalService.saveDraft` still upserts `Rfq.currency` and `Rfq.quoteValidityUntil`, and
+`ComparisonService.buildLeg` takes each offer's `currency` (and hence its USD conversion) from
+`rfq.currency`, not from the submitted draft. So a `REQUOTED` forwarder saving a draft in a different
+currency can still **re-denominate** a preserved offer they did not otherwise touch. The D5 write
+guards on `saveDraft` are what stand between that and a locked query; the column split does not
+address it. Out of scope for S5.9.6 — changing it changes behaviour.
+
+### Register movement
+**A6 CLOSED.** A4's wording corrected (what survives the sweep is `submittedJson`; the retained
+`draftJson` is pre-fill). D4 amended in the design doc rather than rewritten — its behaviour is
+unchanged, its premise and its column names are not. **C8 untouched and still open.**

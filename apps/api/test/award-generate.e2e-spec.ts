@@ -19,8 +19,8 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 // clears the snapshot and rolls back to QUOTED. Both are QUERY-scoped (no :legId — unlike
 // shortlist/send-for-approval/approve/reject).
 //
-// Setup seeds the POST-APPROVAL state DIRECTLY (leg APPROVED, quote APPROVED with a submitted
-// draftJson, LegAwardDecision APPROVED) rather than driving shortlist->send->approve through the
+// Setup seeds the POST-APPROVAL state DIRECTLY (leg APPROVED, quote APPROVED with a
+// submittedJson, LegAwardDecision APPROVED) rather than driving shortlist->send->approve through the
 // real endpoints — that round trip is already covered end-to-end by
 // award-workflow-{maker,checker}.e2e-spec.ts; this file is only about what happens once every
 // leg is already approved.
@@ -174,6 +174,12 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
             spec.amount,
             spec.transitDays,
           ) as unknown as Prisma.InputJsonValue,
+          submittedJson: roadDraft(
+            leg.id,
+            origin.id,
+            spec.amount,
+            spec.transitDays,
+          ) as unknown as Prisma.InputJsonValue,
         },
       });
 
@@ -255,6 +261,7 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
           status: "APPROVED" as never,
           submittedAt: new Date(),
           draftJson: roadDraft(leg.id, spec.originId, 8320, 5) as unknown as Prisma.InputJsonValue,
+          submittedJson: roadDraft(leg.id, spec.originId, 8320, 5) as unknown as Prisma.InputJsonValue,
         },
       });
       await prisma.legAwardDecision.create({
@@ -431,6 +438,45 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
     const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
     expect(updated.awardSnapshot).toBeNull();
     expect(updated.status).not.toBe("QUOTING_CLIENT");
+  });
+
+  // ── S5.9.6 (register A6) — the frozen snapshot prices the SUBMITTED offer ────────────────────
+  it("S5.9.6 (A6) — the winner is priced off submittedJson, so a half-edited draft saved after they quoted cannot reach the client letter", async () => {
+    // THE ROUTE THAT PRODUCES THIS ROW, end to end and all of it real: the forwarder submits
+    // 83,200 (submit writes both JSON columns from one value); an executive asks for a better
+    // number (REQUOTED); the forwarder half-edits the reopened portal down to 41,600 and hits Save
+    // draft — `saveDraft` admits REQUOTED and writes `draftJson` verbatim, so now the two columns
+    // disagree; they then go silent, the deadline sweep expires the quote KEEPING both columns
+    // (D4), and the executive sends that preserved offer for approval (EXPIRED is in
+    // SENDABLE_STATUSES, D4/D8) and it is approved. Every step exists in the product today.
+    //
+    // Before the split, `generateClientQuote` read `draftJson`, so the snapshot the client letter
+    // is priced from would have frozen 41,600 — a number the forwarder never offered.
+    const { query, legs } = await seedQuery("a6submitted", [
+      { decision: "APPROVED", currency: "INR", amount: 83200, transitDays: 3 },
+    ]);
+    const origin = await prisma.point.findFirstOrThrow({
+      where: { queryId: query.id, type: "PICKUP" },
+    });
+    await prisma.quote.update({
+      where: { id: legs[0].quoteId },
+      data: {
+        draftJson: roadDraft(legs[0].id, origin.id, 41600, 3) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(200);
+
+    const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    const snapshot = updated.awardSnapshot as unknown as Snapshot;
+    expect(snapshot.legs).toHaveLength(1);
+    expect(snapshot.legs[0].nativeTotal).toBe(83200); // NOT 41600
+    expect(snapshot.legs[0].usdTotal).toBe(1000); // 83200 / 83.2
+    expect(snapshot.combinedUsd).toBe(1000);
   });
 
   it("task-4 review IMP-2 — combinedUsd is re-rounded to cents after summing (3 winners whose individually-rounded usdTotals sum to a float artifact)", async () => {

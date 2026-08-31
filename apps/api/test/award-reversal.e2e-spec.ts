@@ -168,6 +168,12 @@ describe("change-order reversal of awards (e2e, design §10.2)", () => {
           amountUsd,
           transitDays,
         ) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(
+          leg.id,
+          origin.id,
+          amountUsd,
+          transitDays,
+        ) as unknown as Prisma.InputJsonValue,
       },
     });
     await prisma.legAwardDecision.create({

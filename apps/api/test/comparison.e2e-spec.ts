@@ -21,6 +21,7 @@ type OfferBody = {
   freightForwarderId: string;
   variant: string | null;
   usdTotal: number | null;
+  nativeTotal: number;
   quoteStatus: string;
   priced: boolean; // S5.9.5 — D4/D8 assert on it directly (an EXPIRED offer must still read priced)
 };
@@ -199,6 +200,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         submittedAt: t0,
         // FF-A: INR 123,000, 3-day transit.
         draftJson: roadDraft(leg.id, origin.id, "INR", 123000, 3) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 123000, 3) as unknown as Prisma.InputJsonValue,
       },
     });
     await prisma.quote.create({
@@ -211,6 +213,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         submittedAt: new Date(t0.getTime() + 1000),
         // FF-B: EUR 1,100, ALSO 3-day transit — ties on transit, wins on cheaper USD.
         draftJson: roadDraft(leg.id, origin.id, "EUR", 1100, 3) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "EUR", 1100, 3) as unknown as Prisma.InputJsonValue,
       },
     });
     await prisma.quote.create({
@@ -232,6 +235,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         submittedAt: t0,
         // Quoted in GBP, which has no FxRate row on file.
         draftJson: roadDraft(leg.id, origin.id, "GBP", 5000, 4) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "GBP", 5000, 4) as unknown as Prisma.InputJsonValue,
       },
     });
     await prisma.quote.create({
@@ -248,6 +252,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         // stays FF-B below therefore proves the exclusion is real (status-based), not a coincidence
         // of these numbers happening to lose anyway.
         draftJson: roadDraft(leg.id, origin.id, "INR", 8320, 1) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 8320, 1) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -348,6 +353,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         status: "QUOTED",
         submittedAt: new Date(),
         draftJson: roadDraft(legWithDecision.id, origin.id, "INR", 50000, 5) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(legWithDecision.id, origin.id, "INR", 50000, 5) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -531,6 +537,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         status: "APPROVED",
         submittedAt: new Date(),
         draftJson: roadDraft(leg.id, origin.id, "INR", 45000, 3) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 45000, 3) as unknown as Prisma.InputJsonValue,
       },
     });
 
@@ -772,6 +779,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         submittedAt: new Date(),
         // 2-day transit — HIGH priority ranks speed first, so this is the recommended offer.
         draftJson: roadDraft(leg.id, origin.id, "INR", 83200, 2) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 83200, 2) as unknown as Prisma.InputJsonValue,
       },
     });
     await prisma.quote.create({
@@ -783,6 +791,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         status: "QUOTED",
         submittedAt: new Date(),
         draftJson: roadDraft(leg.id, origin.id, "INR", 90000, 5) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 90000, 5) as unknown as Prisma.InputJsonValue,
       },
     });
     // Sent, never submitted — no draftJson, so it produces no offer and stays "awaiting". A3 is
@@ -867,17 +876,17 @@ describe("GET /queries/:id/comparison (e2e)", () => {
   });
 
   // D4's two EXPIRED scenarios, side by side on one leg. Both halves are in ONE test on purpose:
-  // they are the positive and negative control for the same `draftJson` condition, so no bug that
-  // collapses them (e.g. dropping the `if (!draftJson) continue` skip in `buildLeg`) can satisfy
-  // both.
+  // they are the positive and negative control for the same `submittedJson` condition, so no bug
+  // that collapses them (e.g. dropping the `if (!submittedJson) continue` skip in `buildLeg`) can
+  // satisfy both.
   //
   // WHY THE STATUSES ARE SEEDED DIRECTLY rather than driven through the real expiry sweep: this
-  // test owns only the READ MODEL, whose contract is "EXPIRED + a draft ⇒ an offer; EXPIRED + no
-  // draft ⇒ a pending forwarder". These fixtures are exactly the two end states D4's table
+  // test owns only the READ MODEL, whose contract is "EXPIRED + a submitted price ⇒ an offer;
+  // EXPIRED + none ⇒ a pending forwarder". These fixtures are exactly the two end states D4's table
   // (scenarios B and A) describes. UPDATED (S5.9.5 Task 2) — the sweep
-  // (`rfq-schedule.listener.ts#onExpiry`) now genuinely produces the first of them: it keeps
-  // `draftJson` for a REQUOTED quote and discards it only for RFQ_SENT. That the sweep does so is
-  // pinned by award-requote.e2e-spec.ts's own D4 sweep test, not here.
+  // (`rfq-schedule.listener.ts#onExpiry`) now genuinely produces the first of them: it never
+  // touches `submittedJson`, and discards the scratchpad only for RFQ_SENT. That the sweep does so
+  // is pinned by award-requote.e2e-spec.ts's own D4 sweep test, not here.
   it("S5.9.5 (D4) — an EXPIRED quote that still carries a price produces an offer; one that does not, does not", async () => {
     const query = await prisma.query.create({
       data: { queryCode: `${CODE}-exp`, priority: "MEDIUM", incoterms: "FOB" },
@@ -906,7 +915,8 @@ describe("GET /queries/:id/comparison (e2e)", () => {
     const rfqWithPrice = await mkRfq(query.id, ffWithPrice.id, "EXPP", "INR");
     const rfqNoPrice = await mkRfq(query.id, ffNoPrice.id, "EXPN", "INR");
     // Scenario B — QUOTED -> (request-requote) -> REQUOTED -> expiry sweep -> EXPIRED with the
-    // forwarder's already-submitted earlier price still on `draftJson`.
+    // forwarder's already-submitted earlier price still on `submittedJson` (and the scratchpad
+    // still on `draftJson`, which the sweep keeps for portal pre-fill — the real post-sweep shape).
     await prisma.quote.create({
       data: {
         queryId: query.id,
@@ -916,6 +926,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         status: "EXPIRED",
         submittedAt: new Date(),
         draftJson: roadDraft(leg.id, origin.id, "INR", 41600, 4) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 41600, 4) as unknown as Prisma.InputJsonValue,
       },
     });
     // Scenario A — RFQ_SENT -> expiry sweep -> EXPIRED, never submitted, no draft to keep.
@@ -952,6 +963,95 @@ describe("GET /queries/:id/comparison (e2e)", () => {
       (legDto.offers as OfferBody[]).find((o) => o.freightForwarderId === ffNoPrice.id),
     ).toBeUndefined();
     expect(pendingIds).toContain(ffNoPrice.id);
+  });
+
+
+  // ── S5.9.6 (register A6) — the grid prices what was SUBMITTED, not what is merely saved ──────
+  //
+  // THE DEFECT. `Quote.draftJson` used to mean two things at once: the forwarder's scratchpad
+  // while they type, and the price they submitted. `buildLeg` gated and priced on it. So: a
+  // forwarder submits 5,000; an executive asks for a better number; the forwarder opens the
+  // reopened portal, half-edits it down to 4,200 with the rest still blank, hits Save draft, and
+  // goes silent. `saveDraft` has no status guard and no version hash, so 4,200 landed on the very
+  // column this grid ranked — and 4,200 appeared here as a ranked, ★-recommendable, approvable
+  // offer that nobody had ever offered. Approve it and the client letter is priced from it.
+  //
+  // The two columns are seeded to DIFFERENT values on purpose: only reading `submittedJson` can
+  // satisfy the first assertion, and only reading a live column (rather than something frozen or
+  // hardcoded) can satisfy the second. Seeded rather than driven end to end because this test owns
+  // the READ MODEL; the write side of the same scenario is driven through the real portal
+  // endpoints by ff-portal.e2e-spec.ts's own A6 test.
+  it("S5.9.6 (A6) — the grid prices a REQUOTED forwarder off their SUBMITTED price, not their live draft", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-a6`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+      },
+    });
+    await prisma.fxRate.create({ data: { currency: "INR", unitsPerUsd: 83.2, note: `${PREFIX} a6` } });
+
+    const ff = await mkFf(`FF-${PREFIX}-A6`);
+    const rfq = await mkRfq(query.id, ff.id, "A6", "INR");
+    // They submitted 5,000. Then they were asked to re-quote and saved a half-edited 4,200 they
+    // never submitted — so the two columns disagree, exactly as A6 describes.
+    const quote = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ff.id,
+        rfqId: rfq.id,
+        status: "REQUOTED",
+        submittedAt: new Date(),
+        draftJson: roadDraft(leg.id, origin.id, "INR", 4200, 4) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 5000, 3) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+    const legDto = res.body.legs.find((l: { legId: string }) => l.legId === leg.id);
+    const offer = (legDto.offers as OfferBody[]).find(
+      (o) => o.freightForwarderId === ff.id && o.variant === "DEDICATED",
+    );
+    expect(offer).toBeDefined();
+    expect(offer!.nativeTotal).toBe(5000); // NOT 4200 — nobody ever offered 4200
+
+    // POSITIVE CONTROL, same test: the forwarder actually SUBMITS 4,750. `submit` writes both
+    // columns from one value, so this is the real post-submit shape — and the grid must move.
+    // Without this, an implementation that simply ignored the draft (or froze the first price it
+    // ever saw) would pass the assertion above.
+    await prisma.quote.update({
+      where: { id: quote.id },
+      data: {
+        status: "QUOTED",
+        draftJson: roadDraft(leg.id, origin.id, "INR", 4750, 3) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 4750, 3) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const after = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/comparison`)
+      .set("Cookie", cookie())
+      .expect(200);
+    const legAfter = after.body.legs.find((l: { legId: string }) => l.legId === leg.id);
+    const offerAfter = (legAfter.offers as OfferBody[]).find(
+      (o) => o.freightForwarderId === ff.id && o.variant === "DEDICATED",
+    );
+    expect(offerAfter!.nativeTotal).toBe(4750);
   });
 
   // The ranking half of D4, on ONE forwarder so nothing else can win: the same priced offer must
@@ -992,6 +1092,7 @@ describe("GET /queries/:id/comparison (e2e)", () => {
         status: "REQUOTED",
         submittedAt: new Date(),
         draftJson: roadDraft(leg.id, origin.id, "INR", 24960, 6) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 24960, 6) as unknown as Prisma.InputJsonValue,
       },
     });
 
