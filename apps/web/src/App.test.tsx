@@ -23,7 +23,16 @@ function renderAt(path: string, role: string) {
     mockFetch((url) => {
       if (url.endsWith("/api/auth/me"))
         return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role } } };
-      // Every list endpoint any redirect target might hit; shape is irrelevant to these assertions.
+      // Owner-scoped sub-resources (GET /api/<owner>/:id/contacts, GET /api/<owner>/:id/warehouses)
+      // are bare arrays server-side — listContacts/listWarehouses are plain findMany calls, not
+      // paginated. They never carry a query string, unlike the real paginated list endpoints
+      // (e.g. /api/warehouses?q=...&page=...&pageSize=...), so this suffix check can't collide
+      // with those. Returning the paginated shape here instead crashed ClientFormPage and
+      // FreightForwarderFormPage with "X.map/X.some is not a function" the moment either fetched
+      // its owner's contacts or warehouses — not a production bug, a stale fixture.
+      if (url.endsWith("/contacts") || url.endsWith("/warehouses")) return { status: 200, body: [] };
+      // Every remaining list endpoint any redirect target might hit; shape is irrelevant to
+      // these assertions.
       if (url.includes("/api/")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 10 } };
       return { status: 404 };
     }),
@@ -49,6 +58,7 @@ const FORM_ROUTES: [string, RegExp][] = [
   ["/masters/freight-forwarders/f1", /freight forwarder form/i],
   ["/masters/warehouses/new", /warehouse form/i],
   ["/masters/warehouses/w1", /warehouse form/i],
+  ["/masters/fx-rates/new", /new fx rate/i],
 ];
 
 describe("master form routes are Administrator/Manager only", () => {

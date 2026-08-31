@@ -267,7 +267,9 @@ export function App() {
         path="/masters/fx-rates/new"
         element={
           <Protected>
-            <FxRateFormPage />
+            <AdminOrManagerOnly>
+              <FxRateFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />
