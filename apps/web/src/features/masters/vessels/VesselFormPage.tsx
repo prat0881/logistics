@@ -2,12 +2,11 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { vesselCreateSchema, type VesselCreateInput } from "@svyft/shared";
+import { vesselCreateSchema, MASTER_STATUSES, type VesselCreateInput } from "@svyft/shared";
 import { ApiError, postJson, patchJson } from "@/lib/api";
 import { useVessel } from "../useMasters";
-import { Button } from "@/components/ui/button";
+import { MasterForm, FormSection, Field, SelectField } from "../form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 export function VesselFormPage() {
   const { id } = useParams();
@@ -30,6 +29,7 @@ export function VesselFormPage() {
         imoNumber: existing.data.imoNumber ?? undefined,
         shippingLine: existing.data.shippingLine ?? undefined,
         vesselType: existing.data.vesselType,
+        status: existing.data.status,
       });
     }
   }, [existing.data, reset]);
@@ -49,56 +49,40 @@ export function VesselFormPage() {
     }
   }
 
+  const err = (name: keyof VesselCreateInput) => errors[name]?.message as string | undefined;
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="max-w-md space-y-4" aria-label="Vessel form">
-      <h1 className="font-display text-xl font-semibold tracking-tight">
-        {id ? "Edit vessel" : "New vessel"}
-      </h1>
-      {submitError && (
-        <p role="alert" className="text-sm text-destructive">
-          {submitError}
-        </p>
-      )}
-      <div className="space-y-1">
-        <Label htmlFor="name">Name</Label>
-        <Input id="name" {...register("name")} />
-        {errors.name && (
-          <p role="alert" className="text-sm text-destructive">
-            {errors.name.message}
-          </p>
-        )}
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="imoNumber">IMO number</Label>
-        <Input
-          id="imoNumber"
-          {...register("imoNumber", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
+    <MasterForm
+      title={id ? "Edit vessel" : "New vessel"}
+      error={submitError}
+      onSubmit={handleSubmit(onSubmit)}
+      isSubmitting={isSubmitting}
+      onCancel={() => navigate("/masters/vessels")}
+    >
+      <FormSection title="Vessel">
+        <Field id="name" label="Name" error={err("name")}>
+          <Input id="name" {...register("name")} />
+        </Field>
+        <Field id="imoNumber" label="IMO number" error={err("imoNumber")}>
+          <Input
+            id="imoNumber"
+            {...register("imoNumber", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
+          />
+        </Field>
+        <Field id="shippingLine" label="Shipping line" error={err("shippingLine")}>
+          <Input id="shippingLine" {...register("shippingLine")} />
+        </Field>
+        <Field id="vesselType" label="Vessel type" error={err("vesselType")}>
+          <Input id="vesselType" placeholder="Container Vessel" {...register("vesselType")} />
+        </Field>
+        <SelectField
+          id="status"
+          label="Status"
+          error={err("status")}
+          options={MASTER_STATUSES.map((s) => ({ value: s, label: s }))}
+          registration={register("status")}
         />
-        {errors.imoNumber && (
-          <p role="alert" className="text-sm text-destructive">
-            {errors.imoNumber.message}
-          </p>
-        )}
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="shippingLine">Shipping line</Label>
-        <Input id="shippingLine" {...register("shippingLine")} />
-        {errors.shippingLine && (
-          <p role="alert" className="text-sm text-destructive">
-            {errors.shippingLine.message}
-          </p>
-        )}
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="vesselType">Vessel type</Label>
-        <Input id="vesselType" placeholder="Container Vessel" {...register("vesselType")} />
-        {errors.vesselType && (
-          <p role="alert" className="text-sm text-destructive">{errors.vesselType.message}</p>
-        )}
-      </div>
-      <Button type="submit" disabled={isSubmitting}>
-        {isSubmitting ? "Saving…" : "Save"}
-      </Button>
-    </form>
+      </FormSection>
+    </MasterForm>
   );
 }
