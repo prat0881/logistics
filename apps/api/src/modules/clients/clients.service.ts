@@ -8,6 +8,9 @@ import type {
   Paginated,
 } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
+import { auditCreate, auditUpdate } from "../../common/audit";
+import { mapOwnershipRace } from "../../common/ownership-race";
+import type { RequestUser } from "../auth/types";
 
 @Injectable()
 export class ClientsService {
@@ -52,7 +55,7 @@ export class ClientsService {
     return client;
   }
 
-  async create(input: ClientCreateInput) {
+  async create(input: ClientCreateInput, user?: RequestUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const row = await tx.codeSequence.upsert({
@@ -61,17 +64,20 @@ export class ClientsService {
           update: { lastNumber: { increment: 1 } },
         });
         const clientCode = `CL-${String(row.lastNumber).padStart(4, "0")}`;
-        return tx.client.create({ data: { clientCode, ...input } });
+        return tx.client.create({ data: { clientCode, ...input, ...auditCreate(user) } });
       });
     } catch (e) {
       throw this.mapUnique(e, "A client with that company name already exists");
     }
   }
 
-  async update(id: string, input: ClientUpdateInput) {
+  async update(id: string, input: ClientUpdateInput, user?: RequestUser) {
     await this.get(id);
     try {
-      return await this.prisma.client.update({ where: { id }, data: input });
+      return await this.prisma.client.update({
+        where: { id },
+        data: { ...input, ...auditUpdate(user) },
+      });
     } catch (e) {
       throw this.mapUnique(e, "A client with that company name already exists");
     }
@@ -85,33 +91,35 @@ export class ClientsService {
     });
   }
 
-  async addContact(clientId: string, input: ContactCreateInput) {
+  async addContact(clientId: string, input: ContactCreateInput, user?: RequestUser) {
     await this.get(clientId);
-    return this.prisma.$transaction(async (tx) => {
-      if (input.isPrimary) {
-        await tx.clientContact.updateMany({
-          where: { clientId, isPrimary: true },
-          data: { isPrimary: false },
-        });
-      }
-      return tx.clientContact.create({ data: { clientId, ...input } });
-    });
+    try {
+      return await this.prisma.clientContact.create({
+        data: { clientId, ...input, ...auditCreate(user) },
+      });
+    } catch (e) {
+      throw this.mapUnique(e, "A contact with that value already exists");
+    }
   }
 
-  async updateContact(clientId: string, contactId: string, input: ContactUpdateInput) {
+  async updateContact(
+    clientId: string,
+    contactId: string,
+    input: ContactUpdateInput,
+    user?: RequestUser,
+  ) {
     const existing = await this.prisma.clientContact.findFirst({
       where: { id: contactId, clientId },
     });
     if (!existing) throw new NotFoundException("Contact not found");
-    return this.prisma.$transaction(async (tx) => {
-      if (input.isPrimary) {
-        await tx.clientContact.updateMany({
-          where: { clientId, isPrimary: true, NOT: { id: contactId } },
-          data: { isPrimary: false },
-        });
-      }
-      return tx.clientContact.update({ where: { id: contactId }, data: input });
-    });
+    try {
+      return await this.prisma.clientContact.update({
+        where: { id: contactId },
+        data: { ...input, ...auditUpdate(user) },
+      });
+    } catch (e) {
+      throw this.mapUnique(e, "A contact with that value already exists");
+    }
   }
 
   async removeContact(clientId: string, contactId: string) {
@@ -122,10 +130,69 @@ export class ClientsService {
     await this.prisma.clientContact.delete({ where: { id: contactId } });
   }
 
-  private mapUnique(e: unknown, msg: string): unknown {
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-      return new ConflictException(msg);
+  async listWarehouses(clientId: string) {
+    await this.get(clientId);
+    return this.prisma.warehouse.findMany({
+      where: { clientId },
+      orderBy: { name: "asc" },
+    });
+  }
+
+  /**
+   * Mirrors FreightForwardersService.setWarehouses: one transaction so a warehouse is never
+   * momentarily owned by two parents, contested against a *different* client or against any
+   * forwarder, and re-assignment to the same client is not a conflict. Client has no
+   * whLocation-equivalent column for rfq.service.ts to read, so there is no snapshot to
+   * keep in sync here.
+   */
+  async setWarehouses(clientId: string, warehouseIds: string[], user?: RequestUser) {
+    await this.get(clientId);
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const contested = await tx.warehouse.findFirst({
+          where: {
+            id: { in: warehouseIds },
+            OR: [
+              { clientId: { not: null, notIn: [clientId] } },
+              { freightForwarderId: { not: null } },
+            ],
+          },
+        });
+        if (contested) {
+          throw new ConflictException(`${contested.name} is already assigned to another record`);
+        }
+        await tx.warehouse.updateMany({
+          where: { clientId, id: { notIn: warehouseIds } },
+          data: { clientId: null, ...auditUpdate(user) },
+        });
+        await tx.warehouse.updateMany({
+          where: { id: { in: warehouseIds } },
+          data: { clientId, ...auditUpdate(user) },
+        });
+        return tx.warehouse.findMany({ where: { clientId }, orderBy: { name: "asc" } });
+      });
+    } catch (e) {
+      // See FreightForwardersService.setWarehouses's identical catch: the contested check
+      // above already throws ConflictException directly for the same-request case; this only
+      // re-maps the DB-level CHECK-constraint violation a genuine concurrent race can produce.
+      throw mapOwnershipRace(e);
     }
-    return e;
+  }
+
+  private mapUnique(e: unknown, fallback: string) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      // ClientContact_one_primary is a raw-SQL partial unique index (Prisma can't declare
+      // one via @@unique), so Prisma can't map the violated constraint to a name it knows —
+      // it reports the column list instead. Verified against the live error shape: P2002's
+      // meta.target here is ["clientId"], never the index name "ClientContact_one_primary".
+      // The Client model's own unique constraint (companyName) never reports "clientId", so
+      // this check is unambiguous between the two callers of mapUnique.
+      const target = String((e.meta as { target?: string | string[] })?.target ?? "");
+      if (target.includes("clientId")) {
+        return new ConflictException("This client already has a primary contact");
+      }
+      return new ConflictException(fallback);
+    }
+    return e as Error;
   }
 }

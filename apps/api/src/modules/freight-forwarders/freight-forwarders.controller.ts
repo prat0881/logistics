@@ -1,8 +1,22 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
-import { Role, freightForwarderCreateSchema, freightForwarderUpdateSchema } from "@svyft/shared";
-import type { FreightForwarderCreateInput, FreightForwarderUpdateInput } from "@svyft/shared";
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query } from "@nestjs/common";
+import { z } from "zod";
+import {
+  Role,
+  freightForwarderCreateSchema,
+  freightForwarderUpdateSchema,
+  contactCreateSchema,
+  contactUpdateSchema,
+} from "@svyft/shared";
+import type {
+  FreightForwarderCreateInput,
+  FreightForwarderUpdateInput,
+  ContactCreateInput,
+  ContactUpdateInput,
+} from "@svyft/shared";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
+import type { RequestUser } from "../auth/types";
 import { FreightForwardersService } from "./freight-forwarders.service";
 
 @Controller("freight-forwarders")
@@ -31,8 +45,11 @@ export class FreightForwardersController {
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
   @Post()
-  create(@Body(new ZodValidationPipe(freightForwarderCreateSchema)) body: FreightForwarderCreateInput) {
-    return this.ffs.create(body);
+  create(
+    @Body(new ZodValidationPipe(freightForwarderCreateSchema)) body: FreightForwarderCreateInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.ffs.create(body, user);
   }
 
   @Roles(Role.ADMINISTRATOR, Role.MANAGER)
@@ -40,7 +57,64 @@ export class FreightForwardersController {
   update(
     @Param("id") id: string,
     @Body(new ZodValidationPipe(freightForwarderUpdateSchema)) body: FreightForwarderUpdateInput,
+    @CurrentUser() user: RequestUser,
   ) {
-    return this.ffs.update(id, body);
+    return this.ffs.update(id, body, user);
+  }
+
+  @Get(":id/contacts")
+  listContacts(@Param("id") id: string) {
+    return this.ffs.listContacts(id);
+  }
+
+  @Roles(Role.ADMINISTRATOR, Role.MANAGER)
+  @Post(":id/contacts")
+  addContact(
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(contactCreateSchema)) body: ContactCreateInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.ffs.createContact(id, body, user);
+  }
+
+  @Roles(Role.ADMINISTRATOR, Role.MANAGER)
+  @Patch(":id/contacts/:contactId")
+  updateContact(
+    @Param("id") id: string,
+    @Param("contactId") contactId: string,
+    @Body(new ZodValidationPipe(contactUpdateSchema)) body: ContactUpdateInput,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.ffs.updateContact(id, contactId, body, user);
+  }
+
+  @Roles(Role.ADMINISTRATOR, Role.MANAGER)
+  @Delete(":id/contacts/:contactId")
+  @HttpCode(204)
+  async removeContact(
+    @Param("id") id: string,
+    @Param("contactId") contactId: string,
+    @CurrentUser() user: RequestUser,
+  ) {
+    // Deleting a contact re-derives pic/contactNumber/email on the FreightForwarder row
+    // (syncPrimaryContactColumns), so this route writes a master record and must supply the
+    // actor — same as addContact/updateContact above.
+    await this.ffs.deleteContact(id, contactId, user);
+  }
+
+  @Get(":id/warehouses")
+  listWarehouses(@Param("id") id: string) {
+    return this.ffs.listWarehouses(id);
+  }
+
+  @Roles(Role.ADMINISTRATOR, Role.MANAGER)
+  @Put(":id/warehouses")
+  setWarehouses(
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(z.object({ warehouseIds: z.array(z.string().uuid()) })))
+    body: { warehouseIds: string[] },
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.ffs.setWarehouses(id, body.warehouseIds, user);
   }
 }

@@ -13,6 +13,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 const PREFIX = "FF-PORTAL";
 const CODE = `YAL00-${PREFIX}`;
@@ -132,7 +133,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-${seq}`,
         companyName: `FF ${PREFIX} Co ${seq}`,
         pic: "P",
@@ -142,7 +143,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         modes: ["AIR"],
         handleDg: false,
         defaultCurrency: "USD",
-      },
+      }),
     });
 
     // Select FF to mint the SELECT quote
@@ -634,7 +635,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     await assignPackagesToLeg(prisma, leg.id, [packageId]);
 
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-GM-${seq}`,
         companyName: `FF GM Co ${seq}`,
         pic: "P",
@@ -644,7 +645,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         modes: ["AIR"],
         handleDg: false,
         defaultCurrency: "USD",
-      },
+      }),
     });
     await request(app.getHttpServer())
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
@@ -759,7 +760,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-SEA-${seq}`,
         companyName: `FF SEA Co ${seq}`,
         pic: "P",
@@ -769,7 +770,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         modes: ["SEA"],
         handleDg: false,
         defaultCurrency: "USD",
-      },
+      }),
     });
     await request(app.getHttpServer())
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
@@ -908,7 +909,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     await assignPackagesToLeg(prisma, leg.id, packageIds);
 
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-R4SEA-${seq}`,
         companyName: `FF R4 SEA Co ${seq}`,
         pic: "P",
@@ -918,7 +919,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         modes: ["SEA"],
         handleDg: false,
         defaultCurrency: "USD",
-      },
+      }),
     });
     await request(app.getHttpServer())
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
@@ -1099,7 +1100,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       data: { legId: roadLeg.id, definitionId: tailLift.id },
     });
     const roadFf = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-R4GR-${seq}`,
         companyName: `FF R4 Gate Road Co ${seq}`,
         pic: "P",
@@ -1109,7 +1110,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         modes: ["ROAD"],
         handleDg: false,
         defaultCurrency: "USD",
-      },
+      }),
     });
     await request(app.getHttpServer())
       .put(`/api/queries/${roadQuery.id}/legs/${roadLeg.id}/ff-selection`)
@@ -1218,7 +1219,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
     });
     await assignPackagesToLeg(prisma, seaLeg.id, seaPkgIds);
     const seaFf = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-R4GS-${seq}`,
         companyName: `FF R4 Gate Sea Co ${seq}`,
         pic: "P",
@@ -1228,7 +1229,7 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         modes: ["SEA"],
         handleDg: false,
         defaultCurrency: "USD",
-      },
+      }),
     });
     await request(app.getHttpServer())
       .put(`/api/queries/${seaQuery.id}/legs/${seaLeg.id}/ff-selection`)

@@ -51,8 +51,49 @@ describe("ClientFormPage (create)", () => {
     );
     await userEvent.type(await screen.findByLabelText(/company name/i), "NewCo");
     await userEvent.type(screen.getByLabelText(/country/i), "IN");
+    await userEvent.type(screen.getByLabelText(/street address/i), "1 Test Road");
+    await userEvent.type(screen.getByLabelText(/city/i), "Test City");
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(screen.getByText("clients list")).toBeInTheDocument());
     expect(calls).toContain("create");
+  });
+});
+
+describe("ClientFormPage save failure", () => {
+  // Mirrors ChargeLineFormPage: before this, onSubmit had no try/catch and there is no toast
+  // system anywhere in apps/web, so a rejected save produced NOTHING — the button stopped
+  // spinning and the page sat there. The 409 below is the message the API actually returns.
+  it("surfaces the server’s error message instead of failing silently", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/clients") && init?.method === "POST")
+          return { status: 409, body: { message: "A client with that company name already exists" } };
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/masters/clients/new"]}>
+            <Routes>
+              <Route path="/masters/clients/new" element={<ClientFormPage />} />
+              <Route path="/masters/clients" element={<p>clients list</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    await userEvent.type(await screen.findByLabelText(/company name/i), "Dupe Co");
+    await userEvent.type(screen.getByLabelText(/country/i), "IN");
+    await userEvent.type(screen.getByLabelText(/street address/i), "1 Test Road");
+    await userEvent.type(screen.getByLabelText(/city/i), "Test City");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+    // Still on the form: a refused save must never look like a successful one.
+    expect(screen.queryByText("clients list")).not.toBeInTheDocument();
   });
 });

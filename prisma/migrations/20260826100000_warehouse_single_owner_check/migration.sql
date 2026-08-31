@@ -1,0 +1,11 @@
+-- FreightForwardersService.setWarehouses / ClientsService.setWarehouses already refuse a
+-- contested warehouse inside a transaction, but under Postgres's default Read Committed
+-- isolation two concurrent writers — one PUT assigning a free warehouse to a forwarder, another
+-- PUT assigning the SAME free warehouse to a client — can each read the other owner column as
+-- still null, each pass their own contested check, and both commit: the row ends up owned by
+-- both. Application code alone cannot close that window. This CHECK is the actual database
+-- guarantee "a warehouse can never belong to two owners" was supposed to rest on — the losing
+-- transaction now fails at commit (23514) instead of corrupting the row. Verified against the
+-- current data before authoring this migration: zero existing Warehouse rows have both
+-- freightForwarderId and clientId set.
+ALTER TABLE "Warehouse" ADD CONSTRAINT "Warehouse_single_owner" CHECK ("freightForwarderId" IS NULL OR "clientId" IS NULL);

@@ -11,6 +11,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 3 (FF Portal v3, per-variant quoting — design doc §5): ff-portal.service.ts's
 // resolveScope now seeds a starter QuoteDraft (the per-variant charge matrix + blank leg
@@ -148,7 +149,7 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     });
 
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PFX}${seq}`,
         companyName: `FF ${PFX}${seq} Co`,
         pic: "P",
@@ -158,7 +159,7 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
         modes: ["ROAD"],
         status: "ACTIVE",
         defaultCurrency: "USD",
-      },
+      }),
     });
     await api()
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
@@ -210,7 +211,7 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     });
     await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PFX}${seq}`,
         companyName: `FF ${PFX}${seq} Co`,
         pic: "P",
@@ -220,7 +221,7 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
         modes: ["SEA"],
         status: "ACTIVE",
         defaultCurrency: "USD",
-      },
+      }),
     });
     await api()
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
@@ -272,7 +273,7 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
     });
     await assignPackagesToLeg(prisma, leg.id, packageIds);
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PFX}${seq}`,
         companyName: `FF ${PFX}${seq} Co`,
         pic: "P",
@@ -282,7 +283,7 @@ describe(`${PFX}ff-portal-v3 (e2e)`, () => {
         modes: ["ROAD"],
         status: "ACTIVE",
         defaultCurrency: "USD",
-      },
+      }),
     });
     await api()
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)

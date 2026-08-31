@@ -13,7 +13,7 @@ const ff = (id: string, name: string): FreightForwarderDto => ({
   city: null, postalCode: null, country: null, pic: "P",
   contactNumber: "+1", email: `${id}@x.com`, availableCountries: ["AE"], modes: ["AIR"],
   handleDg: false, vatTrnEori: null, whLocation: null, defaultCurrency: null,
-  paymentTerms: "NET 30", typicalLeadTime: "2d", status: "ACTIVE",
+  paymentTerms: "CREDIT_30", typicalLeadTime: 2, status: "ACTIVE",
 });
 
 const manyFfs = (n: number) =>
@@ -86,8 +86,8 @@ describe("FfSelectionGrid", () => {
     const ffIn: FreightForwarderDto = {
       ...ff("ff1", "India FF"),
       availableCountries: ["IN"],
-      paymentTerms: "NET30",
-      typicalLeadTime: "5d",
+      paymentTerms: "CREDIT_30",
+      typicalLeadTime: 5,
     };
     vi.stubGlobal("fetch", mockFetch((url, init) => {
       if (url.includes("/eligible-ffs")) return { status: 200, body: [ffIn] };

@@ -11,6 +11,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 9 — distribute wiring: seeds ScheduledEvent reminder/expiry timers (anchored to the
 // RFQ) and dispatches rfq.invitation (fresh mint) / rfq.updated (amend) via the dispatcher.
@@ -30,7 +31,7 @@ describe(`${PREFIX} (e2e)`, () => {
     modes: ("AIR" | "SEA" | "ROAD")[] = ["AIR"],
   ) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -39,7 +40,7 @@ describe(`${PREFIX} (e2e)`, () => {
         availableCountries: countries,
         modes,
         status: "ACTIVE",
-      },
+      }),
     });
 
   // Self-clean fixtures + the non-cascaded comms rows (ScheduledEvent/MessageLog reference

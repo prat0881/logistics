@@ -12,6 +12,7 @@ import { RfqService } from "../src/modules/rfq/rfq.service";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import type { RequestUser } from "../src/modules/auth/types";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 13 (SB6, capstone): the full field-edit change-order cascade, end to end, through the
 // SAME mediated service boundary the controllers use (PackageService.update — not ChangeMediator
@@ -128,7 +129,7 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -137,7 +138,7 @@ describe("Change-order cascade — capstone full flow (e2e)", () => {
         availableCountries: ["AE"],
         modes: ["AIR"],
         status: "ACTIVE",
-      },
+      }),
     });
 
   // A minimal "frozen" manifest, as the original distribution would have snapshotted it.

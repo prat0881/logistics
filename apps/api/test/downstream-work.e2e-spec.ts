@@ -5,6 +5,7 @@ import { QuoteStatus } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ScopeResolver } from "../src/modules/changes/scope.resolver";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 const PFX = "p9-downstream-work-";
 
@@ -35,7 +36,7 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
 
   async function mkFf(code: string) {
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "PIC",
@@ -44,7 +45,7 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
         availableCountries: ["IN"],
         modes: ["ROAD"],
         handleDg: false,
-      },
+      }),
     });
     ffIds.push(ff.id);
     return ff;

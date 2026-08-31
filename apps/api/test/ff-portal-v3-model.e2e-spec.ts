@@ -4,6 +4,7 @@ import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 2 (FF Portal v3, per-variant quoting): additive+destructive Prisma migration.
 // Quote grows a leg-level `chargedWeightKg` + `notes` (chargeable weight used to live on
@@ -63,13 +64,13 @@ describe("FF Portal v3 schema (e2e)", () => {
       },
     });
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `${PFX}FF-${n}`,
         companyName: `${PFX}FF Co ${n}`,
         pic: "P. Tester",
         contactNumber: "+10000000000",
         email: `${PFX.toLowerCase()}ff${n}@e2e.test`,
-      },
+      }),
     });
     const quote = await prisma.quote.create({
       data: { queryId: query.id, legId: leg.id, freightForwarderId: ff.id },

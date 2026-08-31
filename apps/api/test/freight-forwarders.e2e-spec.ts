@@ -13,6 +13,9 @@ import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 const CO = "FF E2E Forwarder";
 const valid = {
   companyName: CO,
+  companyAddress: "1 Harbour Road",
+  country: "Singapore",
+  city: "Singapore",
   pic: "Jane Doe",
   contactNumber: "+15551234567",
   email: "ops@ff-e2e.example",

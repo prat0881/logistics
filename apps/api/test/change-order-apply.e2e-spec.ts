@@ -10,6 +10,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { ChangeMediator } from "../src/modules/changes/change-mediator";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 8 (SB6): the change-order APPLY saga — a change-order-path request arriving WITH a
 // `reason` runs the full cascade (design §7): apply the field edit + re-freeze the PENDING
@@ -96,7 +97,7 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -105,7 +106,7 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
         availableCountries: ["AE"],
         modes: ["AIR"],
         status: "ACTIVE",
-      },
+      }),
     });
 
   // A minimal "old" manifest (as distribution would have frozen it), so we can prove the
