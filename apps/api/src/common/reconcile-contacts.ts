@@ -85,7 +85,12 @@ export async function reconcileContacts(opts: {
     await delegate.update({ where: { id: c.id }, data: { ...row(c), ...auditUpdate(user) } });
   }
 
-  // 4. creates, non-primary first for the same index reason
+  // 4. creates, non-primary first. NOT for an index reason — there is no index hazard left
+  //    among creates: the guard at the top of this function caps the payload at one PRIMARY,
+  //    the deletes have already run, and the promotions have already run, so a single primary
+  //    create cannot collide with anything. This ordering is defensive consistency with the
+  //    demote-then-promote pass above (a reader tracing "when does a primary get written?" finds
+  //    one answer, always last), and it is what reconcile-contacts.spec.ts pins.
   const fresh = contacts.filter((c) => !c.id);
   for (const c of [...fresh.filter((f) => !isPrimary(f)), ...fresh.filter(isPrimary)]) {
     await delegate.create({

@@ -129,8 +129,11 @@ describe("reconcileContacts", () => {
   });
 
   it("creates the non-primary rows before the primary one", async () => {
-    // Same index hazard, the all-new case: a fresh owner whose payload happens to list its
-    // primary first must still write that primary last.
+    // Not an index hazard — among creates there isn't one: the two-primary guard caps the
+    // payload at a single PRIMARY, and deletes and promotions have both already run, so a lone
+    // primary create cannot collide with anything. This pins the ordering as the defensive
+    // consistency it is: a fresh owner whose payload happens to list its primary first still
+    // writes that primary last, so "a primary is always written last" holds on every path.
     const delegate = fakeDelegate([]);
 
     await reconcileContacts({
