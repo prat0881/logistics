@@ -1,18 +1,17 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Role } from "@svyft/shared";
-import { useAuth } from "@/features/auth/AuthProvider";
+import { useCanWrite } from "@/features/auth/useCanWrite";
+import { ApiError } from "@/lib/api";
 import { useFreightForwarders } from "../useMasters";
 import { Input } from "@/components/ui/input";
 import { PaginationBar } from "@/components/PaginationBar";
 
 export function FreightForwardersListPage() {
-  const { user } = useAuth();
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const canWrite = user?.role === Role.ADMINISTRATOR || user?.role === Role.MANAGER;
-  const { data, isLoading } = useFreightForwarders({ q, page, pageSize });
+  const canWrite = useCanWrite();
+  const { data, isLoading, isError, error: fetchError } = useFreightForwarders({ q, page, pageSize });
 
   return (
     <div className="space-y-4">
@@ -32,7 +31,16 @@ export function FreightForwardersListPage() {
         value={q}
         onChange={(e) => { setQ(e.target.value); setPage(1); }}
       />
-      {isLoading ? (
+      {isError ? (
+        // A failed fetch must never render the same "No freight forwarders yet." message an empty,
+        // successfully-loaded list would — that reads as data loss. Mirrors
+        // ChargeCatalogueListPage, minus its 403 branch: GET /api/freight-forwarders carries no @Roles
+        // gate (any signed-in user may read this list), so a 403 is not a reachable failure
+        // here and the server’s own message covers whatever did go wrong.
+        <p role="alert" className="text-sm text-destructive">
+          {fetchError instanceof ApiError ? fetchError.message : "Could not load freight forwarders."}
+        </p>
+      ) : isLoading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <div className="overflow-hidden rounded-md border border-border bg-card">

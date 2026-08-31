@@ -10,6 +10,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 const CODE = "E2E-RFQSTATE-Q1";
 const FF_CODES = ["FF-STATE-A", "FF-STATE-B"];
@@ -48,7 +49,7 @@ describe("GET /queries/:id/rfq-state (e2e)", () => {
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -57,9 +58,9 @@ describe("GET /queries/:id/rfq-state (e2e)", () => {
         availableCountries: ["AE"],
         modes: ["AIR"],
         handleDg: false,
-        paymentTerms: "NET 30",
-        typicalLeadTime: "2d",
-      },
+        paymentTerms: "CREDIT_30",
+        typicalLeadTime: 2,
+      }),
     });
 
   it("returns quotes, rfqs, and the referenced FFs", async () => {

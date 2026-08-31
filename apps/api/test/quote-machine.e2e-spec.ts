@@ -4,6 +4,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { StatusService } from "../src/modules/status/status.service";
 import { QuoteEvent } from "@svyft/shared";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 describe("Quote machine (e2e)", () => {
   let moduleRef: TestingModule;
@@ -29,7 +30,7 @@ describe("Quote machine (e2e)", () => {
     legId = leg.id;
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: "FF-E2E-QMACH" } });
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: "FF-E2E-QMACH",
         companyName: "QMach FF E2E",
         pic: "PIC",
@@ -38,7 +39,7 @@ describe("Quote machine (e2e)", () => {
         availableCountries: ["AE"],
         modes: ["AIR"],
         handleDg: true,
-      },
+      }),
     });
     ffId = ff.id;
     const quote = await prisma.quote.create({

@@ -13,6 +13,7 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 import { ScheduledEventService } from "../src/modules/comms/scheduled-event.service";
 import { QueryStatusProjector } from "../src/modules/status/query-status.projector";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 12 — a leg whose FFs ALL expired still rolls up to FULLY_QUOTED (the leg-quote
 // projector counts EXPIRED as "resolved"), so without this fix the query would misreport
@@ -37,7 +38,7 @@ describe(`${PREFIX} (e2e)`, () => {
     modes: ("AIR" | "SEA" | "ROAD")[] = ["AIR"],
   ) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -46,7 +47,7 @@ describe(`${PREFIX} (e2e)`, () => {
         availableCountries: countries,
         modes,
         status: "ACTIVE",
-      },
+      }),
     });
 
   // Self-clean fixtures + the non-cascaded comms rows (ScheduledEvent/MessageLog reference

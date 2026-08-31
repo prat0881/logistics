@@ -12,6 +12,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 11 (Charge Configuration & Warehouse Attribution), Phase E: per-leg charge selection
 // (`chargeLineDefinitionIds`) and the warehouse toggle (`warehouseHandlingIncluded`) are
@@ -121,7 +122,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- distribute the leg (1 FF) ---
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-A`,
         companyName: `FF-${PREFIX}-A Co`,
         pic: "P",
@@ -130,7 +131,7 @@ describe(`${PREFIX} (e2e)`, () => {
         availableCountries: ["CN", "AE"],
         modes: ["ROAD"],
         status: "ACTIVE",
-      },
+      }),
     });
     await request(server)
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
@@ -221,7 +222,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- distribute to 1 FF → the single quote goes RFQ_SENT with a frozen chargeConfigSnapshot ---
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-RF`,
         companyName: `FF-${PREFIX}-RF Co`,
         pic: "P",
@@ -230,7 +231,7 @@ describe(`${PREFIX} (e2e)`, () => {
         availableCountries: ["CN", "AE"],
         modes: ["ROAD"],
         status: "ACTIVE",
-      },
+      }),
     });
     await request(server)
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)
@@ -325,7 +326,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // --- distribute to 1 FF → the single quote goes RFQ_SENT, chargeConfigSnapshot = [TAIL_LIFT] ---
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PREFIX}-SD`,
         companyName: `FF-${PREFIX}-SD Co`,
         pic: "P",
@@ -334,7 +335,7 @@ describe(`${PREFIX} (e2e)`, () => {
         availableCountries: ["CN", "AE"],
         modes: ["ROAD"],
         status: "ACTIVE",
-      },
+      }),
     });
     await request(server)
       .put(`/api/queries/${query.id}/legs/${leg.id}/ff-selection`)

@@ -37,7 +37,7 @@ describe("Queries (e2e)", () => {
     jwt = moduleRef.get(JwtService);
     await seedReferenceData(prisma); // 9 checklist definitions (CI is unseeded)
     const client = await prisma.client.create({
-      data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN" },
+      data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN", streetAddress: "1 Test Road", city: "Test City" },
     });
     clientId = client.id;
   });

@@ -11,6 +11,7 @@ import { LegsService } from "../src/modules/legs/legs.service";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import type { RequestUser } from "../src/modules/auth/types";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 10 (SB6): surfaces ChangeOrderStrategy's two-phase preview/apply (Tasks 7-8) at the
 // mediated-service boundary. A PATCH that lands on the change-order path (RfqDefining-or-
@@ -74,7 +75,7 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -83,7 +84,7 @@ describe("Change-order 409 surface + reason plumbing (e2e)", () => {
         availableCountries: ["AE"],
         modes: ["AIR", "ROAD"],
         status: "ACTIVE",
-      },
+      }),
     });
 
   it("PATCH-equivalent leg.mode edit: 409+preview without reason (nothing applied); applies + invalidates with reason", async () => {

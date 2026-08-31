@@ -15,6 +15,7 @@ import {
   type FfPortalRfqDto,
   type QuoteDraft,
 } from "@svyft/shared";
+import { ffFixture } from "./helpers/freight-forwarder";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
@@ -42,7 +43,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -51,7 +52,7 @@ describe(`${PREFIX} (e2e)`, () => {
         availableCountries: ["CN", "AE"],
         modes: ["AIR"],
         status: "ACTIVE",
-      },
+      }),
     });
 
   // Self-clean fixtures + the non-cascaded comms rows (ScheduledEvent/MessageLog reference

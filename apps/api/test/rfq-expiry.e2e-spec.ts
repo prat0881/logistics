@@ -13,6 +13,7 @@ import { seedReferenceData } from "../src/seed/reference-seed";
 import { ScheduledEventService } from "../src/modules/comms/scheduled-event.service";
 import { RfqScheduleListener } from "../src/modules/rfq/rfq-schedule.listener";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 10 — reminder/expiry listeners: `rfq.expiry` fires from the minute-cron for each
 // still-RFQ_SENT quote on the RFQ → discard draftJson, fire QuoteEvent.EXPIRE, dispatch
@@ -35,7 +36,7 @@ describe(`${PREFIX} (e2e)`, () => {
     modes: ("AIR" | "SEA" | "ROAD")[] = ["AIR"],
   ) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -44,7 +45,7 @@ describe(`${PREFIX} (e2e)`, () => {
         availableCountries: countries,
         modes,
         status: "ACTIVE",
-      },
+      }),
     });
 
   // Self-clean fixtures + the non-cascaded comms rows (ScheduledEvent/MessageLog reference

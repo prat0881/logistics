@@ -1,9 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { clientCreateSchema, vesselCreateSchema, VESSEL_TYPES, MASTER_STATUSES, contactCreateSchema, freightForwarderCreateSchema } from "./masters";
+import { clientCreateSchema, vesselCreateSchema, MASTER_STATUSES, contactCreateSchema, freightForwarderCreateSchema } from "./masters";
 
 describe("masters schemas", () => {
   it("accepts a valid client (no code — server-minted)", () => {
-    expect(clientCreateSchema.safeParse({ companyName: "Acme", country: "IN" }).success).toBe(true);
+    expect(
+      clientCreateSchema.safeParse({
+        companyName: "Acme",
+        country: "IN",
+        streetAddress: "1 Raffles Place",
+        city: "Singapore",
+      }).success,
+    ).toBe(true);
   });
   it("rejects a client with no companyName", () => {
     expect(clientCreateSchema.safeParse({ country: "IN" }).success).toBe(false);
@@ -14,6 +21,7 @@ describe("masters schemas", () => {
         name: "MV Test",
         vesselType: "CONTAINER",
         imoNumber: "1234567",
+        shippingLine: "Maersk",
       }).success,
     ).toBe(true);
   });
@@ -23,31 +31,44 @@ describe("masters schemas", () => {
         .success,
     ).toBe(false);
   });
-  it("rejects an unknown vessel type", () => {
-    expect(vesselCreateSchema.safeParse({ name: "X", vesselType: "SUBMARINE" }).success).toBe(
-      false,
-    );
+  it("accepts an arbitrary vessel type string (no longer a fixed enum)", () => {
+    expect(
+      vesselCreateSchema.safeParse({
+        name: "X",
+        vesselType: "SUBMARINE",
+        imoNumber: "1234567",
+        shippingLine: "Maersk",
+      }).success,
+    ).toBe(true);
   });
-  it("exposes the enum value lists", () => {
-    expect(VESSEL_TYPES).toContain("CONTAINER");
+  it("exposes the status value list", () => {
     expect(MASTER_STATUSES).toEqual(["ACTIVE", "INACTIVE"]);
   });
 });
 
 describe("contactCreateSchema.contactNo (strict E.164)", () => {
   it("rejects a non-E.164 contactNo", () => {
-    expect(contactCreateSchema.safeParse({ name: "A", contactNo: "6591234567" }).success).toBe(false);
+    expect(
+      contactCreateSchema.safeParse({ name: "A", email: "a@example.com", contactNo: "6591234567" })
+        .success,
+    ).toBe(false);
   });
   it("accepts a +-prefixed E.164 contactNo", () => {
-    expect(contactCreateSchema.safeParse({ name: "A", contactNo: "+6591234567" }).success).toBe(true);
+    expect(
+      contactCreateSchema.safeParse({ name: "A", email: "a@example.com", contactNo: "+6591234567" })
+        .success,
+    ).toBe(true);
   });
-  it("allows contactNo to be omitted", () => {
-    expect(contactCreateSchema.safeParse({ name: "A" }).success).toBe(true);
+  it("no longer allows contactNo (or email) to be omitted", () => {
+    expect(contactCreateSchema.safeParse({ name: "A" }).success).toBe(false);
   });
 });
 
 const validFf = {
   companyName: "Acme Freight",
+  companyAddress: "1 Cargo Way",
+  city: "Singapore",
+  country: "Singapore",
   pic: "Jane Doe",
   contactNumber: "+15551234567",
   email: "ops@acme.example",

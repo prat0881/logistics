@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
@@ -7,12 +7,16 @@ import {
   FREIGHT_MODES,
   COUNTRIES,
   CURRENCIES,
+  PAYMENT_TERMS,
+  PAYMENT_TERM_LABELS,
   type FreightForwarderCreateInput,
   type CountryCode,
   type CurrencyCode,
 } from "@svyft/shared";
-import { postJson, patchJson } from "@/lib/api";
-import { useFreightForwarder } from "../useMasters";
+import { ApiError, postJson, patchJson } from "@/lib/api";
+import { useFreightForwarder, useOwnerWarehouses } from "../useMasters";
+import { ContactList } from "../ContactList";
+import { WarehousePicker } from "../WarehousePicker";
 import { MultiSelectCombobox } from "@/components/MultiSelectCombobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +31,8 @@ export function FreightForwarderFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const existing = useFreightForwarder(id);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const ownedWarehouses = useOwnerWarehouses("freight-forwarders", id);
   const {
     register,
     control,
@@ -62,10 +68,21 @@ export function FreightForwarderFormPage() {
     }
   }, [existing.data, reset]);
 
+  // Mirrors ChargeLineFormPage: without this catch a rejected save produced nothing at all —
+  // the button simply stopped spinning. There is no toast system in this app, so an unhandled
+  // rejection here is silence, and it swallowed every 409 (duplicate company name), every 400
+  // and every 403 alike.
   async function onSubmit(values: FreightForwarderCreateInput) {
-    if (id) await patchJson(`/api/freight-forwarders/${id}`, values);
-    else await postJson("/api/freight-forwarders", values);
-    navigate("/masters/freight-forwarders");
+    setSubmitError(null);
+    try {
+      if (id) await patchJson(`/api/freight-forwarders/${id}`, values);
+      else await postJson("/api/freight-forwarders", values);
+      navigate("/masters/freight-forwarders");
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError ? err.message : "Could not save this freight forwarder",
+      );
+    }
   }
 
   const err = (name: keyof FreightForwarderCreateInput) =>
@@ -76,130 +93,190 @@ export function FreightForwarderFormPage() {
     ) : null;
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="max-w-2xl space-y-6" aria-label="Freight forwarder form">
-      <h1 className="font-display text-xl font-semibold tracking-tight">
-        {id ? "Edit freight forwarder" : "New freight forwarder"}
-      </h1>
+    <div className="max-w-2xl space-y-8">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" aria-label="Freight forwarder form">
+        <h1 className="font-display text-xl font-semibold tracking-tight">
+          {id ? "Edit freight forwarder" : "New freight forwarder"}
+        </h1>
+        {submitError && (
+          <p role="alert" className="text-sm text-destructive">
+            {submitError}
+          </p>
+        )}
 
-      <section className="space-y-3">
-        <h2 className={sectionTitleClass}>Company &amp; contact</h2>
-        <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="companyName">Company name</Label>
-            <Input id="companyName" {...register("companyName")} />
-            {err("companyName")}
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="pic">Person in charge</Label>
-            <Input id="pic" {...register("pic")} />
-            {err("pic")}
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="contactNumber">Contact number</Label>
-            <Input id="contactNumber" placeholder="+15551234567" {...register("contactNumber")} />
-            {err("contactNumber")}
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" {...register("email")} />
-            {err("email")}
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className={sectionTitleClass}>Address</h2>
-        <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="companyAddress">Street Address</Label>
-            <Input id="companyAddress" {...register("companyAddress")} />
-            {err("companyAddress")}
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="city">City</Label>
-            <Input id="city" {...register("city")} />
-            {err("city")}
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="postalCode">Postal code</Label>
-            <Input id="postalCode" {...register("postalCode")} />
-            {err("postalCode")}
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="country">Country</Label>
-            <Input id="country" {...register("country")} />
-            {err("country")}
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className={sectionTitleClass}>Service &amp; commercial</h2>
-        <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label>Available countries</Label>
-            <Controller
-              control={control}
-              name="availableCountries"
-              render={({ field }) => (
-                <MultiSelectCombobox value={field.value ?? []} options={COUNTRIES} onChange={field.onChange} ariaLabel="Countries" />
+        <section className="space-y-3">
+          <h2 className={sectionTitleClass}>Company &amp; contact</h2>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="companyName">Company name</Label>
+              <Input id="companyName" {...register("companyName")} />
+              {err("companyName")}
+            </div>
+            <div className="space-y-1 sm:col-span-2">
+              {id && (
+                <p className="text-sm text-muted-foreground">
+                  Person in charge, contact number and email are managed as the primary
+                  contact below.
+                </p>
               )}
-            />
-            {err("availableCountries")}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="pic">Person in charge</Label>
+              {/* Read-only once the record exists: pic/contactNumber/email are derived from
+                  the primary contact (FreightForwardersService.syncPrimaryContactColumns is
+                  their sole writer after create) — editing them here would be silently
+                  reverted by the next unrelated contact write. Plain HTML `disabled`, not
+                  react-hook-form's register-option `disabled`, so the loaded value still
+                  round-trips through validation/submit unchanged rather than being dropped. */}
+              <Input id="pic" disabled={Boolean(id)} {...register("pic")} />
+              {err("pic")}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="contactNumber">Contact number</Label>
+              <Input
+                id="contactNumber"
+                placeholder="+15551234567"
+                disabled={Boolean(id)}
+                {...register("contactNumber")}
+              />
+              {err("contactNumber")}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" disabled={Boolean(id)} {...register("email")} />
+              {err("email")}
+            </div>
           </div>
-          <div className="space-y-1">
-            <Label>Modes</Label>
-            <Controller
-              control={control}
-              name="modes"
-              render={({ field }) => (
-                <MultiSelectCombobox value={field.value ?? []} options={MODE_OPTS} onChange={field.onChange} ariaLabel="Modes" />
-              )}
-            />
-            {err("modes")}
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="defaultCurrency">Default currency</Label>
-            <select id="defaultCurrency" {...register("defaultCurrency", { setValueAs: (v: string) => (v === "" ? undefined : v) })} className={selectClass}>
-              <option value="">—</option>
-              {CURRENCIES.map((c) => (
-                <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="vatTrnEori">VAT / TRN / EORI</Label>
-            <Input id="vatTrnEori" {...register("vatTrnEori")} />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="whLocation">Warehouse location</Label>
-            <Input id="whLocation" {...register("whLocation")} />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="paymentTerms">Payment terms</Label>
-            <Input id="paymentTerms" placeholder="NET 30" {...register("paymentTerms")} />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="typicalLeadTime">Typical lead time</Label>
-            <Input id="typicalLeadTime" placeholder="2d" {...register("typicalLeadTime")} />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="status">Status</Label>
-            <select id="status" {...register("status")} className={selectClass}>
-              <option value="ACTIVE">Active</option>
-              <option value="INACTIVE">Inactive</option>
-            </select>
-          </div>
-          <label className="flex items-center gap-2 sm:col-span-2">
-            <input type="checkbox" {...register("handleDg")} />
-            <span className="text-sm">Handles Dangerous Goods (DG)</span>
-          </label>
-        </div>
-      </section>
+        </section>
 
-      <Button type="submit" disabled={isSubmitting}>
-        {isSubmitting ? "Saving…" : "Save"}
-      </Button>
-    </form>
+        <section className="space-y-3">
+          <h2 className={sectionTitleClass}>Address</h2>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="companyAddress">Street Address</Label>
+              <Input id="companyAddress" {...register("companyAddress")} />
+              {err("companyAddress")}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="city">City</Label>
+              <Input id="city" {...register("city")} />
+              {err("city")}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="postalCode">Postal code</Label>
+              <Input id="postalCode" {...register("postalCode")} />
+              {err("postalCode")}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="country">Country</Label>
+              <Input id="country" {...register("country")} />
+              {err("country")}
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h2 className={sectionTitleClass}>Service &amp; commercial</h2>
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label>Available countries</Label>
+              <Controller
+                control={control}
+                name="availableCountries"
+                render={({ field }) => (
+                  <MultiSelectCombobox value={field.value ?? []} options={COUNTRIES} onChange={field.onChange} ariaLabel="Countries" />
+                )}
+              />
+              {err("availableCountries")}
+            </div>
+            <div className="space-y-1">
+              <Label>Modes</Label>
+              <Controller
+                control={control}
+                name="modes"
+                render={({ field }) => (
+                  <MultiSelectCombobox value={field.value ?? []} options={MODE_OPTS} onChange={field.onChange} ariaLabel="Modes" />
+                )}
+              />
+              {err("modes")}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="defaultCurrency">Default currency</Label>
+              <select id="defaultCurrency" {...register("defaultCurrency", { setValueAs: (v: string) => (v === "" ? undefined : v) })} className={selectClass}>
+                <option value="">—</option>
+                {CURRENCIES.map((c) => (
+                  <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="vatTrnEori">VAT / TRN / EORI</Label>
+              <Input id="vatTrnEori" {...register("vatTrnEori")} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="whLocation">Warehouse location</Label>
+              {/* Read-only once the record exists: whLocation is derived from the assigned
+                  warehouses (FreightForwardersService.setWarehouses is its sole writer after
+                  create) — editing it here would be silently reverted by the next warehouse
+                  assignment, and worse, could itself blank out a value the picker had just set
+                  (see setWarehouses's update() comment). Same disabled-once-id pattern as
+                  pic/contactNumber/email above. */}
+              <Input id="whLocation" disabled={Boolean(id)} {...register("whLocation")} />
+              {id && (
+                <p className="text-sm text-muted-foreground">
+                  Set by the warehouses assigned below.
+                </p>
+              )}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="paymentTerms">Payment terms</Label>
+              <select
+                id="paymentTerms"
+                {...register("paymentTerms", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
+                className={selectClass}
+              >
+                <option value="">—</option>
+                {PAYMENT_TERMS.map((t) => (
+                  <option key={t} value={t}>{PAYMENT_TERM_LABELS[t]}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="typicalLeadTime">Typical lead time (days)</Label>
+              <Input
+                id="typicalLeadTime"
+                type="number"
+                placeholder="2"
+                {...register("typicalLeadTime", {
+                  // Not `valueAsNumber: true` (the brief's literal suggestion): on an empty
+                  // number input, the DOM's `valueAsNumber` is NaN rather than undefined, and
+                  // NaN fails the field's `z.number().int().optional()` check — silently
+                  // blocking submit whenever this optional field is left blank. setValueAs
+                  // maps "" to undefined instead.
+                  setValueAs: (v: string) => (v === "" ? undefined : Number(v)),
+                })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="status">Status</Label>
+              <select id="status" {...register("status")} className={selectClass}>
+                <option value="ACTIVE">Active</option>
+                <option value="INACTIVE">Inactive</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 sm:col-span-2">
+              <input type="checkbox" {...register("handleDg")} />
+              <span className="text-sm">Handles Dangerous Goods (DG)</span>
+            </label>
+          </div>
+        </section>
+
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Saving…" : "Save"}
+        </Button>
+      </form>
+      <ContactList ownerPath="freight-forwarders" ownerId={id} />
+      <WarehousePicker ownerPath="freight-forwarders" ownerId={id} assigned={ownedWarehouses.data ?? []} />
+    </div>
   );
 }

@@ -11,6 +11,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 const PREFIX = "RFQ-DIST";
 const CODE = `YAL00-${PREFIX}`;
@@ -30,7 +31,7 @@ describe(`${PREFIX} (e2e)`, () => {
     handleDg = false,
   ) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -40,7 +41,7 @@ describe(`${PREFIX} (e2e)`, () => {
         modes,
         status,
         handleDg,
-      },
+      }),
     });
 
   const cleanup = async () => {

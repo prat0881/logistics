@@ -4,6 +4,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { StatusService } from "../src/modules/status/status.service";
 import { QuoteEvent } from "@svyft/shared";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Two FFs on one READY_FOR_RFQ leg. Sending RFQ moves the leg to RFQ_SENT; the first
 // submitted quote → PARTIALLY_QUOTED; the second → FULLY_QUOTED; the query rolls up.
@@ -34,7 +35,7 @@ describe("Leg rollup from quotes (e2e)", () => {
     });
     const mkFf = (code: string, name: string) =>
       prisma.freightForwarder.create({
-        data: {
+        data: ffFixture({
           freightForwarderCode: code,
           companyName: name,
           pic: "PIC",
@@ -43,7 +44,7 @@ describe("Leg rollup from quotes (e2e)", () => {
           availableCountries: ["AE"],
           modes: ["AIR"],
           handleDg: false,
-        },
+        }),
       });
     ffA = (await mkFf("FF-E2E-ROLLUP-A", "Rollup FF A E2E")).id;
     ffB = (await mkFf("FF-E2E-ROLLUP-B", "Rollup FF B E2E")).id;
