@@ -16,7 +16,8 @@ were built across three separate efforts and do not behave like one product. The
 3. Every master's fields arranged sectionally, like the FF master.
 4. Add Contact opens a dialog; contacts list as a proper table on the main screen.
 5. At least one Primary contact is mandatory.
-6. Contacts editable and deletable from the row.
+6. Contacts editable and deletable from the row. — **superseded 2026-08-31: all contact
+   mutations happen in the dialog instead; see §4.5.**
 
 This is a consistency and correctness pass over screens that already work. It adds **no new
 database columns and no migration** (§7.1), which matters: `prisma migrate dev` in this repo
@@ -148,17 +149,30 @@ composite reconcile therefore does a **query-before-write** check for an existin
 raises the 409 itself, matching the two later conflict branches the masters branch built this way
 deliberately. The dead branch is removed rather than left to look load-bearing.
 
-### 4.5 Contacts section
+### 4.5 Contacts section — every mutation is a dialog
 
-A `ui/table` with columns **Name · Designation · Email · Phone · Channels · POC · Status ·
-actions**.
+**Decision (user, 2026-08-31), superseding the brief's point 6.** Add, Edit *and* Remove all
+happen in the dialog. The table is a read-only list of records you select; it carries no per-row
+action buttons and no inline editing. This replaced an earlier design with inline row edit and an
+in-row delete confirm.
 
-- **Add contact** opens a `Dialog` carrying all nine fields of `contactCoreSchema` — including
-  `designation` and `status`, capturable for the first time.
-- **Edit** reopens the same dialog, prefilled. **Remove** confirms in-row. Both mutate the draft.
-- Setting a row to PRIMARY auto-demotes the incumbent in the draft.
-- Save is blocked with *"One contact must be marked Primary"* when the draft has none, on all
-  three contact-bearing masters.
+The table is a `ui/table` with columns **Name · Designation · Email · Phone · Channels · POC ·
+Status**. There is no actions column.
+
+- **Add contact** — a button above the table opens an empty `Dialog` carrying all nine fields of
+  `contactCoreSchema`, including `designation` and `status`, capturable for the first time.
+- **Selecting a row** opens that contact in the same dialog, prefilled. The row is the control:
+  it renders as a `<button>` spanning the row so it is reachable by keyboard and announced as
+  activatable, not as a `<tr>` with a click handler.
+- **Remove** is a destructive-styled button *inside* the dialog, present only when editing an
+  existing contact. It asks for confirmation within the dialog, then closes.
+- Every one of these mutates the **draft only**. Nothing reaches the server until the parent
+  form's Save (§4.3), so a contact added and then removed never existed as far as the API is
+  concerned, and Cancel on the parent form discards the lot.
+- POC level is a field in the dialog. Setting a contact to PRIMARY auto-demotes the incumbent in
+  the draft, so the second-primary conflict is unreachable from the UI.
+- Save is blocked with *"One contact must be marked Primary"* per the rule in §4.4, on all three
+  contact-bearing masters.
 
 ### 4.6 FX rates
 
@@ -183,8 +197,14 @@ Editing that contact in the dialog updates them after save, via `syncPrimaryCont
 
 ### 5.2 Vehicles
 
-`vehicles` joins the Warehouse draft as a `useFieldArray` with a Remove action, backed by the
-existing DELETE endpoint through the composite reconcile.
+`vehicles` joins the Warehouse draft as a `useFieldArray`, and follows the **same dialog pattern
+as contacts** (§4.5) rather than keeping its own always-expanded add form: a read-only table,
+an Add vehicle button, row-select to edit, and Remove inside the dialog. Consistency across the
+two child collections on one screen is the point of this work; leaving vehicles on a different
+interaction model would reintroduce exactly what this pass removes.
+
+This is also where vehicles gain a Remove at all — `DELETE /:id/vehicles/:vehicleId` has always
+existed and the UI never exposed it.
 
 ### 5.3 The advisory banner
 
@@ -348,9 +368,13 @@ before the Stage-4 pass starts.
 ## 9. Testing
 
 - **Web (vitest):** per screen — draft-then-save (no network before Save), the primary-contact
-  block, the advisory banner on a record loaded without one, dialog add/edit/remove, PRIMARY
-  auto-demotion, the FF mirror, and the Charge Catalogue form offering only Plain and
-  Heavy-weight while rendering an existing `TRUCKING`/`WAREHOUSE_STAGING` row read-only.
+  block, the advisory banner on a record loaded without one, PRIMARY auto-demotion, the FF
+  mirror, and the Charge Catalogue form offering only Plain and Heavy-weight while rendering an
+  existing `TRUCKING`/`WAREHOUSE_STAGING` row read-only.
+  For contacts and vehicles specifically: the table exposes **no** row action buttons; selecting
+  a row opens the dialog prefilled; Remove lives inside the dialog and is reachable only when
+  editing an existing record; and every mutation is asserted to leave the network untouched until
+  the parent Save.
   Auth-gated assertions must await the role-gated element itself, never "data loaded then assert
   role-gated UI" — that race caused PR #54's CI failure and 17 files share the shape.
 - **API (e2e):** composite create and update for all three masters; reconcile ordering (a payload
