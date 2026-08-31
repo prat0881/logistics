@@ -291,22 +291,44 @@ export class FfPortalService {
   async saveDraft(scope: FfScope, legId: string, draft: QuoteDraft): Promise<{ savedAt: string }> {
     const q = this.quoteForLeg(scope, legId);
     // ── write guards (S5.9.5 D5) — `saveDraft` accepts EXACTLY what `submit` accepts, in the same
-    // order. The brief for this task specified `submit` only; guarding this second call site too
+    // order. The brief for that task specified `submit` only; guarding this second call site too
     // is a deliberate widening, because this write is not confined to the leg it names: alongside
-    // `Quote.draftJson` it upserts `Rfq.currency` and `Rfq.quoteValidityUntil`, which are read
-    // LIVE by code that runs AFTER a query is locked — `comparison.service.ts` takes each offer's
-    // `currency` (and hence its USD conversion) from `rfq.currency` on every read of the compare
-    // grid, so this write can still re-denominate a price it did not itself produce.
+    // `Quote.draftJson` it upserts `Rfq.currency` and `Rfq.quoteValidityUntil` (below).
     //
-    // S5.9.6 NARROWED THIS, honestly: the bullet that used to head this list said
-    // `quotation.service.ts`'s `buildInitialDraft` prices the client quotation's cost lines and
-    // `validUntil` off the WINNING quote's `draftJson`. It no longer does — it reads
-    // `submittedJson`, which this method never writes. So the `draftJson` limb of the argument is
-    // gone; what survives is the `Rfq` limb above, and it is enough on its own to keep the guard.
-    // The leg-closed guard alone does NOT cover that: `generateClientQuote` requires every leg to be
-    // APPROVED with a shortlisted winner (award.service.ts's A6), so a locked query's every leg has
-    // a winner — and `closedReasons` deliberately excludes the winner's own leg. Without the status
-    // check below, that winner could still edit the numbers their client quotation is priced from.
+    // S5.9.6 NARROWED THE REASON, TWICE — and this note has been rewritten to say what actually
+    // survives, because the previous two versions of it are now both false. The first said
+    // `quotation.service.ts`'s `buildInitialDraft` prices the client letter off the winner's
+    // `draftJson`; it reads `submittedJson` now, which this method never writes. The second said
+    // `comparison.service.ts` takes every offer's `currency` from `rfq.currency` on every read of
+    // the compare grid; it reads `submitted.currency ?? rfq.currency` now. Do NOT read either as
+    // a live reason. What the guards are still worth, in three verified limbs:
+    //
+    // (a) LEGACY ROWS. Every pricing reader is now `submittedJson` FIRST and the live `Rfq` row
+    //     as a fallback — `comparison.service.ts` (:328 currency, :366 validUntil),
+    //     `award.service.ts` (:1363 currency, frozen verbatim into `Query.awardSnapshot`) and
+    //     `quotation.service.ts`'s `buildInitialDraft` (validUntil). `validateQuote` hard-blocks a
+    //     submit with no currency (`Q_CURRENCY`) or no validity (`Q_VALIDITY`), so on any row
+    //     submitted since S5.9.6 the fallback is dead. It is LIVE on a pre-S5.9.6 row, whose
+    //     `submittedJson` was backfilled from a `draftJson` that could carry either field blank.
+    //     On exactly those rows this write still re-denominates and re-dates a price it did not
+    //     produce — the old defect, narrowed to one row vintage rather than repealed.
+    //
+    // (b) THE `Rfq` ROW IS SHARED, so this write reaches legs it does not name. `Rfq` is
+    //     `@@unique([queryId, freightForwarderId])` (schema.prisma), and `submit` below freezes
+    //     `currency`/`quoteValidityUntil` from `scope.rfq` into the authoritative draft. So a save
+    //     arriving through a SETTLED leg moves the unit and the validity that this forwarder's
+    //     OTHER, still-open legs on the same query will freeze at their next submit. To be exact
+    //     about what this does NOT do: it never stops a forwarder moving those fields through a
+    //     leg that is genuinely open — the portal's currency control is page-level and query-wide
+    //     by design. It stops them arriving through one that is closed or settled. On a LOCKED
+    //     query that difference is total: `generateClientQuote` requires every leg APPROVED with a
+    //     shortlisted winner (award.service.ts's A6), so every quote fails the status check below
+    //     and every non-winner leg fails `closedReasons` as well — and `closedReasons` deliberately
+    //     excludes the winner's own leg (S5.9 D9), so the status check is the ONLY thing standing
+    //     between that winner and the `Rfq` row their own legacy-vintage letter may still read.
+    //
+    // (c) CLOSED-LEG HYGIENE — the `closedReason` check below, unchanged from S5.9.5 D5.
+    //
     // Together the two guards are what make S5.9.5 D6's blanket FF-portal exemption from the
     // query-wide lock safe.
     //

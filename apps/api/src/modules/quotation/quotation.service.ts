@@ -182,7 +182,8 @@ interface StoredQuotationLeg {
   forwarderName: string;
   variantLabel: string | null;
   groups: QuotationCostGroup[];
-  /** The winning quote's own `quoteValidityUntil` (ISO), captured at draft-creation time so
+  /** The winning quote's own submitted `quoteValidityUntil` (ISO) — falling back to the live `Rfq`
+   *  row only for a legacy row that carries none, exactly as the compare grid does — captured at draft-creation time so
    *  `validUntil` stays computable forever off `draftJson` alone — including for an ISSUED row
    *  after a later reopen has cleared `Query.awardSnapshot` (Task 4, design doc Q2: "earliest
    *  validUntil across the winning quotes"). */
@@ -757,7 +758,14 @@ export class QuotationService {
       // they last had saved in their portal.
       this.prisma.quote.findMany({
         where: { id: { in: quoteIds } },
-        select: { id: true, submittedJson: true },
+        // `rfq.quoteValidityUntil` rides along for the legacy fallback below — same shape
+        // `comparison.service.ts`'s QUOTE_SELECT uses, so the grid and the letter read from the
+        // same two sources in the same order.
+        select: {
+          id: true,
+          submittedJson: true,
+          rfq: { select: { quoteValidityUntil: true } },
+        },
       }),
     ]);
     const legCodeById = new Map(legs.map((l) => [l.id, l.legCode]));
@@ -781,7 +789,21 @@ export class QuotationService {
         forwarderName: forwarderNameById.get(leg.freightForwarderId) ?? leg.freightForwarderId,
         variantLabel: leg.variant ? rateVariantLabel(leg.variant) : null,
         groups,
-        validUntil: submitted.quoteValidityUntil ?? null,
+        // S5.9.6 review (MINOR 2) — same two sources, same order, as the compare grid's
+        // `validUntil` (comparison.service.ts's `buildLeg`), so the executive's grid and the
+        // client's letter cannot disagree about when this cost basis expires.
+        //
+        // `Q_VALIDITY` (quote-engine.ts) blocks a submit with no validity, so on any row submitted
+        // since S5.9.6 the first limb wins and the fallback is dead. It is live only for a
+        // pre-S5.9.6 row: the backfill copied `draftJson` into `submittedJson` verbatim, and
+        // `quoteDraftSchema` accepts a blank `quoteValidityUntil` while `FfPortalService.saveDraft`
+        // writes `undefined` (not null) for a blank — so a half-edited REQUOTED draft could be
+        // saved blank, get backfilled blank, and leave the live `Rfq` row as the only date on
+        // file. Without this limb that row showed the `Rfq` date in the grid and nothing at all
+        // in the letter.
+        validUntil:
+          submitted.quoteValidityUntil ??
+          (quote.rfq?.quoteValidityUntil ? quote.rfq.quoteValidityUntil.toISOString() : null),
       };
     });
 

@@ -413,7 +413,19 @@ describe(`${PREFIX} (e2e)`, () => {
     // Regression: the pre-existing RFQ_SENT sweep still works.
     expect(quoteAAfter.status).toBe("EXPIRED");
     expect(quoteAAfter.draftJson).toBeNull();
-    expect(quoteAAfter.submittedJson).toBeNull(); // never submitted, so there was never a price
+    // DELETED (S5.9.6 final review, MINOR 4): an `expect(quoteAAfter.submittedJson).toBeNull()`
+    // used to sit here. It could not fail. quoteA is RFQ_SENT, a status on which `submittedJson`
+    // is unreachable by construction — `submit` is the only writer and it moves the row to QUOTED,
+    // and `RfqService.distribute` clears the column on the way back in (rfq.service.ts) — so the
+    // fixture starts null, and `onExpiry`'s single write is `data: { draftJson: Prisma.DbNull }`
+    // (rfq-schedule.listener.ts), which names no other column. Null before, null after, for no
+    // reason the sweep controls.
+    //
+    // Where the invariant IS exercised: quoteB below, which carries a real `submittedJson` through
+    // the same `onExpiry` pass and asserts it by identity afterwards — the REQUOTED arm is the only
+    // arm on which the column can exist, so it is the only arm a sweep could destroy it on. The
+    // write side (submit sets it, a later saveDraft leaves it alone) is ff-portal.e2e-spec.ts's
+    // "submit records submittedJson" test.
 
     // THE FIX under test: REQUOTED is now swept too, in the same pass.
     expect(quoteBAfter.status).toBe("EXPIRED");

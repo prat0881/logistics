@@ -1574,10 +1574,19 @@ describe("GET /ff/rfq/:token (e2e)", () => {
   // is APPROVED with a shortlisted winner (A6), so a locked query's every leg HAS a winner — and
   // `closedReasons` deliberately excludes the winner's own leg (S5.9 D9). Their `saveDraft` used to
   // pass `quoteForLeg` (leg membership only) and write `Quote.draftJson` +
-  // `Rfq.currency`/`quoteValidityUntil`, all of which are read LIVE after the freeze:
-  // `quotation.service.ts`'s `buildInitialDraft` prices the client quotation's cost lines and
-  // `validUntil` off the winner's `draftJson` on the FIRST `GET queries/:id/quotation`, which
-  // happens after `awardSnapshot` was frozen. The quote-status guard is what closes that.
+  // `Rfq.currency`/`quoteValidityUntil`.
+  //
+  // S5.9.6 rewrote WHY that matters, and this header with it. The `draftJson` half is gone: every
+  // reader that prices, ranks, gates or freezes now reads `Quote.submittedJson`, which `saveDraft`
+  // never writes. What is still read live after the freeze is the `Rfq` row — as the legacy
+  // fallback behind `submittedJson.currency`/`.quoteValidityUntil` in `comparison.service.ts`,
+  // `award.service.ts` and `quotation.service.ts`'s `buildInitialDraft`, and as the source `submit`
+  // freezes from for this forwarder's other legs (`Rfq` is `@@unique([queryId,
+  // freightForwarderId])`). See the full three-limb note on `FfPortalService.saveDraft`.
+  //
+  // This test does not depend on which of those limbs is live: it asserts the guard's OBSERVABLE
+  // contract — a settled winner's `saveDraft` is refused 409 — and still reddens if the
+  // quote-status check is removed.
   //
   // One leg, two forwarders, so BOTH refusal paths are on the same fixture: ffA (the winner,
   // APPROVED → status guard) and ffB (a loser still RFQ_SENT → leg-closed guard).

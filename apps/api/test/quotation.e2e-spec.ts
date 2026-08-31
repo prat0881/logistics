@@ -362,6 +362,63 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
     expect(res.body.validUntil).toBe("2099-01-01T00:00:00.000Z"); // NOT 2050-06-01
   });
 
+  // ── S5.9.6 final review (MINOR 2) — the grid and the letter must not disagree on a LEGACY row ──
+  //
+  // `comparison.service.ts`'s `buildLeg` reads `submitted.quoteValidityUntil ?? rfq.quoteValidityUntil`.
+  // `buildInitialDraft` read only the first limb, so on the one row vintage where the first limb is
+  // null the executive's compare grid showed the `Rfq` date while the client's letter showed
+  // nothing at all — the same "executive sees one thing, client gets another" split the S5.9.6
+  // currency/validity fix existed to close, one row-vintage narrower.
+  //
+  // That vintage is reachable: `quoteDraftSchema` accepts a blank `quoteValidityUntil`, and
+  // `FfPortalService.saveDraft` writes `undefined` (not null) for a blank, so a blank NEVER clears
+  // the `Rfq` row. A pre-migration REQUOTED forwarder who blanked the field mid-edit had a blank
+  // draft and a populated `Rfq`; the S5.9.6 backfill copied the blank into `submittedJson`.
+  //
+  // Both limbs and their ORDER are pinned below, in one test, on one fixture.
+  const mkRfqFor = async (queryId: string, ffId: string, suffix: string, validity: Date | null) =>
+    prisma.rfq.create({
+      data: {
+        queryId,
+        freightForwarderId: ffId,
+        rfqNumber: `RFQ-${PFX}-${suffix}`,
+        accessTokenHash: `hash-${PFX}-${suffix}`,
+        submissionDeadline: new Date("2098-01-01T00:00:00.000Z"),
+        quoteValidityUntil: validity,
+      },
+    });
+
+  it("S5.9.6 (MINOR 2) — a legacy winner with no submitted validity falls back to the Rfq row, exactly as the compare grid does", async () => {
+    const { query, quote, ff } = await mkAwardedQuery("m2a", null); // submittedJson validity: null
+    const rfq = await mkRfqFor(query.id, ff.id, "m2a", new Date("2098-03-15T00:00:00.000Z"));
+    await prisma.quote.update({ where: { id: quote.id }, data: { rfqId: rfq.id } });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    // The fallback limb. Before this fix: null, while the grid showed 2098-03-15.
+    expect(res.body.validUntil).toBe("2098-03-15T00:00:00.000Z");
+  });
+
+  it("S5.9.6 (MINOR 2) — but the SUBMITTED validity still wins over the Rfq row's", async () => {
+    // The precedence control for the test above, and the reason the fallback cannot quietly
+    // become the primary source: a `saveDraft` moving `Rfq.quoteValidityUntil` must not re-date a
+    // letter whose winner submitted a date of their own (which, post-S5.9.6, every winner has —
+    // `Q_VALIDITY` hard-blocks a submit without one).
+    const { query, quote, ff } = await mkAwardedQuery("m2b"); // submittedJson validity: 2099-01-01
+    const rfq = await mkRfqFor(query.id, ff.id, "m2b", new Date("2098-03-15T00:00:00.000Z"));
+    await prisma.quote.update({ where: { id: quote.id }, data: { rfqId: rfq.id } });
+
+    const res = await request(app.getHttpServer())
+      .get(`/api/queries/${query.id}/quotation`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .expect(200);
+
+    expect(res.body.validUntil).toBe("2099-01-01T00:00:00.000Z"); // NOT 2098-03-15
+  });
+
   it("is idempotent — a second GET returns the same draft, not a second one", async () => {
     const { query } = await mkAwardedQuery("2");
 
