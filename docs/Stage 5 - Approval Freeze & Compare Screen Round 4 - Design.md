@@ -161,7 +161,7 @@ else. Two alternatives were on the table and were **not** taken:
 | Column | Written by | Meaning | Read by |
 | --- | --- | --- | --- |
 | `Quote.draftJson` | `FfPortalService.saveDraft` (any writable status), and `submit` (seeded with what was just sent) | The forwarder's **scratchpad**. Their last saved state, and nothing more. May be half-typed, blank, or a revision they never sent. | The FF portal only — `resolveScope` serves it as the portal's `draft`, which is the pre-fill, preview and print view the forwarder sees. Cleared for an `RFQ_SENT` quote by the expiry sweep and by `RfqService.distribute`; cleared for a refreshing quote by the change-order re-freeze. |
-| `Quote.submittedJson` | `FfPortalService.submit` **alone** | The **offer**. What this forwarder actually put on the table, at the moment they put it there. | Everything that prices something a human acts on: `ComparisonService.buildLeg` (the grid — its existence gate *and* its numbers), `AwardService.generateClientQuote` (the winner frozen into `Query.awardSnapshot`), `QuotationService.buildInitialDraft` (the client letter's cost lines and `validUntil`), and `LIVE_QUOTE_WHERE`'s `EXPIRED` arm (whether an expired quote is a live commercial commitment). Cleared only by `RfqService.distribute`, when a quote re-enters distribution. |
+| `Quote.submittedJson` | `FfPortalService.submit` **alone** | The **offer** — the whole offer: the amounts, and also the **currency** and the **validity**, both frozen from the `Rfq` row at submit time. What this forwarder actually put on the table, at the moment they put it there. | Everything that prices something a human acts on: `ComparisonService.buildLeg` (the grid — its existence gate, its numbers, its currency and its `validUntil`), `AwardService.generateClientQuote` (the winner frozen into `Query.awardSnapshot`, currency included), `QuotationService.buildInitialDraft` (the client letter's cost lines and `validUntil`), and `LIVE_QUOTE_WHERE`'s `EXPIRED` arm (whether an expired quote is a live commercial commitment). Cleared only by `RfqService.distribute`, when a quote re-enters distribution. |
 
 **D4's *behaviour* is unchanged.** The sweep still keeps a `REQUOTED` quote's `draftJson` and still
 discards an `RFQ_SENT` one's. Only the reason survives differently: retention is now about **portal
@@ -170,6 +170,22 @@ pre-fill** — a re-negotiated forwarder opens onto their previous numbers rathe
 as a stand-in for "the submitted price" should be read as `submittedJson`; the self-limiting
 argument for `EXPIRED ∈ COMPARABLE_STATUSES` still holds, and holds more tightly, because the gate
 it rests on is now the submission itself.
+
+**The unit is part of the offer, not just the quantity.** The first pass of this fix moved only the
+amounts and left every reader taking each offer's currency from the live `Rfq` row. That reopened the
+same defect one field to the left, because `saveDraft` upserts `Rfq.currency` and
+`Rfq.quoteValidityUntil` alongside the scratchpad and admits `REQUOTED`: a re-quoted forwarder could
+**re-denominate** an offer they never re-submitted. Measured on the built system — submit 4,750 INR
+(≈ $57.09), go `REQUOTED`, move only `Rfq.currency` to JPY, and the grid returned ¥4,750 ≈ $31.67.
+`usdTotal` is what the grid ranks on and what `combinedUsd` sums, and it is a product of both halves,
+so the quantity being provably submitted bought nothing on its own. `Rfq` is
+`@@unique([queryId, freightForwarderId])`, so one such save moved **every** offer that forwarder held
+on the query, including one already APPROVED on another leg. Both pricing readers now take
+`draft.currency ?? rfq.currency` — the `Rfq` row survives only as a legacy fallback, safe because
+`validateQuote` hard-blocks a submit with no currency (`Q_CURRENCY`) or no validity (`Q_VALIDITY`).
+The grid's per-offer `validUntil` moved the same way, for a reason this sub-build created: once the
+client letter's validity came from `submittedJson`, the two could disagree, and an executive would
+have seen one validity while the client received another.
 
 **What the fix cannot do.** For rows written *before* the migration there is no record of the
 submitted price other than `draftJson`, so the backfill copied the last saved state. For a legacy

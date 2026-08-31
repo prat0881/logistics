@@ -66,15 +66,23 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
   // Same minimal ROAD-draft shape as the maker/checker specs' roadDraft — priced only on the
   // DEDICATED variant, so computeQuoteTotals produces exactly one comparable (nativeTotal,
   // transitDays) pair per quote.
+  // S5.9.6 review (A6, the currency limb) — `currency` is a PARAMETER now, and every caller passes
+  // the same value it gives the quote's own Rfq. It used to be hardcoded "INR" while `seedQuery`
+  // set the Rfq to `spec.currency`, which is a row the product cannot produce: `submit` builds the
+  // authoritative draft with `currency: scope.rfq.currency` (ff-portal.service.ts), so the two
+  // always agree on a genuinely submitted quote. That divergence went unnoticed only because
+  // `generateClientQuote` read the Rfq row; now that it reads the submitted draft, the A7 fixture
+  // has to be honest about which currency the forwarder actually quoted in.
   const roadDraft = (
     legId: string,
     originPointId: string,
     amount: number,
     transitDays: number,
+    currency = "INR",
   ): QuoteDraft => ({
     legId,
     mode: "ROAD",
-    currency: "INR",
+    currency,
     quoteValidityUntil: "2099-01-01T00:00:00.000Z",
     chargedWeightKg: 500,
     notes: null,
@@ -173,12 +181,14 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
             origin.id,
             spec.amount,
             spec.transitDays,
+            spec.currency,
           ) as unknown as Prisma.InputJsonValue,
           submittedJson: roadDraft(
             leg.id,
             origin.id,
             spec.amount,
             spec.transitDays,
+            spec.currency,
           ) as unknown as Prisma.InputJsonValue,
         },
       });
@@ -476,6 +486,43 @@ describe("award workflow — generate-client-quote / reopen-comparison (e2e)", (
     expect(snapshot.legs).toHaveLength(1);
     expect(snapshot.legs[0].nativeTotal).toBe(83200); // NOT 41600
     expect(snapshot.legs[0].usdTotal).toBe(1000); // 83200 / 83.2
+    expect(snapshot.combinedUsd).toBe(1000);
+  });
+
+  // ── S5.9.6 review (A6, the currency limb) — the frozen snapshot's UNIT is submitted too ──────
+  it("S5.9.6 (A6) — moving only Rfq.currency after the winner submitted does NOT re-denominate the frozen snapshot", async () => {
+    // The half-edit above moved the AMOUNT; this moves the UNIT, through the other field the same
+    // `saveDraft` call writes. `saveDraft` upserts `Rfq.currency` and admits `REQUOTED`, and this
+    // method used to read `quote.rfq?.currency` live at generate time — so a forwarder who was
+    // asked to re-quote and saved a draft in another currency re-denominated the winner, and the
+    // wrong unit was frozen VERBATIM into `Query.awardSnapshot` and priced into the client letter.
+    // `Rfq` is `@@unique([queryId, freightForwarderId])`, so one such save moved every offer that
+    // forwarder held on the query. `submit` freezes the currency into the draft it writes, and
+    // `Q_CURRENCY` (quote-engine.ts) blocks a submit without one, so `submittedJson` always has it.
+    //
+    // A JPY rate is on file deliberately: without it the broken behaviour would 409 on A7 rather
+    // than produce a wrong number, and a refusal is a much weaker signal than $1,000 -> $554.67.
+    await prisma.fxRate.create({ data: { currency: "JPY", unitsPerUsd: 150, note: `${PREFIX}-jpy` } });
+    const { query, legs } = await seedQuery("a6currency", [
+      { decision: "APPROVED", currency: "INR", amount: 83200, transitDays: 3 },
+    ]);
+    const quoteBefore = await prisma.quote.findUniqueOrThrow({
+      where: { id: legs[0].quoteId },
+      select: { rfqId: true },
+    });
+    await prisma.rfq.update({ where: { id: quoteBefore.rfqId! }, data: { currency: "JPY" } });
+
+    await request(app.getHttpServer())
+      .post(`/api/queries/${query.id}/generate-client-quote`)
+      .set("Cookie", cookieFor(randomUUID(), Role.MANAGER))
+      .send()
+      .expect(200);
+
+    const updated = await prisma.query.findUniqueOrThrow({ where: { id: query.id } });
+    const snapshot = updated.awardSnapshot as unknown as Snapshot;
+    expect(snapshot.legs[0].currency).toBe("INR"); // NOT "JPY"
+    expect(snapshot.legs[0].unitsPerUsd).toBe(83.2); // NOT 150
+    expect(snapshot.legs[0].usdTotal).toBe(1000); // NOT 554.67
     expect(snapshot.combinedUsd).toBe(1000);
   });
 

@@ -311,9 +311,21 @@ export class ComparisonService {
       const draft = submittedJson as unknown as QuoteDraft;
 
       const totals = computeQuoteTotals(draft);
-      // The quote's OWN Rfq currency is the source of truth (upserted at FF-submit time) — not
-      // draft.currency, which the read-first files call out as a separate, dedicated load.
-      const currency = q.rfq?.currency ?? null;
+      // S5.9.6 review (A6, the currency limb) — the UNIT comes from the submitted draft, with the
+      // live `Rfq` row only as a legacy fallback. This used to read `q.rfq?.currency` outright,
+      // which reopened A6 one field to the left: `FfPortalService.saveDraft` upserts `Rfq.currency`
+      // and admits `REQUOTED`, so a forwarder asked to re-quote could re-denominate an offer they
+      // never re-submitted — the quantity was provably theirs while the unit was not, and
+      // `usdTotal` (what the grid RANKS on, and what `combinedUsd` sums) is a product of both.
+      // Observed before the fix: submit 4,750 INR ≈ $57.09, then a JPY-only `saveDraft` turned the
+      // same untouched row into ¥4,750 ≈ $31.67.
+      //
+      // `draft.currency` is the right source and is safe with no migration: `submit` builds the
+      // authoritative draft with `currency: scope.rfq.currency` frozen at submit time
+      // (ff-portal.service.ts), and `validateQuote` HARD-BLOCKS a submit with no currency
+      // (`Q_CURRENCY`, quote-engine.ts), so it is non-null on every genuinely submitted row. The
+      // `??` fallback therefore only ever serves a legacy/backfilled row.
+      const currency = draft.currency ?? q.rfq?.currency ?? null;
       const rate = currency ? (ratesByCurrency.get(currency) ?? null) : null;
       submittedAtByQuote.set(
         q.id,
@@ -345,7 +357,15 @@ export class ComparisonService {
             draft.transit?.guaranteedTransitDaysByVariant[transitKeyForVariant(draft.mode, v)] ??
             null,
           chargeableWeightKg: totals.chargeableWeightKg,
-          validUntil: q.rfq?.quoteValidityUntil ? q.rfq.quoteValidityUntil.toISOString() : null,
+          // Same fix, same reason, for the same field's sibling (S5.9.6 review). Before this
+          // task the grid's validity and the client letter's validity both tracked `saveDraft`, so
+          // they could not disagree; moving `buildInitialDraft` to `submittedJson` split them, and
+          // an executive would have seen one validity while the client received another.
+          // `Q_VALIDITY` (quote-engine.ts) blocks a submit with no validity, so this is non-null on
+          // any genuinely submitted row and the fallback only serves legacy rows.
+          validUntil:
+            draft.quoteValidityUntil ??
+            (q.rfq?.quoteValidityUntil ? q.rfq.quoteValidityUntil.toISOString() : null),
           quoteStatus: q.status,
           charges: this.buildCharges(vt, totals, currency, rate),
         });

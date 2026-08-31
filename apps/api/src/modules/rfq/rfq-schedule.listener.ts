@@ -147,8 +147,11 @@ export class RfqScheduleListener {
           // retained `draftJson` "is the only thing keeping that offer on the compare screen".
           // That is now FALSE, and it was never a provenance claim to begin with: `draftJson` is
           // the forwarder's SCRATCHPAD — `FfPortalService.saveDraft` overwrites it verbatim with
-          // no status guard and no version hash, and `quoteDraftSchema` accepts blanks on purpose,
-          // so on a REQUOTED quote it is merely their LAST SAVED STATE, which may be a
+          // NO stale-page version hash (contrast `submit`, which has one), and `quoteDraftSchema`
+          // accepts blanks on purpose. Its guards are a leg-closed check and a status check
+          // (`WRITABLE_QUOTE_STATUSES = RFQ_SENT | REQUOTED`, S5.9.5 D5) — and REQUOTED is admitted
+          // deliberately, because a forwarder asked to revise has to be able to type. So on a
+          // REQUOTED quote this column is merely their LAST SAVED STATE, which may be a
           // half-typed, modified, never-submitted bid. S5.9.6 moved the offer to `submittedJson`
           // (written by `submit` alone). The compare grid, the winner pricing and the client
           // letter's cost lines all read THAT column now, so what keeps a re-quoted forwarder's

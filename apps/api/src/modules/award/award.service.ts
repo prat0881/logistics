@@ -1352,7 +1352,15 @@ export class AwardService {
       }
       const nativeTotal = vt.grandTotal;
 
-      const currency = quote.rfq?.currency ?? null;
+      // S5.9.6 review (A6, the currency limb) — the UNIT comes from the submitted draft, with the
+      // live `Rfq` row only as a legacy fallback, exactly as comparison.service.ts's `buildLeg`
+      // does (read its note for the full reasoning and the observed defect). This one matters more,
+      // not less: the value is frozen VERBATIM into `Query.awardSnapshot.legs[].currency` and the
+      // client letter is priced from that snapshot, so a `saveDraft` that moved `Rfq.currency`
+      // between submit and generate would have been baked in permanently. `Rfq` is
+      // `@@unique([queryId, freightForwarderId])`, so one such save re-denominated every offer that
+      // forwarder held on the query — including one already APPROVED on another leg.
+      const currency = draft.currency ?? quote.rfq?.currency ?? null;
       const rate = currency ? (ratesByCurrency.get(currency) ?? null) : null;
       const usdTotal = currency ? toUsd(nativeTotal, currency, rate) : null;
       // A7 — USD passes through toUsd unconditionally; every other currency needs a rate on

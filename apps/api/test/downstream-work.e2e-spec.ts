@@ -122,9 +122,11 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
       },
     });
     // S5.9.6 (A6): the shape that made the split necessary — a forwarder who was asked to re-quote,
-    // typed into the reopened portal, hit Save draft, and went silent. Differs from the fixture
-    // above in EXACTLY one column (`submittedJson`), so the two assertions cannot pass for each
-    // other's reason. They never offered this number, so it is not a commercial commitment.
+    // typed into the reopened portal, hit Save draft, and went silent. It also differs from the
+    // fixture above in `submittedAt` (a never-submitted row must not carry one), but of the only
+    // two columns `LIVE_QUOTE_WHERE` reads — `status` and `submittedJson` — it shares the first and
+    // differs in the second, so the two assertions cannot pass for each other's reason. They never
+    // offered this number, so it is not a commercial commitment.
     await prisma.quote.create({
       data: {
         queryId,
@@ -155,10 +157,12 @@ describe("ScopeResolver.downstreamWork (e2e)", () => {
     await expect(resolver.downstreamWork([{ type: "leg", id: legStaleId }])).resolves.toBe(false);
   });
 
-  // S5.9.5 CRITICAL 1 / S5.9.6 A6 — the halves of the EXPIRED distinction, side by side. The two
-  // fixtures differ in exactly one column (`submittedJson`), so neither assertion can pass for the
-  // other's reason: dropping the EXPIRED arm from LIVE_QUOTE_WHERE reddens the first, and
-  // re-keying that arm on `draftJson` (as it was before S5.9.6) reddens the second.
+  // S5.9.5 CRITICAL 1 / S5.9.6 A6 — the halves of the EXPIRED distinction, side by side. Of the
+  // only two columns LIVE_QUOTE_WHERE reads, the two fixtures share `status` and differ in
+  // `submittedJson` (they also differ in `submittedAt`, which the predicate does not read), so
+  // neither assertion can pass for the other's reason: dropping the EXPIRED arm from
+  // LIVE_QUOTE_WHERE reddens the first, and re-keying that arm on `draftJson` (as it was before
+  // S5.9.6) reddens the second.
   it("is TRUE when the scope leg's only quote is an EXPIRED one that still carries a submitted price", async () => {
     await expect(resolver.downstreamWork([{ type: "leg", id: legExpiredPricedId }])).resolves.toBe(
       true,

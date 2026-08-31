@@ -642,8 +642,12 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     // HALF 3 is S5.9.6 (register A6): before the column split, the live-quote predicate keyed on
     // `draftJson`, so a forwarder who half-edited a reopened portal and went silent was treated as
     // having a live commercial commitment. They never submitted that number and it appears nowhere
-    // on the compare screen, so the edit must free-path exactly as half 2 does. That half and half
-    // 1 differ in EXACTLY one column, `submittedJson`.
+    // on the compare screen, so the edit must free-path exactly as half 2 does. Half 3's fixture
+    // differs from half 1's in several columns (`rfqId`, `submittedAt`, `grandTotal`,
+    // `totalChargeableWeightT`, `submittedJson`) because it also has to be a realistic
+    // never-submitted row — but it differs in exactly one of the columns `LIVE_QUOTE_WHERE`
+    // READS, which is `submittedJson`; that predicate looks at `status` and that column and
+    // nothing else. So the isolation is in the predicate, not in the fixture.
     const query = await prisma.query.create({
       data: { queryCode: CODE4, assignedUserId: execId4, incoterms: "FOB" },
     });
@@ -732,7 +736,8 @@ describe("ChangeOrderStrategy apply saga (e2e)", () => {
     expect(quoteUnpriced.submittedJson).toBeNull();
 
     // S5.9.6 (A6): asked to re-quote, typed into the reopened portal, hit Save draft, went silent.
-    // A scratchpad, never an offer — and one column away from `quotePriced` above.
+    // A scratchpad, never an offer. Of the two columns `LIVE_QUOTE_WHERE` reads it shares
+    // `status` with `quotePriced` above and differs only in `submittedJson`.
     const quoteScratch = await prisma.quote.create({
       data: {
         queryId: query.id,

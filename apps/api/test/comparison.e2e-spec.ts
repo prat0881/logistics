@@ -22,6 +22,9 @@ type OfferBody = {
   variant: string | null;
   usdTotal: number | null;
   nativeTotal: number;
+  currency: string;
+  unitsPerUsd: number | null;
+  validUntil: string | null;
   quoteStatus: string;
   priced: boolean; // S5.9.5 — D4/D8 assert on it directly (an EXPIRED offer must still read priced)
 };
@@ -1052,6 +1055,121 @@ describe("GET /queries/:id/comparison (e2e)", () => {
       (o) => o.freightForwarderId === ff.id && o.variant === "DEDICATED",
     );
     expect(offerAfter!.nativeTotal).toBe(4750);
+  });
+
+  // ── S5.9.6 review (A6, the currency limb) — the UNIT is submitted too ────────────────────────
+  //
+  // The task above made the QUANTITY provably submitted and left the UNIT reading the live `Rfq`
+  // row. `FfPortalService.saveDraft` upserts `Rfq.currency` and `Rfq.quoteValidityUntil` and admits
+  // `REQUOTED`, so A6 survived one field to the left: a forwarder asked to re-quote could
+  // re-denominate an offer they never re-submitted. `usdTotal` — what the grid RANKS on and what
+  // `combinedUsd` sums — is a product of both, so 4,750 INR (≈$57.09) became ¥4,750 (≈$31.67) on an
+  // otherwise untouched row. `Rfq` is `@@unique([queryId, freightForwarderId])`, so ONE such save
+  // moves every offer that forwarder holds on the query.
+  //
+  // The same `saveDraft` moves `Rfq.quoteValidityUntil`, and this task split the two readers of it:
+  // the client letter's validity now comes from `submittedJson` while the grid's still came from
+  // the `Rfq` row, so an executive could see one validity and the client receive another.
+  it("S5.9.6 (A6) — moving only Rfq.currency/validity on a REQUOTED quote does NOT re-denominate or re-date their submitted offer", async () => {
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-a6cur`, priority: "MEDIUM", incoterms: "FOB" },
+    });
+    const origin = await prisma.point.create({
+      data: { queryId: query.id, type: "PICKUP", city: "Shanghai", country: "CN" },
+    });
+    const dest = await prisma.point.create({
+      data: { queryId: query.id, type: "DELIVERY", city: "Dubai", country: "AE" },
+    });
+    const leg = await prisma.leg.create({
+      data: {
+        queryId: query.id,
+        legCode: "L1",
+        mode: "ROAD",
+        originPointId: origin.id,
+        destinationPointId: dest.id,
+      },
+    });
+    await prisma.fxRate.create({
+      data: { currency: "INR", unitsPerUsd: 83.2, note: `${PREFIX} a6cur inr` },
+    });
+    await prisma.fxRate.create({
+      data: { currency: "JPY", unitsPerUsd: 150, note: `${PREFIX} a6cur jpy` },
+    });
+
+    const ff = await mkFf(`FF-${PREFIX}-A6C`);
+    const rfq = await mkRfq(query.id, ff.id, "A6C", "INR");
+    // Submitted 4,750 INR. `submit` freezes the Rfq's currency/validity INTO the draft it writes
+    // (`currency: scope.rfq.currency`, ff-portal.service.ts), and `validateQuote` hard-blocks a
+    // submit carrying neither (`Q_CURRENCY`/`Q_VALIDITY`), so a submitted row always has both.
+    const quote = await prisma.quote.create({
+      data: {
+        queryId: query.id,
+        legId: leg.id,
+        freightForwarderId: ff.id,
+        rfqId: rfq.id,
+        status: "QUOTED",
+        submittedAt: new Date(),
+        draftJson: roadDraft(leg.id, origin.id, "INR", 4750, 3) as unknown as Prisma.InputJsonValue,
+        submittedJson: roadDraft(leg.id, origin.id, "INR", 4750, 3) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const readOffer = async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/queries/${query.id}/comparison`)
+        .set("Cookie", cookie())
+        .expect(200);
+      const legDto = res.body.legs.find((l: { legId: string }) => l.legId === leg.id);
+      return (legDto.offers as OfferBody[]).find(
+        (o) => o.freightForwarderId === ff.id && o.variant === "DEDICATED",
+      )!;
+    };
+
+    const atSubmit = await readOffer();
+    expect(atSubmit.currency).toBe("INR");
+    expect(atSubmit.usdTotal).toBe(57.09); // 4750 / 83.2
+    expect(atSubmit.validUntil).toBe("2099-01-01T00:00:00.000Z");
+
+    // The exec asks for a re-quote; the forwarder opens the reopened portal and saves a draft in
+    // JPY with a nearer validity, then goes silent. Only the Rfq row moves — the SAME upsert
+    // `saveDraft` performs — and `submittedJson` is deliberately left exactly as submitted.
+    await prisma.quote.update({ where: { id: quote.id }, data: { status: "REQUOTED" } });
+    await prisma.rfq.update({
+      where: { id: rfq.id },
+      data: { currency: "JPY", quoteValidityUntil: new Date("2030-03-03T00:00:00.000Z") },
+    });
+
+    const afterSave = await readOffer();
+    expect(afterSave.nativeTotal).toBe(4750); // unchanged by the task above...
+    expect(afterSave.currency).toBe("INR"); // ...and now the UNIT is unchanged too (was "JPY")
+    expect(afterSave.unitsPerUsd).toBe(83.2); // (was 150)
+    expect(afterSave.usdTotal).toBe(57.09); // the ranked number holds (was 31.67)
+    expect(afterSave.validUntil).toBe("2099-01-01T00:00:00.000Z"); // (was 2030-03-03)
+
+    // POSITIVE CONTROL, same test: a genuine re-submit in JPY DOES move all of it. `submit` writes
+    // the Rfq's currency/validity into `submittedJson`, so this is the real post-submit shape — and
+    // without it an implementation that simply ignored currency entirely would pass the above.
+    const resubmitted = roadDraft(leg.id, origin.id, "JPY", 4750, 3);
+    await prisma.quote.update({
+      where: { id: quote.id },
+      data: {
+        status: "QUOTED",
+        draftJson: {
+          ...resubmitted,
+          quoteValidityUntil: "2030-03-03T00:00:00.000Z",
+        } as unknown as Prisma.InputJsonValue,
+        submittedJson: {
+          ...resubmitted,
+          quoteValidityUntil: "2030-03-03T00:00:00.000Z",
+        } as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const afterResubmit = await readOffer();
+    expect(afterResubmit.currency).toBe("JPY");
+    expect(afterResubmit.unitsPerUsd).toBe(150);
+    expect(afterResubmit.usdTotal).toBe(31.67); // 4750 / 150
+    expect(afterResubmit.validUntil).toBe("2030-03-03T00:00:00.000Z");
   });
 
   // The ranking half of D4, on ONE forwarder so nothing else can win: the same priced offer must
