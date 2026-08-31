@@ -46,9 +46,10 @@ export async function reconcileContacts(opts: {
   const { delegate, ownerKey, ownerId, contacts, user } = opts;
 
   // Query-before-write rather than catching P2002. Prisma reports the violated partial index as
-  // its COLUMN list (["clientId"]), never the index name, so a caught conflict on the composite
-  // path could not be told apart from any other unique violation on that column. Checking here
-  // gives the user a real message.
+  // its COLUMN list (["<ownerKey>"]), never the index name, so a caught conflict on the
+  // composite path could not be told apart from any other unique violation on that column.
+  // Checking here gives the user a real message. Deliberately before the first delegate call:
+  // an invalid payload must not write anything at all.
   if (contacts.filter(isPrimary).length > 1) {
     throw new ConflictException(PRIMARY_DUPLICATE_MESSAGE);
   }

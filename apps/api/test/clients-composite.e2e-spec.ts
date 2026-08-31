@@ -5,7 +5,7 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
-import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
+import { Role, ACCESS_TOKEN_COOKIE, PRIMARY_DUPLICATE_MESSAGE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
@@ -181,7 +181,7 @@ describe("Clients composite create/update (e2e)", () => {
     expect(await prisma.clientContact.count({ where: { clientId: created.body.id } })).toBe(1);
   });
 
-  it("409s two primaries with the real message, not a column name", async () => {
+  it("400s two primaries at the schema layer, naming the rule", async () => {
     const created = await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.MANAGER))
@@ -197,11 +197,17 @@ describe("Clients composite create/update (e2e)", () => {
           { name: "P2", email: "p2@x.com", contactNo: "+971501234568", pocLevel: "PRIMARY" },
         ],
       });
-    // 400 from the Zod refine is the first gate; the service's query-before-write 409 is the
-    // backstop for a caller that bypasses the schema. Either is correct; the message must
-    // never be a bare column name.
-    expect([400, 409]).toContain(res.status);
-    expect(String(res.body.message)).not.toBe("clientId");
+    // clientUpdateSchema.contacts carries .refine(atMostOnePrimary), so this never reaches the
+    // service: Zod rejects it first, and 400 is the only possible status. The service's
+    // query-before-write 409 is the backstop for a caller that bypasses the schema, and it is
+    // covered directly in reconcile-contacts.spec.ts — asserting `[400, 409]` here would be a
+    // test with one live branch.
+    expect(res.status).toBe(400);
+    // ZodValidationPipe puts the flat "Validation failed" in `message` and the real rule
+    // messages in `issues`, so assert on the issue the atMostOnePrimary refine raises.
+    expect(res.body.issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ message: PRIMARY_DUPLICATE_MESSAGE })]),
+    );
   });
 
   it("leaves a legacy client with no primary contact saveable", async () => {
