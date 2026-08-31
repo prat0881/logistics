@@ -66,7 +66,7 @@ describe("Vessels (e2e)", () => {
     await request(app.getHttpServer())
       .post("/api/vessels")
       .set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ name: `${NAME} 2`, vesselType: "TANKER", imoNumber: IMO })
+      .send({ name: `${NAME} 2`, vesselType: "TANKER", imoNumber: IMO, shippingLine: "Maersk" })
       .expect(409);
   });
 
@@ -102,7 +102,7 @@ describe("Vessels (e2e)", () => {
     const res2 = await request(app.getHttpServer())
       .post("/api/vessels")
       .set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ name: `${NAME} RESILIENT`, vesselType: "CONTAINER" })
+      .send({ name: `${NAME} RESILIENT`, vesselType: "CONTAINER", imoNumber: "9999002", shippingLine: "Maersk" })
       .expect(201);
     expect(res2.body.vesselCode).toMatch(/^VS-\d{4}$/);
   });

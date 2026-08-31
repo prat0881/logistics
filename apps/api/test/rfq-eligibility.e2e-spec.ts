@@ -10,6 +10,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 const PREFIX = "RFQ-ELIG";
 const CODE = `YAL00-${PREFIX}`;
@@ -109,7 +110,7 @@ describe(`${PREFIX} (e2e)`, () => {
       handleDg = false,
     ) =>
       prisma.freightForwarder.create({
-        data: {
+        data: ffFixture({
           freightForwarderCode: code,
           companyName: `${code} Co`,
           pic: "P",
@@ -119,7 +120,7 @@ describe(`${PREFIX} (e2e)`, () => {
           modes,
           status,
           handleDg,
-        },
+        }),
       });
     const a = await mkFf("FF-ELIG-A", ["CN", "AE"], ["AIR"], "ACTIVE");
     const b = await mkFf("FF-ELIG-B", ["CN", "AE"], ["SEA"], "ACTIVE");
@@ -178,7 +179,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
     // FF-DG-Y: handleDg=true, ACTIVE → eligible even without SG/DE country match (broaden)
     const y = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: "FF-RFQ-ELIG-DG-Y",
         companyName: "FF-RFQ-ELIG-DG-Y Co",
         pic: "P",
@@ -188,11 +189,11 @@ describe(`${PREFIX} (e2e)`, () => {
         modes: ["SEA"],
         status: "ACTIVE",
         handleDg: true,
-      },
+      }),
     });
     // FF-DG-N: handleDg=false, ACTIVE → excluded because DG
     const dgN = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: "FF-RFQ-ELIG-DG-N",
         companyName: "FF-RFQ-ELIG-DG-N Co",
         pic: "P",
@@ -202,7 +203,7 @@ describe(`${PREFIX} (e2e)`, () => {
         modes: ["AIR"],
         status: "ACTIVE",
         handleDg: false,
-      },
+      }),
     });
 
     // broaden=true but DG restriction STILL applies
@@ -248,7 +249,7 @@ describe(`${PREFIX} (e2e)`, () => {
     await assignPackagesToLeg(prisma, leg.id, cty1PackageIds);
     const mk = (code: string, countries: string[]) =>
       prisma.freightForwarder.create({
-        data: {
+        data: ffFixture({
           freightForwarderCode: code,
           companyName: `${code} Co`,
           pic: "P",
@@ -258,7 +259,7 @@ describe(`${PREFIX} (e2e)`, () => {
           modes: ["AIR"],
           status: "ACTIVE",
           handleDg: false,
-        },
+        }),
       });
     const match = await mk("FF-ELIG-CTY-MATCH", ["GB", "DE"]); // covers both endpoints
     const partial = await mk("FF-ELIG-CTY-PARTIAL", ["GB"]); // missing DE
@@ -299,7 +300,7 @@ describe(`${PREFIX} (e2e)`, () => {
     });
     await assignPackagesToLeg(prisma, leg.id, cty2PackageIds);
     const gb = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: "FF-ELIG-CTY-GB",
         companyName: "FF-ELIG-CTY-GB Co",
         pic: "P",
@@ -309,7 +310,7 @@ describe(`${PREFIX} (e2e)`, () => {
         modes: ["AIR"],
         status: "ACTIVE",
         handleDg: false,
-      },
+      }),
     });
 
     const res = await request(app.getHttpServer())

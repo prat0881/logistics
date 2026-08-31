@@ -59,7 +59,7 @@ describe("Clients (e2e)", () => {
     const created = await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.MANAGER))
-      .send({ companyName: CO, country: "IN", industry: "Logistics" })
+      .send({ companyName: CO, country: "IN", industry: "Logistics", streetAddress: "1 Test Road", city: "Test City" })
       .expect(201);
     expect(created.body.clientCode).toMatch(/^CL-\d{4}$/);
     const id = created.body.id;
@@ -75,28 +75,29 @@ describe("Clients (e2e)", () => {
     await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.MANAGER))
-      .send({ companyName: CO, country: "IN" })
+      .send({ companyName: CO, country: "IN", streetAddress: "1 Test Road", city: "Test City" })
       .expect(409);
   });
 
-  it("adds contacts and keeps a single primary", async () => {
+  it("adds a contact, and refuses a second primary with 409", async () => {
     const c = await prisma.client.findFirst({ where: { companyName: CO } });
     const id = c!.id;
     await request(app.getHttpServer())
       .post(`/api/clients/${id}/contacts`)
       .set("Cookie", cookie(Role.MANAGER))
-      .send({ name: "First", isPrimary: true })
+      .send({ name: "First", email: "first@example.com", contactNo: "+10000000001", pocLevel: "PRIMARY" })
       .expect(201);
-    await request(app.getHttpServer())
+    const conflict = await request(app.getHttpServer())
       .post(`/api/clients/${id}/contacts`)
       .set("Cookie", cookie(Role.MANAGER))
-      .send({ name: "Second", isPrimary: true })
-      .expect(201);
+      .send({ name: "Second", email: "second@example.com", contactNo: "+10000000002", pocLevel: "PRIMARY" })
+      .expect(409);
+    expect(conflict.body.message).toBe("This client already has a primary contact");
     const primaries = await prisma.clientContact.findMany({
-      where: { clientId: id, isPrimary: true },
+      where: { clientId: id, pocLevel: "PRIMARY" },
     });
     expect(primaries).toHaveLength(1);
-    expect(primaries[0].name).toBe("Second");
+    expect(primaries[0].name).toBe("First");
   });
 
   it("searches + paginates", async () => {
@@ -139,7 +140,7 @@ describe("Clients (e2e)", () => {
     const res = await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.MANAGER))
-      .send({ companyName: `${CO} RESILIENT`, country: "IN" })
+      .send({ companyName: `${CO} RESILIENT`, country: "IN", streetAddress: "1 Test Road", city: "Test City" })
       .expect(201);
     expect(res.body.clientCode).toMatch(/^CL-\d{4}$/);
   });

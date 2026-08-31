@@ -7,6 +7,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { RfqNotificationsService } from "../src/modules/rfq/rfq-notifications.service";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 9 (SB6): the change-order cascade's saga (Task 8, not yet built) reopens leg(s) and
 // invalidates the FF(s) who had already quoted them, then calls
@@ -80,7 +81,7 @@ describe("RfqNotificationsService.legReopened (e2e)", () => {
 
   const mkFf = (code: string) =>
     prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: code,
         companyName: `${code} Co`,
         pic: "P",
@@ -88,7 +89,7 @@ describe("RfqNotificationsService.legReopened (e2e)", () => {
         email: `${code}@e2e.test`,
         availableCountries: ["AE"],
         modes: ["AIR"],
-      },
+      }),
     });
 
   const mkRfq = (queryId: string, freightForwarderId: string, rfqNumber: string) =>

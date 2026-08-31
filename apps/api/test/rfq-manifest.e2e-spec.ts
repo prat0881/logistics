@@ -12,6 +12,7 @@ import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { loadLegForRfq } from "../src/modules/rfq/leg-context";
 import { buildManifestSnapshot } from "../src/modules/rfq/manifest";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 2 (Unit 1, FF Portal v2 ripple): the RFQ manifest freeze is re-pointed from the old
 // flat CargoItem/LegCargo model onto Cargo→Package→Item + LegPackage. This spec builds a REAL
@@ -135,7 +136,7 @@ describe(`${PFX}rfq-manifest (e2e)`, () => {
 
     // --- ACTIVE, DG-handling FF (F5 requires every selected FF to handle DG) ---
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PFX}A`,
         companyName: `FF-${PFX}A Co`,
         pic: "P",
@@ -145,7 +146,7 @@ describe(`${PFX}rfq-manifest (e2e)`, () => {
         modes: ["AIR"],
         status: "ACTIVE",
         handleDg: true,
-      },
+      }),
     });
 
     await api()

@@ -38,7 +38,7 @@ describe("Create Query route gating (e2e)", () => {
     await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } });
     await prisma.client.deleteMany({ where: { companyName: { startsWith: PFX } } });
     const client = await prisma.client.create({
-      data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN" },
+      data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN", streetAddress: "1 Test Road", city: "Test City" },
     });
     clientId = client.id;
   });

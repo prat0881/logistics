@@ -40,7 +40,7 @@ describe("GET /queries list (e2e)", () => {
     await seedReferenceData(prisma);
 
     const client = await prisma.client.create({
-      data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN" },
+      data: { clientCode: `${PFX}CL`, companyName: `${PFX}Client`, country: "IN", streetAddress: "1 Test Road", city: "Test City" },
     });
     clientId = client.id;
 

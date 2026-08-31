@@ -23,7 +23,7 @@ const vessel2: VesselDto = {
   vesselCode: "VES002",
   name: "Atlantic Dawn",
   imoNumber: "7654321",
-  shippingLine: null,
+  shippingLine: "Maersk",
   vesselType: "BULK_CARRIER",
   status: "ACTIVE",
 };

@@ -20,21 +20,30 @@ describe("charge catalogue seed", () => {
     await prisma.$disconnect();
   });
 
-  // Counts below track apps/api/src/seed/reference-seed.ts's CHARGE_LINE_DEFINITIONS exactly —
-  // last updated for the FF Portal v2 catalogue additions (Stage 4 Unit 2 Task 6'): AIR CORE
-  // gained AIR_MAIN_FSC + AIR_MAIN_PEAK_SEASON (9 -> 11 active), and SEA_MAIN_FREIGHT was retired
-  // (isActive:false — sea freight is now the structured seaRates[] dual-rate, design §5.2), so
-  // SEA CORE drops 6 -> 5 active and the inactive-row count grows 3 -> 4.
-  it("seeds today's per-mode line-up with 4 inactive rows", async () => {
+  // Counts below track apps/api/src/seed/reference-seed.ts's CHARGE_LINE_DEFINITIONS +
+  // NEW_CHARGE_LINES exactly. Task 12 (master-data expansion) added 19 lines: 16 active
+  // executive-selected STANDARD lines (AIR ORIGIN/DEST +5, SEA DEST/ADDITIONAL +10, ROAD
+  // ADDITIONAL +1 — none change CORE or TAG_DRIVEN counts) and 3 dormant always-included lines
+  // (AIR_ORIGIN_INSURANCE, SEA_ORIGIN_CONTAINER_TRANSPORT, SEA_ORIGIN_LSS — role CORE via
+  // isAdditional:false, seeded isActive:false per D17 so pricing is unchanged), growing the
+  // inactive-row count 4 -> 7. Prior to Task 12: AIR CORE gained AIR_MAIN_FSC +
+  // AIR_MAIN_PEAK_SEASON (9 -> 11 active), and SEA_MAIN_FREIGHT was retired (isActive:false —
+  // sea freight is now the structured seaRates[] dual-rate, design §5.2), dropping SEA CORE
+  // 6 -> 5 active.
+  it("seeds today's per-mode line-up with 7 inactive rows", async () => {
     const rows = await prisma.chargeLineDefinition.findMany();
     const by = (m: string, r: string) =>
       rows.filter((x) => x.mode === m && x.role === r && x.isActive);
     expect(by("AIR", "CORE")).toHaveLength(11);
     expect(by("SEA", "CORE")).toHaveLength(5);
-    expect(by("AIR", "STANDARD")).toHaveLength(3); // dest THC/import/storage (last-mile inactive)
-    expect(by("SEA", "STANDARD")).toHaveLength(3); // delivery + last-mile inactive
-    expect(by("ROAD", "STANDARD")).toHaveLength(8);
-    expect(rows.filter((x) => x.role === "TAG_DRIVEN")).toHaveLength(15); // 5 × 3 modes
+    // dest THC/import/storage + Task 12's AIR_ORIGIN_MAGNETIC_FEE/T1_EUROPE/EDD +
+    // AIR_DEST_CUSTOM_DOCS_T1/FILE_OPENING (AIR_ORIGIN_INSURANCE is CORE-role and inactive)
+    expect(by("AIR", "STANDARD")).toHaveLength(8);
+    // delivery + last-mile inactive; plus Task 12's 8 SEA_DEST_* + 2 SEA_ADD_* active lines
+    // (SEA_ORIGIN_CONTAINER_TRANSPORT/LSS are CORE-role and inactive)
+    expect(by("SEA", "STANDARD")).toHaveLength(13);
+    expect(by("ROAD", "STANDARD")).toHaveLength(9); // +ROAD_ADD_BONDED_LICENCE
+    expect(rows.filter((x) => x.role === "TAG_DRIVEN")).toHaveLength(15); // 5 × 3 modes, unchanged
     expect(
       rows
         .filter((x) => !x.isActive)
@@ -42,9 +51,12 @@ describe("charge catalogue seed", () => {
         .sort(),
     ).toEqual([
       "AIR_DEST_LAST_MILE",
+      "AIR_ORIGIN_INSURANCE",
       "SEA_DEST_DELIVERY",
       "SEA_DEST_LAST_MILE",
       "SEA_MAIN_FREIGHT",
+      "SEA_ORIGIN_CONTAINER_TRANSPORT",
+      "SEA_ORIGIN_LSS",
     ]);
     expect(rows.find((x) => x.key === "ROAD_CORE_TRUCKING")?.inputType).toBe("TRUCKING");
     expect(rows.find((x) => x.key === "ROAD_WH_HANDLING")?.role).toBe("WAREHOUSE");
@@ -95,6 +107,10 @@ describe("GET /api/charge-line-definitions (e2e)", () => {
       "SEA_DEST_DELIVERY",
       "SEA_DEST_LAST_MILE",
       "SEA_MAIN_FREIGHT",
+      // Task 12 (D17): dormant always-included lines must not leak into the active list either.
+      "AIR_ORIGIN_INSURANCE",
+      "SEA_ORIGIN_CONTAINER_TRANSPORT",
+      "SEA_ORIGIN_LSS",
     ]) {
       expect(keys).not.toContain(inactiveKey);
     }

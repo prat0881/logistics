@@ -92,3 +92,31 @@ describe("VesselsListPage", () => {
     expect(screen.getByLabelText("Rows per page")).toBeInTheDocument();
   });
 });
+
+describe("VesselsListPage fetch failure", () => {
+  // Mirrors ChargeCatalogueListPage: a failed fetch must never render the same "No vessels yet."
+  // message an empty-but-successful load produces — that reads as data loss.
+  it("surfaces the server’s message and never the empty-state message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.includes("/api/vessels")) return { status: 500, body: { message: "Database unavailable" } };
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter>
+            <VesselsListPage />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Database unavailable");
+    expect(screen.queryByText("No vessels yet.")).not.toBeInTheDocument();
+  });
+});

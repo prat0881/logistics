@@ -29,7 +29,16 @@ describe("Masters models (integration)", () => {
         clientCode: CODE,
         companyName: CO,
         country: "IN",
-        contacts: { create: { name: "Primary POC", isPrimary: true } },
+        streetAddress: "1 Test Road",
+        city: "Test City",
+        contacts: {
+          create: {
+            name: "Primary POC",
+            email: "primary@example.com",
+            contactNo: "+10000000001",
+            pocLevel: "PRIMARY",
+          },
+        },
       },
       include: { contacts: true },
     });
@@ -42,9 +51,13 @@ describe("Masters models (integration)", () => {
   });
 
   it("enforces unique companyName", async () => {
-    await prisma.client.create({ data: { clientCode: "CL-TEST-2", companyName: CO, country: "IN" } });
+    await prisma.client.create({
+      data: { clientCode: "CL-TEST-2", companyName: CO, country: "IN", streetAddress: "1 Test Road", city: "Test City" },
+    });
     await expect(
-      prisma.client.create({ data: { clientCode: "CL-TEST-3", companyName: CO, country: "IN" } }),
+      prisma.client.create({
+        data: { clientCode: "CL-TEST-3", companyName: CO, country: "IN", streetAddress: "1 Test Road", city: "Test City" },
+      }),
     ).rejects.toThrow();
   });
 });

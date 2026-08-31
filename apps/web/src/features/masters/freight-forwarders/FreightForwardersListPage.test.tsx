@@ -66,3 +66,31 @@ describe("FreightForwardersListPage", () => {
     expect(screen.queryByRole("link", { name: /new freight forwarder/i })).not.toBeInTheDocument();
   });
 });
+
+describe("FreightForwardersListPage fetch failure", () => {
+  // Mirrors ChargeCatalogueListPage: a failed fetch must never render the same "No freight forwarders yet."
+  // message an empty-but-successful load produces — that reads as data loss.
+  it("surfaces the server’s message and never the empty-state message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.includes("/api/freight-forwarders")) return { status: 500, body: { message: "Database unavailable" } };
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter>
+            <FreightForwardersListPage />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Database unavailable");
+    expect(screen.queryByText("No freight forwarders yet.")).not.toBeInTheDocument();
+  });
+});

@@ -5,6 +5,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ImpactClassifier } from "../src/modules/changes/impact.classifier";
 import { ImpactRegistry } from "../src/modules/changes/impact.registry";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 const PFX = "p6-impact-scope-";
 
@@ -55,7 +56,7 @@ describe("ImpactClassifier scope fan-out to legs (e2e)", () => {
 
     await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: `${PFX}FF` } });
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `${PFX}FF`,
         companyName: "Impact Scope FF",
         pic: "PIC",
@@ -64,7 +65,7 @@ describe("ImpactClassifier scope fan-out to legs (e2e)", () => {
         availableCountries: ["IN"],
         modes: ["ROAD"],
         handleDg: false,
-      },
+      }),
     });
     ffId = ff.id;
     quoteId = (await prisma.quote.create({ data: { queryId, legId, freightForwarderId: ffId } })).id;

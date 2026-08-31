@@ -5,6 +5,7 @@ import { LegEvent, LegStatus, QuoteEvent, QuoteStatus } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { StatusService } from "../src/modules/status/status.service";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 5 (SB6): the change-order cascade (a later task) reopens a distributed leg and
 // reactivates invalidated quotes on re-distribute. Neither machine FILE is edited — both
@@ -120,7 +121,7 @@ describe(`${PREFIX}(e2e)`, () => {
     it("reactivates an INVALID quote back to RFQ_SENT via SEND", async () => {
       const { query, leg } = await makeLeg("quote-reactivation");
       const ff = await prisma.freightForwarder.create({
-        data: {
+        data: ffFixture({
           freightForwarderCode: `FF-${PREFIX}${Date.now()}`,
           companyName: `SB6 Status Edges FF ${Date.now()}`,
           pic: "P",
@@ -129,7 +130,7 @@ describe(`${PREFIX}(e2e)`, () => {
           availableCountries: ["AE"],
           modes: ["AIR"],
           handleDg: false,
-        },
+        }),
       });
       const quote = await prisma.quote.create({
         data: {

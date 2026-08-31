@@ -1,3 +1,36 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// DATABASE OBJECTS THAT EXIST ONLY IN RAW SQL — READ BEFORE RUNNING MIGRATIONS
+//
+// Prisma's schema language cannot express a partial (WHERE-clause) unique index or a CHECK
+// constraint, so the four objects below live only in hand-written migration SQL and have no
+// counterpart in any model here. `prisma migrate dev` diffs this file against a shadow database
+// built by replaying the migrations: it will see four objects the models do not declare and
+// PROPOSE DROPPING THEM. Never accept that. Review every generated migration for `DROP INDEX` /
+// `DROP CONSTRAINT` on these names, delete those statements, and re-run.
+//
+//   CREATE UNIQUE INDEX "ClientContact_one_primary"
+//     ON "ClientContact" ("clientId") WHERE "pocLevel" = 'PRIMARY';
+//     → prisma/migrations/20260826092000_client_address_and_contacts/migration.sql
+//   CREATE UNIQUE INDEX "FreightForwarderContact_one_primary"
+//     ON "FreightForwarderContact" ("freightForwarderId") WHERE "pocLevel" = 'PRIMARY';
+//     → prisma/migrations/20260826093000_ff_contacts_and_terms/migration.sql
+//   CREATE UNIQUE INDEX "WarehouseContact_one_primary"
+//     ON "WarehouseContact" ("warehouseId") WHERE "pocLevel" = 'PRIMARY';
+//     → prisma/migrations/20260826094000_warehouse_master/migration.sql
+//   ALTER TABLE "Warehouse" ADD CONSTRAINT "Warehouse_single_owner"
+//     CHECK ("freightForwarderId" IS NULL OR "clientId" IS NULL);
+//     → prisma/migrations/20260826100000_warehouse_single_owner_check/migration.sql
+//
+// These are not cosmetic. The three `*_one_primary` indexes ARE the "at most one primary
+// contact" invariant: ClientsService/FreightForwardersService/WarehousesService each catch the
+// resulting P2002 and map it to a 409 ("This client already has a primary contact", and its two
+// siblings). Drop the index and those services stop being able to detect the condition at all —
+// the write just succeeds and the record silently grows a second primary. `Warehouse_single_owner`
+// is likewise the sole enforcement of one-owner-per-warehouse under concurrency; both
+// ClientsService.setWarehouses and FreightForwardersService.setWarehouses catch its violation
+// via `mapOwnershipRace`.
+// ─────────────────────────────────────────────────────────────────────────────
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -48,14 +81,10 @@ enum MasterStatus {
   INACTIVE
 }
 
-enum VesselType {
-  CONTAINER
-  BULK_CARRIER
-  TANKER
-  RORO
-  GENERAL_CARGO
-  REEFER
-  OTHER
+enum PocLevel {
+  PRIMARY
+  SECONDARY
+  NONE
 }
 
 enum FreightMode {
@@ -65,33 +94,45 @@ enum FreightMode {
 }
 
 model Client {
-  id          String          @id @default(uuid()) @db.Uuid
-  tenantId    String?         @db.Uuid
-  clientCode  String          @unique
-  companyName String          @unique
-  industry    String?
-  country     String
-  status      MasterStatus    @default(ACTIVE)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  contacts    ClientContact[]
-  queries     Query[]
+  id            String          @id @default(uuid()) @db.Uuid
+  tenantId      String?         @db.Uuid
+  clientCode    String          @unique
+  companyName   String          @unique
+  industry      String?
+  country       String
+  streetAddress String
+  city          String
+  postalCode    String?
+  status        MasterStatus    @default(ACTIVE)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  createdById   String?
+  updatedById   String?
+  contacts      ClientContact[]
+  queries       Query[]
+  warehouses    Warehouse[]
 
   @@index([tenantId])
 }
 
 model ClientContact {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String?  @db.Uuid
-  clientId    String   @db.Uuid
-  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  name        String
-  designation String?
-  contactNo   String?
-  email       String?
-  isPrimary   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                String       @id @default(uuid()) @db.Uuid
+  tenantId          String?      @db.Uuid
+  clientId          String       @db.Uuid
+  client            Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name              String
+  designation       String?
+  email             String
+  contactNo         String
+  whatsappAvailable Boolean      @default(false)
+  wechatAvailable   Boolean      @default(false)
+  botimAvailable    Boolean      @default(false)
+  pocLevel          PocLevel     @default(NONE)
+  status            MasterStatus @default(ACTIVE)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  createdById       String?
+  updatedById       String?
 
   @@index([clientId])
 }
@@ -101,12 +142,14 @@ model Vessel {
   tenantId     String?      @db.Uuid
   vesselCode   String       @unique
   name         String
-  imoNumber    String?      @unique
-  shippingLine String?
-  vesselType   VesselType
+  imoNumber    String   @unique
+  shippingLine String
+  vesselType   String
   status       MasterStatus @default(ACTIVE)
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+  createdById  String?
+  updatedById  String?
   queries      Query[]
 
   @@index([tenantId])
@@ -117,10 +160,10 @@ model FreightForwarder {
   tenantId             String?       @db.Uuid
   freightForwarderCode String        @unique
   companyName          String        @unique
-  companyAddress       String?
-  city                 String?
+  companyAddress       String
+  city                 String
   postalCode           String?
-  country              String?
+  country              String
   pic                  String
   contactNumber        String
   email                String
@@ -130,16 +173,55 @@ model FreightForwarder {
   vatTrnEori           String?
   whLocation           String?
   defaultCurrency      String?
-  paymentTerms         String?
-  typicalLeadTime      String?
+  paymentTerms         PaymentTerm?
+  typicalLeadTime      Int?
   status               MasterStatus  @default(ACTIVE)
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
+  createdById          String?
+  updatedById          String?
 
-  rfqs   Rfq[]
-  quotes Quote[]
+  rfqs       Rfq[]
+  quotes     Quote[]
+  contacts   FreightForwarderContact[]
+  warehouses Warehouse[]
 
   @@index([tenantId])
+}
+
+enum PaymentTerm {
+  CREDIT_7
+  CREDIT_15
+  CREDIT_30
+  CREDIT_45
+  CREDIT_60
+  ADVANCE_100
+  ADVANCE_50_BALANCE_50
+  ADVANCE_30_BALANCE_70
+  ADVANCE_70_BALANCE_30
+  AFTER_DELIVERY_100
+}
+
+model FreightForwarderContact {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String?  @db.Uuid
+  freightForwarderId String   @db.Uuid
+  freightForwarder   FreightForwarder @relation(fields: [freightForwarderId], references: [id], onDelete: Cascade)
+  name               String
+  designation        String?
+  email              String
+  contactNo          String
+  whatsappAvailable  Boolean  @default(false)
+  wechatAvailable    Boolean  @default(false)
+  botimAvailable     Boolean  @default(false)
+  pocLevel           PocLevel @default(NONE)
+  status             MasterStatus @default(ACTIVE)
+  createdById        String?
+  updatedById        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([freightForwarderId])
 }
 
 model Rfq {
@@ -333,18 +415,23 @@ model WarehouseStagingLine {
 }
 
 model ChargeLineDefinition {
-  id         String              @id @default(uuid()) @db.Uuid
-  key        String              @unique
-  mode       FreightMode
-  role       ChargeLineRole
-  inputType  ChargeLineInputType @default(PLAIN)
-  zone       ChargeZone?
-  tagKey     String?
-  label      String
-  sortOrder  Int                 @default(0)
-  isActive   Boolean             @default(true)
-  createdAt  DateTime            @default(now())
-  updatedAt  DateTime            @updatedAt
+  id           String              @id @default(uuid()) @db.Uuid
+  key          String              @unique
+  mode         FreightMode
+  role         ChargeLineRole
+  inputType    ChargeLineInputType @default(PLAIN)
+  zone         ChargeZone?
+  tagKey       String?
+  label        String
+  sortOrder    Int                 @default(0)
+  isActive     Boolean             @default(true)
+  category     ChargeCategory?
+  variant      ChargeVariant       @default(BOTH)
+  isAdditional Boolean             @default(false)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  createdById  String?
+  updatedById  String?
 
   selections LegChargeLineSelection[]
 
@@ -588,6 +675,23 @@ enum ChargeLineInputType {
   HEAVY_WEIGHT_CALC
 }
 
+enum ChargeCategory {
+  ORIGIN
+  FREIGHT
+  DESTINATION
+  ADDITIONAL
+}
+
+enum ChargeVariant {
+  DEDICATED
+  GROUPAGE
+  DIRECT
+  INDIRECT
+  FCL
+  LCL
+  BOTH
+}
+
 enum ChargeRateVariant {
   DEDICATED
   GROUPAGE
@@ -646,6 +750,125 @@ enum LegExecutionStatus {
   PENDING
   IN_TRANSIT
   COMPLETED
+}
+
+enum WarehouseType {
+  OWNED
+  CONTRACTED
+  CLIENT
+  FF
+}
+
+enum CapacityUnit {
+  CBM
+  PALLETS
+  SQ_FT
+  MT
+}
+
+enum HandlingUnit {
+  PER_PALLET
+  PER_CBM
+  PER_MT
+  PER_SHIPMENT
+  PER_PACKAGE
+}
+
+enum StorageUnit {
+  PER_CBM_DAY
+  PER_CBM_MONTH
+  PER_PALLET_DAY
+  PER_PALLET_MONTH
+  PER_SQ_FT_MONTH
+  PER_MT_DAY
+}
+
+enum WarehouseCapability {
+  DG_COMPATIBLE
+  TEMPERATURE_CONTROLLED
+  HUMIDITY_CONTROLLED
+  FIRE_FIGHTING
+  REEFER_COLD_STORAGE
+  CCTV_ACCESS
+}
+
+model Warehouse {
+  id                  String                @id @default(uuid()) @db.Uuid
+  tenantId            String?               @db.Uuid
+  name                String                @unique
+  type                WarehouseType
+  freightForwarderId  String?               @db.Uuid
+  freightForwarder    FreightForwarder?     @relation(fields: [freightForwarderId], references: [id], onDelete: SetNull)
+  clientId            String?               @db.Uuid
+  client              Client?               @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  streetAddress       String
+  country             String
+  city                String
+  pinCode             String
+  capacity            Decimal               @db.Decimal(14, 2)
+  capacityUnit        CapacityUnit
+  capabilities        WarehouseCapability[]
+  agreementValidUntil DateTime?
+  insuranceValidUntil DateTime?
+  isBonded            Boolean               @default(false)
+  weekendWorking      Boolean               @default(false)
+  weekendWorkingFee   Decimal?              @db.Decimal(14, 2)
+  workingEmployees    Int?
+  forkLiftCount       Int?
+  dipTrayCount        Int?
+  freeStorageDays     Int                   @default(0)
+  rateCurrency        String?
+  handlingRate        Decimal?              @db.Decimal(14, 2)
+  handlingUnit        HandlingUnit?
+  storageRate         Decimal?              @db.Decimal(14, 2)
+  storageUnit         StorageUnit?
+  status              MasterStatus          @default(ACTIVE)
+  createdById         String?
+  updatedById         String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  contacts WarehouseContact[]
+  vehicles WarehouseVehicle[]
+
+  @@index([tenantId])
+  @@index([freightForwarderId])
+  @@index([clientId])
+}
+
+model WarehouseContact {
+  id                String       @id @default(uuid()) @db.Uuid
+  tenantId          String?      @db.Uuid
+  warehouseId       String       @db.Uuid
+  warehouse         Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  name              String
+  designation       String?
+  email             String
+  contactNo         String
+  whatsappAvailable Boolean      @default(false)
+  wechatAvailable   Boolean      @default(false)
+  botimAvailable    Boolean      @default(false)
+  pocLevel          PocLevel     @default(NONE)
+  isWeekendIncharge Boolean      @default(false)
+  status            MasterStatus @default(ACTIVE)
+  createdById       String?
+  updatedById       String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([warehouseId])
+}
+
+model WarehouseVehicle {
+  id          String       @id @default(uuid()) @db.Uuid
+  warehouseId String       @db.Uuid
+  warehouse   Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  tonnage     TruckTonnage
+  quantity    Int
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([warehouseId])
 }
 
 model QuerySequence {

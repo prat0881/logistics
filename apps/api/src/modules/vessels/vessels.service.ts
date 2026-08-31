@@ -2,6 +2,8 @@ import { ConflictException, Injectable, NotFoundException } from "@nestjs/common
 import { Prisma } from "@prisma/client";
 import type { Paginated, VesselCreateInput, VesselUpdateInput } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
+import { auditCreate, auditUpdate } from "../../common/audit";
+import type { RequestUser } from "../auth/types";
 
 @Injectable()
 export class VesselsService {
@@ -44,7 +46,7 @@ export class VesselsService {
     return vessel;
   }
 
-  async create(input: VesselCreateInput) {
+  async create(input: VesselCreateInput, user?: RequestUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const row = await tx.codeSequence.upsert({
@@ -53,17 +55,20 @@ export class VesselsService {
           update: { lastNumber: { increment: 1 } },
         });
         const vesselCode = `VS-${String(row.lastNumber).padStart(4, "0")}`;
-        return tx.vessel.create({ data: { vesselCode, ...input } });
+        return tx.vessel.create({ data: { vesselCode, ...input, ...auditCreate(user) } });
       });
     } catch (e) {
       throw this.mapUnique(e);
     }
   }
 
-  async update(id: string, input: VesselUpdateInput) {
+  async update(id: string, input: VesselUpdateInput, user?: RequestUser) {
     await this.get(id);
     try {
-      return await this.prisma.vessel.update({ where: { id }, data: input });
+      return await this.prisma.vessel.update({
+        where: { id },
+        data: { ...input, ...auditUpdate(user) },
+      });
     } catch (e) {
       throw this.mapUnique(e);
     }

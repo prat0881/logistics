@@ -10,6 +10,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
+import { ffFixture } from "./helpers/freight-forwarder";
 
 // Task 9 (Unit 3, FF Portal v2 ripple): ff-portal.service.ts is rewritten off the dropped
 // density model onto the v2 grain — FfPortalLegDto no longer seeds `seededDensity`; the FF
@@ -183,7 +184,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
 
     // --- ACTIVE, DG-handling FF (F5 requires every selected FF to handle DG) ---
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PFX}A`,
         companyName: `FF-${PFX}A Co`,
         pic: "P",
@@ -194,7 +195,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
         status: "ACTIVE",
         handleDg: true,
         defaultCurrency: "USD",
-      },
+      }),
     });
 
     await api()
@@ -385,7 +386,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     });
 
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PFX}B`,
         companyName: `FF-${PFX}B Co`,
         pic: "P",
@@ -396,7 +397,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
         status: "ACTIVE",
         handleDg: false,
         defaultCurrency: "USD",
-      },
+      }),
     });
 
     await api()
@@ -554,7 +555,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     });
 
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PFX}D`,
         companyName: `FF-${PFX}D Co`,
         pic: "P",
@@ -565,7 +566,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
         status: "ACTIVE",
         handleDg: false,
         defaultCurrency: "USD",
-      },
+      }),
     });
 
     await api()
@@ -692,7 +693,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     });
 
     const ff = await prisma.freightForwarder.create({
-      data: {
+      data: ffFixture({
         freightForwarderCode: `FF-${PFX}E`,
         companyName: `FF-${PFX}E Co`,
         pic: "P",
@@ -703,7 +704,7 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
         status: "ACTIVE",
         handleDg: false,
         defaultCurrency: "USD",
-      },
+      }),
     });
 
     await api()
