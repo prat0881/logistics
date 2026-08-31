@@ -48,14 +48,16 @@ async function raise(res: Response, url: string): Promise<never> {
   if (res.status === 401 && !url.includes("/api/auth/")) {
     onUnauthorized?.();
   }
-  throw new ApiError(
-    res.status,
-    (body as Record<string, unknown> | undefined)?.message as string ??
-      `Request failed: ${res.status}`,
-    findings,
-    issues,
-    body,
-  );
+  // `??` alone is not enough: an empty or whitespace-only `message` is a *present* string, so
+  // it passes the nullish check and renders as a blank alert. Every master form now shows one
+  // consolidated error region, and a blank region on a real failure is worse than no region.
+  const rawMessage = (body as Record<string, unknown> | undefined)?.message;
+  const message =
+    typeof rawMessage === "string" && rawMessage.trim() !== ""
+      ? rawMessage
+      : `Request failed: ${res.status}`;
+
+  throw new ApiError(res.status, message, findings, issues, body);
 }
 
 export async function fetchJson<T>(url: string): Promise<T> {

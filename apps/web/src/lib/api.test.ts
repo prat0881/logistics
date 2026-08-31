@@ -136,3 +136,60 @@ describe("unauthorized (401) handler (U1)", () => {
     expect(onUnauth).not.toHaveBeenCalled();
   });
 });
+
+describe("raise()", () => {
+  it("falls back to a status message when the server sends an empty message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ message: "" }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      status: 409,
+      message: "Request failed: 409",
+    });
+  });
+
+  it("falls back when the message is whitespace only", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: "   " }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      message: "Request failed: 400",
+    });
+  });
+
+  it("preserves a real server message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ message: "This client already has a primary contact" }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      message: "This client already has a primary contact",
+    });
+  });
+
+  it("still produces an ApiError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toBeInstanceOf(ApiError);
+  });
+});
