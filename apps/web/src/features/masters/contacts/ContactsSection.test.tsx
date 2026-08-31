@@ -7,16 +7,18 @@ import { ContactsSection, type ContactDraft } from "./ContactsSection";
 function Harness({
   initial = [] as ContactDraft[],
   lockedFirstRow = false,
+  ownerNoun = "client",
 }: {
   initial?: ContactDraft[];
   lockedFirstRow?: boolean;
+  ownerNoun?: string;
 }) {
   const [value, setValue] = useState<ContactDraft[]>(initial);
   return (
     <ContactsSection
       value={value}
       onChange={setValue}
-      ownerNoun="client"
+      ownerNoun={ownerNoun}
       lockedFirstRow={lockedFirstRow}
     />
   );
@@ -44,6 +46,15 @@ describe("ContactsSection", () => {
     expect(screen.queryByRole("button", { name: /^edit/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^remove/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /asha menon/i })).toBeInTheDocument();
+  });
+
+  // `ownerNoun` exists so the empty state names the record the user is looking at rather than
+  // reading as a generic stub. All three form pages pass a distinct noun; asserting on a
+  // non-default one is what proves the prop is actually threaded through and not ignored.
+  it("names the owner in the empty state", () => {
+    render(<Harness ownerNoun="freight forwarder" />);
+    expect(screen.getByText(/no contacts yet for this freight forwarder/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no contacts yet for this client/i)).not.toBeInTheDocument();
   });
 
   it("adds a contact through the dialog", async () => {

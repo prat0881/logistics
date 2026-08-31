@@ -69,7 +69,7 @@ export function ContactsSection({
 
       {value.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No contacts yet. Add at least one, including a primary.
+          No contacts yet for this {ownerNoun}. Add at least one, including a primary.
         </p>
       ) : (
         <Table aria-label="Contacts">

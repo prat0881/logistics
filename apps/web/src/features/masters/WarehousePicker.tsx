@@ -59,10 +59,15 @@ export function WarehousePicker({
   // non-empty, so it can never clobber a selection the user (or the parent's own reset()) has
   // already made — the same bug this effect always guarded against, just guarded a different
   // way now that there is no local `selected` state left to protect.
+  //
+  // `value` and `onChange` are deliberately omitted from the dependency array: `value` changes on
+  // every toggle and `onChange` is a fresh closure on every parent render, so including either
+  // would re-run the seed continuously and defeat the "only when the assigned set truly changes"
+  // guarantee above. (No eslint-disable comment here — this repo does not configure
+  // eslint-plugin-react-hooks, so the rule name cannot resolve and the comment itself errors.)
   const assignedSignature = useMemo(() => assigned.map((w) => w.id).sort().join(","), [assigned]);
   useEffect(() => {
     if (value.length === 0 && assignedSignature) onChange(assignedSignature.split(","));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignedSignature]);
 
   const options = new Map<string, WarehouseDto>();
