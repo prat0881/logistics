@@ -70,8 +70,9 @@ describe("FxRatesPage", () => {
   it("submits a new rate as a Manager and posts the exact body to POST /api/fx-rates", async () => {
     const calls: Record<string, unknown>[] = [];
     renderPage("MANAGER", (body) => calls.push(body));
-    await waitFor(() => expect(screen.getByRole("cell", { name: "INR" })).toBeInTheDocument());
-    await userEvent.selectOptions(screen.getByLabelText(/currency/i), "INR");
+    // The FX list and /api/auth/me resolve independently, and the Add-rate form is gated on the
+    // role from auth — so waiting for the table proves nothing about the form. Wait for the form.
+    await userEvent.selectOptions(await screen.findByLabelText(/currency/i), "INR");
     await userEvent.type(screen.getByLabelText(/units\/usd/i), "83.2");
     await userEvent.click(screen.getByRole("button", { name: /add rate/i }));
     await waitFor(() => expect(calls).toHaveLength(1));
