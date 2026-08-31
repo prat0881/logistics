@@ -214,7 +214,12 @@ model Quote {
   //   submittedJson — the OFFER. Written by `FfPortalService.submit` alone, from the same
   //                   re-derived/validated/materialized draft it writes to draftJson, so the two
   //                   agree at submit time and diverge only when the forwarder types afterwards.
-  // Both are cleared together wherever a quote re-enters distribution (RfqService.distribute).
+  // Both are cleared together when a quote re-enters distribution (RfqService.distribute) — but
+  // that pairing is NOT a general invariant the code enforces: change-order.strategy.ts's
+  // re-freeze deliberately clears `draftJson` alone. Safe there, and only there, because that
+  // updateMany is scoped to the RFQ_SENT ("refreshing") quotes, and an RFQ_SENT quote's
+  // `submittedJson` is already NULL — submit never leaves a row at that status, and the one edge
+  // back to it clears both columns. Anyone adding a third clearing site owns re-deriving that.
   draftJson              Json?
   submittedJson          Json?
 

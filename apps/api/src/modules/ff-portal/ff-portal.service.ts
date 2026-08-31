@@ -311,9 +311,15 @@ export class FfPortalService {
     // read-only and has no autosave timer, so only a stale page or a hand-crafted request lands here.
     //
     // SCOPE, precisely: this admits `REQUOTED`, exactly as `submit` does — a forwarder asked to
-    // revise must be able to type. So it does NOT touch the registered open issue that `draftJson`
-    // on a REQUOTED quote is the forwarder's last SAVED state rather than provably their submitted
-    // price; that issue stands unchanged.
+    // revise must be able to type. `draftJson` on a REQUOTED quote is therefore the forwarder's
+    // last SAVED state, never provably their submitted price — which was register A6, the open
+    // issue this comment used to say "stands unchanged".
+    //
+    // S5.9.6 CLOSED IT, and not by constraining this write: `Quote.submittedJson` now carries the
+    // offer, written by `submit` alone (below), while `draftJson` stays exactly what this call
+    // makes it — the scratchpad. So this save may keep overwriting it freely; provenance is a
+    // different column's job now, and anything asking "what did they actually submit?" must read
+    // that one.
     const closedReason = (await this.closedReasons([q])).get(legId);
     if (closedReason) throw new ConflictException(closedReason);
     if (!WRITABLE_QUOTE_STATUSES.includes(q.status)) {
@@ -626,8 +632,12 @@ export class FfPortalService {
             dgSurchargeNote: draft.dgSurchargeNote,
             termsConditions: draft.termsConditions,
             submittedAt: new Date(),
-            // Keep the SUBMITTED (re-derived, validated, materialized) draft as the record —
-            // mirrors saveDraft()'s own write above, same column, same shape. Previously this
+            // Seed the scratchpad with what was just submitted — mirrors saveDraft()'s own write
+            // above, same column, same shape. This column is NO LONGER "the record" of the offer:
+            // S5.9.6 gave that job to `submittedJson` just below, because a later saveDraft can
+            // overwrite this one. It is written here so the forwarder's own portal re-reads
+            // (resolveScope's GET → pre-fill/preview/print) show what they sent, and so a
+            // re-quote opens on their previous numbers rather than a blank matrix. Previously this
             // wrote `Prisma.DbNull`, which made `resolveScope`'s GET (below) fall back to
             // `seedQuoteDraft` — a blank per-variant matrix indistinguishable from a leg nobody
             // had touched — for every QUOTED leg, so the FF-portal preview/print/
