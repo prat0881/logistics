@@ -1,6 +1,8 @@
 # Stage 5 — S5.9.5 — Approval Freeze & Compare Screen Round 4 — Design of record
 
-_Branch `feat/stage-5-fx-master` (PR #52). Written 2026-08-26, from a product-owner round of
+_Branch `feat/stage-5-fx-master` (PR #52 — **merged to `main` 2026-08-31**; D4's premise was later found false and corrected by S5.9.6, see that section)._
+
+_Originally: Written 2026-08-26, from a product-owner round of
 five points, then seven business-backed points that superseded parts of the first round._
 
 ## Why this sub-build exists

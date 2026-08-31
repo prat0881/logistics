@@ -1,27 +1,46 @@
 # Stage 5 — Session Handoff
 
-_Last updated: 2026-08-27 (S5.6 through S5.9.4 complete, plus **S5.9.5 — built, reviewed, ci green, ONE product ruling outstanding before merge**. **All open points are consolidated in the register below** — start there.)_
+_Last updated: 2026-08-31. **S5.6 through S5.9.6 complete. PR #52 is being MERGED TO MAIN with known open items deferred** — the branch had been open too long to keep holding. Read the "Merging with these open" section immediately below before anything else; the full register follows it._
 
 ## Current stage & branch
-- **Stage 5 — Compare Quotes & Award.** Branch `feat/stage-5-fx-master` → **PR #52** (OPEN, **not merged** — you merge manually).
+- **Stage 5 — Compare Quotes & Award.** Branch `feat/stage-5-fx-master` → **PR #52**, **merged to `main` on 2026-08-31** after ~2 weeks open. Product-owner decision: ship it and fix the remainder in follow-up trips rather than keep accumulating on one branch. Tip at merge: `c2691c9`, hosted CI green, `mergeStateStatus: CLEAN`.
 - S5.9 (Approval Flow & Compare Screen Rework, 10 tasks) landed on top of S5.4–S5.8: `docs(s5.9): design of record + implementation plan` (`13625c7`) through Task 10's tooltip move + its handoff. Code tip through Task 9: `b3834e5`; whole-branch review fix wave `ef470e4..20dfba9`.
 - **S5.9.1** (Compare Screen Review Fixes, 5 tasks — nine product-owner review points against the delivered S5.9 screen, plus one live-discovered hardening task) landed on top: `docs(s5.9.1): implementation plan …` (`640ab33`) through Task 4's notification + this handoff (see its own section below).
 - **S5.9.2** (Re-quote Status & Compare Screen Round 3, 5 tasks — a re-quote's leg/query status honesty, rejection always possible, and five more product-owner review points) landed on top: `docs(s5.9.2): plan for re-quote status fallback and compare-screen round 3` (`a3dd5ea`) through Task 4's layout pass (`9ffb0e2`), plus this task's handoff (see its own section below).
 - **S5.9.3** (Quotation Screen & Stage Rail, 3 tasks — the client-quotation letter's body becomes editable, legs render in route order, the stage rail merges to four steps) landed on top: `docs(s5.9.3): plan for the quotation screen and the four-stage rail` (`60837a1`) through Task 3 (this task's commit), plus this handoff (see its own section below).
 - **S5.9.4** (Quotation Concurrency Hardening, 1 task — closes register **C10** and **C11**, the last unguarded write on the quotation row and the false refusal its sibling guard could produce) landed on top. Touches `QuotationService.patch` and `apps/api/test/quotation.e2e-spec.ts` only — no schema change, no migration, no web change (the C11 fix is deliberately server-side; see the register).
-- `pnpm run ci` **GREEN** (re-verified for S5.9.4): shared 27 files/397 tests · web 115 files/886 tests · api 94 suites/**481** tests (+6 new, all mutation-proven) · lint + typecheck + 3 builds clean. Reproduced in a full `--runInBand` run this session; no C5-family flake was hit (all five registered specs passed clean).
+- **S5.9.5** (Approval Freeze & Compare Screen Round 4, 10 tasks — approval becomes a real freeze) landed on top: `c0c299a..df9b28c`. Per-task review with 8 fix rounds, opus whole-branch review + one fix wave. Closes **A3** and **A4**; raised **C12**; raised **A6** as its merge blocker.
+- **S5.9.6** (Submitted Price Provenance, 2 tasks — splits `Quote.draftJson` so the priced value is provably the submitted one) landed on top: `f6e68e5..cde81a3`. Closes **A6**; raised **C13**. **One migration**, two statements, no C3 drift.
+- **The masters merge (PR #53) came in at `86211a9` and turned the branch red** — it made `FreightForwarder.companyAddress`/`.city`/`.country` required, breaking 17 create sites across 16 api e2e specs. Fixed in `c2691c9`. If another long-lived branch merges `main`, expect the same break and the same fix.
+- **`ci.yml` now sets `connection_limit=10`.** Without it Prisma derived the pool from runner CPU count and computed 3, while `quotation.e2e-spec.ts`'s C10 race test needs four simultaneous connections — so the hosted check failed intermittently depending on the runner's core allocation, and manual re-runs masked it on the PR rollup. Reproduced and fixed both directions.
+- `pnpm run ci` **GREEN** at the merge tip `c2691c9`: shared 30 files/397 tests · web 122 files/916 tests · api **106 suites/736 tests** · lint + typecheck + builds clean. Hosted CI green on the same commit.
 
 ## ▶ Start here (fresh session)
 
-**State:** everything through **S5.9.6** is built and reviewed; PR #52 is OPEN and *you* merge it manually. `pnpm run ci` is green at the tip. Nothing is half-finished — there is no in-flight task to resume. S5.9.5 and S5.9.6 are **pushed**; the hosted CI check is green (the `connection_limit` fix in `ci.yml` is what made it reliably so — see the commit message for why it was intermittent).
+**State:** everything through **S5.9.6** is built, reviewed, pushed and **merged to `main`**. Hosted CI green at `c2691c9`. Nothing is half-finished and there is no in-flight task to resume.
 
-**S5.9.5 landed while you slept** — 10 tasks, subagent-driven, per-task review with 8 fix rounds, then the opus whole-branch review and one fix wave. `pnpm run ci` is green. **A6 — the ruling that blocked it — is now CLOSED by S5.9.6 (see that section, and the register row).**
+**Read this first — the branch shipped with known open items, deliberately.** It had been open roughly two weeks and was accumulating sub-builds faster than it was closing; the product owner chose to merge and fix forward. Nothing below is a surprise or an oversight — every item was found, traced, argued and consciously deferred. The ranked list is the next section.
 
-The whole-branch review kept its perfect record: it found a Critical that all ten task reviews had passed, and this one was a hole *this sub-build opened* rather than an inherited one (a priced-EXPIRED offer free-pathed a cargo edit, so the client letter could be priced against superseded cargo). Fixed and adversarially re-verified.
+## 🚢 Merging with these open (2026-08-31)
 
-**A6 is answered (S5.9.6). The next open item is C8** — unchanged and untouched by these sub-builds.
+Ranked by what would hurt most in production. **The top two are the ones to schedule first.**
 
-**C8** — `GET /api/queries/:id/emails` returns the rendered invitation email — including the working portal link — with no `@Roles`, for any query. That link is an unauthenticated bearer credential for the `@Public` forwarder portal, so any authenticated Executive can read another forwarder's frozen manifest and **submit a quote as them**. It predates this branch and the product owner ruled it stays its own item; the fix is small.
+| # | What ships open | Why it matters | Cost to fix |
+| :-- | :-- | :-- | :-- |
+| **C8** | `GET /api/queries/:id/emails` returns the rendered invitation email — including the live portal link — with **no `@Roles`**, for any query. | That link is an unauthenticated bearer credential for the `@Public` forwarder portal. Any authenticated **Executive** can open another forwarder's frozen manifest and **submit a quote as them**. Impersonation, not link hygiene. Predates this whole branch. | Small. The only consumer never renders `bodyRendered`, so dropping it from the DTO costs the product nothing. Design was worked out in full on 2026-08-26; see the C8 register row. |
+| **C13** | A `REQUOTED` quote holding a real submitted price is invisible to the change-order fork. | A cargo edit on such a leg **free-paths** — no invalidation, no re-freeze — and once the deadline passes the offer becomes `EXPIRED`: sendable, approvable, and priced into the client letter **against superseded cargo**. No race needed. | Medium. **Not** a one-liner: there is no `REQUOTED --invalidate--> INVALID` edge, so adding `REQUOTED` to the live list alone makes the cascade throw after tx1 commits. |
+| **C12** | A concurrent approve + reject can wedge a leg at `decision=DRAFT / leg=APPROVED / quote=APPROVED`. | Measured at 1 run in 6 under deliberate racing. **Has a one-click in-product exit** (an Executive's Negotiate walks all three rows out) — but that exit is itself untested. | Structural (outbox, or fires inside the transaction). Same deferred hardening as C9. |
+| **C9** | A send-for-approval racing a re-quote can leave a leg approvable only via reject + re-send. | Recoverable without DB surgery. Same root cause as C12: `StatusService.fire` runs after its transaction commits, so the row lock is already released. | Structural, same fix as C12. |
+| **C1** | `LogTransport.send()` is a no-op — **nothing is emailed to anyone**. | Known go-live gate. Issuing a quotation composes, records and advances status; no email leaves the building. | `SmtpTransport` at the go-live gate. |
+| **C6** | S5.8's quotation builder and preview have **no visual pass**. | Test-covered only. Worth eyeballing before it goes near a client. | An hour with a browser. |
+| **C3** | Pre-existing Prisma drift — 10 spurious `ALTER COLUMN "id" DROP DEFAULT` lines on every derived diff. | Costs every future migration author a manual strip. Bit this branch twice. | One dedicated cleanup migration. |
+| **C5** | Six-member intermittent e2e flake family (socket-level `Parse Error`). | Hosted CI can hit any of them. Distinct from the connection-pool failure, which **is** fixed. | Investigation, not a patch. |
+| **B4 · B5 · B6** | Non-atomic multi-forwarder negotiate; itemised charges never reach the compare screen; `REQUOTED` change-order wiring (now superseded by **C13**, which is the same hole traced further). | API-shape follow-ups. B5 is blocked on **A2**. | One bundled API trip. |
+| **A1 · A2 · A5** | Business questions with no engineering blocker: what a quotation's "valid until" means; how client-facing charges group; whether query status should surface approval progress. | Each has a working default in place. | Your call, then small. |
+
+**Deferred cosmetics** (recorded in full in the sub-build sections): three rotted comment cross-references from S5.9.5's fix wave, prettier drift in five `features/compare` files, `RfqPrintView` not surfacing `closedReason`, and one over-long comment line. None affect runtime.
+
+**What is NOT open:** A3, A4, A6, B1, B2, B3, C7, C10 and C11 are all closed, each with the sub-build and mechanism named in its register row.
 
 **How work has been run here, and why it kept paying off:** every sub-build was subagent-driven — a fresh implementer per task, a task-scoped review, then an **opus whole-branch review at the end**. That last pass found a real defect on *every single* sub-build that all the task-scoped reviews had passed. Do not skip it.
 
@@ -31,7 +50,7 @@ The whole-branch review kept its perfect record: it found a Critical that all te
 
 **Before touching user-facing strings, read the Vocabulary section below.** D5 is binding and has been violated twice.
 
-## What's built (11 sub-builds, all on PR #52)
+## What's built (15 sub-builds, all merged to `main` via PR #52 on 2026-08-31)
 | SB | Scope | State |
 | :-- | :-- | :-- |
 | S5.1 | FX master (`FxRate` + `toUsd` + `fx-rates` module + `masters/fx-rates` screen) | ✅ merged into PR |
@@ -47,9 +66,10 @@ The whole-branch review kept its perfect record: it found a Critical that all te
 | **S5.9.2** | **Re-quote Status & Compare Screen Round 3** — a re-quote walks the leg (and query) back honestly, rejection is always possible, plus five more compare-screen review points | ✅ COMPLETE — 5 tasks, per-task review + fix loops, ci green (see its own section below) |
 | **S5.9.3** | **Quotation Screen & Stage Rail** — the client-quotation letter's body becomes editable (product owner's ruling, closes register C2's "body safe by construction" the old way), legs render in route order everywhere, the stage rail merges to four steps | ✅ COMPLETE — 3 tasks, per-task review + fix loops, ci green (see its own section below) |
 | **S5.9.4** | **Quotation Concurrency Hardening** — closes register **C10** (a save racing a send could rewrite an already-issued quotation) and **C11** (that fix's sibling guard refusing a legitimate send after a no-op save) | ✅ COMPLETE — 1 task + review round, ci green (full detail in the register's C10/C11 rows) |
+| **S5.9.5** | **Approval Freeze & Compare Screen Round 4** — approval becomes a real freeze (no action on an approved leg but Reject), a locked query refuses every write but Reopen and the quotation, the approved forwarder stays visible and marked, every RFQ-sent forwarder appears in the grid, and an unanswered re-quote keeps its price | ✅ BUILT — 10 tasks, per-task review + 8 fix rounds, opus whole-branch review + one fix wave, `pnpm run ci` green. A6 — the ruling that blocked it — is **CLOSED by S5.9.6**. |
+| **S5.9.6** | **Submitted Price Provenance** — splits `Quote.draftJson` (the forwarder's scratchpad) from a new `Quote.submittedJson` (the offer, written by `submit` alone), so the price the product ranks, approves and puts in the client letter is provably the one the forwarder submitted — unit included | ✅ COMPLETE — 2 tasks, per-task review + 2 fix rounds, opus whole-branch review + one fix wave, `pnpm run ci` green. Closes **A6**; raised **C13** |
 
 Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **opus whole-branch review**). S5.4's reviews caught 5 real defects before merge; S5.5's caught the `StatusRegistry` init-order issue + the request-requote/`QUOTING_CLIENT` teardown seam. S5.9's caught the `REQUOTED` portal dead-end (see its own section — found and fixed, no frontend coverage existed for it). All findings fixed or adjudicated.
-| **S5.9.5** | **Approval Freeze & Compare Screen Round 4** — approval becomes a real freeze (no action on an approved leg but Reject), a locked query refuses every write but Reopen and the quotation, the approved forwarder stays visible and marked, every RFQ-sent forwarder appears in the grid, and an unanswered re-quote keeps its price | ✅ BUILT — 10 tasks, per-task review + 8 fix rounds, opus whole-branch review + one fix wave, `pnpm run ci` green. A6 — the ruling that blocked it — is **CLOSED by S5.9.6**. |
 
 ## Decisions made (why) — **please review**
 - **S5.4 RBAC — generate = Manager+ ONLY, no four-eyes (your O4 call).** The design self-contradicted (§4/§11/§13 tables said four-eyes on generate; §16 O4 said no). You chose **O4**. Design doc §4/§11/§13/D9/§12/§15 all aligned to it. approve/reject keep four-eyes; generate is Manager+ only.
@@ -76,7 +96,7 @@ Every sub-build was built subagent-driven (TDD, per-task review + fix loops, **o
 
 ## 📋 Open points register — consolidated 2026-08-19, updated 2026-08-25 (through S5.9.4)
 
-Everything still open across S5.4–S5.9.3, in one place so nothing is lost between sessions. Nothing here blocks merging PR #52.
+Everything still open across S5.4–S5.9.6, in one place so nothing is lost between sessions. **PR #52 was merged on 2026-08-31 with the still-open rows below riding along** — a deliberate ship-and-fix-forward call after the branch had been open ~2 weeks, not an oversight. See the ranked triage table under "Merging with these open" near the top for which to schedule first.
 
 ### A · Business decisions — these need your answer, not engineering
 | # | Question | Why it's open | Raised |
