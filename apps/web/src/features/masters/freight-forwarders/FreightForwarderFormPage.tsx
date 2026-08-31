@@ -326,11 +326,12 @@ export function FreightForwarderFormPage() {
         <SelectField
           id="defaultCurrency"
           label="Default currency"
+          error={err("defaultCurrency")}
           placeholder="—"
           options={CURRENCIES.map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` }))}
           registration={register("defaultCurrency", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
         />
-        <Field id="vatTrnEori" label="VAT / TRN / EORI">
+        <Field id="vatTrnEori" label="VAT / TRN / EORI" error={err("vatTrnEori")}>
           <Input id="vatTrnEori" {...register("vatTrnEori")} />
         </Field>
         {/* Read-only once the record exists: whLocation is derived from the assigned
@@ -338,7 +339,7 @@ export function FreightForwarderFormPage() {
             — editing it here would be silently reverted by the next warehouse assignment, and
             worse, could itself blank out a value the picker had just set (see setWarehouses's
             update() comment). Same disabled-once-id pattern as pic/contactNumber/email above. */}
-        <Field id="whLocation" label="Warehouse location">
+        <Field id="whLocation" label="Warehouse location" error={err("whLocation")}>
           <Input id="whLocation" disabled={Boolean(id)} {...register("whLocation")} />
           {id && (
             <p className="text-sm text-muted-foreground">Set by the warehouses assigned below.</p>
@@ -347,11 +348,12 @@ export function FreightForwarderFormPage() {
         <SelectField
           id="paymentTerms"
           label="Payment terms"
+          error={err("paymentTerms")}
           placeholder="—"
           options={PAYMENT_TERMS.map((t) => ({ value: t, label: PAYMENT_TERM_LABELS[t] }))}
           registration={register("paymentTerms", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
         />
-        <Field id="typicalLeadTime" label="Typical lead time (days)">
+        <Field id="typicalLeadTime" label="Typical lead time (days)" error={err("typicalLeadTime")}>
           <Input
             id="typicalLeadTime"
             type="number"
@@ -368,6 +370,7 @@ export function FreightForwarderFormPage() {
         <SelectField
           id="status"
           label="Status"
+          error={err("status")}
           options={MASTER_STATUSES.map((s) => ({ value: s, label: s }))}
           registration={register("status")}
         />

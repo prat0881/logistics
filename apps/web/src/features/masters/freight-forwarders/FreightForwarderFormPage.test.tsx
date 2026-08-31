@@ -153,6 +153,47 @@ describe("FreightForwarderFormPage (create)", () => {
     expect(screen.queryByText("ff list")).not.toBeInTheDocument();
   });
 
+  // Six fields on this page rendered no `error` prop at all — vatTrnEori, whLocation,
+  // typicalLeadTime, defaultCurrency, paymentTerms and status — so a resolver error on any of
+  // them fell to the generic page-level message with nothing pointing at the offending field.
+  // §4.1's whole point was retiring the scattered err() helpers behind a `Field` that surfaces
+  // inline errors. `typicalLeadTime: z.number().int().min(0).max(365)` makes this reachable by
+  // typing a number, which is what this test does.
+  it("shows an inline error on the field itself when the lead time is out of range", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me")) return authMe;
+        if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
+        if (url.endsWith("/api/freight-forwarders") && init?.method === "POST") {
+          calls.push("create");
+          return { status: 201, body: {} };
+        }
+        return { status: 404 };
+      }),
+    );
+    renderAtRoute("/masters/freight-forwarders/new");
+    await userEvent.type(await screen.findByLabelText(/company name/i), "Acme Freight");
+    await userEvent.type(screen.getByLabelText(/street address/i), "1 Cargo Way");
+    await userEvent.type(screen.getByLabelText(/^city$/i), "Singapore");
+    await userEvent.type(screen.getByLabelText(/^country$/i), "Singapore");
+    await userEvent.type(screen.getByLabelText(/person in charge/i), "Jane Doe");
+    await userEvent.type(screen.getByLabelText(/contact number/i), "+15551234567");
+    await userEvent.type(screen.getByLabelText(/^email$/i), "ops@acme.example");
+    await selectCountryAndMode();
+    await userEvent.type(screen.getByLabelText(/typical lead time/i), "400");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    // The error must sit inside the lead-time field's own group, not only in the page-level
+    // region — that is the difference this fix makes.
+    const leadTimeGroup = screen.getByLabelText(/typical lead time/i).closest("div")!;
+    await waitFor(() =>
+      expect(within(leadTimeGroup).getByRole("alert")).toBeInTheDocument(),
+    );
+    expect(calls).not.toContain("create");
+  });
+
   // The mirror: the three "own" columns are also the source of the primary contact the API
   // seeds on create, so the Contacts table should reflect them live instead of making the user
   // type the same person twice.

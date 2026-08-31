@@ -48,14 +48,22 @@ async function raise(res: Response, url: string): Promise<never> {
   if (res.status === 401 && !url.includes("/api/auth/")) {
     onUnauthorized?.();
   }
-  // `??` alone is not enough: an empty or whitespace-only `message` is a *present* string, so
-  // it passes the nullish check and renders as a blank alert. Every master form now shows one
-  // consolidated error region, and a blank region on a real failure is worse than no region.
-  const rawMessage = (body as Record<string, unknown> | undefined)?.message;
-  const message =
-    typeof rawMessage === "string" && rawMessage.trim() !== ""
-      ? rawMessage
-      : `Request failed: ${res.status}`;
+  // ZodValidationPipe throws `{ message: "Validation failed", issues }` for EVERY schema
+  // rejection, so `message` alone renders the same unactionable constant no matter what was
+  // wrong — including the composite endpoints' headline rules (exactlyOnePrimary /
+  // atMostOnePrimary), whose real text lives only in `issues`. Design decision C10 argued that
+  // one consolidated error region rendering *nothing* is worse than six that do; the same
+  // argument applies to rendering a constant, so the first issue's own message wins when there
+  // is one.
+  //
+  // `??` alone is not enough at either step: an empty or whitespace-only string is a *present*
+  // string, so it passes a nullish check and renders as a blank alert. Every master form now
+  // shows one consolidated error region, and a blank region on a real failure is worse than no
+  // region.
+  const text = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : undefined);
+  const firstIssueMessage = text((issues?.[0] as { message?: unknown } | undefined)?.message);
+  const rawMessage = text((body as Record<string, unknown> | undefined)?.message);
+  const message = firstIssueMessage ?? rawMessage ?? `Request failed: ${res.status}`;
 
   throw new ApiError(res.status, message, findings, issues, body);
 }

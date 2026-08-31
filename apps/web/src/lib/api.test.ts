@@ -181,6 +181,78 @@ describe("raise()", () => {
     });
   });
 
+  // ZodValidationPipe throws `{ message: "Validation failed", issues }` for every schema
+  // rejection, so before this the consolidated error region on every master form rendered that
+  // constant — including for the branch's headline server rules, whose real text is only ever
+  // in `issues`.
+  it("prefers the first issue's message over the pipe's constant 'Validation failed'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          message: "Validation failed",
+          issues: [
+            { path: ["contacts"], message: "One contact must be marked Primary" },
+            { path: ["city"], message: "Required" },
+          ],
+        }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      status: 400,
+      message: "One contact must be marked Primary",
+      // The full list is still carried, so a caller that wants every issue still has them.
+      issues: [{ path: ["contacts"] }, { path: ["city"] }],
+    });
+  });
+
+  it("falls back to `message` when `issues` is present but empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: "Validation failed", issues: [] }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      message: "Validation failed",
+    });
+  });
+
+  it("falls back to `message` when the first issue carries no usable message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: "Validation failed", issues: [{ path: ["city"] }] }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      message: "Validation failed",
+    });
+  });
+
+  it("does not let a blank issue message shadow a real server message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          message: "This client already has a primary contact",
+          issues: [{ path: ["contacts"], message: "   " }],
+        }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      message: "This client already has a primary contact",
+    });
+  });
+
   it("still produces an ApiError", async () => {
     vi.stubGlobal(
       "fetch",
