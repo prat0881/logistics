@@ -32,7 +32,7 @@ interface Props {
  * Per-field inline `role="alert"` errors, not a single form-level summary: with ~20 inputs on
  * this form, an error needs to be associated with its field both visually and for a screen
  * reader (proximity + DOM order), which a page-level summary can't provide. This also matches
- * every sibling master form (Client/Vessel/FreightForwarder) and `ContactList`/`VehicleSubForm`
+ * every sibling master form (Client/Vessel/FreightForwarder) and `ContactsSection`/`VehiclesSection`
  * within this same feature.
  */
 export function ContractAndRatesSection({ control, register, errors }: Props) {

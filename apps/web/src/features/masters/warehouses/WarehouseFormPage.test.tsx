@@ -9,31 +9,72 @@ import { mockFetch } from "@/test/mock-fetch";
 
 afterEach(() => vi.unstubAllGlobals());
 
-function renderForm() {
-  vi.stubGlobal(
-    "fetch",
-    mockFetch((url, init) => {
-      if (url.endsWith("/api/auth/me"))
-        return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
-      if (url.endsWith("/api/warehouses") && init?.method === "POST") {
-        return { status: 201, body: { id: "w9", name: "Owned DC" } };
-      }
-      return { status: 404 };
-    }),
-  );
+const authMe = { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+
+function renderAtRoute(initialEntry: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <AuthProvider>
-        <MemoryRouter initialEntries={["/masters/warehouses/new"]}>
+        <MemoryRouter initialEntries={[initialEntry]}>
           <Routes>
             <Route path="/masters/warehouses/new" element={<WarehouseFormPage />} />
+            <Route path="/masters/warehouses/:id" element={<WarehouseFormPage />} />
             <Route path="/masters/warehouses" element={<p>warehouses list</p>} />
           </Routes>
         </MemoryRouter>
       </AuthProvider>
     </QueryClientProvider>,
   );
+}
+
+function renderForm() {
+  vi.stubGlobal(
+    "fetch",
+    mockFetch((url, init) => {
+      if (url.endsWith("/api/auth/me")) return authMe;
+      if (url.endsWith("/api/warehouses") && init?.method === "POST") {
+        return { status: 201, body: { id: "w9", name: "Owned DC" } };
+      }
+      return { status: 404 };
+    }),
+  );
+  return renderAtRoute("/masters/warehouses/new");
+}
+
+// Adds one PRIMARY contact through ContactsSection's dialog — warehouses require exactly one
+// primary contact on create (design decision, same rule as Client/FreightForwarder), so every
+// create-mode test that expects Save to actually reach the network needs this.
+async function addPrimaryContact(
+  name = "Priya Nair",
+  email = "priya@example.com",
+  phone = "+971501234567",
+) {
+  await userEvent.click(screen.getByRole("button", { name: /add contact/i }));
+  await userEvent.type(screen.getByLabelText(/^name$/i), name);
+  await userEvent.type(screen.getByLabelText(/email/i), email);
+  await userEvent.type(screen.getByLabelText(/phone/i), phone);
+  await userEvent.selectOptions(screen.getByLabelText(/poc level/i), "PRIMARY");
+  await userEvent.click(screen.getByRole("button", { name: /save contact/i }));
+}
+
+// Adds one vehicle through VehiclesSection's dialog. `tonnage` must be a real TRUCK_TONNAGES
+// enum value — the tonnage control is a SelectField, not free text.
+async function addVehicle(tonnage = "T_5", quantity = "3") {
+  await userEvent.click(screen.getByRole("button", { name: /add vehicle/i }));
+  await userEvent.selectOptions(screen.getByLabelText(/tonnage/i), tonnage);
+  await userEvent.type(screen.getByLabelText(/quantity/i), quantity);
+  await userEvent.click(screen.getByRole("button", { name: /save vehicle/i }));
+}
+
+async function fillBaseFields(type: string, name: string) {
+  await userEvent.selectOptions(await screen.findByLabelText(/type of warehouse/i), type);
+  await userEvent.type(screen.getByLabelText(/warehouse name/i), name);
+  await userEvent.type(screen.getByLabelText(/street address/i), "1 Dock Road");
+  await userEvent.type(screen.getByLabelText(/^country$/i), "United Arab Emirates");
+  await userEvent.type(screen.getByLabelText(/^city$/i), "Dubai");
+  await userEvent.type(screen.getByLabelText(/pin ?code/i), "00000");
+  await userEvent.type(screen.getByLabelText(/capacity$/i), "500");
 }
 
 describe("WarehouseFormPage (create)", () => {
@@ -51,13 +92,7 @@ describe("WarehouseFormPage (create)", () => {
     // Everything else on the form is filled in and valid, so the only failure is the
     // OWNED/CONTRACTED invariant on the two dates — this proves that invariant message reaches
     // the user, not that the form has unrelated blank-field errors too.
-    await userEvent.selectOptions(await screen.findByLabelText(/type of warehouse/i), "OWNED");
-    await userEvent.type(screen.getByLabelText(/warehouse name/i), "Owned DC");
-    await userEvent.type(screen.getByLabelText(/street address/i), "1 Dock Road");
-    await userEvent.type(screen.getByLabelText(/^country$/i), "United Arab Emirates");
-    await userEvent.type(screen.getByLabelText(/^city$/i), "Dubai");
-    await userEvent.type(screen.getByLabelText(/pin ?code/i), "00000");
-    await userEvent.type(screen.getByLabelText(/capacity$/i), "500");
+    await fillBaseFields("OWNED", "Owned DC");
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     const alerts = await screen.findAllByRole("alert");
     expect(alerts.some((a) => /required for owned and contracted/i.test(a.textContent ?? ""))).toBe(true);
@@ -68,35 +103,17 @@ describe("WarehouseFormPage (create)", () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
-        if (url.endsWith("/api/auth/me"))
-          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/auth/me")) return authMe;
         if (url.endsWith("/api/warehouses") && init?.method === "POST") {
           body = JSON.parse(init.body as string);
-          return { status: 201, body: { id: "w9", name: "Owned DC" } };
+          return { status: 201, body: { id: "w9", name: "Client DC" } };
         }
         return { status: 404 };
       }),
     );
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={qc}>
-        <AuthProvider>
-          <MemoryRouter initialEntries={["/masters/warehouses/new"]}>
-            <Routes>
-              <Route path="/masters/warehouses/new" element={<WarehouseFormPage />} />
-              <Route path="/masters/warehouses" element={<p>warehouses list</p>} />
-            </Routes>
-          </MemoryRouter>
-        </AuthProvider>
-      </QueryClientProvider>,
-    );
-    await userEvent.selectOptions(await screen.findByLabelText(/type of warehouse/i), "CLIENT");
-    await userEvent.type(screen.getByLabelText(/warehouse name/i), "Client DC");
-    await userEvent.type(screen.getByLabelText(/street address/i), "1 Dock Road");
-    await userEvent.type(screen.getByLabelText(/^country$/i), "United Arab Emirates");
-    await userEvent.type(screen.getByLabelText(/^city$/i), "Dubai");
-    await userEvent.type(screen.getByLabelText(/pin ?code/i), "00000");
-    await userEvent.type(screen.getByLabelText(/capacity$/i), "500");
+    renderAtRoute("/masters/warehouses/new");
+    await fillBaseFields("CLIENT", "Client DC");
+    await addPrimaryContact();
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(screen.getByText("warehouses list")).toBeInTheDocument());
     expect(body).toMatchObject({ name: "Client DC", type: "CLIENT" });
@@ -105,38 +122,19 @@ describe("WarehouseFormPage (create)", () => {
   // Mirrors ChargeLineFormPage: before this, onSubmit had no try/catch and there is no toast
   // system anywhere in apps/web, so a rejected save produced NOTHING — the button stopped
   // spinning and the page sat there. The 409 below is the message the API actually returns.
-  // (VehicleSubForm on this same page already caught its own; the main form did not.)
   it("surfaces the server’s error message instead of failing silently", async () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
-        if (url.endsWith("/api/auth/me"))
-          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/auth/me")) return authMe;
         if (url.endsWith("/api/warehouses") && init?.method === "POST")
           return { status: 409, body: { message: "A warehouse with that name already exists" } };
         return { status: 404 };
       }),
     );
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={qc}>
-        <AuthProvider>
-          <MemoryRouter initialEntries={["/masters/warehouses/new"]}>
-            <Routes>
-              <Route path="/masters/warehouses/new" element={<WarehouseFormPage />} />
-              <Route path="/masters/warehouses" element={<p>warehouses list</p>} />
-            </Routes>
-          </MemoryRouter>
-        </AuthProvider>
-      </QueryClientProvider>,
-    );
-    await userEvent.selectOptions(await screen.findByLabelText(/type of warehouse/i), "CLIENT");
-    await userEvent.type(screen.getByLabelText(/warehouse name/i), "Dubai DC");
-    await userEvent.type(screen.getByLabelText(/street address/i), "1 Dock Road");
-    await userEvent.type(screen.getByLabelText(/^country$/i), "United Arab Emirates");
-    await userEvent.type(screen.getByLabelText(/^city$/i), "Dubai");
-    await userEvent.type(screen.getByLabelText(/pin ?code/i), "00000");
-    await userEvent.type(screen.getByLabelText(/capacity$/i), "500");
+    renderAtRoute("/masters/warehouses/new");
+    await fillBaseFields("CLIENT", "Dubai DC");
+    await addPrimaryContact();
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
     // Still on the form: a refused save must never look like a successful one.
@@ -155,8 +153,7 @@ describe("WarehouseFormPage (create)", () => {
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
-        if (url.endsWith("/api/auth/me"))
-          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/auth/me")) return authMe;
         if (url.endsWith("/api/warehouses") && init?.method === "POST") {
           body = JSON.parse(init.body as string);
           return { status: 201, body: { id: "w9", name: "Switcher DC" } };
@@ -164,32 +161,15 @@ describe("WarehouseFormPage (create)", () => {
         return { status: 404 };
       }),
     );
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={qc}>
-        <AuthProvider>
-          <MemoryRouter initialEntries={["/masters/warehouses/new"]}>
-            <Routes>
-              <Route path="/masters/warehouses/new" element={<WarehouseFormPage />} />
-              <Route path="/masters/warehouses" element={<p>warehouses list</p>} />
-            </Routes>
-          </MemoryRouter>
-        </AuthProvider>
-      </QueryClientProvider>,
-    );
-    await userEvent.selectOptions(await screen.findByLabelText(/type of warehouse/i), "OWNED");
-    await userEvent.type(screen.getByLabelText(/warehouse name/i), "Switcher DC");
-    await userEvent.type(screen.getByLabelText(/street address/i), "1 Dock Road");
-    await userEvent.type(screen.getByLabelText(/^country$/i), "United Arab Emirates");
-    await userEvent.type(screen.getByLabelText(/^city$/i), "Dubai");
-    await userEvent.type(screen.getByLabelText(/pin ?code/i), "00000");
-    await userEvent.type(screen.getByLabelText(/capacity$/i), "500");
+    renderAtRoute("/masters/warehouses/new");
+    await fillBaseFields("OWNED", "Switcher DC");
     // A handling rate with no handling unit — invalid while the section is on screen.
     await userEvent.type(screen.getByLabelText(/handling rate/i), "100");
     // Leaving OWNED unmounts the whole Contract & rates section, taking the only renderer of
     // the handlingUnit/rateCurrency errors with it.
     await userEvent.selectOptions(screen.getByLabelText(/type of warehouse/i), "CLIENT");
     expect(screen.queryByLabelText(/handling rate/i)).not.toBeInTheDocument();
+    await addPrimaryContact();
 
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() => expect(screen.getByText("warehouses list")).toBeInTheDocument());
@@ -197,6 +177,52 @@ describe("WarehouseFormPage (create)", () => {
     expect(body).not.toHaveProperty("handlingRate");
     expect(body).not.toHaveProperty("handlingUnit");
     expect(body).not.toHaveProperty("rateCurrency");
+  });
+
+  it("sends warehouse fields, contacts and vehicles in one request", async () => {
+    const postBodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me")) return authMe;
+        if (url.endsWith("/api/warehouses") && init?.method === "POST") {
+          postBodies.push(JSON.parse(init.body as string));
+          return { status: 201, body: { id: "w9", name: "WH One" } };
+        }
+        return { status: 404 };
+      }),
+    );
+    renderAtRoute("/masters/warehouses/new");
+    await fillBaseFields("CLIENT", "WH One");
+    await addPrimaryContact();
+    await addVehicle("T_5", "3");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(postBodies).toHaveLength(1));
+    expect(postBodies[0]).toMatchObject({
+      name: "WH One",
+      contacts: [expect.objectContaining({ pocLevel: "PRIMARY" })],
+      vehicles: [expect.objectContaining({ tonnage: "T_5", quantity: 3 })],
+    });
+  });
+
+  it("blocks Save when no contact is marked Primary", async () => {
+    renderForm();
+    await fillBaseFields("CLIENT", "No Primary DC");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/one contact must be marked primary/i);
+  });
+
+  // Regression guard for the existing rate-field clearing effect, which must survive the
+  // rewrite: it must only fire on a REAL transition out of OWNED/CONTRACTED (never on the first
+  // observed type, or loading an existing record would blank its stored rate card).
+  it("clears rate fields when the type leaves OWNED/CONTRACTED", async () => {
+    renderForm();
+    await userEvent.selectOptions(await screen.findByLabelText(/type of warehouse/i), "OWNED");
+    await userEvent.type(screen.getByLabelText(/handling rate/i), "50");
+    await userEvent.selectOptions(screen.getByLabelText(/type of warehouse/i), "CLIENT");
+    await userEvent.selectOptions(screen.getByLabelText(/type of warehouse/i), "OWNED");
+    expect(screen.getByLabelText(/handling rate/i)).toHaveValue(null);
   });
 });
 
@@ -240,31 +266,17 @@ function renderEditForm(dto: Record<string, unknown>, onPatch: (body: Record<str
   vi.stubGlobal(
     "fetch",
     mockFetch((url, init) => {
-      if (url.endsWith("/api/auth/me"))
-        return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+      if (url.endsWith("/api/auth/me")) return authMe;
       if (url.endsWith("/api/warehouses/w1") && (!init?.method || init.method === "GET"))
         return { status: 200, body: dto };
       if (url.endsWith("/api/warehouses/w1") && init?.method === "PATCH") {
         onPatch(JSON.parse(init.body as string));
         return { status: 200, body: dto };
       }
-      if (url.endsWith("/api/warehouses/w1/contacts")) return { status: 200, body: [] };
       return { status: 404 };
     }),
   );
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <AuthProvider>
-        <MemoryRouter initialEntries={["/masters/warehouses/w1"]}>
-          <Routes>
-            <Route path="/masters/warehouses/:id" element={<WarehouseFormPage />} />
-            <Route path="/masters/warehouses" element={<p>warehouses list</p>} />
-          </Routes>
-        </MemoryRouter>
-      </AuthProvider>
-    </QueryClientProvider>,
-  );
+  return renderAtRoute("/masters/warehouses/w1");
 }
 
 describe("WarehouseFormPage (edit)", () => {

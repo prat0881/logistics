@@ -1,81 +1,46 @@
 import { useEffect, useRef, useState } from "react";
-import { useForm, useWatch } from "react-hook-form";
+import { useForm, useWatch, Controller, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
+import { z } from "zod";
 import {
   warehouseCreateSchema,
+  refineWarehouseInvariants,
+  contactUpsertSchema,
+  atMostOnePrimary,
+  PRIMARY_REQUIRED_MESSAGE,
+  PRIMARY_DUPLICATE_MESSAGE,
   WAREHOUSE_MASTER_TYPES,
   CAPACITY_UNITS,
   WAREHOUSE_CAPABILITIES,
   CONTRACTED_TYPES,
-  warehouseVehicleSchema,
+  MASTER_STATUSES,
   type WarehouseCreateInput,
-  type WarehouseVehicleInput,
   type CurrencyCode,
 } from "@svyft/shared";
-import { postJson, patchJson, ApiError } from "@/lib/api";
-import { useQueryClient } from "@tanstack/react-query";
+import { ApiError, postJson, patchJson } from "@/lib/api";
 import { useWarehouse } from "../useMasters";
-import { ContactList } from "../ContactList";
+import { ContactsSection } from "../contacts/ContactsSection";
+import { VehiclesSection } from "./VehiclesSection";
 import { ContractAndRatesSection } from "./ContractAndRatesSection";
-import { Button } from "@/components/ui/button";
+import { MasterForm, FormSection, Field, SelectField } from "../form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
-const selectClass =
-  "h-10 w-full rounded-md border border-border bg-card px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
-const sectionTitleClass = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
-
-function VehicleSubForm({ id }: { id: string }) {
-  const qc = useQueryClient();
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors, isSubmitting },
-  } = useForm<WarehouseVehicleInput>({ resolver: zodResolver(warehouseVehicleSchema) });
-
-  async function onAdd(values: WarehouseVehicleInput) {
-    setSubmitError(null);
-    try {
-      await postJson(`/api/warehouses/${id}/vehicles`, values);
-      reset();
-      await qc.invalidateQueries({ queryKey: ["warehouse", id] });
-    } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : "Failed to add vehicle");
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit(onAdd)} className="space-y-3" aria-label="Add vehicle">
-      {submitError && <p role="alert" className="text-sm text-destructive">{submitError}</p>}
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1">
-          <Label htmlFor="vehicle-tonnage">Tonnage</Label>
-          <Input id="vehicle-tonnage" placeholder="10T" {...register("tonnage")} />
-          {errors.tonnage && (
-            <p role="alert" className="text-sm text-destructive">{errors.tonnage.message}</p>
-          )}
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="vehicle-quantity">Quantity</Label>
-          <Input
-            id="vehicle-quantity"
-            type="number"
-            {...register("quantity", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-          />
-          {errors.quantity && (
-            <p role="alert" className="text-sm text-destructive">{errors.quantity.message}</p>
-          )}
-        </div>
-        <Button type="submit" disabled={isSubmitting} variant="outline">
-          Add vehicle
-        </Button>
-      </div>
-    </form>
-  );
-}
+// warehouseCreateSchema's own `contacts` rule (.min(1).refine(exactlyOnePrimary)) is
+// unconditional — it can't distinguish "this record never had a primary" (state 3 below, must
+// still save) from "the user just demoted the only one away" (state 2, must block). That
+// distinction needs `loadedWithPrimary`, which only the component has (read off
+// `existing.data`, not the live draft) — see ClientFormPage's identical comment. `.innerType()`
+// unwraps the ZodEffects that `warehouseCreateSchema`'s own `.superRefine(refineWarehouseInvariants)`
+// produces, getting back the plain ZodObject so `.extend()` is available; `refineWarehouseInvariants`
+// (the agreement/insurance-date and rate-currency/unit invariants, which must still fire for
+// every save regardless of create/edit) is then reapplied on top.
+const warehouseFormSchema = warehouseCreateSchema
+  .innerType()
+  .extend({
+    contacts: z.array(contactUpsertSchema).refine(atMostOnePrimary, { message: PRIMARY_DUPLICATE_MESSAGE }),
+  })
+  .superRefine(refineWarehouseInvariants);
 
 export function WarehouseFormPage() {
   const { id } = useParams();
@@ -89,52 +54,78 @@ export function WarehouseFormPage() {
     reset,
     setValue,
     clearErrors,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<WarehouseCreateInput>({
-    resolver: zodResolver(warehouseCreateSchema),
-    defaultValues: { capabilities: [], isBonded: false, weekendWorking: false, freeStorageDays: 0 },
+    resolver: zodResolver(warehouseFormSchema),
+    defaultValues: {
+      capabilities: [],
+      isBonded: false,
+      weekendWorking: false,
+      freeStorageDays: 0,
+      contacts: [],
+      vehicles: [],
+    },
   });
 
   const type = useWatch({ control, name: "type" });
   const isContracted = CONTRACTED_TYPES.includes(type as (typeof CONTRACTED_TYPES)[number]);
 
+  // The single most dangerous lines in this effect are `contacts:` and `vehicles:` below. The
+  // API treats "absent from the array" as "delete", so omitting either mapping would leave the
+  // draft's contacts/vehicles empty and the very next unrelated PATCH (e.g. fixing a typo in the
+  // city) would silently delete every contact and vehicle on the record — the same
+  // silent-overwrite hazard the contract/rate fields below warn about.
+  //
+  // Every contract/rate field below must be loaded too, not just the ones the Contract section
+  // renders. Skipping any of them means an unrelated edit on an existing record silently
+  // overwrites it back to the field's `.default()`/`undefined` on the next PATCH: `isBonded` is
+  // the sharpest case (compliance data quietly cleared to `false`), and leaving the dates
+  // unloaded blanks the Contract section entirely and makes every re-submit of an
+  // OWNED/CONTRACTED record fail the "Required for owned and contracted warehouses" invariant
+  // the server would otherwise have accepted.
   useEffect(() => {
-    if (existing.data) {
-      const d = existing.data;
-      reset({
-        name: d.name,
-        type: d.type,
-        streetAddress: d.streetAddress,
-        country: d.country,
-        city: d.city,
-        pinCode: d.pinCode,
-        capacity: Number(d.capacity),
-        capacityUnit: d.capacityUnit,
-        capabilities: d.capabilities ?? [],
-        // Contract & rate fields — every one of these must be loaded, not just the ones the
-        // Contract section renders. Skipping any of them means an unrelated edit on an existing
-        // record silently overwrites it back to the field's `.default()`/`undefined` on the
-        // next PATCH: `isBonded` is the sharpest case (compliance data quietly cleared to
-        // `false`), and leaving the dates unloaded blanks the Contract section entirely and
-        // makes every re-submit of an OWNED/CONTRACTED record fail the "Required for owned and
-        // contracted warehouses" invariant the server would otherwise have accepted.
-        agreementValidUntil: d.agreementValidUntil ?? undefined,
-        insuranceValidUntil: d.insuranceValidUntil ?? undefined,
-        isBonded: d.isBonded,
-        weekendWorking: d.weekendWorking,
-        weekendWorkingFee: d.weekendWorkingFee != null ? Number(d.weekendWorkingFee) : undefined,
-        workingEmployees: d.workingEmployees ?? undefined,
-        forkLiftCount: d.forkLiftCount ?? undefined,
-        dipTrayCount: d.dipTrayCount ?? undefined,
-        freeStorageDays: d.freeStorageDays,
-        rateCurrency: (d.rateCurrency ?? undefined) as CurrencyCode | undefined,
-        handlingRate: d.handlingRate != null ? Number(d.handlingRate) : undefined,
-        handlingUnit: d.handlingUnit ?? undefined,
-        storageRate: d.storageRate != null ? Number(d.storageRate) : undefined,
-        storageUnit: d.storageUnit ?? undefined,
-        status: d.status,
-      });
-    }
+    if (!existing.data) return;
+    const d = existing.data;
+    reset({
+      name: d.name,
+      type: d.type,
+      streetAddress: d.streetAddress,
+      country: d.country,
+      city: d.city,
+      pinCode: d.pinCode,
+      capacity: Number(d.capacity),
+      capacityUnit: d.capacityUnit,
+      capabilities: d.capabilities ?? [],
+      agreementValidUntil: d.agreementValidUntil ?? undefined,
+      insuranceValidUntil: d.insuranceValidUntil ?? undefined,
+      isBonded: d.isBonded,
+      weekendWorking: d.weekendWorking,
+      weekendWorkingFee: d.weekendWorkingFee != null ? Number(d.weekendWorkingFee) : undefined,
+      workingEmployees: d.workingEmployees ?? undefined,
+      forkLiftCount: d.forkLiftCount ?? undefined,
+      dipTrayCount: d.dipTrayCount ?? undefined,
+      freeStorageDays: d.freeStorageDays,
+      rateCurrency: (d.rateCurrency ?? undefined) as CurrencyCode | undefined,
+      handlingRate: d.handlingRate != null ? Number(d.handlingRate) : undefined,
+      handlingUnit: d.handlingUnit ?? undefined,
+      storageRate: d.storageRate != null ? Number(d.storageRate) : undefined,
+      storageUnit: d.storageUnit ?? undefined,
+      status: d.status,
+      contacts: (d.contacts ?? []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        designation: c.designation ?? undefined,
+        email: c.email,
+        contactNo: c.contactNo,
+        whatsappAvailable: c.whatsappAvailable,
+        wechatAvailable: c.wechatAvailable,
+        botimAvailable: c.botimAvailable,
+        pocLevel: c.pocLevel,
+        status: c.status,
+      })),
+      vehicles: (d.vehicles ?? []).map((v) => ({ id: v.id, tonnage: v.tonnage, quantity: v.quantity })),
+    });
   }, [existing.data, reset]);
 
   // Byte-for-byte the mechanism already fixed in ChargeLineFormPage's mode/category/variant
@@ -167,13 +158,27 @@ export function WarehouseFormPage() {
     clearErrors([...rateFields]);
   }, [type, isContracted, setValue, clearErrors]);
 
-  // Mirrors ChargeLineFormPage: without this catch a rejected save produced nothing at all —
+  // Captured off `existing.data` (the server's record), NOT the live draft — this is what lets
+  // the three-state rule below tell "this record never had a primary" (state 3, save allowed)
+  // from "the user just demoted the only one away" (state 2, must block). A live-draft read
+  // could not make that distinction: both end up with zero PRIMARY contacts in the draft.
+  const loadedWithPrimary = (existing.data?.contacts ?? []).some((c) => c.pocLevel === "PRIMARY");
+  const showNoPrimaryBanner = Boolean(existing.data) && !loadedWithPrimary;
+
+  // Mirrors ChargeLineFormPage: without a try/catch a rejected save produced nothing at all —
   // the button simply stopped spinning. There is no toast system in this app, so an unhandled
   // rejection here is silence, and it swallowed every 409 (duplicate warehouse name, second
-  // primary contact), every 400 and every 403 alike. VehicleSubForm above already caught its
-  // own; the main form did not.
-  async function onSubmit(values: WarehouseCreateInput) {
+  // primary contact), every 400 and every 403 alike.
+  async function onValidSubmit(values: WarehouseCreateInput) {
     setSubmitError(null);
+    const hasPrimary = (values.contacts ?? []).some((c) => c.pocLevel === "PRIMARY");
+    // State 1 (create) and state 2 (editing a record that loaded WITH a primary) both block.
+    // State 3 (editing a record that loaded WITHOUT one) does not — a legacy warehouse must
+    // never become un-editable, because the only place to fix it is this very screen.
+    if ((!id || loadedWithPrimary) && !hasPrimary) {
+      setSubmitError(PRIMARY_REQUIRED_MESSAGE);
+      return;
+    }
     try {
       if (id) await patchJson(`/api/warehouses/${id}`, values);
       else await postJson("/api/warehouses", values);
@@ -183,198 +188,183 @@ export function WarehouseFormPage() {
     }
   }
 
-  const err = (name: keyof WarehouseCreateInput) =>
-    errors[name] ? (
-      <p role="alert" className="text-sm text-destructive">
-        {errors[name]?.message as string}
-      </p>
-    ) : null;
+  const err = (name: keyof WarehouseCreateInput) => errors[name]?.message as string | undefined;
+
+  // Nothing renders `errors.contacts` — it's a Controller-driven ContactsSection, not a Field,
+  // and the scalar Fields elsewhere only ever surface their own errors. Without this handler, a
+  // contact that fails validation (most likely a legacy WarehouseContact row that predates the
+  // tightened E.164 rule, loaded in verbatim by the effect above) makes zodResolver reject the
+  // whole submit and RHF never calls `onValidSubmit` at all — the exact "rejected save produced
+  // nothing at all" failure the try/catch above exists to prevent, except this path bypasses
+  // that catch entirely because it never reaches it. And it lands on precisely the legacy record
+  // whose only repair surface is this screen.
+  function onInvalidSubmit(formErrors: FieldErrors<WarehouseCreateInput>) {
+    const contactsError = formErrors.contacts;
+    if (Array.isArray(contactsError)) {
+      const index = contactsError.findIndex((c) => c);
+      if (index !== -1) {
+        const fieldErrors = contactsError[index] as Record<string, { message?: string }> | undefined;
+        const field = fieldErrors ? Object.keys(fieldErrors)[0] : undefined;
+        const message = field ? fieldErrors?.[field]?.message : undefined;
+        const name = getValues(`contacts.${index}.name`) || `contact #${index + 1}`;
+        setSubmitError(
+          `"${name}"${field ? ` — ${field}` : ""}: ${message ?? "has an invalid value"}. Fix it in Contacts before saving.`,
+        );
+        return;
+      }
+    } else if (contactsError && "message" in contactsError && contactsError.message) {
+      // The atMostOnePrimary array-level refine (not reachable via the UI today, but defensive)
+      // attaches its message directly to `contacts`, not to any index.
+      setSubmitError(contactsError.message as string);
+      return;
+    }
+    setSubmitError("This warehouse has errors that need fixing before it can be saved.");
+  }
 
   return (
-    <div className="max-w-2xl space-y-8">
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" aria-label="Warehouse form">
-        <h1 className="font-display text-xl font-semibold tracking-tight">
-          {id ? "Edit warehouse" : "New warehouse"}
-        </h1>
-        {submitError && (
-          <p role="alert" className="text-sm text-destructive">
-            {submitError}
+    <MasterForm
+      title={id ? "Edit warehouse" : "New warehouse"}
+      error={submitError}
+      banner={
+        showNoPrimaryBanner ? (
+          <p role="status" className="rounded-md border border-border bg-muted px-4 py-3 text-sm">
+            This warehouse has no primary contact. Add one so quotes can address correspondence.
           </p>
-        )}
+        ) : undefined
+      }
+      onSubmit={handleSubmit(onValidSubmit, onInvalidSubmit)}
+      isSubmitting={isSubmitting}
+      onCancel={() => navigate("/masters/warehouses")}
+    >
+      {existing.data?.freightForwarderId || existing.data?.clientId ? (
+        <p className="text-sm text-muted-foreground">
+          Assigned to {existing.data.freightForwarderId ? "a freight forwarder" : "a client"}.
+          Change this from that record.
+        </p>
+      ) : null}
 
-        {existing.data?.freightForwarderId || existing.data?.clientId ? (
-          <p className="text-sm text-muted-foreground">
-            Assigned to {existing.data.freightForwarderId ? "a freight forwarder" : "a client"}.
-            Change this from that record.
-          </p>
-        ) : null}
+      <FormSection title="Warehouse">
+        <Field id="name" label="Warehouse name" error={err("name")}>
+          <Input id="name" {...register("name")} />
+        </Field>
+        <SelectField
+          id="type"
+          label="Type of warehouse"
+          error={err("type")}
+          placeholder="— Select —"
+          options={WAREHOUSE_MASTER_TYPES.map((t) => ({ value: t, label: t }))}
+          registration={register("type")}
+        />
+        <SelectField
+          id="status"
+          label="Status"
+          error={err("status")}
+          options={MASTER_STATUSES.map((s) => ({ value: s, label: s }))}
+          registration={register("status")}
+        />
+      </FormSection>
 
-        <section className="space-y-3">
-          <h2 className={sectionTitleClass}>Warehouse</h2>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="name">Warehouse name</Label>
-              <Input id="name" {...register("name")} />
-              {err("name")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="type">Type of warehouse</Label>
-              <select id="type" {...register("type")} className={selectClass} defaultValue="">
-                <option value="" disabled>
-                  — Select —
-                </option>
-                {WAREHOUSE_MASTER_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-              {err("type")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="status">Status</Label>
-              <select id="status" {...register("status")} className={selectClass}>
-                <option value="ACTIVE">Active</option>
-                <option value="INACTIVE">Inactive</option>
-              </select>
-            </div>
-          </div>
-        </section>
+      <FormSection title="Address">
+        <Field id="streetAddress" label="Street address" error={err("streetAddress")}>
+          <Input id="streetAddress" {...register("streetAddress")} />
+        </Field>
+        <Field id="city" label="City" error={err("city")}>
+          <Input id="city" {...register("city")} />
+        </Field>
+        <Field id="country" label="Country" error={err("country")}>
+          <Input id="country" {...register("country")} />
+        </Field>
+        <Field id="pinCode" label="Pin code" error={err("pinCode")}>
+          <Input id="pinCode" {...register("pinCode")} />
+        </Field>
+      </FormSection>
 
-        <section className="space-y-3">
-          <h2 className={sectionTitleClass}>Address</h2>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="streetAddress">Street address</Label>
-              <Input id="streetAddress" {...register("streetAddress")} />
-              {err("streetAddress")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="city">City</Label>
-              <Input id="city" {...register("city")} />
-              {err("city")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="country">Country</Label>
-              <Input id="country" {...register("country")} />
-              {err("country")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pinCode">Pin code</Label>
-              <Input id="pinCode" {...register("pinCode")} />
-              {err("pinCode")}
-            </div>
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          <h2 className={sectionTitleClass}>Capacity &amp; capabilities</h2>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="capacity">Capacity</Label>
-              <Input
-                id="capacity"
-                type="number"
-                step="any"
-                {...register("capacity", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-              />
-              {err("capacity")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="capacityUnit">Capacity unit</Label>
-              <select id="capacityUnit" {...register("capacityUnit")} className={selectClass}>
-                {CAPACITY_UNITS.map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <fieldset className="space-y-1">
-            <legend className="text-sm text-foreground">Capabilities</legend>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {WAREHOUSE_CAPABILITIES.map((c) => (
-                <label key={c} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" value={c} {...register("capabilities")} />
-                  {c}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        </section>
-
-        {/*
-          Headcount/equipment and weekend-working are operational facts of the physical site,
-          not contract or rate terms — CONTRACTED_TYPES' own docstring scopes that constant to
-          "contract and rate fields", and the API accepts these four for every warehouse type.
-          Gating them behind isContracted would make it impossible to record staffing or
-          equipment for a CLIENT/FF warehouse through this form, so they stay visible always.
-        */}
-        <section className="space-y-3">
-          <h2 className={sectionTitleClass}>Operations</h2>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="workingEmployees">Working employees</Label>
-              <Input
-                id="workingEmployees"
-                type="number"
-                {...register("workingEmployees", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-              />
-              {err("workingEmployees")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="forkLiftCount">Forklift count</Label>
-              <Input
-                id="forkLiftCount"
-                type="number"
-                {...register("forkLiftCount", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-              />
-              {err("forkLiftCount")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="dipTrayCount">Dip tray count</Label>
-              <Input
-                id="dipTrayCount"
-                type="number"
-                {...register("dipTrayCount", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-              />
-              {err("dipTrayCount")}
-            </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" {...register("weekendWorking")} /> Weekend working
-            </label>
-          </div>
-        </section>
-
-        {isContracted && <ContractAndRatesSection control={control} register={register} errors={errors} />}
-
-        {id && (
-          <p className="text-sm text-muted-foreground">
-            Total vehicles: <span className="font-medium text-foreground">{existing.data?.totalVehicles ?? 0}</span>
-          </p>
-        )}
-
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Saving…" : "Save"}
-        </Button>
-      </form>
-
-      {id && (
-        <section aria-label="Vehicles" className="space-y-3">
-          <h2 className="font-display text-lg font-semibold tracking-tight">Vehicles</h2>
-          <ul className="space-y-1 text-sm">
-            {existing.data?.vehicles?.map((v) => (
-              <li key={v.id}>
-                {v.tonnage} × {v.quantity}
-              </li>
+      <FormSection title="Capacity & capabilities">
+        <Field id="capacity" label="Capacity" error={err("capacity")}>
+          <Input
+            id="capacity"
+            type="number"
+            step="any"
+            {...register("capacity", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+          />
+        </Field>
+        <SelectField
+          id="capacityUnit"
+          label="Capacity unit"
+          error={err("capacityUnit")}
+          options={CAPACITY_UNITS.map((u) => ({ value: u, label: u }))}
+          registration={register("capacityUnit")}
+        />
+        <fieldset className="space-y-1 sm:col-span-2">
+          <legend className="text-sm text-foreground">Capabilities</legend>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {WAREHOUSE_CAPABILITIES.map((c) => (
+              <label key={c} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" value={c} {...register("capabilities")} />
+                {c}
+              </label>
             ))}
-          </ul>
-          <VehicleSubForm id={id} />
-        </section>
-      )}
+          </div>
+        </fieldset>
+      </FormSection>
 
-      <ContactList ownerPath="warehouses" ownerId={id} />
-    </div>
+      {/*
+        Headcount/equipment and weekend-working are operational facts of the physical site,
+        not contract or rate terms — CONTRACTED_TYPES' own docstring scopes that constant to
+        "contract and rate fields", and the API accepts these four for every warehouse type.
+        Gating them behind isContracted would make it impossible to record staffing or
+        equipment for a CLIENT/FF warehouse through this form, so they stay visible always.
+      */}
+      <FormSection title="Operations">
+        <Field id="workingEmployees" label="Working employees" error={err("workingEmployees")}>
+          <Input
+            id="workingEmployees"
+            type="number"
+            {...register("workingEmployees", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+          />
+        </Field>
+        <Field id="forkLiftCount" label="Forklift count" error={err("forkLiftCount")}>
+          <Input
+            id="forkLiftCount"
+            type="number"
+            {...register("forkLiftCount", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+          />
+        </Field>
+        <Field id="dipTrayCount" label="Dip tray count" error={err("dipTrayCount")}>
+          <Input
+            id="dipTrayCount"
+            type="number"
+            {...register("dipTrayCount", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+          />
+        </Field>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" {...register("weekendWorking")} /> Weekend working
+        </label>
+      </FormSection>
+
+      {isContracted && <ContractAndRatesSection control={control} register={register} errors={errors} />}
+
+      <Controller
+        control={control}
+        name="vehicles"
+        render={({ field }) => (
+          <div className="space-y-2">
+            <VehiclesSection value={field.value ?? []} onChange={field.onChange} />
+            <p className="text-sm text-muted-foreground">
+              Total vehicles:{" "}
+              <span className="font-medium text-foreground">{(field.value ?? []).length}</span>
+            </p>
+          </div>
+        )}
+      />
+
+      <Controller
+        control={control}
+        name="contacts"
+        render={({ field }) => (
+          <ContactsSection value={field.value ?? []} onChange={field.onChange} ownerNoun="warehouse" />
+        )}
+      />
+    </MasterForm>
   );
 }
