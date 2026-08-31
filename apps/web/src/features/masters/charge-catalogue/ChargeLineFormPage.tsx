@@ -15,7 +15,7 @@ import {
 } from "@svyft/shared";
 import { ApiError, postJson, patchJson } from "@/lib/api";
 import { useChargeCatalogueAdmin } from "../useMasters";
-import { Button } from "@/components/ui/button";
+import { MasterForm, FormSection, Field, SelectField } from "../form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -26,11 +26,20 @@ const CATEGORY_LABELS: Record<ChargeCategory, string> = {
   ADDITIONAL: "Additional Charges",
 };
 
-// Mirrors ChargeLineInputType from packages/shared/src/charge-config.ts (a do-not-touch file
-// for this build) — kept as a local literal list rather than importing CHARGE_LINE_INPUT_TYPES
-// so this screen never needs that module's export surface to change.
-const INPUT_TYPES = ["PLAIN", "TRUCKING", "WAREHOUSE_STAGING", "HEAVY_WEIGHT_CALC"] as const;
-const INPUT_TYPE_LABELS: Record<(typeof INPUT_TYPES)[number], string> = {
+// resolveChargeConfig (packages/shared/src/charge-config.ts, a do-not-touch file for this
+// build) resolves ONLY PLAIN and HEAVY_WEIGHT_CALC lines. TRUCKING and WAREHOUSE_STAGING lines
+// price through the leg's trucking / warehouse rate rows, which seedQuoteDraft builds from the
+// leg's ENDPOINTS — never from a catalogue row. So a new line created as either of those is not
+// merely filtered out of some view: nothing in the system would ever read it. It would save
+// successfully and be invisible forever. Only the two values below are offered for selection;
+// the other two are rendered read-only on the two seeded rows that legitimately carry them
+// (ROAD_CORE_TRUCKING, ROAD_WH_HANDLING).
+const SELECTABLE_INPUT_TYPES = ["PLAIN", "HEAVY_WEIGHT_CALC"] as const;
+
+// Mirrors ChargeLineInputType from packages/shared/src/charge-config.ts — kept as a local
+// literal map rather than importing that module's export surface, same rationale as the type
+// list above.
+const INPUT_TYPE_LABELS: Record<string, string> = {
   PLAIN: "Plain amount",
   TRUCKING: "Trucking (type / basis / amount)",
   WAREHOUSE_STAGING: "Warehouse staging",
@@ -49,6 +58,14 @@ export function ChargeLineFormPage() {
   // for its owner-scoped list.
   const admin = useChargeCatalogueAdmin();
   const existing = admin.data?.find((l) => l.id === id);
+
+  // A row already carrying TRUCKING or WAREHOUSE_STAGING (from before this restriction, or
+  // seeded that way) must stay locked to that value — the dropdown never offers a path back to
+  // it, so it cannot be edited here at all, only viewed with an explanation.
+  const isInputTypeLocked =
+    isEdit &&
+    existing != null &&
+    !SELECTABLE_INPUT_TYPES.includes(existing.inputType as (typeof SELECTABLE_INPUT_TYPES)[number]);
 
   const {
     register,
@@ -71,7 +88,6 @@ export function ChargeLineFormPage() {
         label: existing.label,
         isAdditional: existing.isAdditional,
         inputType: existing.inputType as ChargeLineCreateInput["inputType"],
-        sortOrder: existing.sortOrder,
       });
     }
   }, [existing, reset]);
@@ -110,11 +126,14 @@ export function ChargeLineFormPage() {
       if (id) {
         // chargeLineUpdateSchema is .strict() and picks only label/sortOrder/isActive/
         // inputType — mode/variant/category/isAdditional are immutable after creation and
-        // must never be sent, or the API 400s.
+        // must never be sent, or the API 400s. sortOrder is never sent: it has no field on
+        // this form (see task-13 report — the number is display-only row order, never stored
+        // on a quote). inputType is only sent when it is actually editable here; a locked row
+        // (TRUCKING/WAREHOUSE_STAGING) renders no control for it and must not overwrite it
+        // with whatever the resolver defaulted the unregistered field to.
         await patchJson(`/api/charge-line-definitions/${id}`, {
           label: values.label,
-          sortOrder: values.sortOrder,
-          inputType: values.inputType,
+          ...(isInputTypeLocked ? {} : { inputType: values.inputType }),
         });
       } else {
         await postJson("/api/charge-line-definitions", values);
@@ -126,32 +145,32 @@ export function ChargeLineFormPage() {
     }
   }
 
+  const err = (name: keyof ChargeLineCreateInput) => errors[name]?.message as string | undefined;
+
   return (
-    <div className="max-w-md space-y-8">
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" aria-label="Charge line form">
-        <h1 className="font-display text-xl font-semibold tracking-tight">
-          {isEdit ? "Edit charge line" : "New charge line"}
-        </h1>
-        {submitError && (
-          <p role="alert" className="text-sm text-destructive">
-            {submitError}
+    <MasterForm
+      title={isEdit ? "Edit charge line" : "New charge line"}
+      error={submitError}
+      onSubmit={handleSubmit(onSubmit)}
+      isSubmitting={isSubmitting}
+      onCancel={() => navigate("/masters/charge-catalogue")}
+    >
+      {isEdit && (
+        <div className="space-y-1">
+          <Label htmlFor="key">Key</Label>
+          <p id="key" className="font-mono text-sm text-muted-foreground">
+            {existing?.key ?? (admin.isLoading ? "Loading…" : "")}
           </p>
-        )}
-        {isEdit && (
-          <div className="space-y-1">
-            <Label htmlFor="key">Key</Label>
-            <p id="key" className="font-mono text-sm text-muted-foreground">
-              {existing?.key ?? (admin.isLoading ? "Loading…" : "")}
-            </p>
-          </div>
-        )}
+        </div>
+      )}
+      <FormSection title="Classification">
         <div className="space-y-1">
           <Label htmlFor="mode">Mode</Label>
           <select
             id="mode"
             disabled={isEdit}
             {...register("mode")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            className="h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           >
             {FREIGHT_MODES.map((m) => (
               <option key={m} value={m}>{m}</option>
@@ -169,7 +188,7 @@ export function ChargeLineFormPage() {
             id="category"
             disabled={isEdit}
             {...register("category")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            className="h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           >
             {categoriesForMode(mode).map((c) => (
               <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
@@ -188,7 +207,7 @@ export function ChargeLineFormPage() {
             id="variant"
             disabled={isEdit}
             {...register("variant")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            className="h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm"
           >
             {chargeVariantsForMode(mode).map((v) => (
               <option key={v} value={v}>{v}</option>
@@ -201,44 +220,42 @@ export function ChargeLineFormPage() {
           )}
         </div>
         <div className="space-y-1">
-          <Label htmlFor="label">Label</Label>
-          <Input id="label" {...register("label")} />
-          {errors.label && (
-            <p role="alert" className="text-sm text-destructive">{errors.label.message}</p>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" disabled={isEdit} {...register("isAdditional")} />
+            Additional charge
+          </label>
+          {isEdit && (
+            <p className="text-sm text-muted-foreground">
+              Additional charge is fixed after creation, along with mode, category and variant
+              above.
+            </p>
           )}
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" disabled={isEdit} {...register("isAdditional")} />
-          Additional charge
-        </label>
-        {isEdit && (
-          <p className="text-sm text-muted-foreground">
-            Additional charge is fixed after creation, along with mode, category and variant
-            above.
-          </p>
-        )}
-        <div className="space-y-1">
-          <Label htmlFor="inputType">Input type</Label>
-          <select
-            id="inputType"
-            {...register("inputType")}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-          >
-            {INPUT_TYPES.map((t) => (
-              <option key={t} value={t}>{INPUT_TYPE_LABELS[t]}</option>
-            ))}
-          </select>
-        </div>
-        {isEdit && (
+      </FormSection>
+      <FormSection title="Presentation">
+        <Field id="label" label="Label" error={err("label")}>
+          <Input id="label" {...register("label")} />
+        </Field>
+        {isInputTypeLocked ? (
           <div className="space-y-1">
-            <Label htmlFor="sortOrder">Sort order</Label>
-            <Input id="sortOrder" type="number" {...register("sortOrder", { valueAsNumber: true })} />
+            <span className="text-sm font-medium">Input type</span>
+            <p className="text-sm text-muted-foreground">
+              {INPUT_TYPE_LABELS[existing!.inputType] ?? existing!.inputType}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              This line prices through the portal's rate rows, not the charge matrix.
+            </p>
           </div>
+        ) : (
+          <SelectField
+            id="inputType"
+            label="Input type"
+            error={err("inputType")}
+            options={SELECTABLE_INPUT_TYPES.map((t) => ({ value: t, label: INPUT_TYPE_LABELS[t] }))}
+            registration={register("inputType")}
+          />
         )}
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Saving…" : "Save"}
-        </Button>
-      </form>
-    </div>
+      </FormSection>
+    </MasterForm>
   );
 }
