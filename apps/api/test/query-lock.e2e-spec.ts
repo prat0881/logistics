@@ -377,6 +377,9 @@ describe("S5.9.5 (D6) — a locked query refuses every write except Reopen and t
       data: {
         freightForwarderCode: code,
         companyName: `${code} Co`,
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "P",
         contactNumber: "+1000000000",
         email: `${code.toLowerCase()}@e2e.test`,

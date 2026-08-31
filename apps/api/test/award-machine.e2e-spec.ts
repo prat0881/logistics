@@ -108,6 +108,9 @@ describe(`${PREFIX}(e2e)`, () => {
       data: {
         freightForwarderCode: `FF-${PREFIX}${Date.now()}`,
         companyName: `Award Machine FF ${Date.now()}`,
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "PIC",
         contactNumber: "+10000000000",
         email: "award-machine-ff@e2e.test",

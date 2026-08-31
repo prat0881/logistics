@@ -36,6 +36,9 @@ describe("Quotation (e2e) — GET/PATCH /queries/:id/quotation", () => {
       data: {
         freightForwarderCode: code,
         companyName: `${code} Co`,
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "P",
         contactNumber: "+1000000000",
         email: `${code.toLowerCase()}@e2e.test`,

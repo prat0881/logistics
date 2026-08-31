@@ -1347,6 +1347,9 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         data: {
           freightForwarderCode: `FF-${PREFIX}-${suffix}-${seq}`,
           companyName: `FF ${PREFIX} ${suffix} ${seq}`,
+          companyAddress: "1 Fixture Way",
+          country: "Fixture Country",
+          city: "Fixture City",
           pic: "P",
           contactNumber: "+1000000000",
           email: `ff-${PREFIX.toLowerCase()}-${suffix.toLowerCase()}-${seq}@e2e.test`,
@@ -1635,6 +1638,9 @@ describe("GET /ff/rfq/:token (e2e)", () => {
         data: {
           freightForwarderCode: `FF-${PREFIX}-${suffix}-${seq}`,
           companyName: `FF ${PREFIX} ${suffix} ${seq}`,
+          companyAddress: "1 Fixture Way",
+          country: "Fixture Country",
+          city: "Fixture City",
           pic: "P",
           contactNumber: "+1000000000",
           email: `ff-${PREFIX.toLowerCase()}-${suffix.toLowerCase()}-${seq}@e2e.test`,

@@ -59,6 +59,9 @@ describe("change-order reversal of awards (e2e, design §10.2)", () => {
       data: {
         freightForwarderCode: code,
         companyName: `${code} Co`,
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "P",
         contactNumber: "+10000000000",
         email: `${code.toLowerCase()}@e2e.test`,

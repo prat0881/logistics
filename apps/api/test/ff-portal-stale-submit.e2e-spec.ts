@@ -127,6 +127,9 @@ describe(`${PFX} (e2e)`, () => {
       data: {
         freightForwarderCode: `FF-${PFX}-${seq}`,
         companyName: `FF ${PFX} Co ${seq}`,
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "P",
         contactNumber: "+1000000000",
         email: `ff-${PFX.toLowerCase()}-${seq}@e2e.test`,

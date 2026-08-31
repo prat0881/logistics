@@ -106,6 +106,9 @@ describe(`${PREFIX}(e2e)`, () => {
         data: {
           freightForwarderCode: `FF-${PREFIX}${suffix}-${Date.now()}`,
           companyName: `Leg Rollup Approved FF ${suffix} ${Date.now()}`,
+          companyAddress: "1 Test Street",
+          country: "Test Country",
+          city: "Test City",
           pic: "PIC",
           contactNumber: "+10000000000",
           email: `leg-rollup-approved-ff-${suffix}@e2e.test`,

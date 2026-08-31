@@ -67,6 +67,9 @@ describe(`${PFX} leg rollup freeze (e2e)`, () => {
       data: {
         freightForwarderCode: code,
         companyName: `${code} Co`,
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "PIC",
         contactNumber: "+10000000000",
         email: `${code.toLowerCase()}@e2e.test`,

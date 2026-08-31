@@ -129,6 +129,9 @@ describe(`${PREFIX} (e2e)`, () => {
       data: {
         freightForwarderCode: `FF-${PREFIX}-${seq}`,
         companyName: `FF ${PREFIX} Co ${seq}`,
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "P",
         contactNumber: "+1000000000",
         email: `ff-${PREFIX.toLowerCase()}-${seq}@e2e.test`,
@@ -299,6 +302,9 @@ describe(`${PREFIX} (e2e)`, () => {
       data: {
         freightForwarderCode: `FF-${PREFIX}-EXP-${seq}`,
         companyName: `FF Exp Co ${seq}`,
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "P",
         contactNumber: "+1000000000",
         email: `ff-${PREFIX.toLowerCase()}-exp-${seq}@e2e.test`,

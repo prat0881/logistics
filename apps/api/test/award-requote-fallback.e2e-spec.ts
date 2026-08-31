@@ -76,6 +76,9 @@ describe(`${PREFIX} — a re-quote walks the leg back (e2e)`, () => {
       data: {
         freightForwarderCode: code,
         companyName: `${code} Co`,
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "P",
         contactNumber: "+1000000000",
         email: `${code.toLowerCase()}@e2e.test`,

@@ -130,6 +130,9 @@ describe("Change Mediator (integration)", () => {
       data: {
         freightForwarderCode: `${PFX}ff-approved-${Date.now()}`,
         companyName: "Approved FF Co",
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
         pic: "P",
         contactNumber: "+10000000000",
         email: `${PFX}ff-approved-${Date.now()}@e2e.test`,
