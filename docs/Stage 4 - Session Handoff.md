@@ -27,6 +27,20 @@
 
 ## ▶ Remaining Stage 4 work & pending register (SINGLE SOURCE OF TRUTH)
 
+> ### ⚠️ CORRECTIONS — verified against `main` @ `d58972d` on 2026-08-31
+>
+> The table below was last verified **2026-07-31** and several rows are now stale. Do not re-chase these:
+>
+> - **PR #45 (SB6), PR #50, PR #51 and PR #44 are all MERGED.** The table still calls #45 "pending review/merge" and #51 "NOT merged". Stage 5 (PR #52) and Masters (PR #53) are merged too — `main` is at `d58972d`.
+> - **SB4-polish is largely BUILT, not "❌ none built".** `apps/web/src/features/ff-portal/` now contains `ScopedRouteDiagram.tsx` and `RfqPrintView.tsx` (both with tests). That row predates PR #51. Re-check §8.4/§7.3.4/§7.4.7 against those components before scoping any of it as new work.
+> - **Carried follow-ups 1, 2, 3, 4 and 6 re-verified 2026-08-31 and are STILL open** — evidence unchanged: `useRfq.ts` mutation is `onSuccess`-only; `RfqWorkspace.tsx:39` checks `query.isError` not `rfqState.isError`; `rfqState.data.rfqs` is fetched but never read (the `.rfqs` hits in `DistributeLegAction.tsx` are the *distribute response*, a different object); `QueryOverviewHeader` still does not render `customerName`; `RfqSequence` (`schema.prisma:327`) is still a bare `@id` with no relation.
+> - **"Live email transmission" here and register C1 in the Stage 5 handoff are THE SAME ITEM.** `LogTransport.send()` is still a no-op (`apps/api/src/modules/comms/transport.ts:11-13`); no `SmtpTransport`, no mail library anywhere in `apps/api/src`. Fix it once.
+> - **`COOKIE_SECURE` is wired but off.** `auth.controller.ts:14` reads it correctly; `.env.example:19` ships `"false"`. This is a deploy-config gate, not code work.
+>
+> ### 🔴 NOT PREVIOUSLY REGISTERED — `deploy.yml` is not gated on CI
+>
+> `.github/workflows/deploy.yml` triggers on `push: branches: [main]` and its only `needs:` is its own `build-push` job. **A red suite on `main` does not block a production deploy**, and the deploy runs `prisma migrate deploy` against prod (line 58). Both PR #52 and PR #53 happened to deploy with CI green, so no harm landed — but the gate does not exist. One `workflow_run` change fixes it. First flagged in `docs/Masters - Session Handoff.md`; recorded here because it is an ops gate shared by every stage.
+
 > **Decision (2026-07-31, locked with user):** **finish Stage 4 fully before starting Stage 5.** The program's **Stage 5 = the Quote Comparison & Award epic** (Functional Spec §2 forward-refs; currency→USD, negotiation/requote, per-leg award — drives the `REQUOTED`/`APPROVED`/`CLOSED` statuses defined-but-undriven here). It is **greenfield (no spec/design doc yet)** and **depends on SB6** (awarding on quotes that post-RFQ edits can silently invalidate is unsafe).
 >
 > **▶ Update (2026-08-13) — resume plan for a fresh session:** the FF-portal quoting work is **feature-complete on [PR #51](https://github.com/sj132q/svyft-logistics/pull/51)** (v2 §4.8 → v3 per-variant → route-view → Round-4 charge-model + Road-mandatory; tip `8e30b9a`; `pnpm run ci` green; **go-live-gated, NOT merged**). Two threads remain, both suited to a **fresh session** (context is full):

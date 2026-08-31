@@ -21,6 +21,17 @@ _Last updated: 2026-08-31. **S5.6 through S5.9.6 complete. PR #52 is being MERGE
 
 **Read this first — the branch shipped with known open items, deliberately.** It had been open roughly two weeks and was accumulating sub-builds faster than it was closing; the product owner chose to merge and fix forward. Nothing below is a surprise or an oversight — every item was found, traced, argued and consciously deferred. The ranked list is the next section.
 
+## 🔴 Post-merge facts, verified against `main` @ `d58972d` (2026-08-31)
+
+Three things are now true that were not true when the triage table below was written.
+
+1. **`deploy.yml` is not gated on `ci.yml`.** It triggers on `push: [main]`, its only `needs:` is its own build job, and it runs `prisma migrate deploy` against production. **A red suite on `main` deploys anyway.** PR #52 and #53 both happened to deploy with CI green, so nothing bad landed — but the gate does not exist. One `workflow_run` change. This is an ops gate shared with Stage 4 and Masters; it is registered in all three handoffs now.
+2. **S5.9.6's migration and its backfill are already in production**, applied by the CD run on `d58972d`. So register **A6**'s known limitation is a live data fact, not a hypothetical: any `REQUOTED` quote whose forwarder had overwritten their draft before today had that overwritten value copied into `submittedJson`, and the submitted original is unrecoverable for those rows. Worth counting them:
+   `SELECT count(*) FROM "Quote" WHERE status = 'REQUOTED' AND "submittedJson" IS NOT NULL;`
+3. **Register C1 ("nothing is actually emailed") is the same item as Stage 4's "live email transmission" go-live gate.** Re-verified: `LogTransport.send()` is still a no-op (`apps/api/src/modules/comms/transport.ts:11-13`), no `SmtpTransport` and no mail library anywhere in `apps/api/src`. Fix it once, not twice.
+
+**Also merged the same day:** Masters (PR #53). Its own handoff carries a seven-item **Stage-4 pass** that is not duplicated here, and two of those items now touch Stage 5 directly — audit columns on `FxRate` were explicitly waiting for Stage 5 to merge, and the wizard/`Point` migration is what would give the Warehouse master a consumer. Its merge-order warning against this branch is **moot** now that both are in; the predicted 47-file fixture cost landed as 17 sites across 16 files, fixed in `c2691c9`.
+
 ## 🚢 Merging with these open (2026-08-31)
 
 Ranked by what would hurt most in production. **The top two are the ones to schedule first.**

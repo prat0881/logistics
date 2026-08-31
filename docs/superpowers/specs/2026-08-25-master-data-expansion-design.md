@@ -5,6 +5,13 @@
 **Source:** `Master Tables — Freight Forwarder / Client / Vessel / Warehouse (3).xlsx`
 **Gap matrix:** https://claude.ai/code/artifact/49bbc1fe-ec04-4d89-ae26-144f0de76de4
 
+> **AS BUILT (2026-08-31).** Delivered on `feat/masters`, **merged via PR #53** into `main`, and
+> **deployed to production** — the CD run applies `prisma migrate deploy`, so every migration in §6
+> is live. What this design did not anticipate is captured in `docs/Masters - Session Handoff.md`:
+> ten defects found by implementers, two lossy production conversions decided as deploy-then-correct
+> (`docs/superpowers/specs/2026-08-26-post-deploy-corrections.md` — **that file has an unfinished
+> action; read it before anything else**), and four raw-SQL invariants Prisma cannot express.
+
 ## 1. Purpose
 
 Bring the master-data layer up to the specification in the master-tables workbook: extend the
@@ -375,9 +382,21 @@ Everything deferred by §2.1, to be done as one piece once masters are stable:
 - Warehousing in the charge catalogue.
 - The wizard/`Point` migration, so queries select warehouses from the master.
 
-Merge order against the Stage-5 branch needs agreeing before this pass starts: it edits
-`ff-portal.service.ts`, `ChargeMatrix.tsx`, `QuoteSummary.tsx`, `RfqPrintView.tsx` and
-`quote-engine.ts`, which that branch is also working through.
+~~Merge order against the Stage-5 branch needs agreeing before this pass starts~~ — **RESOLVED
+2026-08-31: both branches are merged**, so there is no ordering left to agree. The five shared files
+(`ff-portal.service.ts`, `ChargeMatrix.tsx`, `QuoteSummary.tsx`, `RfqPrintView.tsx`,
+`quote-engine.ts`) now have one history. The predicted cost was 47 broken Stage-5 fixture files, 32
+of them as conflicts; **the actual cost was 17 create sites across 16 files with zero conflicts**,
+fixed in `c2691c9` — the estimate was pessimistic because masters' `ffFixture()` conversion had
+already absorbed most of the overlap.
+
+**Two items in this list changed status on that merge:**
+
+- *"Audit columns … and on `FxRate` once Stage 5 merges"* — **Stage 5 has merged. This is now
+  unblocked** and is the cheapest item in the pass.
+- *"The wizard/`Point` migration"* — worth promoting. Until it lands the **Warehouse master has no
+  consumer at all**: users maintain warehouse records that nothing in the product reads. It is the
+  most visible gap of the seven to anyone actually using the app.
 
 ## 10. Open questions
 
@@ -390,5 +409,12 @@ Merge order against the Stage-5 branch needs agreeing before this pass starts: i
 - **Fuel, Peak Season and Heavy Weight.** Seeded as always-included Air freight lines; the
   Additional Configurable sheet lists them as executive-configurable. The catalogue screen makes
   flipping them a UI action rather than a code change.
-- **Production row counts** for `Vessel`, `FreightForwarder` and `Client`, needed before the
-  backfill step. Neon is not reachable from the development environment.
+- ~~**Production row counts**~~ — **ANSWERED before merge** and recorded under "Production data —
+  checked, not assumed" in `docs/Masters - Session Handoff.md`: 23 forwarders, 1 vessel, 2 clients.
+  No vessel needed a generated IMO, no client contact needed a placeholder, and no client had two
+  primary contacts, so the partial unique indexes built cleanly. One forwarder takes a
+  `'Not recorded'` address placeholder, and two conversions are lossy — see the post-deploy
+  corrections file.
+
+**The other three questions above are still open**, and all three change quoting behaviour, so they
+should be settled before the Stage-4 pass starts rather than during it.
