@@ -113,9 +113,18 @@ first") become unreachable and are deleted.
 `clients`, `freight-forwarders` and `warehouses` accept children on the parent endpoints and
 reconcile them in **one `$transaction`**.
 
-Reconcile order inside the transaction is **deletes → demotions → updates → promotions**. Any
-other order trips `ClientContact_one_primary` / `FreightForwarderContact_one_primary` /
+Reconcile order inside the transaction is **deletes → demotions → promotions → creates**.
+Demoting before promoting is the load-bearing half: any other order trips
+`ClientContact_one_primary` / `FreightForwarderContact_one_primary` /
 `WarehouseContact_one_primary` mid-transaction, on a payload that is perfectly valid as a whole.
+Creates run last, non-primary first, but that is defensive consistency rather than a second index
+hazard — by then the payload has been capped at one PRIMARY and the deletes and promotions have
+already run, so a lone primary create cannot collide with anything.
+
+> **Correction (2026-09-01, whole-branch review).** This paragraph originally read "deletes →
+> demotions → **updates** → **promotions**" — promotions last, creates unmentioned. That is not
+> what `apps/api/src/common/reconcile-contacts.ts` does, and it is the single sentence a future
+> maintainer is most likely to trust over the code. The order above is the implemented one.
 
 Contact items carry an optional `id`: present means update, absent means create, omitted from the
 array means delete.
@@ -124,12 +133,18 @@ array means delete.
 |---|---|---|---|
 | `POST /api/clients` | **required, min 1, exactly one PRIMARY** | optional | — |
 | `PATCH /api/clients/:id` | optional | optional | — |
-| `POST /api/freight-forwarders` | optional (C5 — derived from `pic`/`contactNumber`/`email` when absent, exactly as today) | optional | — |
+| `POST /api/freight-forwarders` | optional — but **exactly one PRIMARY when supplied**; derived from `pic`/`contactNumber`/`email` when absent (C5) | optional | — |
 | `PATCH /api/freight-forwarders/:id` | optional | optional | — |
 | `POST /api/warehouses` | **required, min 1, exactly one PRIMARY** | — | optional |
 | `PATCH /api/warehouses/:id` | optional | — | optional |
 
-FF create stays backward-compatible by construction, so no FF spec changes.
+FF create stays backward-compatible for callers that omit `contacts` entirely.
+
+> **Correction (2026-09-01, whole-branch review).** The FF create row said `contacts` was
+> "optional … exactly as today". It is now optional-but-`exactlyOnePrimary`-when-supplied, so an
+> explicit `contacts: []` is a 400 rather than a no-op. The line "FF create stays
+> backward-compatible by construction, so no FF spec changes" was true only of the omitted case
+> and is narrowed above.
 
 **The update rule, stated once.** On every `PATCH`, `contacts` is optional, and when supplied it
 must contain **at most one** PRIMARY — never two, never required to have one. The pressure to add
@@ -142,12 +157,22 @@ demote away a primary that existed. A record that loaded without one saves freel
 `PUT /:id/warehouses` and instead toggles `warehouseIds` in the draft. Its own fetch of the
 unassigned pool is unchanged, including the documented 100-row cap that search reaches past.
 
-**Conflict mapping.** `mapUnique`'s `one_primary` branch is **dead code**: Prisma reports
-`meta.target` as the column (`["clientId"]`), never the index name, so a second-primary conflict
-has always returned the wrong message — and status-only assertions could not detect it. The
-composite reconcile therefore does a **query-before-write** check for an existing primary and
-raises the 409 itself, matching the two later conflict branches the masters branch built this way
-deliberately. The dead branch is removed rather than left to look load-bearing.
+**Conflict mapping.** The composite reconcile does a **query-before-write** check for a
+second primary and raises the 409 itself, matching the two later conflict branches the masters
+branch built this way deliberately. It does that because Prisma reports `meta.target` as the
+column (`["clientId"]`), never the index name, so a conflict caught on the composite path could
+not be told apart from any other unique violation on that column — checking first is what lets
+the message name the rule.
+
+`mapUnique`'s `one_primary` branch **stays**. It matches on exactly that column-based P2002
+target, it fires, and it is the sole source of the 409 message four e2e specs assert for the
+standalone `POST`/`PATCH /:id/contacts` endpoints (design C8 keeps those live).
+
+> **Correction (2026-09-01, whole-branch review).** This paragraph originally called that branch
+> "dead code" and said it "is removed". Both are false — `clients.service.ts` now carries a
+> comment directly contradicting the earlier text. The mid-execution plan was corrected
+> (`46a9020 docs: correct the plan's false "dead mapUnique branch" premise`); the design was not,
+> until now.
 
 ### 4.5 Contacts section — every mutation is a dialog
 
@@ -161,9 +186,15 @@ Status**. There is no actions column.
 
 - **Add contact** — a button above the table opens an empty `Dialog` carrying all nine fields of
   `contactCoreSchema`, including `designation` and `status`, capturable for the first time.
-- **Selecting a row** opens that contact in the same dialog, prefilled. The row is the control:
-  it renders as a `<button>` spanning the row so it is reachable by keyboard and announced as
-  activatable, not as a `<tr>` with a click handler.
+- **Selecting a row** opens that contact in the same dialog, prefilled. The control is a real
+  `<button>` wrapping the contact's **name** in the Name cell, so the row is reachable by
+  keyboard and announced as activatable rather than being a `<tr>` with a click handler.
+
+  > **Correction (2026-09-01, whole-branch review).** This originally specified "a `<button>`
+  > spanning the row". That is not achievable: a `<button>` cannot span `<td>`s without breaking
+  > table semantics (the only markup that would span the row is a `<button>` wrapping the `<tr>`,
+  > which is invalid HTML). The implementation puts the button in the Name cell, which is
+  > correct; the text above now matches it.
 - **Remove** is a destructive-styled button *inside* the dialog, present only when editing an
   existing contact. It asks for confirmation within the dialog, then closes.
 - Every one of these mutates the **draft only**. Nothing reaches the server until the parent
@@ -185,12 +216,22 @@ Existing rates stay read-only history.
 ### 5.1 The FF mirror
 
 While creating, `pic` / `contactNumber` / `email` drive a synthetic PRIMARY row rendered in the
-contacts table. The user may add further contacts but cannot mark a second primary. On submit, the payload
-omits `contacts` when the mirrored row is the only contact, and `create()` seeds the primary
-exactly as it does today. When the user has added further contacts, the payload carries all of
-them **including** the mirrored primary — and `create()` skips its seed whenever `contacts`
-already contains a PRIMARY, so the row is written once, not twice. That skip is the single line
-that keeps `FreightForwarderContact_one_primary` from tripping on an otherwise valid payload.
+contacts table. The user may add further contacts but cannot mark a second primary. On submit the
+payload **always** carries the full mirrored array — `[mirror, ...extras]` — never `contacts: []`
+and never an omitted `contacts`. `create()` skips its own seed whenever `contacts` already
+contains a PRIMARY, so the row is written once, not twice. That skip is what keeps the record to
+**exactly one PRIMARY after create**, which is the real requirement.
+
+> **Corrections (2026-09-01, whole-branch review).** Two claims here were wrong.
+>
+> 1. "the payload omits `contacts` when the mirrored row is the only contact" is superseded: the
+>    FF page now always sends `[mirror, ...extras]`, because `freightForwarderCreateSchema`'s
+>    `exactlyOnePrimary`-when-supplied refine makes an explicit `[]` a 400, and sending the array
+>    uniformly removes the special case for "no extra contacts".
+> 2. The skip was called "the single line that keeps `FreightForwarderContact_one_primary` from
+>    tripping". It is not: `reconcileContacts` deletes before it creates, so that index never
+>    trips on this path. The skip's real job is the exactly-one-PRIMARY-after-create invariant,
+>    as restated above.
 
 On an existing record the three fields stay `disabled` and display whichever contact is PRIMARY.
 Editing that contact in the dialog updates them after save, via `syncPrimaryContactColumns`.
@@ -210,12 +251,22 @@ existed and the UI never exposed it.
 
 A record loaded without a PRIMARY contact renders a persistent banner in `MasterForm`'s slot:
 *"This client has no primary contact. Add one so quotes can address correspondence."* — Client,
-FF and Warehouse wordings differ only in the noun. The record stays saveable. The same state
-renders as a marker in the list row.
+FF and Warehouse wordings differ only in the noun. The record stays saveable.
 
 In practice FF rows all have one from the migration backfill, and the Warehouse table is new
 enough (no consumer yet — Stage-4 item 7) that few rows exist. The banner mostly matters for the
 two production clients.
+
+> **Dropped requirement (2026-09-01, whole-branch review).** This section also required that
+> "the same state renders as a marker in the list row". **That was never built** — no list page
+> was touched by this branch. It is recorded here as a deliberate omission rather than left as a
+> silent one. The reasoning is this section's own: the state is rare (backfilled FF rows all
+> have a primary, the Warehouse table is barely populated), so the marker's whole audience is
+> the two production clients — who reach the banner the moment they open the record anyway. The
+> list marker would need `ClientDto`/`WarehouseDto` list payloads to carry a primary-contact
+> flag they do not carry today, which is a payload change on a hot list endpoint for a
+> two-row-wide benefit. If it is wanted, it belongs to the Stage-4 pass alongside the other
+> list-surface work.
 
 ## 6. Charge Catalogue: Input type and Sort order
 
