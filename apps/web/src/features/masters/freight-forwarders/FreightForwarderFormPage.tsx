@@ -1,9 +1,15 @@
-import { useEffect, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm, useWatch, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
+import { z } from "zod";
 import {
   freightForwarderCreateSchema,
+  contactUpsertSchema,
+  atMostOnePrimary,
+  PRIMARY_REQUIRED_MESSAGE,
+  PRIMARY_DUPLICATE_MESSAGE,
+  MASTER_STATUSES,
   FREIGHT_MODES,
   COUNTRIES,
   CURRENCIES,
@@ -14,69 +20,150 @@ import {
   type CurrencyCode,
 } from "@svyft/shared";
 import { ApiError, postJson, patchJson } from "@/lib/api";
-import { useFreightForwarder, useOwnerWarehouses } from "../useMasters";
-import { ContactList } from "../ContactList";
+import { useFreightForwarder, useFreightForwarderContacts, useOwnerWarehouses } from "../useMasters";
+import { ContactsSection, type ContactDraft } from "../contacts/ContactsSection";
 import { WarehousePicker } from "../WarehousePicker";
 import { MultiSelectCombobox } from "@/components/MultiSelectCombobox";
-import { Button } from "@/components/ui/button";
+import { MasterForm, FormSection, Field, SelectField } from "../form";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 const MODE_OPTS = FREIGHT_MODES.map((m) => ({ code: m, name: m }));
-const selectClass =
-  "h-10 w-full rounded-md border border-border bg-card px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
-const sectionTitleClass = "text-xs font-medium uppercase tracking-wide text-muted-foreground";
+
+// freightForwarderCreateSchema's own `contacts` rule (exactlyOnePrimary-when-supplied) can't
+// distinguish "this record never had a primary" (state 3 below, must still save) from "the
+// user just demoted the only one away" (state 2, must block) — see ClientFormPage's identical
+// comment. This form's resolver relaxes that to atMostOnePrimary, exactly like
+// freightForwarderUpdateSchema already does server-side; onValidSubmit below enforces the real
+// three-state rule itself. Unlike Client, create mode can never actually violate it: the
+// mirrored array always carries exactly one PRIMARY (the synthetic row), so this relaxation
+// only matters for edit mode's state 3.
+const freightForwarderFormSchema = freightForwarderCreateSchema.extend({
+  contacts: z.array(contactUpsertSchema).refine(atMostOnePrimary, { message: PRIMARY_DUPLICATE_MESSAGE }).optional(),
+});
 
 export function FreightForwarderFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const existing = useFreightForwarder(id);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const contactsQuery = useFreightForwarderContacts(id);
   const ownedWarehouses = useOwnerWarehouses("freight-forwarders", id);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const {
     register,
     control,
     handleSubmit,
     reset,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<FreightForwarderCreateInput>({
-    resolver: zodResolver(freightForwarderCreateSchema),
-    defaultValues: { availableCountries: [], modes: [], handleDg: false },
+    resolver: zodResolver(freightForwarderFormSchema),
+    defaultValues: { availableCountries: [], modes: [], handleDg: false, contacts: [], warehouseIds: [] },
   });
 
   useEffect(() => {
-    if (existing.data) {
-      reset({
-        companyName: existing.data.companyName,
-        companyAddress: existing.data.companyAddress ?? undefined,
-        city: existing.data.city ?? undefined,
-        postalCode: existing.data.postalCode ?? undefined,
-        country: existing.data.country ?? undefined,
-        pic: existing.data.pic,
-        contactNumber: existing.data.contactNumber,
-        email: existing.data.email,
-        availableCountries: existing.data.availableCountries as CountryCode[],
-        modes: existing.data.modes,
-        handleDg: existing.data.handleDg,
-        vatTrnEori: existing.data.vatTrnEori ?? undefined,
-        whLocation: existing.data.whLocation ?? undefined,
-        defaultCurrency: (existing.data.defaultCurrency ?? undefined) as CurrencyCode | undefined,
-        paymentTerms: existing.data.paymentTerms ?? undefined,
-        typicalLeadTime: existing.data.typicalLeadTime ?? undefined,
-        status: existing.data.status,
-      });
-    }
-  }, [existing.data, reset]);
+    if (!existing.data) return;
+    const d = existing.data;
+    reset({
+      companyName: d.companyName,
+      companyAddress: d.companyAddress ?? undefined,
+      city: d.city ?? undefined,
+      postalCode: d.postalCode ?? undefined,
+      country: d.country ?? undefined,
+      pic: d.pic,
+      contactNumber: d.contactNumber,
+      email: d.email,
+      availableCountries: d.availableCountries as CountryCode[],
+      modes: d.modes,
+      handleDg: d.handleDg,
+      vatTrnEori: d.vatTrnEori ?? undefined,
+      whLocation: d.whLocation ?? undefined,
+      defaultCurrency: (d.defaultCurrency ?? undefined) as CurrencyCode | undefined,
+      paymentTerms: d.paymentTerms ?? undefined,
+      typicalLeadTime: d.typicalLeadTime ?? undefined,
+      status: d.status,
+      // FreightForwarderDto doesn't embed contacts the way ClientDto does (see
+      // useFreightForwarderContacts) — this mapping is the same silent-delete hazard
+      // ClientFormPage's load effect warns about: the API treats "absent from the array" as
+      // "delete", so omitting it would let the next unrelated PATCH wipe every contact.
+      contacts: (contactsQuery.data ?? []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        designation: c.designation ?? undefined,
+        email: c.email,
+        contactNo: c.contactNo,
+        whatsappAvailable: c.whatsappAvailable,
+        wechatAvailable: c.wechatAvailable,
+        botimAvailable: c.botimAvailable,
+        pocLevel: c.pocLevel,
+        status: c.status,
+      })),
+      warehouseIds: (ownedWarehouses.data ?? []).map((w) => w.id),
+    });
+  }, [existing.data, contactsQuery.data, ownedWarehouses.data, reset]);
 
-  // Mirrors ChargeLineFormPage: without this catch a rejected save produced nothing at all —
+  // Create mode only. The three fields are the FF's own columns AND the source of the primary
+  // contact the API seeds (FreightForwardersService.create), so the contacts table shows that
+  // row live rather than making the user type the same person twice. On an existing record the
+  // three fields are disabled and syncPrimaryContactColumns is the only writer, so there is
+  // nothing to mirror — `contacts` comes from the server via contactsQuery above.
+  const [pic, contactNumber, email] = useWatch({ control, name: ["pic", "contactNumber", "email"] });
+  const contacts = useWatch({ control, name: "contacts" }) ?? [];
+  const mirroredContacts: ContactDraft[] = useMemo(() => {
+    if (id) return contacts;
+    const mirror: ContactDraft = {
+      name: pic ?? "",
+      email: email ?? "",
+      contactNo: contactNumber ?? "",
+      pocLevel: "PRIMARY",
+    };
+    return [mirror, ...contacts];
+  }, [id, contacts, pic, contactNumber, email]);
+
+  // Captured off the SERVER's loaded contacts (contactsQuery.data), NOT the live draft — same
+  // reasoning as ClientFormPage's loadedWithPrimary: this is what distinguishes "never had a
+  // primary" (state 3, save allowed) from "just demoted the only one away" (state 2, blocked).
+  const loadedWithPrimary = (contactsQuery.data ?? []).some((c) => c.pocLevel === "PRIMARY");
+  const showNoPrimaryBanner = Boolean(existing.data) && !loadedWithPrimary;
+
+  // Mirrors ChargeLineFormPage: without a try/catch a rejected save produced nothing at all —
   // the button simply stopped spinning. There is no toast system in this app, so an unhandled
   // rejection here is silence, and it swallowed every 409 (duplicate company name), every 400
   // and every 403 alike.
-  async function onSubmit(values: FreightForwarderCreateInput) {
+  async function onValidSubmit(values: FreightForwarderCreateInput) {
     setSubmitError(null);
+    // Create mode sends the FULL mirrored array — [mirror, ...extras] — never `contacts: []`.
+    // freightForwarderCreateSchema.contacts is `.array(...).refine(exactlyOnePrimary).optional()`
+    // — an explicit empty array has zero primaries and is rejected with a 400; the mirrored
+    // array always carries exactly one, so it's always accepted, and sending it uniformly means
+    // there's no special case for "the user added no extra contacts".
+    // Not typed as FreightForwarderCreateInput: that alias is z.infer (output-shaped), which
+    // demands contactCoreSchema's defaulted fields (status, whatsappAvailable, ...) be present
+    // on every contact. postJson/patchJson take `body?: unknown`, so there's nothing to gain
+    // from forcing the narrower type here — the mirror below deliberately supplies only the
+    // three columns it derives from, exactly like ContactDraft (the input shape) elsewhere.
+    const payload = id
+      ? values
+      : {
+          ...values,
+          contacts: [
+            { name: values.pic, email: values.email, contactNo: values.contactNumber, pocLevel: "PRIMARY" as const },
+            ...(values.contacts ?? []),
+          ],
+        };
+    const hasPrimary = (payload.contacts ?? []).some((c) => c.pocLevel === "PRIMARY");
+    // State 1 (create) and state 2 (editing a record that loaded WITH a primary) both block.
+    // State 3 (editing a record that loaded WITHOUT one) does not — a legacy forwarder must
+    // never become un-editable, because the only place to fix it is this very screen. State 1
+    // can never actually reach the block: the mirrored array above always has exactly one
+    // PRIMARY. The check stays anyway so the rule is uniform across all three contact-bearing
+    // masters and the code path exists even though it's unreachable from this UI.
+    if ((!id || loadedWithPrimary) && !hasPrimary) {
+      setSubmitError(PRIMARY_REQUIRED_MESSAGE);
+      return;
+    }
     try {
-      if (id) await patchJson(`/api/freight-forwarders/${id}`, values);
-      else await postJson("/api/freight-forwarders", values);
+      if (id) await patchJson(`/api/freight-forwarders/${id}`, payload);
+      else await postJson("/api/freight-forwarders", payload);
       navigate("/masters/freight-forwarders");
     } catch (err) {
       setSubmitError(
@@ -85,198 +172,211 @@ export function FreightForwarderFormPage() {
     }
   }
 
-  const err = (name: keyof FreightForwarderCreateInput) =>
-    errors[name] ? (
-      <p role="alert" className="text-sm text-destructive">
-        {errors[name]?.message as string}
-      </p>
-    ) : null;
+  const err = (name: keyof FreightForwarderCreateInput) => errors[name]?.message as string | undefined;
+
+  // Nothing renders `errors.contacts` — it's a Controller-driven ContactsSection, not a Field,
+  // and the scalar Fields above only ever surface their own errors. Without this handler, a
+  // contact that fails validation (most likely a legacy FreightForwarderContact row that
+  // predates the tightened E.164 rule, loaded in verbatim by the effect above) makes
+  // zodResolver reject the whole submit and RHF never calls `onValidSubmit` at all — the exact
+  // "rejected save produced nothing at all" failure the try/catch above exists to prevent,
+  // except this path bypasses that catch entirely because it never reaches it. And it lands on
+  // precisely the legacy record whose only repair surface is this screen.
+  function onInvalidSubmit(formErrors: FieldErrors<FreightForwarderCreateInput>) {
+    const contactsError = formErrors.contacts;
+    if (Array.isArray(contactsError)) {
+      const index = contactsError.findIndex((c) => c);
+      if (index !== -1) {
+        const fieldErrors = contactsError[index] as Record<string, { message?: string }> | undefined;
+        const field = fieldErrors ? Object.keys(fieldErrors)[0] : undefined;
+        const message = field ? fieldErrors?.[field]?.message : undefined;
+        const name = getValues(`contacts.${index}.name`) || `contact #${index + 1}`;
+        setSubmitError(
+          `"${name}"${field ? ` — ${field}` : ""}: ${message ?? "has an invalid value"}. Fix it in Contacts before saving.`,
+        );
+        return;
+      }
+    } else if (contactsError && "message" in contactsError && contactsError.message) {
+      // The atMostOnePrimary array-level refine (not reachable via the UI today, but defensive)
+      // attaches its message directly to `contacts`, not to any index.
+      setSubmitError(contactsError.message as string);
+      return;
+    }
+    setSubmitError("This freight forwarder has errors that need fixing before it can be saved.");
+  }
 
   return (
-    <div className="max-w-2xl space-y-8">
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" aria-label="Freight forwarder form">
-        <h1 className="font-display text-xl font-semibold tracking-tight">
-          {id ? "Edit freight forwarder" : "New freight forwarder"}
-        </h1>
-        {submitError && (
-          <p role="alert" className="text-sm text-destructive">
-            {submitError}
+    <MasterForm
+      title={id ? "Edit freight forwarder" : "New freight forwarder"}
+      error={submitError}
+      banner={
+        showNoPrimaryBanner ? (
+          <p role="status" className="rounded-md border border-border bg-muted px-4 py-3 text-sm">
+            This freight forwarder has no primary contact. Add one so quotes can address
+            correspondence.
+          </p>
+        ) : undefined
+      }
+      onSubmit={handleSubmit(onValidSubmit, onInvalidSubmit)}
+      isSubmitting={isSubmitting}
+      onCancel={() => navigate("/masters/freight-forwarders")}
+    >
+      <FormSection title="Company & contact">
+        <Field id="companyName" label="Company name" error={err("companyName")}>
+          <Input id="companyName" {...register("companyName")} />
+        </Field>
+        {id && (
+          <p className="text-sm text-muted-foreground sm:col-span-2">
+            Person in charge, contact number and email are managed as the primary contact below.
           </p>
         )}
+        {/* Read-only once the record exists: pic/contactNumber/email are derived from the
+            primary contact (FreightForwardersService.syncPrimaryContactColumns is their sole
+            writer after create) — editing them here would be silently reverted by the next
+            unrelated contact write. Plain HTML `disabled`, not react-hook-form's register-option
+            `disabled`, so the loaded value still round-trips through validation/submit unchanged
+            rather than being dropped. */}
+        <Field id="pic" label="Person in charge" error={err("pic")}>
+          <Input id="pic" disabled={Boolean(id)} {...register("pic")} />
+        </Field>
+        <Field id="contactNumber" label="Contact number" error={err("contactNumber")}>
+          <Input id="contactNumber" placeholder="+15551234567" disabled={Boolean(id)} {...register("contactNumber")} />
+        </Field>
+        <Field id="email" label="Email" error={err("email")}>
+          <Input id="email" disabled={Boolean(id)} {...register("email")} />
+        </Field>
+      </FormSection>
 
-        <section className="space-y-3">
-          <h2 className={sectionTitleClass}>Company &amp; contact</h2>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="companyName">Company name</Label>
-              <Input id="companyName" {...register("companyName")} />
-              {err("companyName")}
-            </div>
-            <div className="space-y-1 sm:col-span-2">
-              {id && (
-                <p className="text-sm text-muted-foreground">
-                  Person in charge, contact number and email are managed as the primary
-                  contact below.
-                </p>
-              )}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pic">Person in charge</Label>
-              {/* Read-only once the record exists: pic/contactNumber/email are derived from
-                  the primary contact (FreightForwardersService.syncPrimaryContactColumns is
-                  their sole writer after create) — editing them here would be silently
-                  reverted by the next unrelated contact write. Plain HTML `disabled`, not
-                  react-hook-form's register-option `disabled`, so the loaded value still
-                  round-trips through validation/submit unchanged rather than being dropped. */}
-              <Input id="pic" disabled={Boolean(id)} {...register("pic")} />
-              {err("pic")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="contactNumber">Contact number</Label>
-              <Input
-                id="contactNumber"
-                placeholder="+15551234567"
-                disabled={Boolean(id)}
-                {...register("contactNumber")}
-              />
-              {err("contactNumber")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" disabled={Boolean(id)} {...register("email")} />
-              {err("email")}
-            </div>
-          </div>
-        </section>
+      <FormSection title="Address">
+        <Field id="companyAddress" label="Street address" error={err("companyAddress")}>
+          <Input id="companyAddress" {...register("companyAddress")} />
+        </Field>
+        <Field id="city" label="City" error={err("city")}>
+          <Input id="city" {...register("city")} />
+        </Field>
+        <Field id="postalCode" label="Postal code" error={err("postalCode")}>
+          <Input id="postalCode" {...register("postalCode")} />
+        </Field>
+        <Field id="country" label="Country" error={err("country")}>
+          <Input id="country" {...register("country")} />
+        </Field>
+      </FormSection>
 
-        <section className="space-y-3">
-          <h2 className={sectionTitleClass}>Address</h2>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="companyAddress">Street Address</Label>
-              <Input id="companyAddress" {...register("companyAddress")} />
-              {err("companyAddress")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="city">City</Label>
-              <Input id="city" {...register("city")} />
-              {err("city")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="postalCode">Postal code</Label>
-              <Input id="postalCode" {...register("postalCode")} />
-              {err("postalCode")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="country">Country</Label>
-              <Input id="country" {...register("country")} />
-              {err("country")}
-            </div>
-          </div>
-        </section>
+      <FormSection title="Service & commercial">
+        <Field id="availableCountries" label="Available countries" error={err("availableCountries")}>
+          <Controller
+            control={control}
+            name="availableCountries"
+            render={({ field }) => (
+              <MultiSelectCombobox value={field.value ?? []} options={COUNTRIES} onChange={field.onChange} ariaLabel="Countries" />
+            )}
+          />
+        </Field>
+        <Field id="modes" label="Modes" error={err("modes")}>
+          <Controller
+            control={control}
+            name="modes"
+            render={({ field }) => (
+              <MultiSelectCombobox value={field.value ?? []} options={MODE_OPTS} onChange={field.onChange} ariaLabel="Modes" />
+            )}
+          />
+        </Field>
+        <SelectField
+          id="defaultCurrency"
+          label="Default currency"
+          placeholder="—"
+          options={CURRENCIES.map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` }))}
+          registration={register("defaultCurrency", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
+        />
+        <Field id="vatTrnEori" label="VAT / TRN / EORI">
+          <Input id="vatTrnEori" {...register("vatTrnEori")} />
+        </Field>
+        {/* Read-only once the record exists: whLocation is derived from the assigned
+            warehouses (FreightForwardersService.setWarehouses is its sole writer after create)
+            — editing it here would be silently reverted by the next warehouse assignment, and
+            worse, could itself blank out a value the picker had just set (see setWarehouses's
+            update() comment). Same disabled-once-id pattern as pic/contactNumber/email above. */}
+        <Field id="whLocation" label="Warehouse location">
+          <Input id="whLocation" disabled={Boolean(id)} {...register("whLocation")} />
+          {id && (
+            <p className="text-sm text-muted-foreground">Set by the warehouses assigned below.</p>
+          )}
+        </Field>
+        <SelectField
+          id="paymentTerms"
+          label="Payment terms"
+          placeholder="—"
+          options={PAYMENT_TERMS.map((t) => ({ value: t, label: PAYMENT_TERM_LABELS[t] }))}
+          registration={register("paymentTerms", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
+        />
+        <Field id="typicalLeadTime" label="Typical lead time (days)">
+          <Input
+            id="typicalLeadTime"
+            type="number"
+            placeholder="2"
+            {...register("typicalLeadTime", {
+              // Not `valueAsNumber: true` (the brief's literal suggestion): on an empty number
+              // input, the DOM's `valueAsNumber` is NaN rather than undefined, and NaN fails the
+              // field's `z.number().int().optional()` check — silently blocking submit whenever
+              // this optional field is left blank. setValueAs maps "" to undefined instead.
+              setValueAs: (v: string) => (v === "" ? undefined : Number(v)),
+            })}
+          />
+        </Field>
+        <SelectField
+          id="status"
+          label="Status"
+          options={MASTER_STATUSES.map((s) => ({ value: s, label: s }))}
+          registration={register("status")}
+        />
+        <label className="flex items-center gap-2 sm:col-span-2">
+          <input type="checkbox" {...register("handleDg")} />
+          <span className="text-sm">Handles Dangerous Goods (DG)</span>
+        </label>
+      </FormSection>
 
-        <section className="space-y-3">
-          <h2 className={sectionTitleClass}>Service &amp; commercial</h2>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label>Available countries</Label>
-              <Controller
-                control={control}
-                name="availableCountries"
-                render={({ field }) => (
-                  <MultiSelectCombobox value={field.value ?? []} options={COUNTRIES} onChange={field.onChange} ariaLabel="Countries" />
-                )}
-              />
-              {err("availableCountries")}
-            </div>
-            <div className="space-y-1">
-              <Label>Modes</Label>
-              <Controller
-                control={control}
-                name="modes"
-                render={({ field }) => (
-                  <MultiSelectCombobox value={field.value ?? []} options={MODE_OPTS} onChange={field.onChange} ariaLabel="Modes" />
-                )}
-              />
-              {err("modes")}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="defaultCurrency">Default currency</Label>
-              <select id="defaultCurrency" {...register("defaultCurrency", { setValueAs: (v: string) => (v === "" ? undefined : v) })} className={selectClass}>
-                <option value="">—</option>
-                {CURRENCIES.map((c) => (
-                  <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="vatTrnEori">VAT / TRN / EORI</Label>
-              <Input id="vatTrnEori" {...register("vatTrnEori")} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="whLocation">Warehouse location</Label>
-              {/* Read-only once the record exists: whLocation is derived from the assigned
-                  warehouses (FreightForwardersService.setWarehouses is its sole writer after
-                  create) — editing it here would be silently reverted by the next warehouse
-                  assignment, and worse, could itself blank out a value the picker had just set
-                  (see setWarehouses's update() comment). Same disabled-once-id pattern as
-                  pic/contactNumber/email above. */}
-              <Input id="whLocation" disabled={Boolean(id)} {...register("whLocation")} />
-              {id && (
-                <p className="text-sm text-muted-foreground">
-                  Set by the warehouses assigned below.
-                </p>
-              )}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="paymentTerms">Payment terms</Label>
-              <select
-                id="paymentTerms"
-                {...register("paymentTerms", { setValueAs: (v: string) => (v === "" ? undefined : v) })}
-                className={selectClass}
-              >
-                <option value="">—</option>
-                {PAYMENT_TERMS.map((t) => (
-                  <option key={t} value={t}>{PAYMENT_TERM_LABELS[t]}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="typicalLeadTime">Typical lead time (days)</Label>
-              <Input
-                id="typicalLeadTime"
-                type="number"
-                placeholder="2"
-                {...register("typicalLeadTime", {
-                  // Not `valueAsNumber: true` (the brief's literal suggestion): on an empty
-                  // number input, the DOM's `valueAsNumber` is NaN rather than undefined, and
-                  // NaN fails the field's `z.number().int().optional()` check — silently
-                  // blocking submit whenever this optional field is left blank. setValueAs
-                  // maps "" to undefined instead.
-                  setValueAs: (v: string) => (v === "" ? undefined : Number(v)),
-                })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="status">Status</Label>
-              <select id="status" {...register("status")} className={selectClass}>
-                <option value="ACTIVE">Active</option>
-                <option value="INACTIVE">Inactive</option>
-              </select>
-            </div>
-            <label className="flex items-center gap-2 sm:col-span-2">
-              <input type="checkbox" {...register("handleDg")} />
-              <span className="text-sm">Handles Dangerous Goods (DG)</span>
-            </label>
-          </div>
-        </section>
+      <Controller
+        control={control}
+        name="contacts"
+        render={({ field }) => (
+          <ContactsSection
+            value={mirroredContacts}
+            onChange={(next) => {
+              if (id) {
+                field.onChange(next);
+                return;
+              }
+              // The mirror at index 0 is synthetic — synthesized above from pic/contactNumber/
+              // email, never stored in the `contacts` field — so it's dropped here rather than
+              // written back. ContactsSection's own demote-the-incumbent logic (upsert(), in
+              // ContactsSection.tsx) demotes whichever row IT thinks is the incumbent primary,
+              // including this synthetic row at index 0, the moment a second contact is marked
+              // PRIMARY; that demotion is discarded along with the rest of index 0. Any surviving
+              // PRIMARY in the tail is force-demoted to SECONDARY here too: the mirror is
+              // definitionally the forwarder's one and only primary while creating, so nothing
+              // else may hold that badge, regardless of what the dialog briefly allowed.
+              field.onChange(
+                next.slice(1).map((c) => (c.pocLevel === "PRIMARY" ? { ...c, pocLevel: "SECONDARY" } : c)),
+              );
+            }}
+            ownerNoun="freight forwarder"
+            lockedFirstRow={!id}
+          />
+        )}
+      />
 
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Saving…" : "Save"}
-        </Button>
-      </form>
-      <ContactList ownerPath="freight-forwarders" ownerId={id} />
-      <WarehousePicker ownerPath="freight-forwarders" ownerId={id} assigned={ownedWarehouses.data ?? []} />
-    </div>
+      <Controller
+        control={control}
+        name="warehouseIds"
+        render={({ field }) => (
+          <WarehousePicker
+            ownerPath="freight-forwarders"
+            value={field.value ?? []}
+            onChange={field.onChange}
+            assigned={ownedWarehouses.data ?? []}
+          />
+        )}
+      />
+    </MasterForm>
   );
 }
