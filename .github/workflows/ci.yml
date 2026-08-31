@@ -27,8 +27,15 @@ jobs:
       # really is blocked. The suite boots the whole AppModule, so app and test share one pool and
       # all four contend. The poller then cannot get a connection, times out after 10s, and the
       # test fails DETERMINISTICALLY on CI while passing locally (a dev machine's pool is ~21).
-      # That is what made this job red from 2026-08-25 onward; it is not one of the register-C5
-      # flakes, which are socket-level and intermittent.
+      # In practice this is INTERMITTENT, not always-red: `ubuntu-latest` does not always allocate
+      # the same core count, so some runs computed a pool of 5 and passed. The run history shows
+      # exactly that — two consecutive `pull_request` failures on 2026-08-25 with successes either
+      # side, and manual `workflow_dispatch` re-runs that passed without changing anything. Those
+      # re-runs are also why the PR kept DISPLAYING red long after: a `workflow_dispatch` success
+      # does not replace the `pull_request` check on the PR, so the last failing PR-event run stayed
+      # on the rollup.
+      # Distinct from the register-C5 flakes, which are socket-level `Parse Error` symptoms with a
+      # different cause; this one is pool starvation and is fully explained by the pool size.
       DATABASE_URL: postgresql://svyft:svyft@localhost:5432/svyft?schema=public&connection_limit=10
       DIRECT_URL: postgresql://svyft:svyft@localhost:5432/svyft?schema=public
       JWT_ACCESS_SECRET: test-access-secret
