@@ -10,6 +10,7 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { clientCreateBody } from "./helpers/client";
+import { warehouseCreateBody } from "./helpers/warehouse";
 import { mapOwnershipRace } from "../src/common/ownership-race";
 
 describe("Warehouse linking (e2e)", () => {
@@ -58,16 +59,18 @@ describe("Warehouse linking (e2e)", () => {
     const res = await request(app.getHttpServer())
       .post("/api/warehouses")
       .set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({
-        name,
-        type: "FF",
-        streetAddress: "Plot 12",
-        country: "United Arab Emirates",
-        city: "Dubai",
-        pinCode: "00000",
-        capacity: 5000,
-        capacityUnit: "CBM",
-      })
+      .send(
+        warehouseCreateBody({
+          name,
+          type: "FF",
+          streetAddress: "Plot 12",
+          country: "United Arab Emirates",
+          city: "Dubai",
+          pinCode: "00000",
+          capacity: 5000,
+          capacityUnit: "CBM",
+        }),
+      )
       .expect(201);
     return res.body as { id: string };
   }

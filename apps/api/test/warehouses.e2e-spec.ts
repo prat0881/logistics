@@ -11,9 +11,12 @@ import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { ffFixture } from "./helpers/freight-forwarder";
+import { warehouseCreateBody } from "./helpers/warehouse";
 
 const NAME = "Warehouse E2E";
 
+// The row fields these tests actually care about; `warehouseCreateBody` supplies the rest of a
+// valid payload — notably the one PRIMARY contact that POST /api/warehouses now requires.
 const base = {
   name: NAME,
   type: "CLIENT",
@@ -56,7 +59,7 @@ describe("Warehouses (e2e)", () => {
 
   it("creates a warehouse and derives totalVehicles from the child table", async () => {
     const wh = await request(app.getHttpServer())
-      .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR)).send(base).expect(201);
+      .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR)).send(warehouseCreateBody(base)).expect(201);
 
     await request(app.getHttpServer())
       .post(`/api/warehouses/${wh.body.id}/vehicles`).set("Cookie", cookie(Role.ADMINISTRATOR))
@@ -73,13 +76,13 @@ describe("Warehouses (e2e)", () => {
   it("rejects an owned warehouse with no agreement date", async () => {
     await request(app.getHttpServer())
       .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ ...base, name: `${NAME} owned`, type: "OWNED" }).expect(400);
+      .send(warehouseCreateBody({ ...base, name: `${NAME} owned`, type: "OWNED" })).expect(400);
   });
 
   it("refuses writes from an executive", async () => {
     await request(app.getHttpServer())
       .post("/api/warehouses").set("Cookie", cookie(Role.EXECUTIVE))
-      .send({ ...base, name: `${NAME} rbac` }).expect(403);
+      .send(warehouseCreateBody({ ...base, name: `${NAME} rbac` })).expect(403);
   });
 
   it("lists only unassigned warehouses when asked", async () => {
@@ -92,20 +95,32 @@ describe("Warehouses (e2e)", () => {
   it("409s a duplicate warehouse name", async () => {
     const conflict = await request(app.getHttpServer())
       .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send(base).expect(409);
+      .send(warehouseCreateBody(base)).expect(409);
     expect(conflict.body.message).toBe("A warehouse with that name already exists");
   });
 
   it("adds a contact, and refuses a second primary with a 409 whose message names the reason", async () => {
-    const wh = await prisma.warehouse.findFirst({ where: { name: NAME } });
-    const id = wh!.id;
+    // Every warehouse now leaves POST /api/warehouses with its one required PRIMARY contact
+    // ("First" here), so the standalone endpoint can only ever add non-primaries to it — which is
+    // exactly the pair this test needs: a successful add, then the refused second primary. It
+    // creates its own warehouse rather than borrowing the first test's, so the contact set it
+    // asserts on is entirely its own.
+    const wh = await request(app.getHttpServer())
+      .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
+      .send(warehouseCreateBody({
+        ...base,
+        name: `${NAME} contacts`,
+        contacts: [{ name: "First", email: "first@example.com", contactNo: "+10000000001", pocLevel: "PRIMARY" }],
+      }))
+      .expect(201);
+    const id = wh.body.id as string;
     await request(app.getHttpServer())
       .post(`/api/warehouses/${id}/contacts`).set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ name: "First", email: "first@example.com", contactNo: "+10000000001", pocLevel: "PRIMARY" })
+      .send({ name: "Second", email: "second@example.com", contactNo: "+10000000002", pocLevel: "SECONDARY" })
       .expect(201);
     const conflict = await request(app.getHttpServer())
       .post(`/api/warehouses/${id}/contacts`).set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ name: "Second", email: "second@example.com", contactNo: "+10000000002", pocLevel: "PRIMARY" })
+      .send({ name: "Third", email: "third@example.com", contactNo: "+10000000003", pocLevel: "PRIMARY" })
       .expect(409);
     expect(conflict.body.message).toBe("This warehouse already has a primary contact");
     const primaries = await prisma.warehouseContact.findMany({ where: { warehouseId: id, pocLevel: "PRIMARY" } });
@@ -129,10 +144,10 @@ describe("Warehouses (e2e)", () => {
     fixtureForwarderId = forwarder.id;
     const clientOwned = await request(app.getHttpServer())
       .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ ...base, name: `${NAME} client-owned` }).expect(201);
+      .send(warehouseCreateBody({ ...base, name: `${NAME} client-owned` })).expect(201);
     const ffOwned = await request(app.getHttpServer())
       .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
-      .send({ ...base, name: `${NAME} ff-owned`, type: "FF" }).expect(201);
+      .send(warehouseCreateBody({ ...base, name: `${NAME} ff-owned`, type: "FF" })).expect(201);
     await prisma.warehouse.update({ where: { id: clientOwned.body.id }, data: { clientId: client.id } });
     await prisma.warehouse.update({ where: { id: ffOwned.body.id }, data: { freightForwarderId: forwarder.id } });
 
@@ -152,13 +167,15 @@ describe("Warehouses (e2e)", () => {
     it("rejects an explicit null for agreementValidUntil (Zod: the field is optional, not nullable)", async () => {
       const created = await request(app.getHttpServer())
         .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
-        .send({
-          ...base,
-          name: `${NAME} owned-patch-date`,
-          type: "OWNED",
-          agreementValidUntil: "2030-01-01T00:00:00.000Z",
-          insuranceValidUntil: "2030-01-01T00:00:00.000Z",
-        })
+        .send(
+          warehouseCreateBody({
+            ...base,
+            name: `${NAME} owned-patch-date`,
+            type: "OWNED",
+            agreementValidUntil: "2030-01-01T00:00:00.000Z",
+            insuranceValidUntil: "2030-01-01T00:00:00.000Z",
+          }),
+        )
         .expect(201);
 
       const res = await request(app.getHttpServer())
@@ -173,13 +190,15 @@ describe("Warehouses (e2e)", () => {
     it("rejects an explicit null for rateCurrency (Zod: the field is optional, not nullable)", async () => {
       const created = await request(app.getHttpServer())
         .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
-        .send({
-          ...base,
-          name: `${NAME} rate-patch-currency`,
-          rateCurrency: "AED",
-          handlingRate: 100,
-          handlingUnit: "PER_PALLET",
-        })
+        .send(
+          warehouseCreateBody({
+            ...base,
+            name: `${NAME} rate-patch-currency`,
+            rateCurrency: "AED",
+            handlingRate: 100,
+            handlingUnit: "PER_PALLET",
+          }),
+        )
         .expect(201);
 
       const res = await request(app.getHttpServer())
@@ -191,7 +210,7 @@ describe("Warehouses (e2e)", () => {
     it("still allows an unrelated PATCH on a CLIENT warehouse to succeed", async () => {
       const created = await request(app.getHttpServer())
         .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
-        .send({ ...base, name: `${NAME} client-unrelated-patch`, type: "CLIENT" })
+        .send(warehouseCreateBody({ ...base, name: `${NAME} client-unrelated-patch`, type: "CLIENT" }))
         .expect(201);
 
       const res = await request(app.getHttpServer())
@@ -207,7 +226,7 @@ describe("Warehouses (e2e)", () => {
     it("rejects flipping type from CLIENT to OWNED via PATCH when no agreement dates exist yet", async () => {
       const created = await request(app.getHttpServer())
         .post("/api/warehouses").set("Cookie", cookie(Role.ADMINISTRATOR))
-        .send({ ...base, name: `${NAME} type-flip`, type: "CLIENT" })
+        .send(warehouseCreateBody({ ...base, name: `${NAME} type-flip`, type: "CLIENT" }))
         .expect(201);
       expect(created.body.agreementValidUntil).toBeFalsy();
 
