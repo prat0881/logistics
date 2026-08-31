@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import { useForm, Controller } from "react-hook-form";
+import { useForm, Controller, type FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
 import {
   clientCreateSchema,
   contactUpsertSchema,
+  atMostOnePrimary,
   MASTER_STATUSES,
   PRIMARY_REQUIRED_MESSAGE,
+  PRIMARY_DUPLICATE_MESSAGE,
   type ClientCreateInput,
 } from "@svyft/shared";
 import { ApiError, postJson, patchJson } from "@/lib/api";
@@ -23,10 +25,13 @@ import { Input } from "@/components/ui/input";
 // `loadedWithPrimary`, which only the component has (read off `existing.data`, not the live
 // draft). So the resolver here validates every field exactly as clientCreateSchema does —
 // including each individual contact's own shape (name/email/E.164 phone/etc, via
-// contactUpsertSchema) — EXCEPT the array-level primary rule, which `onSubmit` below enforces
-// itself using all three states of design decision C4.
+// contactUpsertSchema) — EXCEPT the create-time "exactly one" rule, which `onSubmit` below
+// enforces itself using all three states of design decision C4. `atMostOnePrimary` stays:
+// nothing in the UI can produce a two-PRIMARY draft (ContactsSection demotes the incumbent the
+// moment a second contact is set PRIMARY), but keeping it costs nothing and means a bug in that
+// demotion logic would fail loudly here rather than reach the server's own 400.
 const clientFormSchema = clientCreateSchema.extend({
-  contacts: z.array(contactUpsertSchema),
+  contacts: z.array(contactUpsertSchema).refine(atMostOnePrimary, { message: PRIMARY_DUPLICATE_MESSAGE }),
 });
 
 export function ClientFormPage() {
@@ -40,6 +45,7 @@ export function ClientFormPage() {
     control,
     handleSubmit,
     reset,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<ClientCreateInput>({
     resolver: zodResolver(clientFormSchema),
@@ -110,6 +116,37 @@ export function ClientFormPage() {
 
   const err = (name: keyof ClientCreateInput) => errors[name]?.message as string | undefined;
 
+  // Nothing renders `errors.contacts` — it's a Controller-driven ContactsSection, not a Field,
+  // and the seven scalar Fields above only ever surface their own errors. Without this handler,
+  // a contact that fails validation (most likely a `ClientContact` row that predates the
+  // tightened E.164 rule, loaded in verbatim by the effect above) makes `zodResolver` reject the
+  // whole submit and RHF never calls `onValidSubmit` at all — the exact "rejected save produced
+  // nothing at all" failure the try/catch below exists to prevent, except this path bypasses
+  // that catch entirely because it never reaches it. And it lands on precisely the legacy record
+  // whose only repair surface is this screen.
+  function onInvalidSubmit(formErrors: FieldErrors<ClientCreateInput>) {
+    const contactsError = formErrors.contacts;
+    if (Array.isArray(contactsError)) {
+      const index = contactsError.findIndex((c) => c);
+      if (index !== -1) {
+        const fieldErrors = contactsError[index] as Record<string, { message?: string }> | undefined;
+        const field = fieldErrors ? Object.keys(fieldErrors)[0] : undefined;
+        const message = field ? fieldErrors?.[field]?.message : undefined;
+        const name = getValues(`contacts.${index}.name`) || `contact #${index + 1}`;
+        setSubmitError(
+          `"${name}"${field ? ` — ${field}` : ""}: ${message ?? "has an invalid value"}. Fix it in Contacts before saving.`,
+        );
+        return;
+      }
+    } else if (contactsError && "message" in contactsError && contactsError.message) {
+      // The atMostOnePrimary array-level refine (not reachable via the UI today, but defensive)
+      // attaches its message directly to `contacts`, not to any index.
+      setSubmitError(contactsError.message as string);
+      return;
+    }
+    setSubmitError("This client has errors that need fixing before it can be saved.");
+  }
+
   return (
     <MasterForm
       title={id ? "Edit client" : "New client"}
@@ -121,7 +158,7 @@ export function ClientFormPage() {
           </p>
         ) : undefined
       }
-      onSubmit={handleSubmit(onValidSubmit)}
+      onSubmit={handleSubmit(onValidSubmit, onInvalidSubmit)}
       isSubmitting={isSubmitting}
       onCancel={() => navigate("/masters/clients")}
     >

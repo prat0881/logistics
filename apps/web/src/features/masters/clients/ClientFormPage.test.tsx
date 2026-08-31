@@ -59,19 +59,31 @@ async function addContactViaDialog({
 }
 
 describe("ClientFormPage (create)", () => {
-  it("sends parent fields and contacts in ONE request", async () => {
-    const bodies: unknown[] = [];
+  it("sends parent fields, contacts and warehouses in ONE request", async () => {
+    // Capture every mutating (non-GET) call, not just the ones matching the expected URL/method
+    // — a stray write (e.g. a leftover PUT to /api/clients/:id/warehouses) would 404 in this
+    // mock and vanish silently if only the POST branch pushed into the array, letting a
+    // regression through a test literally named "ONE request".
+    const calls: { url: string; body: unknown }[] = [];
     vi.stubGlobal(
       "fetch",
       mockFetch((url, init) => {
         if (url.endsWith("/api/auth/me")) return authMe;
-        if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
-        if (url.endsWith("/api/clients") && init?.method === "POST") {
-          bodies.push(JSON.parse(String(init.body)));
+        if (url.startsWith("/api/warehouses?unassigned=true")) {
           return {
-            status: 201,
-            body: { id: "c9", clientCode: "CL-0009", companyName: "NewCo", country: "IN", status: "ACTIVE" },
+            status: 200,
+            body: { items: [{ id: "7c9e6679-7425-40de-944b-e07fc1f90ae7", name: "Depot One" }], total: 1, page: 1, pageSize: 100 },
           };
+        }
+        if (init?.method && init.method !== "GET") {
+          calls.push({ url, body: init.body ? JSON.parse(String(init.body)) : undefined });
+          if (url.endsWith("/api/clients") && init.method === "POST") {
+            return {
+              status: 201,
+              body: { id: "c9", clientCode: "CL-0009", companyName: "NewCo", country: "IN", status: "ACTIVE" },
+            };
+          }
+          return { status: 404 };
         }
         return { status: 404 };
       }),
@@ -79,12 +91,15 @@ describe("ClientFormPage (create)", () => {
     renderAtRoute("/masters/clients/new");
     await fillParentFields("NewCo");
     await addContactViaDialog({ name: "Asha Menon", email: "asha@example.com", phone: "+971501234567", primary: true });
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Depot One" }));
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
-    await waitFor(() => expect(bodies).toHaveLength(1));
-    expect(bodies[0]).toMatchObject({
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0].url).toBe("/api/clients");
+    expect(calls[0].body).toMatchObject({
       companyName: "NewCo",
       contacts: [expect.objectContaining({ name: "Asha Menon", pocLevel: "PRIMARY" })],
+      warehouseIds: ["7c9e6679-7425-40de-944b-e07fc1f90ae7"],
     });
   });
 
@@ -158,15 +173,17 @@ describe("ClientFormPage (edit)", () => {
     id,
     pocLevel,
     patchCalls,
+    assignedWarehouses = [],
   }: {
     id: string;
     pocLevel: "NONE" | "PRIMARY";
     patchCalls: unknown[];
+    assignedWarehouses?: { id: string; name: string }[];
   }) {
     return mockFetch((url, init) => {
       if (url.endsWith("/api/auth/me")) return authMe;
       if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
-      if (url.endsWith(`/api/clients/${id}/warehouses`)) return { status: 200, body: [] };
+      if (url.endsWith(`/api/clients/${id}/warehouses`)) return { status: 200, body: assignedWarehouses };
       if (url.endsWith(`/api/clients/${id}`)) {
         if (init?.method === "PATCH") {
           patchCalls.push(JSON.parse(String(init.body)));
@@ -205,20 +222,36 @@ describe("ClientFormPage (edit)", () => {
     });
   }
 
-  it("shows the advisory banner on a loaded client with no primary, and still saves", async () => {
+  it("shows the advisory banner on a loaded client with no primary, and still saves — carrying contacts and an emptied warehouseIds", async () => {
     const patchCalls: unknown[] = [];
-    vi.stubGlobal("fetch", mockLegacyClient({ id: "c1", pocLevel: "NONE", patchCalls }));
+    vi.stubGlobal(
+      "fetch",
+      mockLegacyClient({
+        id: "c1",
+        pocLevel: "NONE",
+        patchCalls,
+        assignedWarehouses: [{ id: "7c9e6679-7425-40de-944b-e07fc1f90ae7", name: "Depot One" }],
+      }),
+    );
     renderAtRoute("/masters/clients/c1");
 
     expect(await screen.findByRole("status")).toHaveTextContent(/no primary contact/i);
-    // Save without touching anything — an unrelated field edit isn't even needed to expose the
-    // hazard: if the load effect failed to map `contacts` in, this PATCH would carry an empty
-    // array and the API (which treats "absent from the array" as "delete") would wipe the
-    // client's one legacy contact on the very first save.
+    // Unchecking the loaded warehouse is what proves warehouseIds actually reaches the wire as
+    // an explicit `[]`, not merely absent — the API reads "absent" as "unset" for optional
+    // fields on PATCH, but reads an explicit empty array as "unassign everything". The old
+    // WarehousePicker-only test for this ("unassigning everything sends an empty array") no
+    // longer applies to that component (it doesn't touch the network anymore) — this is where
+    // that guarantee now has to be proven, at the boundary where it actually matters.
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Depot One" }));
+    // Save without touching any other field — an unrelated field edit isn't even needed to
+    // expose the contacts hazard: if the load effect failed to map `contacts` in, this PATCH
+    // would carry an empty array and the API (which treats "absent from the array" as "delete")
+    // would wipe the client's one legacy contact on the very first save.
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
     await waitFor(() => expect(patchCalls).toHaveLength(1));
     expect(patchCalls[0]).toMatchObject({
       contacts: [expect.objectContaining({ name: "Asha Menon", pocLevel: "NONE" })],
+      warehouseIds: [],
     });
   });
 
@@ -236,6 +269,69 @@ describe("ClientFormPage (edit)", () => {
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/one contact must be marked primary/i);
+    expect(patchCalls).toHaveLength(0);
+  });
+
+  // Nothing in this page renders `errors.contacts` — ContactsSection is Controller-driven, not
+  // a Field. Before the onInvalid handler existed, a loaded contact that failed validation (the
+  // realistic case: a ClientContact row predating the tightened E.164 phone rule) made
+  // zodResolver reject the whole submit, RHF never called the submit handler at all, and Save
+  // just... stopped spinning. Silently. On exactly the legacy record whose only repair surface
+  // is this screen. This is the same "rejected save produced nothing" failure the try/catch
+  // exists to prevent, reached through a path the try/catch can't cover because it's never
+  // entered.
+  it("surfaces a visible error when a loaded contact fails validation, instead of doing nothing", async () => {
+    const patchCalls: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me")) return authMe;
+        if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
+        if (url.endsWith("/api/clients/c3/warehouses")) return { status: 200, body: [] };
+        if (url.endsWith("/api/clients/c3")) {
+          if (init?.method === "PATCH") {
+            patchCalls.push(1);
+            return { status: 200, body: {} };
+          }
+          return {
+            status: 200,
+            body: {
+              id: "c3",
+              clientCode: "CL-0003",
+              companyName: "Bad Phone Co",
+              industry: null,
+              country: "IN",
+              streetAddress: "3 Old Rd",
+              city: "Old City",
+              postalCode: null,
+              status: "ACTIVE",
+              contacts: [
+                {
+                  id: "9e0c4c1a-2a3b-4d5e-8f6a-1b2c3d4e5f60",
+                  name: "Legacy Contact",
+                  designation: null,
+                  email: "legacy@example.com",
+                  // Missing the leading "+" — predates the E.164 tightening, fails
+                  // contactUpsertSchema's regex on load.
+                  contactNo: "971501234567",
+                  whatsappAvailable: false,
+                  wechatAvailable: false,
+                  botimAvailable: false,
+                  pocLevel: "PRIMARY",
+                  status: "ACTIVE",
+                },
+              ],
+            },
+          };
+        }
+        return { status: 404 };
+      }),
+    );
+    renderAtRoute("/masters/clients/c3");
+
+    await userEvent.click(await screen.findByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/legacy contact/i);
     expect(patchCalls).toHaveLength(0);
   });
 });
