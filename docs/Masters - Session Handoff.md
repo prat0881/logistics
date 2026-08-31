@@ -2,9 +2,15 @@
 
 > Resume point for a fresh session. Records what shipped, what was decided and why, what the plan got wrong, and the exact next step. Sibling of `Stage 3 - Session Handoff.md` and `Stage 4 - Session Handoff.md`. This work is **not** a numbered stage — it is the master-data layer the client specified in the four master-table workbooks, plus a charge-line catalogue.
 
-## Current status (2026-08-26)
+## Current status (2026-08-31 — MERGED)
 
-- ✅ **Master Data Expansion — DELIVERED → [PR #53](https://github.com/sj132q/svyft-logistics/pull/53) OPEN** against `main`. Branch `feat/masters`, worktree `.claude/worktrees/feat+masters`, **48 commits over `main@b875291`**, 127 files, +11,311/−603. **`pnpm run ci` GREEN — 1,498 tests** (shared 369 · web 662 · api 467) plus lint, typecheck and all three builds. Design: `docs/superpowers/specs/2026-08-25-master-data-expansion-design.md`. Plan: `docs/superpowers/plans/2026-08-25-master-data-expansion.md` (15 tasks). Post-deploy corrections owed: `docs/superpowers/specs/2026-08-26-post-deploy-corrections.md`.
+- ✅ **Master Data Expansion — MERGED to `main` via [PR #53](https://github.com/sj132q/svyft-logistics/pull/53).** Stage 5 ([PR #52](https://github.com/sj132q/svyft-logistics/pull/52)) merged alongside it; `main` tip `d58972d`. **CI and Deploy both green on `main`** (31 Aug, two runs) — which also settles the migration-interleaving question: masters' eight migrations and Stage-5's seven applied to production without error despite Stage-5's carrying earlier timestamps.
+- ✅ **The predicted merge cost was real but ~3× smaller than estimated.** Masters made `FreightForwarder.companyAddress`/`city`/`country` NOT NULL, which broke Stage-5's e2e fixtures — **17 create sites across 16 api specs**, fixed in `c2691c9` by adding the three fields. No assertion needed changing; none of those specs asserts on forwarder shape. The handoff's original estimate of 47 files counted every file *containing* `freightForwarder.create`, not the files that would actually fail. **If another long-lived branch merges `main` later, expect the same break and the same fix** — check `pnpm --filter @svyft/api typecheck` for `FreightForwarderCreateInput` before suspecting the branch's own commits.
+- 🟡 **One item outstanding: the post-deploy correction.** The pre-deploy capture WAS taken, so this is mechanical — see "Production data" below.
+
+### Delivery detail (unchanged)
+
+Branch `feat/masters`, worktree `.claude/worktrees/feat+masters`, **49 commits over `main@b875291`**, 127 files, +11,311/−603. **`pnpm run ci` GREEN — 1,498 tests** (shared 369 · web 662 · api 467) plus lint, typecheck and all three builds. Design: `docs/superpowers/specs/2026-08-25-master-data-expansion-design.md`. Plan: `docs/superpowers/plans/2026-08-25-master-data-expansion.md` (15 tasks). Post-deploy corrections owed: `docs/superpowers/specs/2026-08-26-post-deploy-corrections.md`.
 - 🟢 **The governing constraint held.** **No Stage-4 or Stage-5 file was modified** across all 48 commits — verified by the final whole-branch review, not merely asserted. The only changes under protected paths are **three test-fixture literals** (`ClientPicker.test.tsx`, `VesselPicker.test.tsx`, `FfSelectionGrid.test.tsx`), each authorised individually after confirming the type error was the only one monorepo-wide and no production code under those paths was affected.
 - 🔵 **Reference artifacts** (private, shareable): [Master Data Gap Matrix](https://claude.ai/code/artifact/49bbc1fe-ec04-4d89-ae26-144f0de76de4) — field-by-field workbook-vs-build comparison with all design decisions; [Master Data Handover](https://claude.ai/code/artifact/000b8158-2521-49b0-94fa-de323d16cbec) — per-master schema read from the live database, plus the Stage-4/5 fit.
 
@@ -101,7 +107,9 @@ Queried against Neon before merge (23 forwarders, 1 vessel, 2 clients):
 - ✅ **No client contact needs a placeholder** email or phone (0 missing).
 - ✅ **No client has two primary contacts** — the partial unique indexes build; the deploy will not abort.
 - ⚠ **One forwarder** gets `'Not recorded'` in an address component. Self-identifying in the UI.
-- 🔴 **Two lossy conversions**, decided as deploy-then-correct. Detail in `2026-08-26-post-deploy-corrections.md`. **The pre-deploy capture is required** — after the migration, the two 50/50-split forwarders are indistinguishable from the genuine `ADVANCE PAYMENT` one.
+- 🟡 **Two lossy conversions**, decided as deploy-then-correct. **The pre-deploy capture WAS taken** (confirmed 2026-08-31), so the correction is mechanical rather than archaeological. Detail in `2026-08-26-post-deploy-corrections.md`.
+
+**Note on the column that looks unchanged:** `FreightForwarder.paymentTerms` still exists by name, because the migration drops the *text* column and then renames `paymentTermsEnum` into its place. Seeing the column is not evidence the migration was skipped. The decisive check is the type — `information_schema.columns.udt_name` reads `PaymentTerm` if it ran, `text` if it did not.
 
 ## Deferred — the Stage-4 pass (§9 of the design doc)
 
@@ -115,17 +123,15 @@ Queried against Neon before merge (23 forwarders, 1 vessel, 2 clients):
 6. Warehousing in the charge catalogue — `ROAD_WH_HANDLING` currently has a null category and is filtered out of the admin screen, so warehouse charges cannot be managed there at all.
 7. The wizard/`Point` migration, so queries select warehouses from the master. **Until this lands the Warehouse master has no consumer** — users maintain warehouses that nothing reads.
 
-**Merge-order warning:** this pass edits `ff-portal.service.ts`, `ChargeMatrix.tsx`, `QuoteSummary.tsx`, `RfqPrintView.tsx` and `quote-engine.ts` — the same five files the Stage-5 branch works in. Agree order before starting.
+**The merge-order blocker is GONE.** This pass edits `ff-portal.service.ts`, `ChargeMatrix.tsx`, `QuoteSummary.tsx`, `RfqPrintView.tsx` and `quote-engine.ts` — contested while Stage 5 was unmerged, but both branches are now on `main`, so those five files have a single owner again. That was the main reason to wait; it no longer applies.
 
-## Merging both branches — measured impact
+## Merging both branches — what actually happened
 
-The product works and no data is corrupted; migrations are disjoint and apply in either order. But:
+Both merged on 2026-08-31. The product works, no data was corrupted, and the interleaved migration sets applied cleanly in production.
 
-- **47 Stage-5 test files create a `FreightForwarder`.** Masters made `companyAddress`/`city`/`country` NOT NULL, so all 47 break — **32 of them as merge conflicts** (masters converted the same files to `ffFixture()`), the other **15 silently**, with no conflict but a failing typecheck.
-- Four small conflicts where both branches append entries: `app.module.ts`, `App.tsx`, `AppLayout.tsx`, `packages/shared/src/index.ts`. `prisma/schema.prisma` should auto-merge — the Stage-5 session diffed the hunk ranges and found no overlap.
-- 🔴 **`deploy.yml` does not wait for `ci.yml`** (its only `needs:` is its own build job). So a red suite on `main` does **not** block a production deploy.
-
-**Recommended:** treat the 47 fixture files as the first task of the Stage-4 pass, not as merge cleanup — same shape of work, and it needs doing either way.
+- **The fixture break was 17 create sites across 16 api specs**, not the 47 files predicted. Fixed in `c2691c9`. The over-estimate came from counting files containing `freightForwarder.create` rather than files that would fail — several already supplied the three now-required fields.
+- The small append-conflicts (`app.module.ts`, `App.tsx`, `AppLayout.tsx`, `packages/shared/src/index.ts`) and `prisma/schema.prisma` resolved as expected; the Stage-5 session's hunk-range analysis was correct.
+- 🔴 **Still true and worth remembering: `deploy.yml` does not wait for `ci.yml`** (its only `needs:` is its own build job). A red suite on `main` does not block a production deploy. This did not bite here — both runs were green — but it means CI is not a gate.
 
 ## Open questions from the workbook
 
@@ -153,9 +159,12 @@ The product works and no data is corrupted; migrations are disjoint and apply in
 
 ## The exact next step
 
-**PR #53 is open and awaiting review/merge.** Nothing blocks it. Before merging:
+**Both branches are merged and deployed. Two things remain.**
 
-1. **Run the pre-deploy capture** and keep the output — `SELECT "freightForwarderCode", "companyName", "paymentTerms", "typicalLeadTime" FROM "FreightForwarder" ORDER BY "freightForwarderCode";` Without it, the post-deploy corrections cannot be applied, because the source text does not survive the migration.
-2. **Decide merge order against `feat/stage-5-fx-master`** and expect the 47-file fixture repair on whichever merges second.
+1. **Apply the post-deploy correction** (small, and you have what it needs). From the pre-deploy capture: the two forwarders whose terms read `50% ADVANCE / 50% ON DELIVERY` and `50% ADVANCE / 50% ON BL` now show **100% Advance** and should be *50% Advance : 50% After Delivery*. All 23 lead times sit on the low end of their original ranges (`18-24d` → 18); reset to the upper bound if these are ever treated as real, since understating a lead time is the direction that causes missed commitments. Both correctable through the admin screens.
 
-After merge, the next body of work is **the Stage-4 pass** (seven items above). It has not been specced — that is the natural next session's first task, and it should start by settling the three open workbook questions, because item 3 (the tag two-gate) and the destination-charge question both change quoting behaviour.
+2. **Spec the Stage-4 pass** — seven items above, none started, and now unblocked. This has **not** been specced; it is the next session's first task.
+
+**How to approach the Stage-4 pass.** Settle the three open workbook questions *first*, because two of them change quoting behaviour and would otherwise get decided mid-build: whether destination charges are always-included (thirteen lines flip if the sheet is right), what the shipment-type field should be, and whether FSC/Peak/Heavy stay always-included. Then sequence the seven items — the two "retire the old representation" items are the largest and share a shape (repoint readers, prove equivalence, drop columns), and the wizard/`Point` migration is the one users will actually notice, since **until it lands the Warehouse master has no consumer**.
+
+Also worth checking early, cheaply: confirm production's `_prisma_migrations` lists all fifteen migrations (masters' eight plus Stage-5's seven) as applied. The green deploy strongly implies it, but interleaved ordering is exactly the case where "it ran" and "it ran completely" can differ.
