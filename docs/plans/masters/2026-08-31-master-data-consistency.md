@@ -1045,7 +1045,16 @@ Replace `create` and `update`. Split the children off the parent payload before 
 
 Extract the body of the existing `setWarehouses` into a private `setWarehousesTx(tx, clientId, warehouseIds, user)` that takes a transaction client, and make the existing public `setWarehouses` call it inside its own `$transaction`. That keeps `PUT /:id/warehouses` (design C8) working unchanged while letting the composite path reuse the same contested-ownership logic.
 
-Then **delete the dead `clientId` branch** from `mapUnique` and its comment — `reconcileContacts` now raises that 409 itself, and leaving the branch in place makes dead code look load-bearing.
+**Do NOT delete the `clientId` branch from `mapUnique`.** An earlier draft of this plan called
+it dead code, on a misreading of the masters handoff — the handoff describes a bug that was
+already FIXED. The branch checks `target.includes("clientId")`, and Prisma reports P2002's
+`meta.target` as exactly `["clientId"]`, so it matches and fires. It is the only source of the
+409 message for `addContact`/`updateContact` — the standalone `/:id/contacts` endpoints that
+design C8 keeps — and four e2e specs assert those exact strings
+(`clients.e2e-spec.ts:115`, `clients-address.e2e-spec.ts:109`, `warehouses.e2e-spec.ts:110`,
+`ff-contacts.e2e-spec.ts:146`). Leave it; narrow its comment to say it now serves only the
+standalone endpoints, because the composite path raises the conflict earlier in
+`reconcileContacts`.
 
 - [ ] **Step 5: Update the 11 existing create sites**
 
@@ -1063,7 +1072,11 @@ Leave the 403/401 auth-check sites alone if they assert a rejection *before* val
 - [ ] **Step 6: Run the full api suite + typecheck**
 
 Run: `pnpm --filter @svyft/api test && pnpm --filter @svyft/api typecheck`
-Expected: all green, including the 6 new composite tests.
+Expected: every client suite green including the 6 new composite tests. **`warehouses.e2e-spec.ts`
+and `warehouse-linking.e2e-spec.ts` are expected to be RED at this point** — Task 3 made
+`contacts` required on `POST /api/warehouses` and Task 5 is what wraps those 11 create sites.
+Do not try to fix them here. Api typecheck still reports errors in `freight-forwarders.service.ts`
+until Task 6.
 
 - [ ] **Step 7: Commit**
 
@@ -1253,7 +1266,7 @@ Then rewrite `create`/`update` on the same shape as `ClientsService`: destructur
 
 **Keep `update`'s existing `merged` invariant block exactly as it is** — build `merged` from `fields`, never from the raw `input`, or the `"agreementValidUntil" in input` checks start seeing the child keys.
 
-Delete the now-dead `warehouseId` branch from this service's `mapUnique`, same as Task 4.
+**Do NOT delete the `warehouseId` branch from this service's `mapUnique`** — see the corrected note in Task 4. It is live, it serves the standalone contact endpoints, and `warehouses.e2e-spec.ts:110` asserts its message.
 
 - [ ] **Step 4: Update the 11 existing create sites**
 
@@ -1412,7 +1425,7 @@ In `create()`, after `tx.freightForwarder.create(...)`, replace the unconditiona
 
 In `update()`, destructure the children off before building `data`, keep the four existing `delete data.*` lines untouched (C7 defence in depth), and after the parent update run `reconcileContacts` then `syncPrimaryContactColumns` inside the same transaction. As in Task 4, extract `setWarehousesTx` from the existing public `setWarehouses`.
 
-Delete the dead `freightForwarderId` branch from this service's `mapUnique`.
+**Do NOT delete the `freightForwarderId` branch from this service's `mapUnique`** — see the corrected note in Task 4. It is live and `ff-contacts.e2e-spec.ts:146` asserts its message.
 
 - [ ] **Step 4: Run the full api suite + typecheck**
 
