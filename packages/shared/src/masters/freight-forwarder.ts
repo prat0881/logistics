@@ -3,7 +3,9 @@ import {
   MASTER_STATUSES,
   contactUpsertSchema,
   atMostOnePrimary,
+  exactlyOnePrimary,
   PRIMARY_DUPLICATE_MESSAGE,
+  PRIMARY_REQUIRED_MESSAGE,
   type MasterStatus,
 } from "./contacts";
 import { FREIGHT_MODES, type FreightMode } from "../config";
@@ -49,9 +51,17 @@ export const freightForwarderCreateSchema = z.object({
   paymentTerms: z.enum(PAYMENT_TERMS).optional(),
   typicalLeadTime: z.number().int().min(0).max(365).optional(),
   status: statusField,
+  // Create-time: `contacts` itself stays optional (a caller may still send only
+  // pic/contactNumber/email, exactly as before this array existed — see the seed in
+  // FreightForwardersService.create). But when a caller DOES supply contacts, the array must
+  // carry exactly one PRIMARY, not merely at-most-one like Client/Warehouse's *update* rule.
+  // Reconcile always deletes any server-seeded contact whose id the caller could not possibly
+  // have sent before it creates the supplied rows (delete-before-create), so a caller-supplied
+  // array with zero PRIMARY would leave the forwarder with none at all once reconcile runs —
+  // this refine is what keeps that state from ever reaching the service.
   contacts: z
     .array(contactUpsertSchema)
-    .refine(atMostOnePrimary, { message: PRIMARY_DUPLICATE_MESSAGE })
+    .refine(exactlyOnePrimary, { message: PRIMARY_REQUIRED_MESSAGE })
     .optional(),
   warehouseIds: z.array(z.string().uuid()).optional(),
 });
@@ -64,9 +74,19 @@ export const freightForwarderCreateSchema = z.object({
 // happens through its contact list / warehouse picker, in exactly one place each. They stay on
 // the *create* schema above: creation still needs them (pic/contactNumber/email are NOT NULL)
 // and rfq.service.ts still reads all four off the row.
+// `contacts` is re-declared here rather than inherited from the create schema's `.omit()`:
+// update-time keeps the Client/Warehouse *update* rule (at-most-one, never exactly-one) so a
+// legacy forwarder with no primary contact stays saveable (design C4) — create's
+// exactly-one-when-supplied rule above would otherwise block every edit to such a row.
 export const freightForwarderUpdateSchema = freightForwarderCreateSchema
-  .omit({ pic: true, contactNumber: true, email: true, whLocation: true })
-  .partial();
+  .omit({ pic: true, contactNumber: true, email: true, whLocation: true, contacts: true })
+  .partial()
+  .extend({
+    contacts: z
+      .array(contactUpsertSchema)
+      .refine(atMostOnePrimary, { message: PRIMARY_DUPLICATE_MESSAGE })
+      .optional(),
+  });
 export type FreightForwarderCreateInput = z.infer<typeof freightForwarderCreateSchema>;
 export type FreightForwarderUpdateInput = z.infer<typeof freightForwarderUpdateSchema>;
 

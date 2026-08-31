@@ -8,7 +8,7 @@ import type {
   FreightForwarderUpdateInput,
   Paginated,
 } from "@svyft/shared";
-import { PocLevel, resolveCountryCode } from "@svyft/shared";
+import { resolveCountryCode } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { auditCreate, auditUpdate } from "../../common/audit";
 import { mapOwnershipRace } from "../../common/ownership-race";
@@ -79,11 +79,21 @@ export class FreightForwardersService {
         // writing these columns (below): there's now always a contact row for
         // syncPrimaryContactColumns to read from.
         //
-        // Skipped, not merged, when the caller supplies its own PRIMARY: writing both would
-        // insert two PRIMARY rows and FreightForwarderContact_one_primary would reject the
-        // whole transaction.
-        const suppliedPrimary = (contacts ?? []).some((c) => c.pocLevel === PocLevel.PRIMARY);
-        if (!suppliedPrimary) {
+        // Skipped — not "skipped when the caller supplies a PRIMARY", but skipped whenever the
+        // caller supplies ANY contacts at all. This is NOT about avoiding
+        // FreightForwarderContact_one_primary: reconcileContacts always deletes before it
+        // creates, and this seed's freshly-minted id could never appear in the caller's payload,
+        // so reconcile would delete the seed regardless of whether the payload contained a
+        // PRIMARY — the two-PRIMARY state this used to guard against never actually forms. The
+        // real risk was the opposite one: seed, then have reconcile's delete-step remove that
+        // seed (because its id wasn't in the payload) while the payload itself carried no
+        // PRIMARY of its own, leaving zero PRIMARY contacts and corrupting
+        // syncPrimaryContactColumns' fallback into copying a non-primary contact's details onto
+        // pic/contactNumber/email. The create schema's `contacts` refine (exactlyOnePrimary when
+        // supplied — see freight-forwarder.ts) is what makes skipping safe: any supplied array
+        // is guaranteed to already carry exactly one PRIMARY, so reconcile alone produces the
+        // correct end state without this seed's help.
+        if (!contacts?.length) {
           await tx.freightForwarderContact.create({
             data: {
               freightForwarderId: ff.id,

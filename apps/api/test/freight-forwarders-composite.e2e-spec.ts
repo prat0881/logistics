@@ -5,7 +5,7 @@ import { Test } from "@nestjs/testing";
 import request from "supertest";
 import cookieParser from "cookie-parser";
 import { JwtService } from "@nestjs/jwt";
-import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
+import { Role, ACCESS_TOKEN_COOKIE, PRIMARY_REQUIRED_MESSAGE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
@@ -60,7 +60,11 @@ describe("FreightForwarders composite create/update (e2e)", () => {
     await app.close();
   });
 
-  // Backward compatibility: this is exactly the payload every existing FF spec sends.
+  // Backward compatibility AND the regression guard for Finding 1 (task-6 review): a create
+  // with no `contacts` key must yield exactly one PRIMARY, seeded from the submitted
+  // pic/contactNumber/email — both on the contact row AND on the forwarder row itself, so a
+  // seed that got deleted out from under the write (Finding 1's corruption) would show up here
+  // as either zero contacts or a forwarder whose pic no longer matches what was submitted.
   it("still seeds the primary from pic/contactNumber/email when contacts is absent", async () => {
     const res = await request(app.getHttpServer())
       .post("/api/freight-forwarders")
@@ -74,11 +78,22 @@ describe("FreightForwarders composite create/update (e2e)", () => {
     expect(contacts).toHaveLength(1);
     expect(contacts[0].pocLevel).toBe("PRIMARY");
     expect(contacts[0].name).toBe("Fixture PIC");
+
+    const ff = await prisma.freightForwarder.findUniqueOrThrow({ where: { id: res.body.id } });
+    expect(ff.pic).toBe("Fixture PIC");
+    expect(ff.email).toBe("fixture-pic@ff-composite.example");
+    expect(ff.contactNumber).toBe("+15551234567");
   });
 
-  // The double-insert guard. Without the skip, this payload writes the supplied PRIMARY *and*
-  // the seeded one, and FreightForwarderContact_one_primary rejects the whole transaction.
-  it("uses the supplied primary and does not also seed one", async () => {
+  // Outcome-based, not implementation-based (task-6 review Finding 2): asserts the state that
+  // must hold after a create supplying a PRIMARY — exactly one PRIMARY among exactly the
+  // submitted contacts, and it is the submitted one, not the seed. Verified by mutation: with
+  // the create()'s seed condition inverted, this exact assertion set still passes (reconcile's
+  // delete-before-create step removes the seed regardless, once any contacts are supplied), so
+  // this test does NOT re-detect a regression in that specific line — see the task-6 fix report
+  // for the mutation-testing trace and which test actually catches that inversion (the one
+  // above, whenever `contacts` is entirely absent).
+  it("creates the supplied contacts with exactly one primary, and it is the supplied one", async () => {
     const res = await request(app.getHttpServer())
       .post("/api/freight-forwarders")
       .set("Cookie", cookie(Role.MANAGER))
@@ -99,6 +114,29 @@ describe("FreightForwarders composite create/update (e2e)", () => {
     expect(contacts).toHaveLength(2);
     expect(contacts.filter((c) => c.pocLevel === "PRIMARY")).toHaveLength(1);
     expect(contacts.find((c) => c.pocLevel === "PRIMARY")?.name).toBe("Supplied P");
+    expect(contacts.map((c) => c.name).sort()).toEqual(["Second", "Supplied P"]);
+  });
+
+  // C3/design: `contacts`, when supplied on create, must carry exactly one PRIMARY — a payload
+  // with none is rejected before it ever reaches the service (Finding 1's corrupting case).
+  it("400s a create whose supplied contacts include no primary", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/api/freight-forwarders")
+      .set("Cookie", cookie(Role.MANAGER))
+      .send(
+        ffCreateBody({
+          companyName: `${FF} NoPrimary`,
+          contacts: [
+            { name: "Only Secondary", email: "os@x.com", contactNo: "+971501234567", pocLevel: "SECONDARY" },
+          ],
+        }),
+      );
+    expect(res.status).toBe(400);
+    // ZodValidationPipe puts the flat "Validation failed" in `message` and the real rule
+    // messages in `issues` — assert on the issue the exactlyOnePrimary refine raises.
+    expect(res.body.issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ message: PRIMARY_REQUIRED_MESSAGE })]),
+    );
   });
 
   // C7: the derived columns must track the primary contact, and only via the sync.
