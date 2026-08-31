@@ -508,6 +508,20 @@ export class RfqService {
               // re-freeze does for RFQ_SENT quotes (change-order.strategy.ts). No-op for a fresh
               // SELECT quote (its draftJson is already null — a pre-distribution quote has no draft).
               draftJson: Prisma.DbNull,
+              // S5.9.6 (register A6) — the offer column goes with it, for the SAME reason and in
+              // the SAME write: the old bid was priced against the manifest/chargeConfig snapshots
+              // this very update has just replaced, so it is not an offer against the current
+              // basis any more. The forwarder re-submits and `submit` writes both columns again.
+              //
+              // Concretely, what leaving it behind would cost: the expiry sweep clears the
+              // SCRATCHPAD for an RFQ_SENT quote but nothing clears this column
+              // (rfq-schedule.listener.ts), and EXPIRED *is* a status the compare screen reads
+              // (COMPARABLE_STATUSES, comparison.service.ts). So a reactivated quote whose
+              // forwarder stays silent would carry its pre-change price into EXPIRED — visible
+              // and approvable — once the read side moves onto this column.
+              // It is also the invariant behind the migration's RFQ_SENT exclusion: with this
+              // clear, no quote sitting at RFQ_SENT carries a submitted offer.
+              submittedJson: Prisma.DbNull,
             },
           });
           quoteFires.push(quoteId);

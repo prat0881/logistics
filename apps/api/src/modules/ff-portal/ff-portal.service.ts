@@ -640,6 +640,14 @@ export class FfPortalService {
             // with what actually got written to ChargeLine/TruckingCharge/SeaFreightRate/
             // TransitPlan/Quote, never a stale or since-filtered client draft.
             draftJson: draft as unknown as object,
+            // S5.9.6 (register A6) — THE OFFER. Same `draft` object, same write, so the two can
+            // never disagree at submit time; they diverge only afterwards, when `saveDraft`
+            // overwrites the scratchpad above with whatever the forwarder types next (it has no
+            // version hash and admits REQUOTED, so a half-typed revision lands there and used to
+            // be indistinguishable from a submitted price). Written HERE and nowhere else: this
+            // is the only site in the codebase that stamps `submittedAt`, and the two belong to
+            // the same event.
+            submittedJson: draft as unknown as object,
           },
         });
       });

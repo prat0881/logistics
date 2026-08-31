@@ -48,6 +48,12 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       await prisma.scheduledEvent.deleteMany({
         where: { entityType: "RFQ", entityId: { in: rfqIds } },
       });
+      // S5.9.6 — the A6 test drives `request-requote`, whose `rfq.requote_requested` dispatch is
+      // scoped to the RFQ (negotiation.service.ts), not the query, so the QUERY-scoped sweep below
+      // would leave those rows behind.
+      await prisma.messageLog.deleteMany({
+        where: { entityType: "RFQ", entityId: { in: rfqIds } },
+      });
     }
     if (queryIds.length) {
       await prisma.messageLog.deleteMany({
@@ -1746,5 +1752,102 @@ describe("GET /ff/rfq/:token (e2e)", () => {
       .patch(`/api/ff/rfq/${open.token}/quotes/${open.legId}`)
       .send(fullValidDraft(open.legId, gotOpen.body))
       .expect(200);
+  });
+  // ── S5.9.6 (register A6): `draftJson` is the scratchpad, `submittedJson` is the offer ──
+
+  it("S5.9.6 (A6) — submit records submittedJson; a later saveDraft moves draftJson and leaves it alone", async () => {
+    const seq = ++fixtureSeq;
+    // A real user row: request-requote stamps `actorId` (@db.Uuid) on the AwardDecisionEvent.
+    const exec = await prisma.user.create({
+      data: {
+        name: "FF Portal Exec A6",
+        email: `${PREFIX.toLowerCase()}-exec-a6-${seq}@e2e.test`,
+        passwordHash: "x",
+        role: "EXECUTIVE",
+      },
+    });
+    const { token, legId, queryId } = await distributeFixture(exec.id);
+
+    // --- the forwarder submits a complete offer (every priced line at 10, weight 125) ---
+    const got = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+    const offer = fullValidDraft(legId, got.body);
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(offer)
+      .expect(200);
+    await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
+      .expect(201);
+
+    const afterSubmit = await prisma.quote.findFirstOrThrow({ where: { legId } });
+    expect(afterSubmit.status).toBe("QUOTED");
+    // Both columns hold the offer, and hold the SAME object: submit writes them from one value.
+    expect(afterSubmit.submittedJson).not.toBeNull();
+    expect(afterSubmit.submittedJson).toEqual(afterSubmit.draftJson);
+    expect((afterSubmit.submittedJson as unknown as QuoteDraft).chargedWeightKg).toBe(125);
+
+    // --- the exec asks for a re-quote: REQUOTED, and neither column moves (the earlier price
+    //     stays visible — the REQUEST_REQUOTE edge has no effect, negotiation.service.ts) ---
+    await request(app.getHttpServer())
+      .post(`/api/queries/${queryId}/legs/${legId}/quotes/${afterSubmit.id}/request-requote`)
+      .set("Cookie", cookieFor(exec.id, Role.EXECUTIVE))
+      .send({ comment: "Please sharpen the origin charges." })
+      .expect(200);
+
+    const afterRequote = await prisma.quote.findUniqueOrThrow({ where: { id: afterSubmit.id } });
+    expect(afterRequote.status).toBe("REQUOTED");
+    expect(afterRequote.draftJson).toEqual(afterSubmit.draftJson);
+    expect(afterRequote.submittedJson).toEqual(afterSubmit.submittedJson);
+
+    // --- the forwarder HALF-EDITS the reopened portal and saves: one line re-priced to 4200, the
+    //     rest blanked, a note on it — then goes silent. This is A6's scenario verbatim. ---
+    const halfEdit: QuoteDraft = {
+      ...offer,
+      notes: "half-edited, never submitted",
+      charges: offer.charges.map((c, i) =>
+        i === 0 ? { ...c, amount: 4200 } : { ...c, amount: null },
+      ),
+    };
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(halfEdit)
+      .expect(200);
+
+    const afterHalfEdit = await prisma.quote.findUniqueOrThrow({ where: { id: afterSubmit.id } });
+    // The scratchpad moved...
+    const scratch = afterHalfEdit.draftJson as unknown as QuoteDraft;
+    expect(scratch.notes).toBe("half-edited, never submitted");
+    expect(scratch.charges[0].amount).toBe(4200);
+    expect(scratch.charges.slice(1).every((c) => c.amount === null)).toBe(true);
+    // ...and the OFFER did not. This is the whole point of the split: nothing the forwarder types
+    // after submitting can turn into an approvable price.
+    expect(afterHalfEdit.submittedJson).toEqual(afterSubmit.submittedJson);
+    const stillTheOffer = afterHalfEdit.submittedJson as unknown as QuoteDraft;
+    expect(stillTheOffer.notes).toBeNull();
+    expect(stillTheOffer.charges[0].amount).toBe(offer.charges[0].amount);
+
+    // --- POSITIVE CONTROL, same test: a second SUBMIT moves BOTH columns. A `submittedJson` that
+    //     were merely frozen at the first submit would pass every assertion above and fail here. ---
+    const revised: QuoteDraft = { ...offer, notes: "revised offer", chargedWeightKg: 200 };
+    await request(app.getHttpServer())
+      .patch(`/api/ff/rfq/${token}/quotes/${legId}`)
+      .send(revised)
+      .expect(200);
+    // Fresh GET: request-requote changed the status AND reset the submission deadline, both of
+    // which feed the stale-page version hash (S5.9 D10).
+    const gotAgain = await request(app.getHttpServer()).get(`/api/ff/rfq/${token}`).expect(200);
+    expect(gotAgain.body.legs[0].status).toBe("REQUOTED");
+    await request(app.getHttpServer())
+      .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: gotAgain.body.legs[0].version })
+      .expect(201);
+
+    const afterResubmit = await prisma.quote.findUniqueOrThrow({ where: { id: afterSubmit.id } });
+    expect(afterResubmit.status).toBe("QUOTED");
+    expect(afterResubmit.submittedJson).toEqual(afterResubmit.draftJson);
+    const newOffer = afterResubmit.submittedJson as unknown as QuoteDraft;
+    expect(newOffer.notes).toBe("revised offer");
+    expect(newOffer.chargedWeightKg).toBe(200);
   });
 });
