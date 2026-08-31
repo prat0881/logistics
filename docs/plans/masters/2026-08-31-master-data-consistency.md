@@ -884,7 +884,7 @@ export function clientCreateBody(
 
 - [ ] **Step 2: Run and verify failure**
 
-Run: `pnpm --filter @svyft/api test:e2e -- clients-composite`
+Run: `pnpm --filter @svyft/api test -- clients-composite`
 Expected: FAIL — the create returns 201 but writes zero contacts (the service ignores the key), and the swap PATCH 500s or leaves both rows unchanged.
 
 - [ ] **Step 3: Implement `reconcile-contacts.ts`**
@@ -1062,7 +1062,7 @@ Leave the 403/401 auth-check sites alone if they assert a rejection *before* val
 
 - [ ] **Step 6: Run the full api suite + typecheck**
 
-Run: `pnpm --filter @svyft/api test:e2e && pnpm --filter @svyft/api typecheck`
+Run: `pnpm --filter @svyft/api test && pnpm --filter @svyft/api typecheck`
 Expected: all green, including the 6 new composite tests.
 
 - [ ] **Step 7: Commit**
@@ -1208,7 +1208,7 @@ export function warehouseCreateBody(
 
 - [ ] **Step 2: Run and verify failure**
 
-Run: `pnpm --filter @svyft/api test:e2e -- warehouses-composite`
+Run: `pnpm --filter @svyft/api test -- warehouses-composite`
 Expected: FAIL — contacts and vehicles counts are 0.
 
 - [ ] **Step 3: Implement**
@@ -1261,7 +1261,7 @@ Wrap each `POST /api/warehouses` body in `warehouseCreateBody({ ... })` in `ware
 
 - [ ] **Step 5: Run the full api suite + typecheck**
 
-Run: `pnpm --filter @svyft/api test:e2e && pnpm --filter @svyft/api typecheck`
+Run: `pnpm --filter @svyft/api test && pnpm --filter @svyft/api typecheck`
 Expected: all green.
 
 - [ ] **Step 6: Commit**
@@ -1367,7 +1367,7 @@ Add a local `ffCreateBody(overrides)` helper to this spec returning the HTTP-sha
 
 - [ ] **Step 2: Run and verify failure**
 
-Run: `pnpm --filter @svyft/api test:e2e -- freight-forwarders-composite`
+Run: `pnpm --filter @svyft/api test -- freight-forwarders-composite`
 Expected: test 1 passes (current behaviour), tests 2 and 3 fail — test 2 with a P2002 on the primary index.
 
 - [ ] **Step 3: Implement**
@@ -1416,7 +1416,7 @@ Delete the dead `freightForwarderId` branch from this service's `mapUnique`.
 
 - [ ] **Step 4: Run the full api suite + typecheck**
 
-Run: `pnpm --filter @svyft/api test:e2e && pnpm --filter @svyft/api typecheck`
+Run: `pnpm --filter @svyft/api test && pnpm --filter @svyft/api typecheck`
 Expected: green, **including every pre-existing FF spec unchanged** — that is the backward-compatibility claim, and it must be observed, not assumed.
 
 - [ ] **Step 5: Commit**
