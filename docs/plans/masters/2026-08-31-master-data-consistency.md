@@ -1971,7 +1971,15 @@ The mirror, in create mode only:
 
 `ContactsSection` receives `mirroredContacts`; its `onChange` writes back only the tail (`next.slice(1)`) in create mode, so the mirrored row cannot be edited or removed from the table — it is edited through the three fields above. Pass `ContactsSection` a `lockedFirstRow` boolean so the mirrored row renders as plain text rather than a select-button.
 
-On submit in create mode, send `contacts: []` — the service seeds the primary from `pic`/`contactNumber`/`email`, and sending the mirrored row as well would be redundant (harmless, since Task 6 skips the seed when a PRIMARY is supplied, but sending nothing keeps the create path byte-identical to what every existing FF spec exercises).
+On submit in create mode, send the **full mirrored array** — `[mirror, ...extras]`, which always
+contains exactly one PRIMARY.
+
+**Do NOT send `contacts: []`.** An earlier draft of this plan said to; Task 6's fix invalidated
+that. `freightForwarderCreateSchema.contacts` is now
+`.array(contactUpsertSchema).refine(exactlyOnePrimary).optional()`, so an explicit empty array has
+zero primaries and is rejected with a 400. Omitting the key entirely is still legal (that is what
+preserves backward compatibility for existing callers), but sending the mirrored array is the
+uniform choice and needs no special case for "user added no extra contacts".
 
 Keep the `disabled={Boolean(id)}` attributes and both explanatory paragraphs on
 `pic`/`contactNumber`/`email`/`whLocation` exactly as they are — they document C7 and the
