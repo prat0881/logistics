@@ -268,16 +268,21 @@ describe("FreightForwarderFormPage (edit)", () => {
     contacts,
     patchCalls,
     assignedWarehouses = [],
+    warehousesFail = false,
   }: {
     id: string;
     contacts: { id: string; name: string; email: string; contactNo: string; pocLevel: "NONE" | "PRIMARY" }[];
     patchCalls: unknown[];
     assignedWarehouses?: { id: string; name: string }[];
+    warehousesFail?: boolean;
   }) {
     return mockFetch((url, init) => {
       if (url.endsWith("/api/auth/me")) return authMe;
       if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
-      if (url.endsWith(`/api/freight-forwarders/${id}/warehouses`)) return { status: 200, body: assignedWarehouses };
+      if (url.endsWith(`/api/freight-forwarders/${id}/warehouses`))
+        return warehousesFail
+          ? { status: 500, body: { message: "warehouses unavailable" } }
+          : { status: 200, body: assignedWarehouses };
       if (url.endsWith(`/api/freight-forwarders/${id}/contacts`)) {
         return {
           status: 200,
@@ -376,7 +381,12 @@ describe("FreightForwarderFormPage (edit)", () => {
     });
   });
 
-  it("shows the advisory banner on a loaded forwarder with no primary, and still saves", async () => {
+  // State 3 is the residual hazard: `loadedWithPrimary` is false, so nothing blocks submission
+  // here. That makes this the one path where a dropped `contacts:` mapping in reset() would
+  // PATCH `contacts: []` and have the API silently delete every contact — asserting only
+  // `patchCalls.toHaveLength(1)` would stay green through exactly that regression. Assert on
+  // the contact's id, not a length: a drop-and-recreate passes a length check.
+  it("shows the advisory banner on a loaded forwarder with no primary, and still saves — carrying its contacts", async () => {
     const patchCalls: unknown[] = [];
     vi.stubGlobal(
       "fetch",
@@ -393,6 +403,52 @@ describe("FreightForwarderFormPage (edit)", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(/no primary contact/i);
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
     await waitFor(() => expect(patchCalls).toHaveLength(1));
+    expect(patchCalls[0]).toMatchObject({
+      contacts: [
+        expect.objectContaining({
+          id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+          name: "Legacy Contact",
+          pocLevel: "NONE",
+        }),
+      ],
+    });
+  });
+
+  // The third data-loss path, one query over from the contacts gate above and the same
+  // mechanism: `warehouseIds` is seeded `[]` by defaultValues and only filled in by the load
+  // effect's `(ownedWarehouses.data ?? []).map(...)`. With GET /:id/warehouses failed, `data`
+  // stays undefined permanently (retries are already exhausted, and WarehousePicker's seeding
+  // effect is guarded on a truthy `assignedSignature` so it never fires) while the rest of the
+  // form is valid and Save-able. `warehouseIds` is a declared schema field, so the explicit
+  // `[]` reaches the wire, `if (warehouseIds)` passes (`Boolean([])` is `true`), and
+  // setWarehousesTx's `updateMany({ where: { freightForwarderId, id: { notIn: [] } } })`
+  // matches EVERY row — detaching every warehouse AND blanking `whLocation`, which
+  // rfq.service.ts snapshots into every future RFQ.
+  it("blocks Save (sends no PATCH) when the assigned-warehouses fetch has failed", async () => {
+    const patchCalls: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockLoadedForwarder({
+        id: "f9",
+        contacts: [
+          { id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301", name: "Asha Menon", email: "asha@example.com", contactNo: "+971501234567", pocLevel: "PRIMARY" },
+        ],
+        patchCalls,
+        warehousesFail: true,
+      }),
+    );
+    renderAtRoute("/masters/freight-forwarders/f9");
+
+    // Parent record loaded, contacts loaded, a primary present — nothing else blocks Save.
+    await screen.findByLabelText(/company name/i);
+    await waitFor(() =>
+      expect(screen.getByLabelText(/company name/i)).toHaveValue("Legacy Forwarders Co"),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts.some((a) => /warehouses/i.test(a.textContent ?? ""))).toBe(true);
+    expect(patchCalls).toHaveLength(0);
   });
 
   // The third state of the three-state rule, and the one the state-3 test above can't cover:

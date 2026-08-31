@@ -154,6 +154,25 @@ export function FreightForwarderFormPage() {
       );
       return;
     }
+    // The same hazard, one query over: `warehouseIds` is seeded `[]` by defaultValues and only
+    // filled in by the load effect's `(ownedWarehouses.data ?? []).map(...)`. If that query has
+    // failed (after react-query's retries `data` stays undefined forever — WarehousePicker's
+    // seeding effect is guarded on a truthy `assignedSignature` so it never fires either; this
+    // is permanent, not a race) or is still pending while `existing.data` has landed, the draft
+    // carries an explicit empty array. It is a declared schema field, so `[]` survives the
+    // resolver and reaches the wire; server-side `if (warehouseIds)` passes (`Boolean([])` is
+    // `true`) and setWarehousesTx runs `updateMany({ where: { freightForwarderId, id: { notIn:
+    // [] } } })`, which matches EVERY row and detaches every warehouse. On this page it also
+    // blanks `whLocation` (setWarehousesTx is its sole writer), which rfq.service.ts snapshots
+    // into every future RFQ. Edit mode only — a create page has nothing to fetch.
+    if (id && !ownedWarehouses.isSuccess) {
+      setSubmitError(
+        ownedWarehouses.isError
+          ? "Could not load this forwarder's assigned warehouses. Please retry before saving."
+          : "This forwarder's assigned warehouses are still loading. Please wait a moment and try again.",
+      );
+      return;
+    }
     // Create mode sends the FULL mirrored array — [mirror, ...extras] — never `contacts: []`.
     // freightForwarderCreateSchema.contacts is `.array(...).refine(exactlyOnePrimary).optional()`
     // — an explicit empty array has zero primaries and is rejected with a 400; the mirrored

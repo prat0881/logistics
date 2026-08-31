@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Paginated, WarehouseDto } from "@svyft/shared";
-import { fetchJson } from "@/lib/api";
+import { ApiError, fetchJson } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -102,9 +102,21 @@ export function WarehousePicker({
           Showing {shown} of {total} unassigned warehouses — refine by name.
         </p>
       )}
-      {sorted.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No warehouses available to assign.</p>
-      ) : (
+      {/* A failed fetch must never render the same "No warehouses available to assign." message
+          an empty, successfully-loaded pool produces — that reads as "there are none" when the
+          truth is "we don't know", and the user would save a selection made against a pool they
+          could not see. Same convention as WarehousesListPage's own isError branch. The list
+          itself still renders when the merge has anything in it: `assigned` comes from the
+          parent's separate query, so an owner's existing warehouses stay visible (and
+          uncheckable-by-accident) even when only the unassigned pool failed. */}
+      {unassigned.isError && (
+        <p role="alert" className="text-sm text-destructive">
+          {unassigned.error instanceof ApiError
+            ? unassigned.error.message
+            : "Could not load warehouses to assign."}
+        </p>
+      )}
+      {sorted.length > 0 ? (
         <ul className="space-y-1">
           {sorted.map((w) => (
             <li key={w.id}>
@@ -115,6 +127,8 @@ export function WarehousePicker({
             </li>
           ))}
         </ul>
+      ) : unassigned.isError ? null : (
+        <p className="text-sm text-muted-foreground">No warehouses available to assign.</p>
       )}
     </section>
   );

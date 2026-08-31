@@ -174,16 +174,21 @@ describe("ClientFormPage (edit)", () => {
     pocLevel,
     patchCalls,
     assignedWarehouses = [],
+    warehousesFail = false,
   }: {
     id: string;
     pocLevel: "NONE" | "PRIMARY";
     patchCalls: unknown[];
     assignedWarehouses?: { id: string; name: string }[];
+    warehousesFail?: boolean;
   }) {
     return mockFetch((url, init) => {
       if (url.endsWith("/api/auth/me")) return authMe;
       if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
-      if (url.endsWith(`/api/clients/${id}/warehouses`)) return { status: 200, body: assignedWarehouses };
+      if (url.endsWith(`/api/clients/${id}/warehouses`))
+        return warehousesFail
+          ? { status: 500, body: { message: "warehouses unavailable" } }
+          : { status: 200, body: assignedWarehouses };
       if (url.endsWith(`/api/clients/${id}`)) {
         if (init?.method === "PATCH") {
           patchCalls.push(JSON.parse(String(init.body)));
@@ -270,6 +275,59 @@ describe("ClientFormPage (edit)", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/one contact must be marked primary/i);
     expect(patchCalls).toHaveLength(0);
+  });
+
+  // The third data-loss path, the same mechanism as the FF contacts gate one query over.
+  // `warehouseIds` is seeded `[]` by defaultValues and only filled in by the load effect's
+  // `(ownedWarehouses.data ?? []).map(...)`. When GET /:id/warehouses fails, `data` stays
+  // undefined permanently (react-query has already exhausted its retries, and
+  // WarehousePicker's seeding effect is guarded on a truthy `assignedSignature` so it never
+  // fires either) while GET /:id has resolved and the form is fully valid and Save-able.
+  // `warehouseIds` is a declared schema field, so the explicit `[]` survives the resolver and
+  // reaches the wire; server-side `if (warehouseIds)` passes (`Boolean([])` is `true`) and
+  // setWarehousesTx's `updateMany({ where: { clientId, id: { notIn: [] } } })` matches EVERY
+  // row — detaching every warehouse this client owns.
+  it("blocks Save (sends no PATCH) when the assigned-warehouses fetch has failed", async () => {
+    const patchCalls: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockLegacyClient({ id: "c4", pocLevel: "PRIMARY", patchCalls, warehousesFail: true }),
+    );
+    renderAtRoute("/masters/clients/c4");
+
+    // The parent record is fully loaded and valid, and it has a primary contact — neither the
+    // record nor the three-state primary rule blocks Save. Only the failed warehouses fetch
+    // should.
+    await screen.findByLabelText(/company name/i);
+    await waitFor(() => expect(screen.getByLabelText(/company name/i)).toHaveValue("Legacy Co"));
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts.some((a) => /warehouses/i.test(a.textContent ?? ""))).toBe(true);
+    expect(patchCalls).toHaveLength(0);
+  });
+
+  // The `id` on a dialog-edited contact survives only because react-hook-form carries
+  // unregistered `defaultValues` through `handleSubmit` and `contactUpsertSchema` declares
+  // `id` — two non-obvious mechanisms, neither pinned anywhere. If either changed, every
+  // dialog edit would silently become delete-plus-create: new row ids, lost audit rows, and
+  // reconcileContacts deleting the original because it is absent from the payload. The three
+  // dialog tests on the form pages are all *add* flows, which cannot catch that.
+  it("carries the loaded contact's id through a dialog edit and into the PATCH body", async () => {
+    const patchCalls: { contacts?: { id?: string; name?: string }[] }[] = [];
+    vi.stubGlobal("fetch", mockLegacyClient({ id: "c5", pocLevel: "PRIMARY", patchCalls }));
+    renderAtRoute("/masters/clients/c5");
+
+    await userEvent.click(await screen.findByRole("button", { name: /asha menon/i }));
+    await userEvent.clear(screen.getByLabelText(/^name$/i));
+    await userEvent.type(screen.getByLabelText(/^name$/i), "Asha M. Menon");
+    await userEvent.click(screen.getByRole("button", { name: /save contact/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(patchCalls).toHaveLength(1));
+    expect(patchCalls[0].contacts).toMatchObject([
+      { id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301", name: "Asha M. Menon" },
+    ]);
   });
 
   // Nothing in this page renders `errors.contacts` — ContactsSection is Controller-driven, not

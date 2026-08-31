@@ -97,6 +97,26 @@ export function ClientFormPage() {
   // and every 403 alike.
   async function onValidSubmit(values: ClientCreateInput) {
     setSubmitError(null);
+    // Edit mode only — a create page has nothing to fetch and must never be blocked. The same
+    // shape as FreightForwarderFormPage's contacts gate, and for the same reason: `warehouseIds`
+    // is seeded `[]` by defaultValues and only filled in by the load effect's
+    // `(ownedWarehouses.data ?? []).map(...)`. If that query has failed (after react-query's
+    // retries `data` stays undefined forever — WarehousePicker's seeding effect is guarded on a
+    // truthy `assignedSignature` so it never fires either; this is permanent, not a race) or is
+    // still pending while `existing.data` has already landed, the draft carries an explicit
+    // empty array. `warehouseIds` is a declared schema field, so `[]` survives the resolver and
+    // reaches the wire; server-side `if (warehouseIds)` passes (`Boolean([])` is `true`) and
+    // setWarehousesTx runs `updateMany({ where: { clientId, id: { notIn: [] } } })`, which
+    // matches EVERY row and detaches every warehouse from this client. Blocking here is what
+    // stops that empty draft from ever reaching the PATCH.
+    if (id && !ownedWarehouses.isSuccess) {
+      setSubmitError(
+        ownedWarehouses.isError
+          ? "Could not load this client's assigned warehouses. Please retry before saving."
+          : "This client's assigned warehouses are still loading. Please wait a moment and try again.",
+      );
+      return;
+    }
     const hasPrimary = values.contacts.some((c) => c.pocLevel === "PRIMARY");
     // State 1 (create) and state 2 (editing a record that loaded WITH a primary) both block.
     // State 3 (editing a record that loaded WITHOUT one) does not — a legacy client must never

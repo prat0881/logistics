@@ -206,6 +206,26 @@ describe("WarehousePicker", () => {
     expect(requestedUrls.some((u) => u.includes("q=Foo"))).toBe(true);
   });
 
+  // The anti-pattern WarehousesListPage's own isError branch already forbids in this repo: "A
+  // failed fetch must never render the same 'No warehouses yet.' message an empty, successful
+  // load produces." The picker was rewritten in Task 8 and did not inherit it — it rendered
+  // "No warehouses available to assign." for a 500 exactly as it does for a genuinely empty
+  // pool, so the user would tick nothing, save, and never learn there were options.
+  it("renders the server's error when the unassigned pool fetch fails, not the empty-pool message", async () => {
+    stubFetch((url) => {
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 500, body: { message: "Could not reach the warehouse service" } };
+      }
+      return { status: 404 };
+    });
+    renderFixed({ value: [], assigned: [] });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /could not reach the warehouse service/i,
+    );
+    expect(screen.queryByText(/no warehouses available to assign/i)).not.toBeInTheDocument();
+  });
+
   it("does not show a truncation hint once every unassigned warehouse has been fetched", async () => {
     stubFetch((url) => {
       if (url.startsWith("/api/warehouses?unassigned=true")) {
