@@ -9,6 +9,7 @@ import { ChangeMediator } from "../changes/change-mediator";
 import { ImpactRegistry } from "../changes/impact.registry";
 import { assertApplied } from "../changes/assert-applied";
 import { shapeCargo } from "./cargo-shape";
+import { QueryLockService } from "../award/query-lock.service";
 
 @Injectable()
 export class CargoService {
@@ -16,6 +17,7 @@ export class CargoService {
     private readonly prisma: PrismaService,
     private readonly mediator: ChangeMediator,
     private readonly impacts: ImpactRegistry,
+    private readonly lock: QueryLockService,
   ) {}
 
   private async assertQueryExists(queryId: string): Promise<void> {
@@ -71,6 +73,10 @@ export class CargoService {
   // Mediated @create: mint the next rowIndex, insert, shape the result (packages is always []
   // for a brand-new cargo) — all inside the Free-path strategy's transaction.
   async create(queryId: string, input: CargoCreateInput, user: RequestUser): Promise<CargoDto> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.assertQueryExists(queryId);
     const id = randomUUID();
     let shaped: CargoDto | undefined;
@@ -116,6 +122,10 @@ export class CargoService {
     input: CargoUpdateInput,
     user: RequestUser,
   ): Promise<CargoDto> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.load(queryId, cid);
     const fields = Object.keys(input);
     if (fields.length === 0) return this.getOne(queryId, cid);
@@ -151,6 +161,10 @@ export class CargoService {
   // Mediated @delete. Package/Item cascade via the schema's onDelete: Cascade (Cargo->Package,
   // Package->Item), so no extra cleanup is needed here.
   async remove(queryId: string, cid: string, user: RequestUser): Promise<void> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     await this.load(queryId, cid);
     const result = await this.mediator.apply(
       { entity: "cargo", id: cid, action: "@delete", queryId, actorId: user.userId },

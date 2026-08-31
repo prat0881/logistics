@@ -344,6 +344,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
     const res = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
       .expect(201);
 
     expect(res.body.status).toBe("QUOTED");
@@ -361,6 +362,7 @@ describe(`${PREFIX} (e2e)`, () => {
 
     const res = await request(app.getHttpServer())
       .post(`/api/ff/rfq/${token}/quotes/${legId}/submit`)
+      .send({ version: got.body.legs[0].version })
       .expect(422);
 
     expect(res.body.findings.some((f: { rule: string }) => f.rule === "Q_PRICED")).toBe(true);

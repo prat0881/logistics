@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Routes, Route, useNavigate } from "react-router-dom";
 import { QueryWizardPage } from "./QueryWizardPage";
@@ -849,5 +849,50 @@ describe("QueryWizardPage", () => {
     // ...and must render on step 0 (Client & Query), not the leaked Shipment step.
     expect(await screen.findByRole("heading", { name: /Query Details/i })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /Shipment Details/i })).not.toBeInTheDocument();
+  });
+
+  // 🔴 S5.9.3 final review — this page passed ONLY `rfqEnabled` to `StageRail`, though
+  // `QueryWorkspaceHub`'s own comment states every consumer must thread all three gates or the
+  // steps it doesn't pass render with `to: undefined`. Revisiting `/queries/:id` for a query that
+  // has already reached QUOTED+ therefore showed a Quotation step that looked present and went
+  // nowhere. Mutation proof: drop `quotesEnabled`/`quotationEnabled` from `QueryWizardPage`'s
+  // `StageRail` and the two href assertions redden.
+  it("threads every stage gate into the rail, so revisiting a past-RFQ query has live steps and not dead ones", async () => {
+    // QUOTING_CLIENT: `isRfqStageEnabled` and `isQuotesStageEnabled` are both true, and
+    // `isQuotationStageEnabled` is true too — so the merged Quotation step resolves to the
+    // client-quotation builder rather than to Compare Quotes.
+    const quotingClientDetail = { ...draftDetail, status: "QUOTING_CLIENT" };
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.includes("/api/auth/me"))
+          return {
+            status: 200,
+            body: { user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+          };
+        if (url.includes("/api/queries/q9")) return { status: 200, body: quotingClientDetail };
+        return { status: 200, body: {} };
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/queries/:id" element={<QueryWizardPage />} />
+      </Routes>,
+      { route: "/queries/q9", user: { id: "u1", name: "E", email: "e@x", role: "EXECUTIVE" } },
+    );
+
+    const rail = await screen.findByRole("navigation", { name: /query stages/i });
+    expect(within(rail).getByRole("link", { name: /rfq/i })).toHaveAttribute(
+      "href",
+      "/queries/q9/workspace",
+    );
+    expect(within(rail).getByRole("link", { name: /quotation/i })).toHaveAttribute(
+      "href",
+      "/queries/q9/quotation",
+    );
+    // The one step Stage 5 genuinely leaves dead — the positive control that "every step is a
+    // link" is NOT what the two assertions above are accidentally measuring.
+    expect(within(rail).queryByRole("link", { name: /award/i })).not.toBeInTheDocument();
   });
 });

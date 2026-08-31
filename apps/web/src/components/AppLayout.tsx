@@ -32,8 +32,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <Link to="/masters/vessels" className="text-muted-foreground hover:text-foreground">
             Vessels
           </Link>
-          <Link to="/masters/freight-forwarders" className="text-muted-foreground hover:text-foreground">
+          <Link
+            to="/masters/freight-forwarders"
+            className="text-muted-foreground hover:text-foreground"
+          >
             Forwarders
+          </Link>
+          <Link to="/masters/fx-rates" className="text-muted-foreground hover:text-foreground">
+            FX Rates
           </Link>
           <Link to="/masters/warehouses" className="text-muted-foreground hover:text-foreground">
             Warehouses

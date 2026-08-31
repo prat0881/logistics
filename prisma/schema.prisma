@@ -233,6 +233,10 @@ model Rfq {
   freightForwarder   FreightForwarder @relation(fields: [freightForwarderId], references: [id], onDelete: Restrict)
   rfqNumber          String           @unique
   accessTokenHash    String           @unique
+  /// The raw portal token. Persisted (S5.9 D8) so a re-quote email can render the CURRENT link
+  /// without minting a new one — rotation would break the forwarder's bookmark (D7). Nullable
+  /// for rows created before S5.9. `accessTokenHash` remains the lookup index.
+  accessToken        String?
   submissionDeadline DateTime
   incoterms          Incoterms?
   currency           String?
@@ -285,7 +289,21 @@ model Quote {
   grandTotal             Decimal? @db.Decimal(14, 2)
   dgSurchargeNote        String?
   termsConditions        String?
+  // S5.9.6 (register A6) — the two columns are DIFFERENT things and must never be conflated:
+  //   draftJson     — the forwarder's SCRATCHPAD. `FfPortalService.saveDraft` overwrites it
+  //                   verbatim at any writable status (RFQ_SENT/REQUOTED), with no version hash
+  //                   and no provenance. A half-typed revision lives here.
+  //   submittedJson — the OFFER. Written by `FfPortalService.submit` alone, from the same
+  //                   re-derived/validated/materialized draft it writes to draftJson, so the two
+  //                   agree at submit time and diverge only when the forwarder types afterwards.
+  // Both are cleared together when a quote re-enters distribution (RfqService.distribute) — but
+  // that pairing is NOT a general invariant the code enforces: change-order.strategy.ts's
+  // re-freeze deliberately clears `draftJson` alone. Safe there, and only there, because that
+  // updateMany is scoped to the RFQ_SENT ("refreshing") quotes, and an RFQ_SENT quote's
+  // `submittedJson` is already NULL — submit never leaves a row at that status, and the one edge
+  // back to it clears both columns. Anyone adding a third clearing site owns re-deriving that.
   draftJson              Json?
+  submittedJson          Json?
 
   // v3 (FF Portal per-variant quoting): leg-level chargeable weight (was per-QuoteCargoLine) + notes.
   chargedWeightKg Decimal? @db.Decimal(12, 3)
@@ -523,6 +541,7 @@ model StatusTransition {
   from     String?
   to       String
   event    String
+  reason   String?
   actorId  String?  @db.Uuid
   at       DateTime @default(now())
 
@@ -548,6 +567,52 @@ model ChangeLog {
   @@index([entity, entityId])
 }
 
+enum AwardDecisionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+model LegAwardDecision {
+  id                 String              @id @default(uuid()) @db.Uuid
+  legId              String              @unique @db.Uuid
+  leg                Leg                 @relation(fields: [legId], references: [id], onDelete: Cascade)
+  queryId            String              @db.Uuid
+  query              Query               @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  shortlistedQuoteId String?             @db.Uuid
+  shortlistedVariant ChargeRateVariant?
+  recommendedQuoteId String?             @db.Uuid
+  recommendedVariant ChargeRateVariant?
+  overrideReason     String?
+  status             AwardDecisionStatus @default(DRAFT)
+  sentForApprovalAt  DateTime?
+  sentByUserId       String?             @db.Uuid
+  decidedByUserId    String?             @db.Uuid
+  decidedAt          DateTime?
+  rejectionReason    String?
+  updatedAt          DateTime            @updatedAt
+
+  @@index([queryId])
+}
+
+model AwardDecisionEvent {
+  id      String             @id @default(uuid()) @db.Uuid
+  legId   String             @db.Uuid
+  leg     Leg                @relation(fields: [legId], references: [id], onDelete: Cascade)
+  queryId String             @db.Uuid
+  query   Query              @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  type    String
+  quoteId String?            @db.Uuid
+  variant ChargeRateVariant?
+  reason  String?
+  actorId String?            @db.Uuid
+  at      DateTime           @default(now())
+
+  @@index([legId])
+  @@index([queryId])
+}
+
 enum QueryStatus {
   DRAFT
   CREATED
@@ -559,6 +624,7 @@ enum QueryStatus {
   LOST
   CLOSED
   NO_RESPONSE
+  QUOTING_CLIENT
 }
 
 enum Priority {
@@ -638,10 +704,12 @@ enum LegStatus {
   RFQ_SENT
   PARTIALLY_QUOTED
   FULLY_QUOTED
+  PENDING_APPROVAL
   AWARDED
   IN_TRANSIT
   DELIVERED
   CLOSED
+  APPROVED
 }
 
 enum QuoteStatus {
@@ -651,6 +719,7 @@ enum QuoteStatus {
   EXPIRED
   INVALID
   REQUOTED
+  PENDING_APPROVAL
   CLOSED
   APPROVED
 }
@@ -915,6 +984,7 @@ model Query {
   internalNotes           String?
   status                  QueryStatus @default(DRAFT)
   rfqReadyAt              DateTime?
+  awardSnapshot           Json?
   // Soft reference (nullable uuid, NO relation) — same convention as StatusTransition.actorId
   // and FileAsset.uploadedById: decoupled + keeps synthetic-jwt test subjects valid.
   assignedUserId          String?     @db.Uuid
@@ -932,6 +1002,11 @@ model Query {
   changeLogs ChangeLog[]
 
   notifications Notification[]
+
+  awardDecisions      LegAwardDecision[]
+  awardDecisionEvents AwardDecisionEvent[]
+
+  quotations Quotation[]
 
   @@index([tenantId])
   @@index([clientId])
@@ -1061,6 +1136,8 @@ model Leg {
   legPackages LegPackage[]
   quotes   Quote[]
   chargeSelections LegChargeLineSelection[]
+  awardDecision       LegAwardDecision?
+  awardDecisionEvents AwardDecisionEvent[]
 
   @@unique([queryId, legCode])
   @@index([queryId])
@@ -1195,4 +1272,49 @@ model ScheduledEvent {
 
   @@unique([entityType, entityId, eventKey, tier])
   @@index([dueAt, firedAt, cancelledAt])
+}
+
+model FxRate {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String?  @db.Uuid
+  currency     String                          // ISO-4217, non-USD (USD ≡ 1, never stored)
+  unitsPerUsd  Decimal  @db.Decimal(18, 8)     // 83.20000000 → 1 USD = 83.2 <currency>
+  effectiveFrom DateTime @default(now())
+  note         String?
+  createdById  String?  @db.Uuid
+  createdAt    DateTime @default(now())
+
+  @@index([currency, effectiveFrom])
+}
+
+// ── S5.8 — client quotation (design doc "Data model") ──────────────────────────
+enum QuotationStatus {
+  DRAFT
+  ISSUED
+  SUPERSEDED
+}
+
+model Quotation {
+  id             String          @id @default(uuid()) @db.Uuid
+  tenantId       String?         @db.Uuid
+  queryId        String          @db.Uuid
+  query          Query           @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  version        Int
+  status         QuotationStatus @default(DRAFT)
+  marginPct      Decimal         @db.Decimal(5, 2)
+  draftJson      Json // lines + overrides, editable
+  issuedSnapshot Json? // frozen at issue
+  costTotalUsd   Decimal         @db.Decimal(14, 2)
+  clientTotalUsd Decimal         @db.Decimal(14, 2)
+  recipientEmail String?
+  subject        String?
+  bodyText       String?
+  issuedAt       DateTime?
+  issuedByUserId String?         @db.Uuid
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([queryId, version])
+  @@index([queryId, status])
+  @@index([tenantId])
 }

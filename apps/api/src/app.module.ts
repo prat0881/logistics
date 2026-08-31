@@ -26,6 +26,10 @@ import { NotificationsModule } from "./modules/notifications/notifications.modul
 import { EscalationsModule } from "./modules/escalations/escalations.module";
 import { FfPortalModule } from "./modules/ff-portal/ff-portal.module";
 import { CommsModule } from "./modules/comms/comms.module";
+import { FxRatesModule } from "./modules/fx-rates/fx-rates.module";
+import { ComparisonModule } from "./modules/comparison/comparison.module";
+import { AwardModule } from "./modules/award/award.module";
+import { QuotationModule } from "./modules/quotation/quotation.module";
 
 const staticImports =
   process.env.SERVE_STATIC === "true"
@@ -64,6 +68,10 @@ const staticImports =
     EscalationsModule,
     FfPortalModule,
     CommsModule,
+    FxRatesModule,
+    ComparisonModule,
+    AwardModule,
+    QuotationModule,
     HealthModule,
   ],
 })

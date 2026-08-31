@@ -1,6 +1,7 @@
 // apps/api/src/modules/legs/legs.module.ts
 import { Module, type OnModuleInit } from "@nestjs/common";
 import { ChangesModule } from "../changes/changes.module";
+import { QueryLockModule } from "../award/query-lock.module";
 import { ImpactRegistry } from "../changes/impact.registry";
 import { StatusModule } from "../status/status.module";
 import { StatusRegistry } from "../status/status.registry";
@@ -11,7 +12,7 @@ import { LegsService } from "./legs.service";
 import { legImpactMap } from "./leg.impact";
 
 @Module({
-  imports: [ChangesModule, StatusModule],
+  imports: [ChangesModule, StatusModule, QueryLockModule],
   controllers: [LegsController],
   providers: [LegsService],
   exports: [LegsService],

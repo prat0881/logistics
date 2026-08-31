@@ -11,6 +11,13 @@ export class PortalError extends Error {
     const f = (this.body as Record<string, unknown> | undefined)?.findings;
     return Array.isArray(f) ? (f as Finding[]) : undefined;
   }
+  /** Nest's default HttpException body shape is `{statusCode, message, error}` — e.g. the
+   *  stale-page 409's "please refresh" text (S5.9 D10). Undefined for bodies that don't carry a
+   *  plain string message (e.g. the 422 findings body above). */
+  get serverMessage(): string | undefined {
+    const m = (this.body as Record<string, unknown> | undefined)?.message;
+    return typeof m === "string" ? m : undefined;
+  }
 }
 
 async function parse(res: Response): Promise<unknown> {

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import type { EmailLogDto } from "@svyft/shared";
 import { PrismaService } from "../../prisma/prisma.service";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
+import { QueryLockService } from "../award/query-lock.service";
 
 const RESPONSE_TIMELINE = "24 hours";
 
@@ -10,6 +11,7 @@ export class EmailsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly dispatcher: NotificationDispatcher,
+    private readonly lock: QueryLockService,
   ) {}
 
   async compose(
@@ -17,6 +19,10 @@ export class EmailsService {
     queryId: string,
     composedById: string | null,
   ): Promise<void> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const q = await this.prisma.query.findUnique({
       where: { id: queryId },
       select: { id: true, queryCode: true, contactName: true, contactEmail: true, tenantId: true },

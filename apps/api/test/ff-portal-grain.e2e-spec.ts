@@ -281,7 +281,10 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     };
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draftNoTransit).expect(200);
-    const blockedRes = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(422);
+    const blockedRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .send({ version: legDto.version })
+      .expect(422);
     // v3: BOTH Dedicated and Groupage are priced variants (both trucking rows are filled), and
     // validateQuote's Q_TRANSIT loop fires once PER priced variant missing its transit-days — so
     // this is 2 findings, not 1 (was a single leg-wide Q_TRANSIT pre-v3).
@@ -300,7 +303,10 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     };
     await api().patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draftReady).expect(200);
 
-    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(201);
+    const submitRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .send({ version: legDto.version })
+      .expect(201);
     expect(submitRes.body.status).toBe("QUOTED");
     const quoteId = submitRes.body.quoteId as string;
 
@@ -475,7 +481,10 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     };
 
     await api().patch(`/api/ff/rfq/${token}/quotes/${leg.id}`).send(draft).expect(200);
-    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(201);
+    const submitRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .send({ version: legDto.version })
+      .expect(201);
     expect(submitRes.body.status).toBe("QUOTED");
     const quoteId = submitRes.body.quoteId as string;
 
@@ -638,7 +647,10 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     // PrismaClientValidationError, which PrismaExceptionFilter maps to a generic 400 "Invalid
     // request" instead of this succeeding, even though the draft is fully valid per Q_RATE
     // (>=1 of the two variants filled is enough to submit).
-    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(201);
+    const submitRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .send({ version: legDto.version })
+      .expect(201);
     expect(submitRes.body.status).toBe("QUOTED");
 
     // Exactly ONE TruckingCharge persisted — the unpriced Groupage row is dropped entirely
@@ -771,7 +783,10 @@ describe(`${PFX}ff-portal-grain (e2e)`, () => {
     // throw on null — it silently evaluates to 1970-01-01T00:00:00.000Z and Prisma writes that
     // to the (then) NOT NULL column instead of erroring. `.expect(201)` alone wouldn't have
     // caught that (it "succeeds" either way) — the assertions below are what actually pin it.
-    const submitRes = await api().post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`).expect(201);
+    const submitRes = await api()
+      .post(`/api/ff/rfq/${token}/quotes/${leg.id}/submit`)
+      .send({ version: legDto.version })
+      .expect(201);
     expect(submitRes.body.status).toBe("QUOTED");
 
     const transitPlan = await prisma.transitPlan.findFirstOrThrow({

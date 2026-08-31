@@ -82,7 +82,14 @@ function LegSectionHeader({
   open: boolean;
   onOpen: () => void;
 }): JSX.Element {
-  const status = legStatusBadge(leg.status);
+  // S5.9.5 (D5, review round 1 / MINOR 2) — a closed loser's OWN quote is still RFQ_SENT, whose
+  // badge reads "Open for quoting" — which would contradict the body directly below it. The
+  // closed fact outranks the status here. No D9 concern: `closedReason` is only ever non-null for
+  // a forwarder who is already being told, and it never names who was selected.
+  const status =
+    leg.closedReason != null
+      ? { label: "Closed for quoting", variant: "pending" as const }
+      : legStatusBadge(leg.status);
   return (
     <button
       type="button"
@@ -125,7 +132,12 @@ const LEG_STATUS_BADGE: Record<string, { label: string; variant: BadgeProps["var
   INVALID: { label: "Invalid", variant: "destructive" },
   REQUOTED: { label: "Requote requested", variant: "warning" },
   CLOSED: { label: "Closed", variant: "pending" },
-  APPROVED: { label: "Approved", variant: "success" },
+  // D9 — the forwarder must never learn a commercial outcome from this screen. Approval selects
+  // a forwarder with NO forwarder notification and stays reversible until the client accepts
+  // (design D5), and a leading forwarder who knows they are leading has no reason to sharpen.
+  // Both internal states therefore read as one neutral label.
+  PENDING_APPROVAL: { label: "Under review", variant: "secondary" },
+  APPROVED: { label: "Under review", variant: "secondary" },
 };
 function legStatusBadge(status: string): { label: string; variant: BadgeProps["variant"] } {
   return LEG_STATUS_BADGE[status] ?? { label: status, variant: "outline" };
@@ -162,13 +174,53 @@ function LegSectionBody({
     return <ManifestUnavailableCard />;
   }
 
+  // ── Leg-closed branch (S5.9.5 D5) ──────────────────────────────────────
+  // ABOVE both status branches below, and it does not replace either: `closedReason` is a
+  // LEG-level fact (a forwarder has been selected for it) that is independent of this forwarder's
+  // own quote status, so a forwarder can be closed AND have already quoted. Whichever is true, the
+  // leg is not submittable, and the closed reason is the one that explains why. The server refuses
+  // the matching writes itself (ff-portal.service.ts's saveDraft/submit) — this is the explanation,
+  // not the enforcement. Still below the legacy-manifest guard above: this branch renders
+  // CargoManifestTable, which is exactly what that guard protects.
+  if (leg.closedReason != null) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">{leg.closedReason}</p>
+        {/* Review round 1, MINOR 3 — a forwarder who SUBMITTED and then lost keeps their own
+            submitted prices on screen. That summary is their commercial record, not a
+            competitor's, and losing it was an unintended side effect of putting this branch
+            first. The reason still renders ABOVE it, which is what the ordering was for.
+
+            WIDENED (final whole-branch review, MINOR): the condition was `status === "QUOTED"`,
+            which dropped the summary for exactly the forwarders D4 went to the trouble of keeping
+            a price for. A loser whose own quote is REQUOTED (they submitted, we asked for a
+            revision, then the leg went elsewhere) or EXPIRED-with-a-draft (D4 scenario B: same,
+            and the window then closed) submitted a real price too, and it is still on the row.
+            `leg.draft` is the discriminator for those two — `AlreadySubmittedSummary` falls back
+            to `draftFromDto` when it is null, which for a never-submitted forwarder would render
+            a blank, zeroed "Quote submitted" card, so RFQ_SENT and draft-less EXPIRED still get
+            the manifest alone. QUOTED keeps its unconditional arm: a QUOTED quote always carries
+            the submission the status names. */}
+        {leg.status === "QUOTED" ||
+        ((leg.status === "REQUOTED" || leg.status === "EXPIRED") && leg.draft != null) ? (
+          <AlreadySubmittedSummary leg={leg} rfq={rfq} />
+        ) : (
+          <CargoManifestTable cargo={leg.manifest.cargo} />
+        )}
+      </div>
+    );
+  }
+
   // ── Status branch: QUOTED ──────────────────────────────────────────────
   if (leg.status === "QUOTED") {
     return <AlreadySubmittedSummary leg={leg} rfq={rfq} />;
   }
 
-  // ── Status branch: not RFQ_SENT (e.g. CANCELLED, DRAFT, etc.) ─────────
-  if (leg.status !== "RFQ_SENT") {
+  // ── Status branch: not open ────────────────────────────────────────────
+  // REQUOTED belongs with RFQ_SENT, not here: ff-portal.service.ts's submit guard accepts both,
+  // and a re-quote request exists precisely so the forwarder can revise. Omitting it dead-ended
+  // the whole negotiate flow — the forwarder was told the leg was closed (S5.9 §1).
+  if (leg.status !== "RFQ_SENT" && leg.status !== "REQUOTED") {
     return (
       <div className="space-y-4">
         <CargoManifestTable cargo={leg.manifest.cargo} />
@@ -177,7 +229,7 @@ function LegSectionBody({
     );
   }
 
-  // ── Editable form (RFQ_SENT) ───────────────────────────────────────────
+  // ── Editable form (RFQ_SENT | REQUOTED) ────────────────────────────────
   return (
     <LegSectionForm
       token={token}
@@ -189,6 +241,47 @@ function LegSectionBody({
       onOpen={onOpen}
     />
   );
+}
+
+/** The forwarder-facing message for a FAILED portal write, shared by BOTH writes on this leg
+ *  (Save draft and Submit) so the same refusal can never be described two different ways
+ *  depending on which button produced it — review round 1, MINOR 4.
+ *
+ *  Note what this does NOT handle: submit's 422, which carries structured `findings` for the form
+ *  to highlight rather than a message. That stays at the submit call site.
+ *
+ *  `draftNote` is the submit path's "your pricing has been saved as a draft" reassurance; it is
+ *  passed empty by the save path, which by definition has no saved draft to promise. */
+function writeErrorMessage(e: unknown, write: "save" | "submit", draftNote: string): string {
+  if (e instanceof PortalError && e.status === 409) {
+    // The server's own message is the actionable one: the stale-page "please refresh…" (S5.9
+    // D10), the already-submitted/not-open refusal, or S5.9.5 D5's closed-leg reason. The
+    // fallback only fires for a 409 carrying no string message at all.
+    return (
+      e.serverMessage ??
+      (write === "submit"
+        ? "This RFQ has been updated — please refresh the page before submitting."
+        : "This RFQ has been updated — please refresh the page before continuing.")
+    );
+  }
+  if (e instanceof PortalError && (e.status === 401 || e.status === 403)) {
+    // S5.9 final whole-branch review, IMPORTANT 3. Reachable TODAY, with no deploy skew: a staff
+    // member clicking "Regenerate" on the portal link while a forwarder has this page open
+    // invalidates the token this page holds, and `RfqTokenGuard` then 401/403s the very next
+    // write. Fixed copy rather than the server's own `.message`, which for an auth refusal is a
+    // guard-internal string with nothing actionable in it — and which D9 keeps out of
+    // forwarder-facing surfaces on principle.
+    return `This quote link is no longer valid — it may have been reissued. Please use the most recent link emailed to you, or ask your Svyft contact for a new one.${draftNote}`;
+  }
+  // S5.9 final whole-branch review, IMPORTANT 3 — the CATCH-ALL that had to exist. Without it, ANY
+  // other outcome (a 500, a 400 from a future contract change, a dropped connection) ended
+  // silently: the spinner simply stopped, nothing appeared on screen, and the leg stayed RFQ_SENT
+  // with the forwarder given no reason to suspect anything went wrong. That exact shape is what
+  // made S5.9 Task 7's Critical invisible, so this branch is deliberately unconditional — it must
+  // keep catching cases nobody has enumerated yet, which is why it does not test `e` any further.
+  return `Something went wrong ${
+    write === "submit" ? "submitting this quote" : "saving your draft"
+  }. Please try again, and contact your Svyft contact if it keeps failing.${draftNote}`;
 }
 
 // Split into inner form component so hooks are always called at the same level
@@ -234,6 +327,12 @@ function LegSectionForm({
   // Findings state
   const [attempted, setAttempted] = useState(false);
   const [serverFindings, setServerFindings] = useState<Finding[] | null>(null);
+  // Inline failure message for EITHER write on this leg — Save draft or Submit. Originally the
+  // stale-page guard's slot (S5.9 D10: the server's own "please refresh…" for a 409 whose basis
+  // moved out from under this open page), widened in review round 1 (MINOR 4) because the save
+  // path had no error surface at all: `onSaveDraft` passed only an `onSuccess`, so a refused save
+  // showed nothing and the only cue was a timestamp that never appeared.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const clientFindings = attempted
     ? validateQuote(draft, rfq.submissionDeadline, new Date().toISOString(), activeLines)
@@ -257,28 +356,46 @@ function LegSectionForm({
   // Save draft handler (no validation)
   const onSaveDraft = () => {
     setServerFindings(null);
+    setActionError(null);
     saved.mutate(buildDraft(), {
       onSuccess: () => setSavedAt(Date.now()),
+      // Review round 1, MINOR 4 — a refused save must say so. Reuses `writeErrorMessage` so the
+      // save and submit paths cannot describe the same 409 (or the same revoked link) two
+      // different ways.
+      onError: (e) => setActionError(writeErrorMessage(e, "save", "")),
     });
   };
 
   // Submit handler
   const onSubmit = async () => {
     setServerFindings(null);
+    setActionError(null);
     setAttempted(true);
     const d = buildDraft();
     const f = validateQuote(d, rfq.submissionDeadline, new Date().toISOString(), activeLines);
     if (f.length > 0) return; // client-invalid: show findings, do NOT hit network
 
+    // Whether the save half actually landed, so the failure copy below can only PROMISE a saved
+    // draft when there genuinely is one. The two calls fail together for a revoked token (the
+    // save 401s first), so assuming it would have been a plain lie in exactly the case the
+    // reassurance matters most.
+    let draftSaved = false;
     try {
       await saved.mutateAsync(d); // save first
-      await submit.mutateAsync(); // then submit (server reads stored draft)
+      draftSaved = true;
+      // `leg.version` — echoed verbatim from the same DTO this form is rendering, never a value
+      // cached elsewhere (S5.9 D10): the guard is only meaningful if it checks THIS page's basis.
+      await submit.mutateAsync(leg.version); // then submit (server reads stored draft)
       // on success: query invalidation in hooks triggers refetch → leg becomes QUOTED
     } catch (e) {
+      const draftNote = draftSaved ? " Your pricing has been saved as a draft." : "";
+      // 422 is the only submit-specific outcome: it carries structured findings for the form to
+      // highlight, not a message. Everything else goes through the shared writeErrorMessage.
       if (e instanceof PortalError && e.status === 422) {
         setServerFindings(e.findings ?? []);
+      } else {
+        setActionError(writeErrorMessage(e, "submit", draftNote));
       }
-      // 409 already-submitted: invalidation/refetch will surface QUOTED state
     }
   };
 
@@ -373,6 +490,18 @@ function LegSectionForm({
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Terms
           </h3>
+          {/* Every submit failure lands here, inline right above the Submit button: the
+              stale-page / already-submitted 409's own server message (design D10), a revoked-link
+              401/403, and — since the final whole-branch review's IMPORTANT 3 — the catch-all for
+              everything else, which previously produced no visible outcome at all. */}
+          {actionError && (
+            <p
+              role="alert"
+              className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            >
+              {actionError}
+            </p>
+          )}
           <SubmissionBar
             showDgNote={showDgNote}
             currency={currency}

@@ -379,6 +379,11 @@ describe(`${PREFIX} (e2e)`, () => {
         status: QuoteStatus.INVALID,
         manifestSnapshot: oldSnapshot(leg.id, packageId) as unknown as Prisma.InputJsonValue,
         draftJson: staleDraft as unknown as Prisma.InputJsonValue,
+        // S5.9.6 (register A6) — the quote was INVALIDATED out of a real submission, so it carries
+        // the submitted offer too, on its own column. `submittedAt` alongside it because `submit`
+        // stamps the two together.
+        submittedJson: staleDraft as unknown as Prisma.InputJsonValue,
+        submittedAt: new Date(Date.now() - 7200_000),
       },
     });
 
@@ -393,6 +398,10 @@ describe(`${PREFIX} (e2e)`, () => {
     const quoteAfter = await prisma.quote.findUniqueOrThrow({ where: { id: quote.id } });
     expect(quoteAfter.status).toBe(QuoteStatus.RFQ_SENT);
     expect(quoteAfter.draftJson).toBeNull();
+    // S5.9.6 (register A6) — and so was the OFFER column, in the same write. The old bid was
+    // priced against the snapshot this distribute just replaced; a reactivated quote must re-enter
+    // distribution carrying no price at all, on either column.
+    expect(quoteAfter.submittedJson).toBeNull();
 
     // --- assert: a fresh GET re-seeds clean from the CURRENT AIR snapshot — none of the stale
     //     ROAD bid survives (this is exactly what resolveScope serves the reopened FF). ---

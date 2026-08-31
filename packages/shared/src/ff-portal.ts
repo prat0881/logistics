@@ -64,6 +64,18 @@ export interface FfPortalLegDto {
   seededCharges: FfPortalSeededCharge[];
   warehouseIncluded?: boolean; // frozen Leg warehouse decision (design §9); optional so pre-Task-9 build stays green, set from Task 9 on
   draft: QuoteDraft | null;
+  /** S5.9.5 (D5) — non-null when this leg is closed to this forwarder and why, in copy the
+   *  forwarder may read. Today there is exactly one cause: another forwarder has been approved for
+   *  the leg. Deliberately a REASON STRING rather than a new `QuoteStatus`: the product owner
+   *  ruled against a "Cancelled" status, and the forwarder's own quote status is unchanged — it is
+   *  the LEG that closed, not their quote. */
+  closedReason: string | null;
+  /** Opaque fingerprint of everything a submit is priced against — quote status, submission
+   *  deadline, manifest snapshot, charge-config snapshot. Echoed back on submit so an open page
+   *  whose basis moved fails loudly instead of pricing against a stale one (S5.9 D10).
+   *  Deliberately NOT derived from `Quote.updatedAt`: drafts autosave, so that would let the
+   *  forwarder's own typing invalidate their page. */
+  version: string;
 }
 export interface FfPortalRfqDto {
   rfqNumber: string;
@@ -74,6 +86,12 @@ export interface FfPortalRfqDto {
   freightForwarder: { companyName: string };
   legs: FfPortalLegDto[];
 }
+
+// ── POST .../submit body — the stale-page guard (S5.9 D10) ──
+// The client never computes this itself; it only echoes back FfPortalLegDto.version verbatim
+// from the same GET response the form is rendering.
+export const submitQuoteSchema = z.object({ version: z.string().min(1) });
+export type SubmitQuoteInput = z.infer<typeof submitQuoteSchema>;
 
 // ── PATCH body shape-check (NOT the Q1–Q8 business rules; those are submit-only) ──
 export const quoteDraftSchema: z.ZodType<QuoteDraft> = z.object({

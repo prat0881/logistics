@@ -5,6 +5,7 @@ import {
   Logger,
   UnprocessableEntityException,
 } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import {
   classifyWarehousePositions,
   validateQuote,
@@ -32,6 +33,7 @@ import type {
   ChargeRateVariant,
   TransitVariantKey,
   SeedEndpoint,
+  SubmitQuoteInput,
 } from "@svyft/shared";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -39,6 +41,7 @@ import { StatusService } from "../status/status.service";
 import { NotificationDispatcher } from "../comms/notification-dispatcher.service";
 import { ScheduledEventService } from "../comms/scheduled-event.service";
 import type { FfScope } from "../rfq/rfq-token.service";
+import { closedLegReasons } from "./leg-closure";
 
 /** Calc line amount (design §7): HEAVY_WEIGHT_CALC lines compute from the FF-entered piece
  *  weight / airline limit / excess rate; every other charge line carries its own amount. */
@@ -136,6 +139,15 @@ function seedQuoteDraft(
   };
 }
 
+/** The quote-status refusal, shared VERBATIM by `submit` and `saveDraft` so the two cannot drift
+ *  apart on which statuses accept a write (they must accept exactly the same set — see
+ *  `saveDraft`). One string, one vocabulary. */
+const QUOTE_NOT_OPEN_REASON = "This quote has already been submitted or is not open";
+
+/** The only two quote statuses a forwarder may write against: their RFQ is open, or they have been
+ *  asked to revise. Mirrors the portal UI, which renders every other status read-only. */
+const WRITABLE_QUOTE_STATUSES: readonly string[] = ["RFQ_SENT", "REQUOTED"];
+
 @Injectable()
 export class FfPortalService {
   private readonly logger = new Logger(FfPortalService.name);
@@ -164,6 +176,8 @@ export class FfPortalService {
         .map((p) => p.id),
     );
     const whPos = classifyWarehousePositions(whLegs, whPointIds);
+    // S5.9.5 (D5) — one batched read for the whole scope; see closedReasons for the rule.
+    const closed = await this.closedReasons(scope.quotes);
 
     const legs: FfPortalLegDto[] = scope.quotes.map((q) => {
       const manifest = q.manifestSnapshot as ManifestSnapshot;
@@ -214,6 +228,8 @@ export class FfPortalService {
         draft: q.draftJson
           ? (q.draftJson as QuoteDraft)
           : seedQuoteDraft(q.legId, mode, snap.lines, endpoints, snap.warehouseIncluded),
+        closedReason: closed.get(q.legId) ?? null,
+        version: this.legVersion(q, scope.rfq.submissionDeadline),
       };
     });
 
@@ -228,14 +244,112 @@ export class FfPortalService {
     };
   }
 
+  /**
+   * S5.9.5 (D5) — which of the given quotes sit on a leg CLOSED to their forwarder.
+   *
+   * The rule itself lives in `leg-closure.ts`, NOT here: the deadline-reminder listener
+   * (`rfq-schedule.listener.ts`) has to answer the same question — a forwarder with no leg still
+   * open to them on an RFQ must stop being nudged to submit — and a second copy of "is this leg
+   * still open?" is exactly the drift D5 warns about. This wrapper stays so the three call sites
+   * below read unchanged.
+   */
+  private closedReasons(quotes: { id: string; legId: string }[]): Promise<Map<string, string>> {
+    return closedLegReasons(this.prisma, quotes);
+  }
+
   private quoteForLeg(scope: FfScope, legId: string) {
     const q = scope.quotes.find((x) => x.legId === legId);
     if (!q) throw new ForbiddenException("This leg is not part of your RFQ");
     return q;
   }
 
+  /** Opaque fingerprint of everything a submit is priced against (S5.9 D10) — quote status,
+   *  submission deadline, manifest snapshot, charge-config snapshot. Deliberately NOT
+   *  `Quote.updatedAt`: the portal autosaves drafts, which bumps `@updatedAt` on every keystroke
+   *  — that would invalidate the forwarder's own open page while they're still typing. Every
+   *  input here is Prisma-parsed JSON/plain values (never a Decimal/Date instance), so
+   *  JSON.stringify's output — and therefore this hash — is deterministic across reads and across
+   *  processes for the same row content; see the Task-7 report for how this was verified.
+   *  Deterministic across processes — plain sha256 over a stable field order. */
+  private legVersion(
+    q: { status: string; manifestSnapshot: unknown; chargeConfigSnapshot: unknown },
+    submissionDeadline: Date,
+  ): string {
+    return createHash("sha256")
+      .update(
+        JSON.stringify([
+          q.status,
+          submissionDeadline.toISOString(),
+          q.manifestSnapshot,
+          q.chargeConfigSnapshot,
+        ]),
+      )
+      .digest("hex")
+      .slice(0, 16);
+  }
+
   async saveDraft(scope: FfScope, legId: string, draft: QuoteDraft): Promise<{ savedAt: string }> {
     const q = this.quoteForLeg(scope, legId);
+    // ── write guards (S5.9.5 D5) — `saveDraft` accepts EXACTLY what `submit` accepts, in the same
+    // order. The brief for that task specified `submit` only; guarding this second call site too
+    // is a deliberate widening, because this write is not confined to the leg it names: alongside
+    // `Quote.draftJson` it upserts `Rfq.currency` and `Rfq.quoteValidityUntil` (below).
+    //
+    // S5.9.6 NARROWED THE REASON, TWICE — and this note has been rewritten to say what actually
+    // survives, because the previous two versions of it are now both false. The first said
+    // `quotation.service.ts`'s `buildInitialDraft` prices the client letter off the winner's
+    // `draftJson`; it reads `submittedJson` now, which this method never writes. The second said
+    // `comparison.service.ts` takes every offer's `currency` from `rfq.currency` on every read of
+    // the compare grid; it reads `submitted.currency ?? rfq.currency` now. Do NOT read either as
+    // a live reason. What the guards are still worth, in three verified limbs:
+    //
+    // (a) LEGACY ROWS. Every pricing reader is now `submittedJson` FIRST and the live `Rfq` row
+    //     as a fallback — `comparison.service.ts` (:328 currency, :366 validUntil),
+    //     `award.service.ts` (:1363 currency, frozen verbatim into `Query.awardSnapshot`) and
+    //     `quotation.service.ts`'s `buildInitialDraft` (validUntil). `validateQuote` hard-blocks a
+    //     submit with no currency (`Q_CURRENCY`) or no validity (`Q_VALIDITY`), so on any row
+    //     submitted since S5.9.6 the fallback is dead. It is LIVE on a pre-S5.9.6 row, whose
+    //     `submittedJson` was backfilled from a `draftJson` that could carry either field blank.
+    //     On exactly those rows this write still re-denominates and re-dates a price it did not
+    //     produce — the old defect, narrowed to one row vintage rather than repealed.
+    //
+    // (b) THE `Rfq` ROW IS SHARED, so this write reaches legs it does not name. `Rfq` is
+    //     `@@unique([queryId, freightForwarderId])` (schema.prisma), and `submit` below freezes
+    //     `currency`/`quoteValidityUntil` from `scope.rfq` into the authoritative draft. So a save
+    //     arriving through a SETTLED leg moves the unit and the validity that this forwarder's
+    //     OTHER, still-open legs on the same query will freeze at their next submit. To be exact
+    //     about what this does NOT do: it never stops a forwarder moving those fields through a
+    //     leg that is genuinely open — the portal's currency control is page-level and query-wide
+    //     by design. It stops them arriving through one that is closed or settled. On a LOCKED
+    //     query that difference is total: `generateClientQuote` requires every leg APPROVED with a
+    //     shortlisted winner (award.service.ts's A6), so every quote fails the status check below
+    //     and every non-winner leg fails `closedReasons` as well — and `closedReasons` deliberately
+    //     excludes the winner's own leg (S5.9 D9), so the status check is the ONLY thing standing
+    //     between that winner and the `Rfq` row their own legacy-vintage letter may still read.
+    //
+    // (c) CLOSED-LEG HYGIENE — the `closedReason` check below, unchanged from S5.9.5 D5.
+    //
+    // Together the two guards are what make S5.9.5 D6's blanket FF-portal exemption from the
+    // query-wide lock safe.
+    //
+    // Nothing legitimate loses anything: the portal renders every non-RFQ_SENT/REQUOTED leg
+    // read-only and has no autosave timer, so only a stale page or a hand-crafted request lands here.
+    //
+    // SCOPE, precisely: this admits `REQUOTED`, exactly as `submit` does — a forwarder asked to
+    // revise must be able to type. `draftJson` on a REQUOTED quote is therefore the forwarder's
+    // last SAVED state, never provably their submitted price — which was register A6, the open
+    // issue this comment used to say "stands unchanged".
+    //
+    // S5.9.6 CLOSED IT, and not by constraining this write: `Quote.submittedJson` now carries the
+    // offer, written by `submit` alone (below), while `draftJson` stays exactly what this call
+    // makes it — the scratchpad. So this save may keep overwriting it freely; provenance is a
+    // different column's job now, and anything asking "what did they actually submit?" must read
+    // that one.
+    const closedReason = (await this.closedReasons([q])).get(legId);
+    if (closedReason) throw new ConflictException(closedReason);
+    if (!WRITABLE_QUOTE_STATUSES.includes(q.status)) {
+      throw new ConflictException(QUOTE_NOT_OPEN_REASON);
+    }
     const now = new Date();
     await this.prisma.$transaction([
       this.prisma.quote.update({
@@ -255,10 +369,34 @@ export class FfPortalService {
     return { savedAt: now.toISOString() };
   }
 
-  async submit(scope: FfScope, legId: string): Promise<{ quoteId: string; status: "QUOTED" }> {
+  async submit(
+    scope: FfScope,
+    legId: string,
+    input: SubmitQuoteInput,
+  ): Promise<{ quoteId: string; status: "QUOTED" }> {
     const q = this.quoteForLeg(scope, legId);
-    if (q.status !== "RFQ_SENT") {
-      throw new ConflictException("This quote has already been submitted or is not open");
+
+    // ── stale-page guard (S5.9 D10) — MUST run before the status guard below: a page that went
+    // stale because the basis moved (e.g. a requote landed, the RFQ was re-frozen) needs the
+    // actionable "please refresh" message, not the generic "already submitted or is not open" one
+    // the status guard would otherwise produce for the very same stale request. ──
+    if (this.legVersion(q, scope.rfq.submissionDeadline) !== input.version) {
+      throw new ConflictException(
+        "This RFQ has been updated — please refresh the page before submitting.",
+      );
+    }
+
+    // ── leg-closed guard (S5.9.5 D5) — AFTER the stale-page guard above and BEFORE the
+    // quote-status guard below, for the same reason the stale-page guard states: the most
+    // actionable message wins. A stale page's "please refresh" still outranks this one (refreshing
+    // is what surfaces the closed leg in the first place); and this one outranks the generic
+    // "already submitted or is not open", which is the wrong story for a forwarder whose own quote
+    // is perfectly open and whose LEG is what closed. ──
+    const closedReason = (await this.closedReasons([q])).get(legId);
+    if (closedReason) throw new ConflictException(closedReason);
+
+    if (!WRITABLE_QUOTE_STATUSES.includes(q.status)) {
+      throw new ConflictException(QUOTE_NOT_OPEN_REASON);
     }
 
     const manifest = q.manifestSnapshot as ManifestSnapshot;
@@ -519,8 +657,12 @@ export class FfPortalService {
             dgSurchargeNote: draft.dgSurchargeNote,
             termsConditions: draft.termsConditions,
             submittedAt: new Date(),
-            // Keep the SUBMITTED (re-derived, validated, materialized) draft as the record —
-            // mirrors saveDraft()'s own write above, same column, same shape. Previously this
+            // Seed the scratchpad with what was just submitted — mirrors saveDraft()'s own write
+            // above, same column, same shape. This column is NO LONGER "the record" of the offer:
+            // S5.9.6 gave that job to `submittedJson` just below, because a later saveDraft can
+            // overwrite this one. It is written here so the forwarder's own portal re-reads
+            // (resolveScope's GET → pre-fill/preview/print) show what they sent, and so a
+            // re-quote opens on their previous numbers rather than a blank matrix. Previously this
             // wrote `Prisma.DbNull`, which made `resolveScope`'s GET (below) fall back to
             // `seedQuoteDraft` — a blank per-variant matrix indistinguishable from a leg nobody
             // had touched — for every QUOTED leg, so the FF-portal preview/print/
@@ -533,6 +675,14 @@ export class FfPortalService {
             // with what actually got written to ChargeLine/TruckingCharge/SeaFreightRate/
             // TransitPlan/Quote, never a stale or since-filtered client draft.
             draftJson: draft as unknown as object,
+            // S5.9.6 (register A6) — THE OFFER. Same `draft` object, same write, so the two can
+            // never disagree at submit time; they diverge only afterwards, when `saveDraft`
+            // overwrites the scratchpad above with whatever the forwarder types next (it has no
+            // version hash and admits REQUOTED, so a half-typed revision lands there and used to
+            // be indistinguishable from a submitted price). Written HERE and nowhere else: this
+            // is the only site in the codebase that stamps `submittedAt`, and the two belong to
+            // the same event.
+            submittedJson: draft as unknown as object,
           },
         });
       });

@@ -119,9 +119,13 @@ export interface ScopedGraph {
  * in (origin, then destination). A leg with fewer than 2 endpoints
  * contributes what it can (a lone node, or nothing) rather than throwing.
  *
- * Exported (Round 4, #2) so `legOrder.ts`'s `orderLegsByRoute` can build the
- * SAME graph this diagram lays out from — leg render order and diagram node
- * order reuse one graph-construction so they can't silently drift apart.
+ * Exported for `ScopedRouteDiagram.test.tsx`. Round 4 #2 originally also
+ * exported this so `legOrder.ts`'s `orderLegsByRoute` could build the SAME
+ * graph this diagram lays out from; S5.9.3 Task 2 replaced that with a call
+ * straight to `@svyft/shared`'s generic `orderLegsByRoute` (accessors on
+ * `endpoints[0]/[1].pointId`, no separate node/edge graph object) — see that
+ * function's own doc comment for why the two stay equivalent without sharing
+ * this exact object.
  */
 export function buildScopedGraph(legs: FfPortalLegDto[]): ScopedGraph {
   const nodes = new Map<string, ScopedNode>();

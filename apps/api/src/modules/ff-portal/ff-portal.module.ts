@@ -7,9 +7,12 @@ import { FfPortalService } from "./ff-portal.service";
 import { RfqTokenGuard } from "./rfq-token.guard";
 
 // PrismaModule is @Global() — no need to import it here.
-// RfqModule is NOT imported to avoid re-triggering its onModuleInit (which contributes
-// to the "leg" status machine and requires LegsModule to have run first). Instead,
-// RfqTokenService is provided directly — PrismaService is already global.
+// RfqTokenService is provided directly rather than importing the whole RfqModule — this only
+// needs that one small stateless service, not RfqModule's full surface. (Originally this also
+// sidestepped an onModuleInit-ordering hazard — RfqModule's own onModuleInit contributes to the
+// "leg" status machine and required LegsModule's register() to have already run — but that
+// hazard no longer exists: StatusRegistry.contribute()/register() are order-independent as of
+// S5.5 task-2's review fix. Kept as-is since the minimal-surface reasoning still holds.)
 // StatusModule is imported for T6 submit (exports StatusService; does NOT contribute status edges).
 // CommsModule is imported for T11 submit comms (NotificationDispatcher + ScheduledEventService).
 // ConfigDataModule dropped in Task 9 (FF Portal v2) — resolveScope no longer reads

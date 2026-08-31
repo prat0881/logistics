@@ -30,6 +30,7 @@ import { loadLegForRfq, type LegRfqContext } from "./leg-context";
 import { buildManifestSnapshot } from "./manifest";
 import { buildChargeConfigSnapshot } from "./charge-config.snapshot";
 import { warehousePointIds, findWarehouseYesConflict } from "./warehouse.util";
+import { QueryLockService } from "../award/query-lock.service";
 
 @Injectable()
 export class RfqService {
@@ -43,6 +44,7 @@ export class RfqService {
     private readonly commsSettings: CommsSettingsService,
     private readonly scheduled: ScheduledEventService,
     private readonly dispatcher: NotificationDispatcher,
+    private readonly lock: QueryLockService,
   ) {}
 
   async setFfSelection(
@@ -51,6 +53,10 @@ export class RfqService {
     ffIds: string[],
     user: RequestUser,
   ): Promise<{ selected: string[] }> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const leg = await this.prisma.leg.findFirst({
       where: { id: legId, queryId },
       select: { id: true },
@@ -111,6 +117,10 @@ export class RfqService {
     input: DistributeInput,
     user: RequestUser,
   ): Promise<DistributeResult> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const query = await this.prisma.query.findUnique({
       where: { id: queryId },
       select: { id: true, incoterms: true },
@@ -154,7 +164,10 @@ export class RfqService {
    * Rotate an RFQ's access token (identity = query × FF) and record an audit row.
    * Recovery path: if the distribute response that carried the raw token was lost,
    * the token is unrecoverable (the hash is one-way) — this mints a fresh one.
-   * Touches only accessTokenHash; deadline / status / quotes / manifest are intact.
+   * Touches only accessTokenHash/accessToken; deadline / status / quotes / manifest are intact.
+   * S5.9 D7 — this is now the ONLY place a live RFQ's token rotates. Negotiation
+   * (negotiation.service.ts's requestRequote) deliberately does NOT call this any more — the
+   * Stage-4 Regenerate button (RegeneratePortalLink.tsx) is the sole caller.
    */
   async reissueToken(
     queryId: string,
@@ -162,6 +175,18 @@ export class RfqService {
     user: RequestUser,
   ): Promise<ReissueTokenResult> {
     return this.prisma.$transaction(async (tx) => {
+      // S5.9.5 (D6) — a locked query refuses every write. Inside the transaction, on `tx`,
+      // because the transaction is this method's FIRST operation, so the check and the writes below
+      // are one unit of work that rolls back together.
+      //
+      // It does NOT serialise against a concurrent `generate-client-quote`: nothing in this repo sets
+      // `isolationLevel` (grep — there is none), so Prisma runs on the connection default, READ
+      // COMMITTED, where every statement takes its own snapshot rather than the transaction sharing
+      // one; and `assertUnlocked` is a plain `findUnique` that takes no lock on the `Query` row. A
+      // generate committing between this SELECT and the writes below is a race this guard does not
+      // close. The placement costs nothing and is the right shape; the guarantee is just narrower
+      // than "shares the transaction's snapshot" claimed.
+      await this.lock.assertUnlocked(queryId, tx);
       const rfq = await tx.rfq.findUnique({
         where: { queryId_freightForwarderId: { queryId, freightForwarderId } },
         select: { id: true, rfqNumber: true },
@@ -169,12 +194,60 @@ export class RfqService {
       if (!rfq)
         throw new NotFoundException("No RFQ found for this freight forwarder on this query");
       const { token, hash } = this.token.mint();
-      await tx.rfq.update({ where: { id: rfq.id }, data: { accessTokenHash: hash } });
+      // S5.9 D8 — persist the raw token alongside its hash. `accessTokenHash` stays the lookup
+      // index (resolveByToken hashes the incoming raw token and looks that up); `accessToken` is
+      // what a re-quote email (negotiation.service.ts) reads back to render the CURRENT link
+      // without minting a new one, now that re-quote no longer rotates it (D7).
+      await tx.rfq.update({ where: { id: rfq.id }, data: { accessTokenHash: hash, accessToken: token } });
       await tx.rfqTokenReissue.create({
         data: { rfqId: rfq.id, actorId: user.userId, tenantId: user.tenantId },
       });
       return { rfqId: rfq.id, rfqNumber: rfq.rfqNumber, freightForwarderId, accessToken: token };
     });
+  }
+
+  /**
+   * Reset an existing RFQ's submission window to a fresh deadline and re-arm its
+   * `rfq.reminder`/`rfq.expiry` ScheduledEvents off that new deadline. Extracted from
+   * `performDistribution`'s reactivation branch (SB6 §7 Phase 3, below) so S5.5's negotiation
+   * path (design §10.1) can reuse the identical deadline-reset + re-arm behavior for a single
+   * RFQ outside of a distribute call (`NegotiationService.requestRequote`).
+   * Touches ONLY `submissionDeadline` — `currency`/`quoteValidityUntil` are deliberately left
+   * alone: the FF-portal `submit()` re-derives those two fields directly from the live `Rfq`
+   * row with no fallback, so clearing them here would 422 a REQUOTED FF's re-submit on
+   * Q_CURRENCY/Q_VALIDITY for reasons unrelated to the negotiation itself.
+   */
+  async resetDeadlineAndRearm(rfqId: string, tenantId?: string | null): Promise<Date> {
+    const deadline = await this.resolveDeadline();
+    await this.prisma.rfq.update({ where: { id: rfqId }, data: { submissionDeadline: deadline } });
+
+    // DELETE, not cancel — schedule()'s upsert matches on (entityType, entityId, eventKey,
+    // tier) and no-ops (`update: {}`) on an existing row, so it would never revise `dueAt` to
+    // the new deadline otherwise (same reasoning as the reactivation branch below).
+    await this.prisma.scheduledEvent.deleteMany({
+      where: { entityType: "RFQ", entityId: rfqId, eventKey: { in: ["rfq.reminder", "rfq.expiry"] } },
+    });
+
+    const offsets = await this.commsSettings.rfqReminderOffsets();
+    await this.scheduled.schedule(
+      "RFQ",
+      rfqId,
+      "rfq.reminder",
+      offsets.map((h) => ({
+        tier: `T${h}H`,
+        dueAt: new Date(deadline.getTime() - h * 60 * 60 * 1000),
+      })),
+      { tenantId },
+    );
+    await this.scheduled.schedule(
+      "RFQ",
+      rfqId,
+      "rfq.expiry",
+      [{ tier: "DEADLINE", dueAt: deadline }],
+      { tenantId },
+    );
+
+    return deadline;
   }
 
   async getRfqState(queryId: string): Promise<QueryRfqStateDto> {
@@ -247,6 +320,10 @@ export class RfqService {
     input: DistributeInput,
     user: RequestUser,
   ): Promise<DistributeResult> {
+    // S5.9.5 (D6) — a locked query (`awardSnapshot != null`, i.e. QUOTING_CLIENT /
+    // AWAITING_CLIENT_DECISION) refuses every write. First, before any other read, so a locked
+    // query never does partial work.
+    await this.lock.assertUnlocked(queryId);
     const ctx = await loadLegForRfq(this.prisma, queryId, legId);
     const query = await this.prisma.query.findUnique({
       where: { id: queryId },
@@ -385,6 +462,9 @@ export class RfqService {
               freightForwarderId: ffId,
               rfqNumber,
               accessTokenHash: t.hash,
+              // S5.9 D8 — see reissueToken's identical note: persist the raw token too, so a
+              // later re-quote can render this same link (D7) without minting a new one.
+              accessToken: t.token,
               submissionDeadline: deadline,
               incoterms: query.incoterms,
               tenantId: user.tenantId,
@@ -428,6 +508,20 @@ export class RfqService {
               // re-freeze does for RFQ_SENT quotes (change-order.strategy.ts). No-op for a fresh
               // SELECT quote (its draftJson is already null — a pre-distribution quote has no draft).
               draftJson: Prisma.DbNull,
+              // S5.9.6 (register A6) — the offer column goes with it, for the SAME reason and in
+              // the SAME write: the old bid was priced against the manifest/chargeConfig snapshots
+              // this very update has just replaced, so it is not an offer against the current
+              // basis any more. The forwarder re-submits and `submit` writes both columns again.
+              //
+              // Concretely, what leaving it behind would cost: the expiry sweep clears the
+              // SCRATCHPAD for an RFQ_SENT quote but nothing clears this column
+              // (rfq-schedule.listener.ts), and EXPIRED *is* a status the compare screen reads
+              // (COMPARABLE_STATUSES, comparison.service.ts). So a reactivated quote whose
+              // forwarder stays silent would carry its pre-change price into EXPIRED — visible
+              // and approvable — once the read side moves onto this column.
+              // It is also the invariant behind the migration's RFQ_SENT exclusion: with this
+              // clear, no quote sitting at RFQ_SENT carries a submitted offer.
+              submittedJson: Prisma.DbNull,
             },
           });
           quoteFires.push(quoteId);

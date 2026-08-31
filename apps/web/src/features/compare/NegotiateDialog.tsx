@@ -1,0 +1,413 @@
+import { useEffect, useState } from "react";
+import { requestRequoteSchema, type LegComparisonDto, type QuoteStatus } from "@svyft/shared";
+import { ForwarderStatusBadge } from "@/features/rfq-workspace/statusBadges";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { useRequestRequoteBatch, type RequoteResult, type RequoteTarget } from "./useAwardActions";
+import { fmtUsd } from "./money";
+
+export interface NegotiateDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  queryId: string;
+  legId: string;
+  /** The whole leg — eligibility is derived from `offers`/`pendingForwarders` fresh on every
+   *  render, so a background refetch (the batch's own invalidate included) can't leave the dialog
+   *  showing a stale forwarder list. */
+  leg: LegComparisonDto;
+}
+
+// Read straight off the schema (`requestRequoteSchema.shape.comment` is `.trim().min(1).max(2000)`)
+// rather than a hand-copied `2000` — the single-forwarder dialog this replaces enforced the WHOLE
+// schema via `zodResolver`; this rewrite dropped the max-length half of that (fix round 1, MINOR
+// #2), so both note paths below must fail the same way the old dialog did, not just on empty.
+const NOTE_MAX_LENGTH = requestRequoteSchema.shape.comment.maxLength ?? 2000;
+
+function noteTooLong(value: string): boolean {
+  return value.trim().length > NOTE_MAX_LENGTH;
+}
+
+/** One row in the eligibility list — one per FORWARDER, never per offer. */
+interface Candidate {
+  freightForwarderId: string;
+  freightForwarderName: string;
+  /** The one Quote covering every variant this forwarder priced — or, for a `pendingForwarders`
+   *  entry, the quote row that entry was built from. Non-null for EVERY candidate since S5.9.5's
+   *  final review: `PendingForwarderDto` carries a `quoteId` now, which is what lets an EXPIRED
+   *  pending forwarder be re-asked. Selectability is decided by `eligible`, never by this being
+   *  null — it used to be both, and that coupling is what hid the missing capability. */
+  quoteId: string;
+  eligible: boolean;
+  /** Only set when `!eligible` — always rendered next to the (disabled) checkbox, never hidden. */
+  reason?: string;
+  /** The forwarder's quote status, shown as the SAME `ForwarderStatusBadge` the grid uses (design
+   *  §89). For an offer-derived candidate this is the status of the quote `quoteId` points at; for
+   *  a `pendingForwarders` entry it's that entry's own status (`RFQ_SENT`, `EXPIRED`, …). */
+  quoteStatus: QuoteStatus;
+  /** Every PRICED offer this forwarder has on the leg, in read-model order. A list, not one
+   *  number, because one Quote fans out into one offer per variant — "Bridge's current price" is
+   *  genuinely `Dedicated $542.17 · Groupage $361.45`, and collapsing that to a single figure would
+   *  be inventing one. Empty for a forwarder that has never priced anything. `usdTotal` keeps the
+   *  read model's own `number | null` — `priced` and a non-null total are separate fields on
+   *  `OfferDto`, and `fmtUsd` renders the null as an em-dash rather than a fake `$0.00`. */
+  prices: { variantLabel: string; usdTotal: number | null }[];
+}
+
+/**
+ * Builds the dialog's eligibility list, deduplicated by `freightForwarderId`.
+ *
+ * One `Quote` covers ALL of a forwarder's variants on a leg (`request-requote` is keyed by
+ * `quoteId`, not offer), so a Road forwarder who priced both Dedicated and Groupage shows up as
+ * TWO `OfferDto` rows sharing one `quoteId` (see `ComparisonGrid`'s own `groupByForwarder` doc
+ * comment for the same fact on the read side). Keying this list on the offer instead of the
+ * forwarder would show that FF twice and fire two `request-requote` calls against the one quote it
+ * actually has — `NegotiateDialog.test.tsx`'s "posts one request per selected forwarder" catches
+ * exactly that regression (asserts 2 calls off a 4-offer/1-pending fixture, not 4 or 5).
+ *
+ * A forwarder is eligible when it has AT LEAST ONE offer whose `quoteStatus` is in the server's
+ * `REQUOTABLE_STATUSES` — `QUOTED`, `APPROVED` or (S5.9.5 D4) `EXPIRED` — or is a
+ * `pendingForwarders` entry whose own status is `EXPIRED`, which the same server list admits (see
+ * the pending loop below: a forwarder who never answered can still be re-asked, and until the
+ * final whole-branch review nothing in the UI could do it). REQUOTED forwarders (an offer exists,
+ * but a revised one is already pending) and the remaining pending statuses are included, disabled,
+ * with their own reason text — never hidden.
+ *
+ * PENDING_APPROVAL is ALSO ineligible, with its own reason text (design decision D5, S5.9 code
+ * review round 2): negotiate stays REFUSED while a leg is under review — the maker must reject
+ * the leg back to QUOTED first, matching the server's own gate: the LEG-level decision guard in
+ * `NegotiationService.requestRequote`, which loads the leg's `LegAwardDecision` and 409s when it is
+ * `PENDING_APPROVAL` — or, since S5.9.5 D1, `APPROVED` — BEFORE `REQUOTABLE_STATUSES` is ever
+ * consulted. (Line numbers dropped in the final whole-branch review: this citation has been
+ * corrected twice already, in Task 10's review round 1 and again when D1's `APPROVED` arm moved
+ * the guard, which is enough evidence that a line number is the wrong way to point at it.)
+ * That guard is NOT
+ * redundant with `REQUOTABLE_STATUSES` — the latter only gates the quote NAMED in a given call,
+ * so a still-QUOTED sibling quote on the same leg would sail straight past it and let a maker
+ * reset a decision a checker is mid-review of on a different, already-shortlisted quote. An
+ * earlier version of this function admitted PENDING_APPROVAL as eligible on the theory that it's
+ * "just a QUOTED offer under review, not a different commitment" — that was wrong: the product
+ * owner ruled negotiate stays refused, and admitting it client-side while the server refuses it
+ * would have let the maker select an ineligible forwarder and get a 409 back.
+ */
+function buildCandidates(leg: LegComparisonDto): Candidate[] {
+  const byForwarder = new Map<string, Candidate>();
+  for (const offer of leg.offers) {
+    // Mirrors negotiation.service.ts's REQUOTABLE_STATUSES exactly (S5.9.5 D4). EXPIRED is new:
+    // after D4 an expired quote can still carry the forwarder's real submitted price, and
+    // re-negotiating is the deliberate act that reopens their portal with a fresh deadline.
+    // APPROVED stays listed because `REQUOTABLE_STATUSES` still lists it — and, CORRECTED in the
+    // final whole-branch review (IMPORTANT 1), because this arm IS REACHABLE. The previous version
+    // of this comment said it was unreachable "for TWO independent reasons": D1 stopping the dialog
+    // opening on an approved leg (`CompareLegPanel`'s `negotiateDisabledReason`) and
+    // `requestRequote` refusing an APPROVED decision. Both of those gate on the DECISION's status;
+    // this arm gates on the QUOTE's (`offer.quoteStatus`), and the two can drift apart — `approve()`
+    // commits the decision in its own transaction and fires the quote/leg transitions afterwards,
+    // and register C12 records the resulting `decision = DRAFT` / `leg = APPROVED` /
+    // `quote = APPROVED` triple as observed, not theoretical.
+    //
+    // In that triple this arm fires and everything downstream of it works: the decision is DRAFT so
+    // `negotiateDisabledReason` is null and the dialog opens, the offer is in `leg.offers` because
+    // D8 put APPROVED into `COMPARABLE_STATUSES`, and both server guards pass (the decision is
+    // DRAFT; `REQUOTABLE_STATUSES` admits the APPROVED quote) — which is exactly how an Executive
+    // clears that wedge in one click. `negotiation.service.ts`'s own doc on `REQUOTABLE_STATUSES`
+    // says the same thing from the server side; keep the two readings identical.
+    const quotable =
+      offer.quoteStatus === "QUOTED" ||
+      offer.quoteStatus === "APPROVED" ||
+      offer.quoteStatus === "EXPIRED";
+    // Reachable only for the statuses left over once `quotable` has taken QUOTED/APPROVED/EXPIRED:
+    // `COMPARABLE_STATUSES` (comparison.service.ts) admits exactly QUOTED, REQUOTED,
+    // PENDING_APPROVAL, APPROVED and EXPIRED, so the two arms below cover PENDING_APPROVAL and
+    // REQUOTED and nothing else. That is why the fallback may state REQUOTED's cause outright —
+    // and why widening `quotable` above without revisiting it would be a bug: before S5.9.5 an
+    // EXPIRED offer landed on this fallback and was told a re-quote was outstanding, when in fact
+    // the re-quote had already gone unanswered.
+    const ineligibleReason =
+      offer.quoteStatus === "PENDING_APPROVAL"
+        ? "This leg is pending approval — reject it first."
+        : "Already awaiting a revised quote.";
+    const existing = byForwarder.get(offer.freightForwarderId);
+    if (!existing) {
+      byForwarder.set(offer.freightForwarderId, {
+        freightForwarderId: offer.freightForwarderId,
+        freightForwarderName: offer.freightForwarderName,
+        quoteId: offer.quoteId,
+        eligible: quotable,
+        reason: quotable ? undefined : ineligibleReason,
+        quoteStatus: offer.quoteStatus,
+        prices: [],
+      });
+    } else if (quotable && !existing.eligible) {
+      // A later offer for the same forwarder turned out quotable (e.g. Dedicated is QUOTED after
+      // Groupage, seen first, was REQUOTED) — the forwarder as a whole is still eligible. The badge
+      // follows the quote that made it eligible, so it can't say "RFQ-Resent" next to an enabled box.
+      existing.eligible = true;
+      existing.quoteId = offer.quoteId;
+      existing.reason = undefined;
+      existing.quoteStatus = offer.quoteStatus;
+    }
+    // Prices accumulate across ALL of the forwarder's offers, eligible or not — the maker is
+    // choosing who to renegotiate with and needs to see what each one currently charges.
+    if (offer.priced) {
+      byForwarder
+        .get(offer.freightForwarderId)!
+        .prices.push({ variantLabel: offer.variantLabel, usdTotal: offer.usdTotal });
+    }
+  }
+  for (const pending of leg.pendingForwarders) {
+    if (!byForwarder.has(pending.freightForwarderId)) {
+      // S5.9.5 final whole-branch review, MINOR. Every pending forwarder used to be ineligible
+      // with "Hasn't quoted yet — nothing to re-quote." For an EXPIRED one that is FALSE on both
+      // clauses: they WERE asked, and the window closed on them without an answer. Worse, it left
+      // the product with NO route at all to re-ask a forwarder who never answered — even though
+      // D4 built exactly that capability on the server (`REQUOTABLE_STATUSES` admits `EXPIRED`,
+      // and the quote machine carries `EXPIRED --request_requote--> REQUOTED`, added so a
+      // forwarder could not be frozen out). A pending EXPIRED entry and a priced EXPIRED offer are
+      // the same status reached from different sides (design's scenarios A and B); the server
+      // treats them alike, and so does this list now.
+      //
+      // The other pending statuses stay ineligible, each with its own true sentence: RFQ_SENT is
+      // genuinely "not yet" (and the server 409s it — there is no price to negotiate against),
+      // while INVALID/CLOSED have no `request_requote` edge at all.
+      const reAskable = pending.quoteStatus === "EXPIRED";
+      byForwarder.set(pending.freightForwarderId, {
+        freightForwarderId: pending.freightForwarderId,
+        freightForwarderName: pending.freightForwarderName,
+        quoteId: pending.quoteId,
+        eligible: reAskable,
+        reason: reAskable
+          ? undefined
+          : pending.quoteStatus === "RFQ_SENT"
+            ? "Hasn't quoted yet — nothing to re-quote."
+            : "This forwarder's quote is no longer open.",
+        quoteStatus: pending.quoteStatus,
+        prices: [],
+      });
+    }
+  }
+  return Array.from(byForwarder.values());
+}
+
+/**
+ * NegotiateDialog — the maker's leg-level "ask selected forwarders to revise their price" action
+ * (S5.7 T5, replacing S5.6's per-forwarder button + single-forwarder dialog in `MakerPanel`). One
+ * `Checkbox` per eligible/ineligible forwarder (deduplicated — see `buildCandidates`), ONE shared
+ * note applied to every selected forwarder (S5.9.2 product item 1 — the earlier per-forwarder
+ * note toggle/boxes are gone; a maker wanting different wording for one forwarder selects just
+ * that forwarder and sends alone), and a Send that fires N sequential `request-requote` calls via
+ * `useRequestRequoteBatch` — see that hook's doc
+ * comment for why there is no single combined success/error state.
+ *
+ * **Partial success is a real state, not an error path.** `run()` never throws; it always resolves
+ * with one `RequoteResult` per target. This component closes ONLY when every result is `ok`
+ * (ambiguity resolution #3) — on any failure it stays open, renders the full per-forwarder result
+ * list (`data-result="ok"|"error"` on each row, so nothing is folded into one combined message),
+ * and narrows the selection down to just the FAILED forwarders so a second Send retries only those
+ * (their notes are left exactly as typed — nothing here re-collects one on retry).
+ *
+ * **Can't dismiss mid-flight** survives from the single-forwarder dialog this replaces: Radix
+ * funnels every close attempt (Escape, overlay click, the corner X, this component's own Cancel)
+ * through `onOpenChange`, gated here while `batch.isPending`. The OTHER hard-won behaviour from
+ * that component — the `latestQuoteId` stale-success guard — is moot here: there is exactly one
+ * dialog instance now (not one reused across forwarders), and `run()`'s result is consumed
+ * synchronously off its own `await`, so there is no second in-flight call whose late resolution
+ * could reach for a `quoteId` that has since moved on.
+ */
+export function NegotiateDialog({ open, onOpenChange, queryId, legId, leg }: NegotiateDialogProps) {
+  const batch = useRequestRequoteBatch(queryId, legId);
+  const candidates = buildCandidates(leg);
+  const eligible = candidates.filter((c) => c.eligible);
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [sharedNote, setSharedNote] = useState("");
+  const [results, setResults] = useState<RequoteResult[] | null>(null);
+
+  // Reset every bit of selection/note/result state whenever the dialog re-opens — a cancelled (or
+  // completed) attempt must not leak its picks into the next one (ambiguity resolution #5).
+  useEffect(() => {
+    if (open) {
+      setSelected(new Set());
+      setSharedNote("");
+      setResults(null);
+    }
+  }, [open]);
+
+  const allEligibleSelected =
+    eligible.length > 0 && eligible.every((c) => selected.has(c.freightForwarderId));
+  const selectedCandidates = candidates.filter(
+    (c) => c.eligible && selected.has(c.freightForwarderId),
+  );
+  const n = selectedCandidates.length;
+
+  // Same rule `requestRequoteSchema` enforces server-side — non-empty AND no more than
+  // `NOTE_MAX_LENGTH`. One shared note applies to every selected forwarder (S5.9.2 product item 1
+  // — an exec wanting different wording per forwarder selects one at a time instead), so there is
+  // only ever one note to validate.
+  const hasInvalidNote =
+    n > 0 && (sharedNote.trim().length === 0 || sharedNote.trim().length > NOTE_MAX_LENGTH);
+  const canSubmit = n > 0 && !hasInvalidNote && !batch.isPending;
+
+  function toggleForwarder(id: string, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll(checked: boolean) {
+    setSelected(checked ? new Set(eligible.map((c) => c.freightForwarderId)) : new Set());
+  }
+
+  async function handleSend() {
+    if (!canSubmit) return;
+    const note = sharedNote.trim();
+    const targets: RequoteTarget[] = selectedCandidates.map((c) => ({
+      quoteId: c.quoteId,
+      freightForwarderName: c.freightForwarderName,
+      comment: note,
+    }));
+    const idByQuoteId = new Map(selectedCandidates.map((c) => [c.quoteId, c.freightForwarderId]));
+
+    const outcome = await batch.run(targets);
+    setResults(outcome);
+
+    if (outcome.every((r) => r.ok)) {
+      onOpenChange(false);
+      return;
+    }
+    // Narrow the selection to just the forwarders that failed, so the notes stay filled in and a
+    // second click of Send retries only those — the ones that already succeeded don't need it.
+    setSelected(
+      new Set(
+        outcome
+          .filter((r) => !r.ok)
+          .map((r) => idByQuoteId.get(r.quoteId))
+          .filter((id): id is string => !!id),
+      ),
+    );
+  }
+
+  // Same "can't dismiss mid-flight" gate the single-forwarder dialog had — see the component doc
+  // comment above.
+  function handleOpenChange(next: boolean) {
+    if (!next && batch.isPending) return;
+    onOpenChange(next);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Negotiate — {leg.legCode}</DialogTitle>
+          <DialogDescription>
+            Ask selected forwarders to revise their price. Each one sees your note and their quote
+            moves to Re-quoted until they respond.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <Checkbox
+              checked={allEligibleSelected}
+              disabled={eligible.length === 0}
+              onCheckedChange={(v) => toggleSelectAll(v === true)}
+              aria-label="Select all"
+            />
+            Select all
+          </label>
+
+          <ul className="space-y-2">
+            {candidates.map((c) => (
+              <li key={c.freightForwarderId} className="space-y-1">
+                {/* Design item 6 (§89) — "a checkbox per forwarder, showing each one's current
+                    price and status". The dialog is modal, so the grid the maker was reading is
+                    covered; shipping names alone made them choose who to renegotiate with blind to
+                    prices (final review IMPORTANT #4). The badge is the grid's own
+                    `ForwarderStatusBadge`, not a second status vocabulary. `aria-label` stays on
+                    the Checkbox, so its accessible name is still just the forwarder's name. */}
+                <label className="flex flex-wrap items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={selected.has(c.freightForwarderId)}
+                    disabled={!c.eligible}
+                    onCheckedChange={(v) => toggleForwarder(c.freightForwarderId, v === true)}
+                    aria-label={c.freightForwarderName}
+                  />
+                  {c.freightForwarderName}
+                  <ForwarderStatusBadge status={c.quoteStatus} />
+                  <span
+                    data-testid={`negotiate-price-${c.freightForwarderId}`}
+                    className="font-mono text-xs tabular-nums text-muted-foreground"
+                  >
+                    {c.prices.length === 0
+                      ? "No price yet"
+                      : c.prices.map((p) => `${p.variantLabel} ${fmtUsd(p.usdTotal)}`).join(" · ")}
+                  </span>
+                </label>
+                {!c.eligible && <p className="pl-6 text-xs text-muted-foreground">{c.reason}</p>}
+              </li>
+            ))}
+          </ul>
+
+          {/* S5.9.2 product item 1 — one shared note applied to every selected forwarder. The
+              per-forwarder note toggle/boxes this used to offer are gone: an exec who wants
+              different wording for one forwarder selects just that forwarder and sends alone. */}
+          <div className="space-y-1">
+            <Label htmlFor="negotiate-note">Note</Label>
+            <Textarea
+              id="negotiate-note"
+              value={sharedNote}
+              onChange={(e) => setSharedNote(e.target.value)}
+            />
+            {noteTooLong(sharedNote) && (
+              <p role="alert" className="text-sm text-destructive">
+                Note must be {NOTE_MAX_LENGTH} characters or fewer.
+              </p>
+            )}
+          </div>
+
+          {results && (
+            <ul className="space-y-1 text-sm" data-testid="negotiate-results">
+              {results.map((r) => (
+                <li key={r.quoteId} data-result={r.ok ? "ok" : "error"}>
+                  {r.ok ? (
+                    <>{r.freightForwarderName} — re-quote requested.</>
+                  ) : (
+                    <span role="alert">
+                      {r.freightForwarderName} — {r.error}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => handleOpenChange(false)}
+            disabled={batch.isPending}
+          >
+            Cancel
+          </Button>
+          <Button type="button" onClick={handleSend} disabled={!canSubmit}>
+            {batch.isPending ? "Sending…" : `Send to ${n} forwarder${n === 1 ? "" : "s"}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

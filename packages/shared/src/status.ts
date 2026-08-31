@@ -41,6 +41,8 @@ export const LegStatus = {
   RFQ_SENT: "RFQ_SENT",
   PARTIALLY_QUOTED: "PARTIALLY_QUOTED",
   FULLY_QUOTED: "FULLY_QUOTED",
+  PENDING_APPROVAL: "PENDING_APPROVAL",
+  APPROVED: "APPROVED",
   AWARDED: "AWARDED",
   IN_TRANSIT: "IN_TRANSIT",
   DELIVERED: "DELIVERED",
@@ -56,6 +58,20 @@ export const LegEvent = {
   SEND_RFQ: "rfq.send",
   QUOTE_PARTIAL: "quote.partial",
   QUOTE_FULL: "quote.full",
+  SEND_FOR_APPROVAL: "send_for_approval",
+  APPROVE: "approve",
+  RETURN_FULL: "return.full",
+  RETURN_PARTIAL: "return.partial",
+  REOPEN_AWARD: "reopen_award",
+  // S5.9.2 Q1 (register C7) — the two BACKWARD rollup edges a re-quote walks. Deliberately their
+  // own events rather than reusing QUOTE_PARTIAL/SEND_RFQ from a later state: `findTransition`
+  // matches on (from, on), so a backward `FULLY_QUOTED --quote.partial--> PARTIALLY_QUOTED` would
+  // be indistinguishable in the StatusTransition log from the forward rollup, and there is no
+  // existing event that lands on RFQ_SENT other than "the RFQ was distributed". Named
+  // `requote.*` because a re-quote is the ONLY input allowed to fire them — see
+  // leg-quote.projector.ts.
+  REQUOTE_PARTIAL: "requote.partial", // FULLY_QUOTED -> PARTIALLY_QUOTED (a comparable sibling survives)
+  REQUOTE_OUTSTANDING: "requote.outstanding", // -> RFQ_SENT (nothing comparable left at all)
 } as const;
 export type LegEvent = (typeof LegEvent)[keyof typeof LegEvent];
 export const LEG_EVENTS = Object.values(LegEvent) as [LegEvent, ...LegEvent[]];
@@ -68,6 +84,7 @@ export const QuoteStatus = {
   EXPIRED: "EXPIRED",
   INVALID: "INVALID",
   REQUOTED: "REQUOTED",
+  PENDING_APPROVAL: "PENDING_APPROVAL",
   CLOSED: "CLOSED",
   APPROVED: "APPROVED",
 } as const;
@@ -79,6 +96,18 @@ export const QuoteEvent = {
   SUBMIT: "submit",   // RFQ_SENT → QUOTED
   EXPIRE: "expire",   // RFQ_SENT → EXPIRED
   INVALIDATE: "invalidate", // QUOTED → INVALID (change-order, sub-build 6)
+  SEND_FOR_APPROVAL: "send_for_approval", // QUOTED → PENDING_APPROVAL
+  APPROVE: "approve",             // PENDING_APPROVAL → APPROVED
+  RETURN: "return",               // PENDING_APPROVAL → QUOTED (reject)
+  UNAPPROVE: "unapprove",         // APPROVED → QUOTED
+  // S5.9.5 (Step 5c) — PENDING_APPROVAL/APPROVED → EXPIRED. The reversal edge for an offer that
+  // was already EXPIRED when it was sent for approval (S5.9.5 D4 made a priced-EXPIRED offer
+  // sendable). RETURN and UNAPPROVE both land on QUOTED, which would hand a live status back to a
+  // forwarder whose submission window closed and who never answered. A separate EVENT rather than
+  // a second target for RETURN/UNAPPROVE because `findTransition` matches on (from, on), so one
+  // event cannot have two destinations from the same source.
+  RETURN_EXPIRED: "return_expired",
+  REQUEST_REQUOTE: "request_requote", // QUOTED/APPROVED → REQUOTED
 } as const;
 export type QuoteEvent = (typeof QuoteEvent)[keyof typeof QuoteEvent];
 export const QUOTE_EVENTS = Object.values(QuoteEvent) as [QuoteEvent, ...QuoteEvent[]];
@@ -90,6 +119,7 @@ export const QueryStatus = {
   RFQ_READY: "RFQ_READY",
   RFQ_SENT: "RFQ_SENT",
   QUOTED: "QUOTED",
+  QUOTING_CLIENT: "QUOTING_CLIENT",
   NO_RESPONSE: "NO_RESPONSE",
   AWAITING_CLIENT_DECISION: "AWAITING_CLIENT_DECISION",
   WON: "WON",
@@ -106,6 +136,7 @@ export interface QueryMilestones {
   rfqReady?: boolean;
   noResponse?: boolean;
   awaitingClientDecision?: boolean;
+  quotingClient?: boolean;
   won?: boolean;
   lost?: boolean;
   closed?: boolean;
@@ -117,10 +148,12 @@ const LEG_RANK: Record<LegStatus, number> = {
   RFQ_SENT: 2,
   PARTIALLY_QUOTED: 3,
   FULLY_QUOTED: 4,
-  AWARDED: 5,
-  IN_TRANSIT: 6,
-  DELIVERED: 7,
-  CLOSED: 8,
+  PENDING_APPROVAL: 5,
+  APPROVED: 6,
+  AWARDED: 7,
+  IN_TRANSIT: 8,
+  DELIVERED: 9,
+  CLOSED: 10,
 };
 
 function leastAdvanced(legStatuses: LegStatus[]): LegStatus {
@@ -140,6 +173,7 @@ export function deriveQueryStatus(
   if (milestones.lost) return QueryStatus.LOST;
   if (milestones.won) return QueryStatus.WON;
   if (milestones.awaitingClientDecision) return QueryStatus.AWAITING_CLIENT_DECISION;
+  if (milestones.quotingClient) return QueryStatus.QUOTING_CLIENT;
 
   if (legStatuses.length === 0) {
     // No legs (legacy Plan-4 drafts / pre-leg queries): query-level milestones only.
@@ -159,6 +193,9 @@ export function deriveQueryStatus(
       return QueryStatus.RFQ_SENT;
     case LegStatus.FULLY_QUOTED:
       return milestones.noResponse ? QueryStatus.NO_RESPONSE : QueryStatus.QUOTED;
+    case LegStatus.PENDING_APPROVAL:
+    case LegStatus.APPROVED:
+      return QueryStatus.QUOTED;
     case LegStatus.DELIVERED:
       return QueryStatus.CLOSED; // all legs delivered (§9.1)
     case LegStatus.CLOSED:
@@ -169,4 +206,32 @@ export function deriveQueryStatus(
       // Stage 3 (no edges reach those states).
       return QueryStatus.QUOTED;
   }
+}
+
+/**
+ * Quote states that count as "settled" for the leg rollup (§9.2). `PENDING_APPROVAL` and
+ * `APPROVED` count — a quote under review or already approved is not something we are still
+ * waiting on. `REQUOTED` deliberately does NOT: a re-quote in flight is genuinely unresolved.
+ */
+const LEG_ROLLUP_RESOLVED: readonly QuoteStatus[] = [
+  QuoteStatus.QUOTED,
+  QuoteStatus.EXPIRED,
+  QuoteStatus.CLOSED,
+  QuoteStatus.PENDING_APPROVAL,
+  QuoteStatus.APPROVED,
+];
+
+/**
+ * What a leg's status SHOULD be, given its quotes. `null` means "nothing to say" — either
+ * nothing was ever distributed, or every distributed quote is still outstanding, in which case
+ * the leg keeps whatever status it already has.
+ *
+ * Undistributed (`SELECT`) quotes are excluded: they were never sent, so they can never resolve.
+ */
+export function rollupLegTarget(quoteStatuses: QuoteStatus[]): LegStatus | null {
+  const distributed = quoteStatuses.filter((s) => s !== QuoteStatus.SELECT);
+  if (distributed.length === 0) return null;
+  if (distributed.every((s) => LEG_ROLLUP_RESOLVED.includes(s))) return LegStatus.FULLY_QUOTED;
+  if (distributed.some((s) => s === QuoteStatus.QUOTED)) return LegStatus.PARTIALLY_QUOTED;
+  return null;
 }

@@ -63,6 +63,8 @@ const leg: FfPortalLegDto = {
   ],
   warehouseIncluded: true,
   draft: null,
+  closedReason: null,
+  version: "v1",
 };
 
 const roadLeg: FfPortalLegDto = {
@@ -160,6 +162,8 @@ const quotedRoadLeg: FfPortalLegDto = {
   ],
   warehouseIncluded: false,
   draft: quotedRoadDraft,
+  closedReason: null,
+  version: "v3",
 };
 
 // Warehousing is shared (design D4), not per-variant — WarehouseStaging's read-only mirror

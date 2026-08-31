@@ -8,6 +8,7 @@ const QUERY_STATUS_LABEL: Record<QueryStatus, string> = {
   RFQ_READY: "RFQ Ready",
   RFQ_SENT: "RFQ Sent",
   QUOTED: "Quoted",
+  QUOTING_CLIENT: "Quoting Client",
   NO_RESPONSE: "No Response",
   AWAITING_CLIENT_DECISION: "Awaiting Client Decision",
   WON: "Won",
@@ -20,6 +21,7 @@ function queryStatusVariant(s: string) {
   if (s === "CREATED") return "secondary" as const;
   if (s === "RFQ_READY") return "default" as const;
   if (s === "RFQ_SENT") return "accent" as const;
+  if (s === "QUOTING_CLIENT") return "accent" as const;
   if (s === "QUOTED" || s === "WON") return "success" as const;
   if (s === "NO_RESPONSE") return "warning" as const;
   return "outline" as const;

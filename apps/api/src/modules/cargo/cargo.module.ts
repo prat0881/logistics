@@ -1,5 +1,6 @@
 import { Module, type OnModuleInit } from "@nestjs/common";
 import { ChangesModule } from "../changes/changes.module";
+import { QueryLockModule } from "../award/query-lock.module";
 import { FilesModule } from "../files/files.module";
 import { QueriesModule } from "../queries/queries.module";
 import { ImpactRegistry } from "../changes/impact.registry";
@@ -20,7 +21,7 @@ import { itemImpactMap } from "./item.impact";
 // CargoModule, and QueriesModule's own imports (Changes/Status/Legs/Routing) never reach back to
 // CargoModule; QueriesModule already `exports: [QueriesService]`.
 @Module({
-  imports: [ChangesModule, FilesModule, QueriesModule],
+  imports: [ChangesModule, FilesModule, QueriesModule, QueryLockModule],
   controllers: [CargoController, PackageController, ItemController],
   providers: [CargoService, PackageService, ItemService],
 })

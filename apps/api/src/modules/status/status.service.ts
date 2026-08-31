@@ -67,6 +67,7 @@ export class StatusService {
           from: current,
           to: transition.to,
           event,
+          reason: ctx.reason ?? null,
           actorId: ctx.actorId ?? null,
           tenantId: ctx.tenantId ?? null,
         },

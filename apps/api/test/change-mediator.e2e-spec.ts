@@ -2,6 +2,7 @@ process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? "test-access-se
 
 import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
+import { QuoteStatus } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { ChangeMediator } from "../src/modules/changes/change-mediator";
@@ -29,7 +30,8 @@ describe("Change Mediator (integration)", () => {
   });
 
   afterAll(async () => {
-    await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } }); // cascades legs/legPackages/cargo/packages/items
+    await prisma.query.deleteMany({ where: { shipmentDescription: { startsWith: PFX } } }); // cascades legs/legPackages/cargo/packages/items/quotes
+    await prisma.freightForwarder.deleteMany({ where: { freightForwarderCode: { startsWith: PFX } } }); // SB6 Task 3's APPROVED-quote fixture below needs a real FF
     await app.close();
   });
 
@@ -110,6 +112,54 @@ describe("Change Mediator (integration)", () => {
       impactClass: "RfqDefining",
     });
     expect(uow).not.toHaveBeenCalled(); // no reason ⇒ preview only, nothing applied (Task 7)
+  });
+
+  // SB6 Task 3 (§10.2 prereq, S5.5): downstreamWork() and ChangeOrderStrategy's live-quotes
+  // query previously excluded APPROVED (post-award) quotes entirely — a field edit on an
+  // already-approved leg silently took the FREE path (no invalidation, no reopen), so the
+  // eventual award-reversal listener (§10.2) would never fire. This is the REAL resolver, no
+  // downstreamWork mock (the whole point): a real Leg + real APPROVED Quote must be enough on
+  // their own to flip the fork AND to land the quote in the "invalidating" (not "refreshing")
+  // partition of the preview.
+  it("forks to CHANGE-ORDER for a leg whose only live quote is APPROVED, not just RFQ_SENT/QUOTED (§10.2 prereq)", async () => {
+    const q = await prisma.query.create({
+      data: { queryCode: `${PFX}${Date.now()}-approved`, shipmentDescription: `${PFX}q` },
+    });
+    const leg = await prisma.leg.create({ data: { queryId: q.id, legCode: "L-APPROVED" } });
+    const ff = await prisma.freightForwarder.create({
+      data: {
+        freightForwarderCode: `${PFX}ff-approved-${Date.now()}`,
+        companyName: "Approved FF Co",
+        companyAddress: "1 Test Street",
+        country: "Test Country",
+        city: "Test City",
+        pic: "P",
+        contactNumber: "+10000000000",
+        email: `${PFX}ff-approved-${Date.now()}@e2e.test`,
+        availableCountries: ["AE"],
+        modes: ["AIR"],
+        status: "ACTIVE",
+      },
+    });
+    const quote = await prisma.quote.create({
+      data: { queryId: q.id, legId: leg.id, freightForwarderId: ff.id, status: QuoteStatus.APPROVED },
+    });
+
+    const uow = jest.fn(async () => {});
+    const res = await mediator.apply(
+      { entity: "leg", id: leg.id, field: "originPointId", queryId: q.id, actorId: null },
+      uow,
+    );
+
+    expect(res.path).toBe("change-order");
+    expect(res.needsConfirmation).toBe(true);
+    expect(res.preview).toEqual({
+      affectedLegs: [leg.id],
+      invalidatingQuotes: [{ quoteId: quote.id, freightForwarderId: ff.id }],
+      refreshingQuotes: [],
+      impactClass: "RfqDefining",
+    });
+    expect(uow).not.toHaveBeenCalled(); // no reason ⇒ preview only, nothing applied
   });
 
   // Real Query + Cargo + Package (v2 grain, via the shared helper), self-cleaned via

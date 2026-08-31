@@ -11,6 +11,7 @@ import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
 import { seedReferenceData } from "../src/seed/reference-seed";
 import { ScheduledEventService } from "../src/modules/comms/scheduled-event.service";
+import { RfqScheduleListener } from "../src/modules/rfq/rfq-schedule.listener";
 import { createCargoWithPackages, assignPackagesToLeg } from "./helpers/cargo";
 import { ffFixture } from "./helpers/freight-forwarder";
 
@@ -25,6 +26,7 @@ describe(`${PREFIX} (e2e)`, () => {
   let prisma: PrismaService;
   let jwt: JwtService;
   let scheduled: ScheduledEventService;
+  let listener: RfqScheduleListener;
   const cookie = (role: Role) =>
     `${ACCESS_TOKEN_COOKIE}=${jwt.sign({ sub: `u-${role}`, role, tenantId: null })}`;
 
@@ -91,6 +93,7 @@ describe(`${PREFIX} (e2e)`, () => {
     prisma = moduleRef.get(PrismaService);
     jwt = moduleRef.get(JwtService);
     scheduled = moduleRef.get(ScheduledEventService);
+    listener = moduleRef.get(RfqScheduleListener);
     await cleanup();
     // create-only upserts: guarantees the rfq.* message templates + reminder/deadline
     // AppSettings exist regardless of test order/DB state.
@@ -226,5 +229,87 @@ describe(`${PREFIX} (e2e)`, () => {
       },
     });
     expect(liveReminders).toBe(0);
+  });
+  // ── S5.9.5 final whole-branch review, IMPORTANT 4 ───────────────────────────────────────────
+  it("reminder: a forwarder still holding an open leg is nudged; once EVERY leg is approved to a rival, they are not", async () => {
+    // `onReminder` dispatched unconditionally — no leg-closure check at all — while D5 (Task 7)
+    // had already closed an APPROVED leg to the forwarders who did not win it: their portal
+    // renders read-only and `saveDraft`/`submit` 409 them. So a shut-out forwarder kept getting
+    // "please submit your quote before the deadline" for a portal that refuses the submission.
+    // D5's own rationale reasons about per-RFQ timers on the premise that the forwarder still
+    // holds an OPEN leg — the code had no such condition.
+    //
+    // `Rfq` is @@unique([queryId, freightForwarderId]), so ONE RFQ covers every leg this forwarder
+    // holds on this query. The rule is therefore per LEG: silence only when they are shut out of
+    // ALL of them. The two halves below differ by exactly one `LegAwardDecision` row.
+    const query = await prisma.query.create({
+      data: { queryCode: `${CODE}-REM`, incoterms: "FOB" },
+    });
+    const legOne = await mkLeg(query.id, "L-REM-1", "PO-REM-1");
+    const legTwo = await mkLeg(query.id, "L-REM-2", "PO-REM-2");
+
+    const loser = await mkFf(`FF-${PREFIX}-REM-LOSER`, ["CN", "AE"], ["AIR"]);
+    const winner = await mkFf(`FF-${PREFIX}-REM-WINNER`, ["CN", "AE"], ["AIR"]);
+
+    const mkRfq = async (ffId: string, n: number) =>
+      prisma.rfq.create({
+        data: {
+          queryId: query.id,
+          freightForwarderId: ffId,
+          rfqNumber: `${CODE}-REM-RFQ00${n}`,
+          accessTokenHash: `hash-${PREFIX}-rem-${n}`,
+          submissionDeadline: new Date(Date.now() + 3600_000),
+          currency: "USD",
+        },
+      });
+    const loserRfq = await mkRfq(loser.id, 1);
+    const winnerRfq = await mkRfq(winner.id, 2);
+
+    const mkQuote = (rfqId: string, ffId: string, legId: string) =>
+      prisma.quote.create({
+        data: { queryId: query.id, legId, freightForwarderId: ffId, rfqId, status: "RFQ_SENT" },
+      });
+    await mkQuote(loserRfq.id, loser.id, legOne.id);
+    await mkQuote(loserRfq.id, loser.id, legTwo.id);
+    const winnerOne = await mkQuote(winnerRfq.id, winner.id, legOne.id);
+    const winnerTwo = await mkQuote(winnerRfq.id, winner.id, legTwo.id);
+
+    const approve = (legId: string, quoteId: string) =>
+      prisma.legAwardDecision.create({
+        data: {
+          legId,
+          queryId: query.id,
+          shortlistedQuoteId: quoteId,
+          shortlistedVariant: null,
+          status: "APPROVED",
+          sentByUserId: null,
+          sentForApprovalAt: new Date(),
+          decidedAt: new Date(),
+        },
+      });
+    const remindersTo = (email: string) =>
+      prisma.messageLog.count({
+        where: {
+          entityType: "QUERY",
+          entityId: query.id,
+          eventKey: "rfq.reminder",
+          toAddress: email,
+        },
+      });
+
+    // ── POSITIVE CONTROL: LEG-1 is decided against the loser, LEG-2 is still open to them ──
+    await approve(legOne.id, winnerOne.id);
+    await listener.onReminder({ entityType: "RFQ", entityId: loserRfq.id, tier: "T1" });
+    expect(await remindersTo(loser.email)).toBe(1); // they still have real work to do on LEG-2
+
+    // ── the fix: LEG-2 goes the same way, so nothing on this RFQ is open to them any more ──
+    await approve(legTwo.id, winnerTwo.id);
+    await listener.onReminder({ entityType: "RFQ", entityId: loserRfq.id, tier: "T2" });
+    expect(await remindersTo(loser.email)).toBe(1); // still just the one from the control above
+
+    // ...and the WINNER, whose own quotes are the approved ones, is not silenced by their own
+    // approval — `closedLegReasons` deliberately never reports a leg closed to its own winner.
+    await listener.onReminder({ entityType: "RFQ", entityId: winnerRfq.id, tier: "T2" });
+    expect(await remindersTo(winner.email)).toBe(1);
   });
 });

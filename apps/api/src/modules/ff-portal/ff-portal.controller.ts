@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Patch, Post, UseGuards } from "@nestjs/common";
-import type { FfPortalRfqDto, QuoteDraft } from "@svyft/shared";
-import { quoteDraftSchema } from "@svyft/shared";
+import type { FfPortalRfqDto, QuoteDraft, SubmitQuoteInput } from "@svyft/shared";
+import { quoteDraftSchema, submitQuoteSchema } from "@svyft/shared";
 import { Public } from "../auth/decorators/public.decorator";
 import { RfqTokenGuard } from "./rfq-token.guard";
 import { FfScope } from "./ff-scope.decorator";
@@ -30,7 +30,11 @@ export class FfPortalController {
 
   @Post("quotes/:legId/submit")
   @HttpCode(201)
-  submit(@FfScope() scope: FfScopeType, @Param("legId") legId: string) {
-    return this.portal.submit(scope, legId);
+  submit(
+    @FfScope() scope: FfScopeType,
+    @Param("legId") legId: string,
+    @Body(new ZodValidationPipe(submitQuoteSchema)) body: SubmitQuoteInput,
+  ) {
+    return this.portal.submit(scope, legId, body);
   }
 }
