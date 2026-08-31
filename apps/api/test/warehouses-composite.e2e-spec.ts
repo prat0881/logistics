@@ -105,6 +105,10 @@ describe("Warehouses composite create/update (e2e)", () => {
       where: { warehouseId: created.body.id },
     });
     expect(after).toHaveLength(1);
+    // By id, not just by count: a reconcile that deleted both rows and re-created the kept one
+    // from scratch would satisfy a length-and-quantity check while losing the row's identity
+    // and its audit trail.
+    expect(after[0].id).toBe(keep.id);
     expect(after[0].quantity).toBe(5);
   });
 

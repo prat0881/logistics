@@ -210,6 +210,62 @@ describe("Clients composite create/update (e2e)", () => {
     );
   });
 
+  // reconcileContacts' cross-owner guard (`Contact not found on this record`). Without it,
+  // `delegate.update({ where: { id } })` addresses the row by id alone and would happily write
+  // ANOTHER client's contact — a real IDOR, and a silent one, since the victim's row simply
+  // changes under them. The vehicle equivalent is already covered
+  // (warehouses-composite.e2e-spec.ts, "rolls the parent write back when a vehicle id belongs
+  // to no row on this warehouse"); this is the contact half of the same guard.
+  it("404s a contact id belonging to another client, leaving that client's contact untouched", async () => {
+    const a = await request(app.getHttpServer())
+      .post("/api/clients")
+      .set("Cookie", cookie(Role.MANAGER))
+      .send(clientCreateBody({ companyName: `${CO} G` }))
+      .expect(201);
+    const b = await request(app.getHttpServer())
+      .post("/api/clients")
+      .set("Cookie", cookie(Role.MANAGER))
+      .send(
+        clientCreateBody({
+          companyName: `${CO} H`,
+          contacts: [
+            {
+              name: "Victim",
+              email: "victim@x.com",
+              contactNo: "+971509999999",
+              pocLevel: "PRIMARY",
+            },
+          ],
+        }),
+      )
+      .expect(201);
+    const victim = (await prisma.clientContact.findMany({ where: { clientId: b.body.id } }))[0];
+
+    await request(app.getHttpServer())
+      .patch(`/api/clients/${a.body.id}`)
+      .set("Cookie", cookie(Role.MANAGER))
+      .send({
+        contacts: [
+          {
+            id: victim.id,
+            name: "Hijacked",
+            email: "hijacked@x.com",
+            contactNo: "+971500000000",
+            pocLevel: "PRIMARY",
+          },
+        ],
+      })
+      .expect(404);
+
+    const after = await prisma.clientContact.findUnique({ where: { id: victim.id } });
+    expect(after?.name).toBe("Victim");
+    expect(after?.email).toBe("victim@x.com");
+    expect(after?.clientId).toBe(b.body.id);
+    // The guard runs before the first delegate call, so client A's own contact is intact too —
+    // it was neither deleted nor replaced by the rejected payload.
+    expect(await prisma.clientContact.count({ where: { clientId: a.body.id } })).toBe(1);
+  });
+
   it("leaves a legacy client with no primary contact saveable", async () => {
     const created = await request(app.getHttpServer())
       .post("/api/clients")

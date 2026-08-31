@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
@@ -28,12 +28,15 @@ function renderAtRoute(initialEntry: string) {
   );
 }
 
-function renderForm() {
+/** `postCalls`, when given, collects every POST /api/warehouses body — for the tests that must
+ *  prove Save sent nothing at all, not merely that a message appeared. */
+function renderForm(postCalls?: unknown[]) {
   vi.stubGlobal(
     "fetch",
     mockFetch((url, init) => {
       if (url.endsWith("/api/auth/me")) return authMe;
       if (url.endsWith("/api/warehouses") && init?.method === "POST") {
+        postCalls?.push(init.body ? JSON.parse(String(init.body)) : undefined);
         return { status: 201, body: { id: "w9", name: "Owned DC" } };
       }
       return { status: 404 };
@@ -207,10 +210,14 @@ describe("WarehouseFormPage (create)", () => {
   });
 
   it("blocks Save when no contact is marked Primary", async () => {
-    renderForm();
+    // Both halves, like the ClientFormPage sibling: the message appears AND nothing was sent. A
+    // message-only assertion would stay green if the block were moved after the network call.
+    const postCalls: unknown[] = [];
+    renderForm(postCalls);
     await fillBaseFields("CLIENT", "No Primary DC");
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/one contact must be marked primary/i);
+    expect(postCalls).toHaveLength(0);
   });
 
   // Regression guard for the existing rate-field clearing effect, which must survive the
@@ -351,6 +358,73 @@ describe("WarehouseFormPage (edit)", () => {
     ]);
     expect(body?.vehicles).toMatchObject([
       { id: "9e0c4c1a-2a3b-4d5e-8f6a-1b2c3d4e5f60", tonnage: "T_5", quantity: 3 },
+    ]);
+  });
+
+  // State 3 of the three-state primary rule — a record that LOADED with contacts but none
+  // marked PRIMARY. It is explicitly permitted to save (a legacy record must never become
+  // un-editable, because this screen is the only place to fix it), which is exactly why it is
+  // the residual hazard: `loadedWithPrimary` is false, so nothing blocks submission, and a
+  // dropped `contacts:` mapping in reset() would PATCH `contacts: []` and have the API silently
+  // delete every contact with no test failing. Assert on the contact's id, not a length — a
+  // drop-and-recreate passes a length check. This is also the only cover for
+  // `showNoPrimaryBanner` on this page.
+  it("shows the advisory banner on a loaded warehouse with no primary, and still saves — carrying its contacts", async () => {
+    let body: Record<string, unknown> | undefined;
+    renderEditForm(
+      ownedWarehouseDto({
+        contacts: [
+          {
+            id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+            name: "Priya Nair",
+            designation: null,
+            email: "priya@example.com",
+            contactNo: "+971501234567",
+            whatsappAvailable: false,
+            wechatAvailable: false,
+            botimAvailable: false,
+            pocLevel: "NONE",
+            status: "ACTIVE",
+          },
+        ],
+      }),
+      (b) => (body = b),
+    );
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/no primary contact/i);
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(screen.getByText("warehouses list")).toBeInTheDocument());
+    expect(body?.contacts).toMatchObject([
+      { id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301", name: "Priya Nair", pocLevel: "NONE" },
+    ]);
+  });
+
+  // The `id` on a dialog-edited row survives only because react-hook-form carries unregistered
+  // `defaultValues` through `handleSubmit` (VehicleDialog seeds them from `initial` and never
+  // registers `id`) and `warehouseVehicleUpsertSchema` declares `id`. Neither is obvious, and
+  // if either changed, every dialog edit would silently become delete-plus-create: a new row
+  // id, a lost audit trail, and reconcile deleting the original because it is absent from the
+  // payload. The test above only proves an UNTOUCHED vehicle keeps its id.
+  it("carries the loaded vehicle's id through a dialog edit and into the PATCH body", async () => {
+    let body: Record<string, unknown> | undefined;
+    renderEditForm(
+      ownedWarehouseDto({
+        vehicles: [{ id: "9e0c4c1a-2a3b-4d5e-8f6a-1b2c3d4e5f60", tonnage: "T_5", quantity: 3 }],
+        totalVehicles: 3,
+      }),
+      (b) => (body = b),
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: /5 T/i }));
+    const dialog = screen.getByRole("dialog");
+    await userEvent.clear(within(dialog).getByLabelText(/quantity/i));
+    await userEvent.type(within(dialog).getByLabelText(/quantity/i), "7");
+    await userEvent.click(within(dialog).getByRole("button", { name: /save vehicle/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(screen.getByText("warehouses list")).toBeInTheDocument());
+
+    expect(body?.vehicles).toMatchObject([
+      { id: "9e0c4c1a-2a3b-4d5e-8f6a-1b2c3d4e5f60", tonnage: "T_5", quantity: 7 },
     ]);
   });
 });

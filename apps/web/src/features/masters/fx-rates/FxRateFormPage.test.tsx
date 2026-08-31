@@ -97,4 +97,33 @@ describe("FxRateFormPage (create)", () => {
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toEqual({ currency: "INR", unitsPerUsd: 83.2 });
   });
+
+  // The page's own try/catch carries the comment that without it "a rejected save produced
+  // nothing at all" — the button simply stopped spinning, since there is no toast system
+  // anywhere in apps/web. That claim had no test behind it here, unlike the three big form
+  // pages, each of which pins the same behaviour. The 409 below is what the API returns for a
+  // duplicate (currency, effectiveFrom).
+  it("surfaces the server's error message instead of failing silently", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return {
+            status: 200,
+            body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } },
+          };
+        if (url.endsWith("/api/fx-rates") && init?.method === "POST")
+          return { status: 409, body: { message: "A rate for INR already exists at that time" } };
+        return { status: 404 };
+      }),
+    );
+    renderForm();
+    await userEvent.selectOptions(await screen.findByLabelText(/currency/i), "INR");
+    await userEvent.type(screen.getByLabelText(/units\/usd/i), "83.5");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByText(/already exists at that time/i)).toBeInTheDocument();
+    // Still on the form: a refused save must never look like a successful one.
+    expect(screen.queryByText("fx list")).not.toBeInTheDocument();
+  });
 });
