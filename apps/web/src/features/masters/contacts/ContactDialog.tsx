@@ -44,7 +44,20 @@ export function ContactDialog({
         <DialogHeader>
           <DialogTitle>{isExisting ? "Edit contact" : "Add contact"}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit(onSave)} className="space-y-3">
+        {/* stopPropagation is required, not cosmetic: DialogContent renders through a Radix
+            Portal, so this <form> sits outside any enclosing <form> in the raw DOM — but React
+            bubbles events through the *React tree*, not the DOM tree, for elements rendered via
+            createPortal. Once ContactsSection is used inside a real page-level <form>
+            (MasterForm, from Task 8 on), this dialog's own submit would otherwise also reach
+            that outer form's onSubmit on every "Save contact" click, submitting the whole page
+            with whatever stale values it had *before* this dialog's onSave/onChange had run. */}
+        <form
+          onSubmit={(e) => {
+            e.stopPropagation();
+            void handleSubmit(onSave)(e);
+          }}
+          className="space-y-3"
+        >
           <Field id="c-name" label="Name" error={err("name")}>
             <Input id="c-name" {...register("name")} />
           </Field>
