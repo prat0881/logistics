@@ -108,8 +108,13 @@ export function FreightForwarderFormPage() {
   // nothing to mirror — `contacts` comes from the server via contactsQuery above.
   const [pic, contactNumber, email] = useWatch({ control, name: ["pic", "contactNumber", "email"] });
   const contacts = useWatch({ control, name: "contacts" }) ?? [];
+  // Suppressed while all three source fields are still blank: without this, a brand-new /new
+  // page renders a ghost PRIMARY row with an empty name/email/phone before the user has typed
+  // anything, and ContactsSection's "No contacts yet" empty state can never appear in create
+  // mode. As soon as any one of the three has content, the mirror (partially filled) takes over.
+  const hasMirror = !id && Boolean(pic || contactNumber || email);
   const mirroredContacts: ContactDraft[] = useMemo(() => {
-    if (id) return contacts;
+    if (!hasMirror) return contacts;
     const mirror: ContactDraft = {
       name: pic ?? "",
       email: email ?? "",
@@ -117,7 +122,7 @@ export function FreightForwarderFormPage() {
       pocLevel: "PRIMARY",
     };
     return [mirror, ...contacts];
-  }, [id, contacts, pic, contactNumber, email]);
+  }, [hasMirror, contacts, pic, contactNumber, email]);
 
   // Captured off the SERVER's loaded contacts (contactsQuery.data), NOT the live draft — same
   // reasoning as ClientFormPage's loadedWithPrimary: this is what distinguishes "never had a
@@ -131,6 +136,24 @@ export function FreightForwarderFormPage() {
   // and every 403 alike.
   async function onValidSubmit(values: FreightForwarderCreateInput) {
     setSubmitError(null);
+    // Edit mode only: FreightForwarderDto doesn't embed contacts (see useFreightForwarderContacts
+    // above), so this page always makes a SECOND request for them. Unlike ClientFormPage — where
+    // `existing.data` present implies contacts are present, because they're the same response —
+    // that second request can still be loading or can have failed while `existing.data` has
+    // already resolved and the rest of the form is fully valid. Left unguarded, the load effect's
+    // `contacts: (contactsQuery.data ?? []).map(...)` would reset the draft to an empty contacts
+    // array, and the API (freight-forwarders.service.ts: `if (contacts)` — `Boolean([])` is
+    // `true`) treats a present-but-empty array as "delete every contact", not "leave unchanged".
+    // Blocking here, rather than only in the load effect, is what stops that empty draft from
+    // ever reaching the PATCH.
+    if (id && !contactsQuery.isSuccess) {
+      setSubmitError(
+        contactsQuery.isError
+          ? "Could not load this forwarder's contacts. Please retry before saving."
+          : "This forwarder's contacts are still loading. Please wait a moment and try again.",
+      );
+      return;
+    }
     // Create mode sends the FULL mirrored array — [mirror, ...extras] — never `contacts: []`.
     // freightForwarderCreateSchema.contacts is `.array(...).refine(exactlyOnePrimary).optional()`
     // — an explicit empty array has zero primaries and is rejected with a 400; the mirrored
@@ -342,7 +365,7 @@ export function FreightForwarderFormPage() {
           <ContactsSection
             value={mirroredContacts}
             onChange={(next) => {
-              if (id) {
+              if (!hasMirror) {
                 field.onChange(next);
                 return;
               }
@@ -360,7 +383,7 @@ export function FreightForwarderFormPage() {
               );
             }}
             ownerNoun="freight forwarder"
-            lockedFirstRow={!id}
+            lockedFirstRow={hasMirror}
           />
         )}
       />

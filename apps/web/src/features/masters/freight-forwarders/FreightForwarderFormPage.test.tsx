@@ -175,6 +175,25 @@ describe("FreightForwarderFormPage (create)", () => {
     expect(within(table).getByText("PRIMARY")).toBeInTheDocument();
   });
 
+  // Without this, the mirror was prepended unconditionally: a brand-new /new page rendered one
+  // PRIMARY row with an empty name/email/phone before the user had typed anything, and
+  // ContactsSection's own empty state could never appear in create mode.
+  it("shows no ghost PRIMARY row before any of pic/contactNumber/email is filled", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.endsWith("/api/auth/me")) return authMe;
+        if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
+        return { status: 404 };
+      }),
+    );
+    renderAtRoute("/masters/freight-forwarders/new");
+    await screen.findByLabelText(/person in charge/i);
+
+    expect(screen.queryByText("PRIMARY")).not.toBeInTheDocument();
+    expect(screen.getByText(/no contacts yet/i)).toBeInTheDocument();
+  });
+
   it("does not let a second contact be made primary while the mirror holds it", async () => {
     vi.stubGlobal(
       "fetch",
@@ -352,6 +371,7 @@ describe("FreightForwarderFormPage (edit)", () => {
     await waitFor(() => expect(patchCalls).toHaveLength(1));
     expect(patchCalls[0]).toHaveProperty("contacts");
     expect(patchCalls[0]).toMatchObject({
+      companyName: "Legacy Forwarders Co",
       contacts: [expect.objectContaining({ name: "Asha M. Menon", pocLevel: "PRIMARY" })],
     });
   });
@@ -373,6 +393,97 @@ describe("FreightForwarderFormPage (edit)", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(/no primary contact/i);
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
     await waitFor(() => expect(patchCalls).toHaveLength(1));
+  });
+
+  // The third state of the three-state rule, and the one the state-3 test above can't cover:
+  // the record LOADED with a primary and the user is demoting it away. That must block, even
+  // though a record that loaded WITHOUT one saves freely. Critically, this pins
+  // `loadedWithPrimary` to the SERVER's loaded contacts (contactsQuery.data) rather than the
+  // live draft — regressing that sourcing to read the draft instead would leave every other
+  // test in this file green, since the state-3 test's draft also ends up with zero primaries.
+  it("blocks Save when the user demotes away the primary the record loaded with", async () => {
+    const patchCalls: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockLoadedForwarder({
+        id: "f7",
+        contacts: [
+          { id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301", name: "Asha Menon", email: "asha@example.com", contactNo: "+971501234567", pocLevel: "PRIMARY" },
+        ],
+        patchCalls,
+      }),
+    );
+    renderAtRoute("/masters/freight-forwarders/f7");
+
+    await userEvent.click(await screen.findByRole("button", { name: /asha menon/i }));
+    const dialog = screen.getByRole("dialog");
+    await userEvent.selectOptions(within(dialog).getByLabelText(/poc level/i), "SECONDARY");
+    await userEvent.click(within(dialog).getByRole("button", { name: /save contact/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/one contact must be marked primary/i);
+    expect(patchCalls).toHaveLength(0);
+  });
+
+  // The two-query split this page needs (FreightForwarderDto doesn't embed contacts, unlike
+  // ClientDto — see useFreightForwarderContacts) opens a data-loss window ClientFormPage never
+  // had: if GET /:id/contacts fails (or is simply still loading) while GET /:id has already
+  // resolved, the rest of the form is fully valid and nothing before this guard stops Save. The
+  // load effect's `contacts: (contactsQuery.data ?? []).map(...)` would then reset the draft to
+  // an empty array, and the API (freight-forwarders.service.ts: `if (contacts)` — `Boolean([])`
+  // is `true`) treats a present empty array as "delete every contact", not "leave unchanged".
+  it("blocks Save (sends no PATCH) when the contacts fetch has failed", async () => {
+    const patchCalls: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me")) return authMe;
+        if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
+        if (url.endsWith("/api/freight-forwarders/f8/warehouses")) return { status: 200, body: [] };
+        if (url.endsWith("/api/freight-forwarders/f8/contacts")) return { status: 500, body: { message: "boom" } };
+        if (url.endsWith("/api/freight-forwarders/f8")) {
+          if (init?.method === "PATCH") {
+            patchCalls.push(JSON.parse(String(init.body)));
+            return { status: 200, body: {} };
+          }
+          return {
+            status: 200,
+            body: {
+              id: "f8",
+              freightForwarderCode: "FF-0008",
+              companyName: "Stale Contacts Co",
+              companyAddress: "1 Old Rd",
+              city: "Old City",
+              postalCode: null,
+              country: "Singapore",
+              pic: "Someone",
+              contactNumber: "+971501234567",
+              email: "someone@ff.com",
+              availableCountries: ["SG"],
+              modes: ["AIR"],
+              handleDg: false,
+              vatTrnEori: null,
+              whLocation: null,
+              defaultCurrency: null,
+              paymentTerms: null,
+              typicalLeadTime: null,
+              status: "ACTIVE",
+            },
+          };
+        }
+        return { status: 404 };
+      }),
+    );
+    renderAtRoute("/masters/freight-forwarders/f8");
+
+    // The parent record is fully loaded and valid — nothing about it blocks Save. Only the
+    // failed contacts fetch should.
+    await screen.findByLabelText(/company name/i);
+    await waitFor(() => expect(screen.getByLabelText(/company name/i)).toHaveValue("Stale Contacts Co"));
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/contacts/i);
+    expect(patchCalls).toHaveLength(0);
   });
 
   // Nothing in this page renders `errors.contacts` — ContactsSection is Controller-driven, not
