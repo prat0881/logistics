@@ -306,4 +306,51 @@ describe("WarehouseFormPage (edit)", () => {
     await waitFor(() => expect(screen.getByText("warehouses list")).toBeInTheDocument());
     expect(body).toMatchObject({ name: "Dubai DC (renamed)", isBonded: true });
   });
+
+  // reset()'s own comment calls the `contacts:`/`vehicles:` mappings "the single most dangerous
+  // lines in this effect" — omitting either would leave the draft's array empty, and the API
+  // treats "absent from the array" as "delete", so the very next unrelated PATCH would silently
+  // delete every contact and vehicle on the record. `ownedWarehouseDto()` alone can't catch a
+  // regression here: its `contacts: []`/`vehicles: []` are already empty, so a dropped mapping
+  // line would be indistinguishable from correct behaviour. This test loads a warehouse with a
+  // REAL contact and a REAL vehicle, edits an unrelated scalar (city), and asserts both survive
+  // in the PATCH body — by id, not just by array length, so a mapping that dropped the id and
+  // re-created a same-shaped row from scratch would still be caught.
+  it("keeps existing contacts and vehicles in the PATCH body when an unrelated field is edited", async () => {
+    let body: Record<string, unknown> | undefined;
+    renderEditForm(
+      ownedWarehouseDto({
+        contacts: [
+          {
+            id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+            name: "Priya Nair",
+            designation: null,
+            email: "priya@example.com",
+            contactNo: "+971501234567",
+            whatsappAvailable: false,
+            wechatAvailable: false,
+            botimAvailable: false,
+            pocLevel: "PRIMARY",
+            status: "ACTIVE",
+          },
+        ],
+        vehicles: [{ id: "9e0c4c1a-2a3b-4d5e-8f6a-1b2c3d4e5f60", tonnage: "T_5", quantity: 3 }],
+        totalVehicles: 3,
+      }),
+      (b) => (body = b),
+    );
+
+    const cityInput = (await screen.findByDisplayValue("Dubai")) as HTMLInputElement;
+    await userEvent.type(cityInput, " Updated");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(screen.getByText("warehouses list")).toBeInTheDocument());
+
+    expect(body).toMatchObject({ city: "Dubai Updated" });
+    expect(body?.contacts).toMatchObject([
+      { id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301", name: "Priya Nair", pocLevel: "PRIMARY" },
+    ]);
+    expect(body?.vehicles).toMatchObject([
+      { id: "9e0c4c1a-2a3b-4d5e-8f6a-1b2c3d4e5f60", tonnage: "T_5", quantity: 3 },
+    ]);
+  });
 });
