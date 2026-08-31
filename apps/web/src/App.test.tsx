@@ -49,16 +49,21 @@ function renderAt(path: string, role: string) {
   );
 }
 
+// Each regex must match the page's actual aria-label (MasterForm renders aria-label={title}) and
+// must NOT match any other master's — "new"/"edit" plus the exact entity name, not a generic
+// "<thing> form" the shared shell never renders. These went stale once Tasks 8-11 moved
+// clients/vessels/freight-forwarders/warehouses onto MasterForm's dynamic "New X"/"Edit X" title;
+// the old hardcoded aria-label="X form" markup is gone.
 const FORM_ROUTES: [string, RegExp][] = [
-  ["/masters/clients/new", /client form/i],
-  ["/masters/clients/c1", /client form/i],
-  ["/masters/vessels/new", /vessel form/i],
-  ["/masters/vessels/v1", /vessel form/i],
-  ["/masters/freight-forwarders/new", /freight forwarder form/i],
-  ["/masters/freight-forwarders/f1", /freight forwarder form/i],
-  ["/masters/warehouses/new", /warehouse form/i],
-  ["/masters/warehouses/w1", /warehouse form/i],
-  ["/masters/fx-rates/new", /new fx rate/i],
+  ["/masters/clients/new", /^new client$/i],
+  ["/masters/clients/c1", /^edit client$/i],
+  ["/masters/vessels/new", /^new vessel$/i],
+  ["/masters/vessels/v1", /^edit vessel$/i],
+  ["/masters/freight-forwarders/new", /^new freight forwarder$/i],
+  ["/masters/freight-forwarders/f1", /^edit freight forwarder$/i],
+  ["/masters/warehouses/new", /^new warehouse$/i],
+  ["/masters/warehouses/w1", /^edit warehouse$/i],
+  ["/masters/fx-rates/new", /^new fx rate$/i],
 ];
 
 describe("master form routes are Administrator/Manager only", () => {
