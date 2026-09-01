@@ -3,9 +3,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { vesselCreateSchema, MASTER_STATUSES, type VesselCreateInput } from "@svyft/shared";
-import { ApiError, postJson, patchJson } from "@/lib/api";
+import { postJson, patchJson } from "@/lib/api";
 import { useVessel } from "../useMasters";
-import { MasterForm, FormSection, Field, SelectField } from "../form";
+import { MasterForm, FormSection, Field, SelectField, saveErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 
 export function VesselFormPage() {
@@ -45,7 +45,7 @@ export function VesselFormPage() {
       else await postJson("/api/vessels", values);
       navigate("/masters/vessels");
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : "Could not save this vessel");
+      setSubmitError(saveErrorMessage(err, "Could not save this vessel"));
     }
   }
 

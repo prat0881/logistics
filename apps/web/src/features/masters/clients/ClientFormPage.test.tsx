@@ -166,6 +166,37 @@ describe("ClientFormPage save failure", () => {
     // Still on the form: a refused save must never look like a successful one.
     expect(screen.queryByText("clients list")).not.toBeInTheDocument();
   });
+
+  // ZodValidationPipe throws `{ message: "Validation failed", issues }` for every schema
+  // rejection, so a naive `err.message` read would render that constant instead of the actual
+  // rule text. The masters' `saveErrorMessage` helper (apps/web/src/features/masters/form)
+  // reads the first usable `issues[]` message instead — this is the end-to-end proof that the
+  // wiring through ClientFormPage's onSubmit actually surfaces it.
+  it("surfaces the issue's own message instead of the ZodValidationPipe constant", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me")) return authMe;
+        if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
+        if (url.endsWith("/api/clients") && init?.method === "POST")
+          return {
+            status: 400,
+            body: {
+              message: "Validation failed",
+              issues: [{ message: "Exactly one contact must be marked Primary" }],
+            },
+          };
+        return { status: 404 };
+      }),
+    );
+    renderAtRoute("/masters/clients/new");
+    await fillParentFields("NewCo");
+    await addContactViaDialog({ name: "Asha Menon", email: "asha@example.com", phone: "+971501234567", primary: true });
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByText(/exactly one contact must be marked primary/i)).toBeInTheDocument();
+    expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
+  });
 });
 
 describe("ClientFormPage (edit)", () => {

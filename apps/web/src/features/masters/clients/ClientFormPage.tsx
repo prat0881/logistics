@@ -12,11 +12,11 @@ import {
   PRIMARY_DUPLICATE_MESSAGE,
   type ClientCreateInput,
 } from "@svyft/shared";
-import { ApiError, postJson, patchJson } from "@/lib/api";
+import { postJson, patchJson } from "@/lib/api";
 import { useClient, useOwnerWarehouses } from "../useMasters";
 import { ContactsSection } from "../contacts/ContactsSection";
 import { WarehousePicker } from "../WarehousePicker";
-import { MasterForm, FormSection, Field, SelectField } from "../form";
+import { MasterForm, FormSection, Field, SelectField, saveErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 
 // clientCreateSchema's own `contacts` rule (.min(1).refine(exactlyOnePrimary)) is unconditional
@@ -130,7 +130,7 @@ export function ClientFormPage() {
       else await postJson("/api/clients", values);
       navigate("/masters/clients");
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : "Could not save this client");
+      setSubmitError(saveErrorMessage(err, "Could not save this client"));
     }
   }
 

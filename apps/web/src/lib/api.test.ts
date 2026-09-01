@@ -182,10 +182,11 @@ describe("raise()", () => {
   });
 
   // ZodValidationPipe throws `{ message: "Validation failed", issues }` for every schema
-  // rejection, so before this the consolidated error region on every master form rendered that
-  // constant — including for the branch's headline server rules, whose real text is only ever
-  // in `issues`.
-  it("prefers the first issue's message over the pipe's constant 'Validation failed'", async () => {
+  // rejection. raise() is the shared fetch boundary for the whole app, so it surfaces the
+  // body's own `message` as-is rather than reaching into `issues` — a caller that wants a
+  // specific issue's text (e.g. the masters' `saveErrorMessage` helper) reads `issues` off the
+  // thrown `ApiError` itself, which is why `issues` must still come through intact below.
+  it("uses the body's message even when issues are present, and still passes issues through", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -202,41 +203,12 @@ describe("raise()", () => {
     );
     await expect(fetchJson("/api/clients")).rejects.toMatchObject({
       status: 400,
-      message: "One contact must be marked Primary",
-      // The full list is still carried, so a caller that wants every issue still has them.
+      message: "Validation failed",
       issues: [{ path: ["contacts"] }, { path: ["city"] }],
     });
   });
 
-  it("falls back to `message` when `issues` is present but empty", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 400,
-        json: async () => ({ message: "Validation failed", issues: [] }),
-      } as unknown as Response),
-    );
-    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
-      message: "Validation failed",
-    });
-  });
-
-  it("falls back to `message` when the first issue carries no usable message", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 400,
-        json: async () => ({ message: "Validation failed", issues: [{ path: ["city"] }] }),
-      } as unknown as Response),
-    );
-    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
-      message: "Validation failed",
-    });
-  });
-
-  it("does not let a blank issue message shadow a real server message", async () => {
+  it("does not let an issue's message override a real server message", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({

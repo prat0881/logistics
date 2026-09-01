@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useCanWrite } from "@/features/auth/useCanWrite";
-import { ApiError } from "@/lib/api";
 import { useFreightForwarders } from "../useMasters";
+import { saveErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 import { PaginationBar } from "@/components/PaginationBar";
 
@@ -38,7 +38,7 @@ export function FreightForwardersListPage() {
         // gate (any signed-in user may read this list), so a 403 is not a reachable failure
         // here and the server’s own message covers whatever did go wrong.
         <p role="alert" className="text-sm text-destructive">
-          {fetchError instanceof ApiError ? fetchError.message : "Could not load freight forwarders."}
+          {saveErrorMessage(fetchError, "Could not load freight forwarders.")}
         </p>
       ) : isLoading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>

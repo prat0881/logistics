@@ -19,12 +19,12 @@ import {
   type CountryCode,
   type CurrencyCode,
 } from "@svyft/shared";
-import { ApiError, postJson, patchJson } from "@/lib/api";
+import { postJson, patchJson } from "@/lib/api";
 import { useFreightForwarder, useFreightForwarderContacts, useOwnerWarehouses } from "../useMasters";
 import { ContactsSection, type ContactDraft } from "../contacts/ContactsSection";
 import { WarehousePicker } from "../WarehousePicker";
 import { MultiSelectCombobox } from "@/components/MultiSelectCombobox";
-import { MasterForm, FormSection, Field, SelectField } from "../form";
+import { MasterForm, FormSection, Field, SelectField, saveErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 
 const MODE_OPTS = FREIGHT_MODES.map((m) => ({ code: m, name: m }));
@@ -208,9 +208,7 @@ export function FreightForwarderFormPage() {
       else await postJson("/api/freight-forwarders", payload);
       navigate("/masters/freight-forwarders");
     } catch (err) {
-      setSubmitError(
-        err instanceof ApiError ? err.message : "Could not save this freight forwarder",
-      );
+      setSubmitError(saveErrorMessage(err, "Could not save this freight forwarder"));
     }
   }
 

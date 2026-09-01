@@ -18,12 +18,12 @@ import {
   type WarehouseCreateInput,
   type CurrencyCode,
 } from "@svyft/shared";
-import { ApiError, postJson, patchJson } from "@/lib/api";
+import { postJson, patchJson } from "@/lib/api";
 import { useWarehouse } from "../useMasters";
 import { ContactsSection } from "../contacts/ContactsSection";
 import { VehiclesSection } from "./VehiclesSection";
 import { ContractAndRatesSection } from "./ContractAndRatesSection";
-import { MasterForm, FormSection, Field, SelectField } from "../form";
+import { MasterForm, FormSection, Field, SelectField, saveErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 
 // warehouseCreateSchema's own `contacts` rule (.min(1).refine(exactlyOnePrimary)) is
@@ -184,7 +184,7 @@ export function WarehouseFormPage() {
       else await postJson("/api/warehouses", values);
       navigate("/masters/warehouses");
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : "Could not save this warehouse");
+      setSubmitError(saveErrorMessage(err, "Could not save this warehouse"));
     }
   }
 

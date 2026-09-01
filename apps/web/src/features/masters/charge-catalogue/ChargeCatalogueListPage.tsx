@@ -10,6 +10,7 @@ import {
 import { useCanWrite } from "@/features/auth/useCanWrite";
 import { ApiError, del, patchJson } from "@/lib/api";
 import { useChargeCatalogueAdmin } from "../useMasters";
+import { saveErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -63,7 +64,7 @@ export function ChargeCatalogueListPage() {
       await patchJson(`/api/charge-line-definitions/${id}`, { isActive: false });
       await qc.invalidateQueries({ queryKey: ["charge-catalogue-admin"] });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not deactivate this charge line");
+      setError(saveErrorMessage(e, "Could not deactivate this charge line"));
     }
   }
 
@@ -74,7 +75,7 @@ export function ChargeCatalogueListPage() {
       await qc.invalidateQueries({ queryKey: ["charge-catalogue-admin"] });
     } catch (e) {
       // Surfaces the 409 "in use on N legs" message from the API rather than a generic failure.
-      setError(e instanceof ApiError ? e.message : "Could not delete this charge line");
+      setError(saveErrorMessage(e, "Could not delete this charge line"));
     } finally {
       setConfirmDeleteId(null);
     }
@@ -106,9 +107,7 @@ export function ChargeCatalogueListPage() {
         <p role="alert" className="text-sm text-destructive">
           {fetchError instanceof ApiError && fetchError.status === 403
             ? "This screen needs Administrator or Manager access."
-            : fetchError instanceof ApiError
-              ? fetchError.message
-              : "Could not load the charge catalogue."}
+            : saveErrorMessage(fetchError, "Could not load the charge catalogue.")}
         </p>
       ) : (
         <>

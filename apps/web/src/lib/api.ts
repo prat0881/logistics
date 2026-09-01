@@ -48,22 +48,19 @@ async function raise(res: Response, url: string): Promise<never> {
   if (res.status === 401 && !url.includes("/api/auth/")) {
     onUnauthorized?.();
   }
-  // ZodValidationPipe throws `{ message: "Validation failed", issues }` for EVERY schema
-  // rejection, so `message` alone renders the same unactionable constant no matter what was
-  // wrong — including the composite endpoints' headline rules (exactlyOnePrimary /
-  // atMostOnePrimary), whose real text lives only in `issues`. Design decision C10 argued that
-  // one consolidated error region rendering *nothing* is worse than six that do; the same
-  // argument applies to rendering a constant, so the first issue's own message wins when there
-  // is one.
+  // `??` alone is not enough here: an empty or whitespace-only string is a *present* string, so
+  // it passes a nullish check and would render as a blank alert. Every master form shows one
+  // consolidated error region, and a blank region on a real failure is worse than no region, so
+  // fall back to a status message for a blank `message` too.
   //
-  // `??` alone is not enough at either step: an empty or whitespace-only string is a *present*
-  // string, so it passes a nullish check and renders as a blank alert. Every master form now
-  // shows one consolidated error region, and a blank region on a real failure is worse than no
-  // region.
+  // `raise()` is the shared fetch boundary for the whole app, so it surfaces the body's own
+  // `message` as-is — it does not know which caller can make use of `issues`. A caller that
+  // wants a specific issue's text (e.g. the masters' `saveErrorMessage` helper, for
+  // ZodValidationPipe's `{ message: "Validation failed", issues }` shape) reads `issues` off
+  // the thrown `ApiError` itself; `issues` is passed through below untouched.
   const text = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : undefined);
-  const firstIssueMessage = text((issues?.[0] as { message?: unknown } | undefined)?.message);
   const rawMessage = text((body as Record<string, unknown> | undefined)?.message);
-  const message = firstIssueMessage ?? rawMessage ?? `Request failed: ${res.status}`;
+  const message = rawMessage ?? `Request failed: ${res.status}`;
 
   throw new ApiError(res.status, message, findings, issues, body);
 }
