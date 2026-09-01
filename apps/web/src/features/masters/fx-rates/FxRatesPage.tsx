@@ -1,11 +1,12 @@
 import { Link } from "react-router-dom";
 import { viewerZone, formatInZone } from "@svyft/shared";
 import { useCanWrite } from "@/features/auth/useCanWrite";
+import { masterErrorMessage } from "../form";
 import { useFxRatesList } from "./useFxRates";
 
 export function FxRatesPage() {
   const canWrite = useCanWrite();
-  const { data, isLoading } = useFxRatesList();
+  const { data, isLoading, isError, error: fetchError } = useFxRatesList();
   const zone = viewerZone();
 
   return (
@@ -22,7 +23,18 @@ export function FxRatesPage() {
         )}
       </div>
 
-      {isLoading ? (
+      {isError ? (
+        // The sixth and last of the unified masters to get this branch. Without it a failed
+        // GET /api/fx-rates falls straight through to "No FX rates yet." — a message that
+        // claims the table is empty when in truth nothing was ever read, and on a rate table
+        // that drives quote conversion, "no rates" is a materially different fact from "the
+        // rates could not be loaded". No 403 branch: GET /api/fx-rates carries no @Roles gate
+        // (the POST does, the GET doesn't), so 403 is unreachable here; 500 and a dead network
+        // are not.
+        <p role="alert" className="text-sm text-destructive">
+          {masterErrorMessage(fetchError, "Could not load FX rates.")}
+        </p>
+      ) : isLoading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <div className="overflow-hidden rounded-md border border-border bg-card">

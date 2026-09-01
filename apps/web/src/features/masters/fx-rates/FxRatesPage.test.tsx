@@ -84,4 +84,29 @@ describe("FxRatesPage", () => {
     expect(await screen.findByText("auth role: EXECUTIVE")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /new fx rate/i })).not.toBeInTheDocument();
   });
+
+  it("surfaces the server’s message on a failed load and never the empty-state message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/fx-rates")) return { status: 500, body: { message: "Database unavailable" } };
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter>
+            <FxRatesPage />
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Database unavailable");
+    // The point of the branch: a failed read must not be dressed up as a successful empty one.
+    expect(screen.queryByText("No FX rates yet.")).not.toBeInTheDocument();
+  });
 });
