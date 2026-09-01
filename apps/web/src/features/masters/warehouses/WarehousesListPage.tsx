@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useCanWrite } from "@/features/auth/useCanWrite";
 import { useWarehouses } from "../useMasters";
-import { saveErrorMessage } from "../form";
+import { masterErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 import { PaginationBar } from "@/components/PaginationBar";
 
@@ -40,7 +40,7 @@ export function WarehousesListPage() {
         // gate (any signed-in user may read this list), so a 403 is not a reachable failure
         // here and the server’s own message covers whatever did go wrong.
         <p role="alert" className="text-sm text-destructive">
-          {saveErrorMessage(fetchError, "Could not load warehouses.")}
+          {masterErrorMessage(fetchError, "Could not load warehouses.")}
         </p>
       ) : isLoading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>

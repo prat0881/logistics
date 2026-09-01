@@ -15,7 +15,7 @@ import {
 } from "@svyft/shared";
 import { postJson, patchJson } from "@/lib/api";
 import { useChargeCatalogueAdmin } from "../useMasters";
-import { MasterForm, FormSection, Field, SelectField, saveErrorMessage } from "../form";
+import { MasterForm, FormSection, Field, SelectField, masterErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -141,7 +141,7 @@ export function ChargeLineFormPage() {
       await qc.invalidateQueries({ queryKey: ["charge-catalogue-admin"] });
       navigate("/masters/charge-catalogue");
     } catch (err) {
-      setSubmitError(saveErrorMessage(err, "Could not save this charge line"));
+      setSubmitError(masterErrorMessage(err, "Could not save this charge line"));
     }
   }
 

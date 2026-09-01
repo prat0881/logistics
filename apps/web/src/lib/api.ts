@@ -55,7 +55,7 @@ async function raise(res: Response, url: string): Promise<never> {
   //
   // `raise()` is the shared fetch boundary for the whole app, so it surfaces the body's own
   // `message` as-is — it does not know which caller can make use of `issues`. A caller that
-  // wants a specific issue's text (e.g. the masters' `saveErrorMessage` helper, for
+  // wants a specific issue's text (e.g. the masters' `masterErrorMessage` helper, for
   // ZodValidationPipe's `{ message: "Validation failed", issues }` shape) reads `issues` off
   // the thrown `ApiError` itself; `issues` is passed through below untouched.
   const text = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : undefined);

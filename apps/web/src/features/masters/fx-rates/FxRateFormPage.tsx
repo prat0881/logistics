@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { fxRateCreateSchema, CURRENCY_CODES, viewerZone, type FxRateCreateInput } from "@svyft/shared";
 import { useCreateFxRate } from "./useFxRates";
-import { MasterForm, FormSection, Field, SelectField, saveErrorMessage } from "../form";
+import { MasterForm, FormSection, Field, SelectField, masterErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 import { Form } from "@/components/ui/form";
 import { ZonedDateTimeField } from "@/components/ZonedDateTimeField";
@@ -35,7 +35,7 @@ export function FxRateFormPage() {
       await createRate.mutateAsync(values);
       navigate("/masters/fx-rates");
     } catch (err) {
-      setSubmitError(saveErrorMessage(err, "Could not save this FX rate"));
+      setSubmitError(masterErrorMessage(err, "Could not save this FX rate"));
     }
   }
 

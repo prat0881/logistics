@@ -169,7 +169,7 @@ describe("ClientFormPage save failure", () => {
 
   // ZodValidationPipe throws `{ message: "Validation failed", issues }` for every schema
   // rejection, so a naive `err.message` read would render that constant instead of the actual
-  // rule text. The masters' `saveErrorMessage` helper (apps/web/src/features/masters/form)
+  // rule text. The masters' `masterErrorMessage` helper (apps/web/src/features/masters/form)
   // reads the first usable `issues[]` message instead — this is the end-to-end proof that the
   // wiring through ClientFormPage's onSubmit actually surfaces it.
   it("surfaces the issue's own message instead of the ZodValidationPipe constant", async () => {

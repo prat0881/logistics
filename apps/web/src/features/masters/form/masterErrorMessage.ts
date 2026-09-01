@@ -18,7 +18,7 @@ const usableText = (v: unknown): string | undefined =>
  * back again to a page-supplied `fallback` — the same non-blank-string test `raise()` itself
  * uses, so a whitespace-only issue message can't win over a good `err.message`.
  */
-export function saveErrorMessage(err: unknown, fallback: string): string {
+export function masterErrorMessage(err: unknown, fallback: string): string {
   if (!(err instanceof ApiError)) return fallback;
 
   const issues = err.issues;

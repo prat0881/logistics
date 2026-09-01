@@ -2,4 +2,4 @@ export { MasterForm } from "./MasterForm";
 export { FormSection } from "./FormSection";
 export { Field } from "./Field";
 export { SelectField } from "./SelectField";
-export { saveErrorMessage } from "./saveErrorMessage";
+export { masterErrorMessage } from "./masterErrorMessage";

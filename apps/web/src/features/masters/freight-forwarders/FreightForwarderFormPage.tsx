@@ -24,7 +24,7 @@ import { useFreightForwarder, useFreightForwarderContacts, useOwnerWarehouses } 
 import { ContactsSection, type ContactDraft } from "../contacts/ContactsSection";
 import { WarehousePicker } from "../WarehousePicker";
 import { MultiSelectCombobox } from "@/components/MultiSelectCombobox";
-import { MasterForm, FormSection, Field, SelectField, saveErrorMessage } from "../form";
+import { MasterForm, FormSection, Field, SelectField, masterErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 
 const MODE_OPTS = FREIGHT_MODES.map((m) => ({ code: m, name: m }));
@@ -208,7 +208,7 @@ export function FreightForwarderFormPage() {
       else await postJson("/api/freight-forwarders", payload);
       navigate("/masters/freight-forwarders");
     } catch (err) {
-      setSubmitError(saveErrorMessage(err, "Could not save this freight forwarder"));
+      setSubmitError(masterErrorMessage(err, "Could not save this freight forwarder"));
     }
   }
 

@@ -16,7 +16,7 @@ import { postJson, patchJson } from "@/lib/api";
 import { useClient, useOwnerWarehouses } from "../useMasters";
 import { ContactsSection } from "../contacts/ContactsSection";
 import { WarehousePicker } from "../WarehousePicker";
-import { MasterForm, FormSection, Field, SelectField, saveErrorMessage } from "../form";
+import { MasterForm, FormSection, Field, SelectField, masterErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 
 // clientCreateSchema's own `contacts` rule (.min(1).refine(exactlyOnePrimary)) is unconditional
@@ -130,7 +130,7 @@ export function ClientFormPage() {
       else await postJson("/api/clients", values);
       navigate("/masters/clients");
     } catch (err) {
-      setSubmitError(saveErrorMessage(err, "Could not save this client"));
+      setSubmitError(masterErrorMessage(err, "Could not save this client"));
     }
   }
 

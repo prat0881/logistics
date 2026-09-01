@@ -4,7 +4,7 @@ import type { Paginated, WarehouseDto } from "@svyft/shared";
 import { fetchJson } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { saveErrorMessage } from "./form";
+import { masterErrorMessage } from "./form";
 
 /**
  * Owner-agnostic, fully controlled draft editor (Task 8). It no longer talks to the network to
@@ -112,7 +112,7 @@ export function WarehousePicker({
           uncheckable-by-accident) even when only the unassigned pool failed. */}
       {unassigned.isError && (
         <p role="alert" className="text-sm text-destructive">
-          {saveErrorMessage(unassigned.error, "Could not load warehouses to assign.")}
+          {masterErrorMessage(unassigned.error, "Could not load warehouses to assign.")}
         </p>
       )}
       {sorted.length > 0 ? (

@@ -184,7 +184,7 @@ describe("raise()", () => {
   // ZodValidationPipe throws `{ message: "Validation failed", issues }` for every schema
   // rejection. raise() is the shared fetch boundary for the whole app, so it surfaces the
   // body's own `message` as-is rather than reaching into `issues` — a caller that wants a
-  // specific issue's text (e.g. the masters' `saveErrorMessage` helper) reads `issues` off the
+  // specific issue's text (e.g. the masters' `masterErrorMessage` helper) reads `issues` off the
   // thrown `ApiError` itself, which is why `issues` must still come through intact below.
   it("uses the body's message even when issues are present, and still passes issues through", async () => {
     vi.stubGlobal(
