@@ -19,7 +19,10 @@ const fiveTonner: WarehouseVehicleUpsert = {
 describe("VehiclesSection", () => {
   it("has no per-row action buttons — the row itself is the control", () => {
     render(<Harness initial={[fiveTonner]} />);
-    expect(screen.queryByRole("button", { name: /^edit/i })).not.toBeInTheDocument();
+    // The row's own button is labelled "Edit 5 T" (Task 1's accessible-name fix), so a bare
+    // /^edit/i query now matches it too. Assert there is exactly one such button — the row
+    // itself — rather than none, to still catch a future separate Edit action button.
+    expect(screen.getAllByRole("button", { name: /^edit/i })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /^remove/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /5 t/i })).toBeInTheDocument();
   });
@@ -72,5 +75,11 @@ describe("VehiclesSection", () => {
     expect(within(table).getByText(/12 t/i)).toBeInTheDocument();
     expect(fetchSpy).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+
+  it("styles the tonnage as a link so it reads as clickable", () => {
+    render(<Harness initial={[fiveTonner]} />);
+    const tonnageButton = screen.getByRole("button", { name: /^edit /i });
+    expect(tonnageButton).toHaveClass("text-primary");
   });
 });

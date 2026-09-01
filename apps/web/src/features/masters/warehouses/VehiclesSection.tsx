@@ -60,7 +60,8 @@ export function VehiclesSection({
                 <TableCell>
                   <button
                     type="button"
-                    className="font-medium underline-offset-4 hover:underline"
+                    aria-label={`Edit ${truckTonnageLabel(v.tonnage as TruckTonnage)}`}
+                    className="font-medium text-primary hover:underline"
                     onClick={() => setOpenIndex(i)}
                   >
                     {truckTonnageLabel(v.tonnage as TruckTonnage)}

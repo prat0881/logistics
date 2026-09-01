@@ -93,7 +93,8 @@ export function ContactsSection({
                   ) : (
                     <button
                       type="button"
-                      className="font-medium underline-offset-4 hover:underline"
+                      aria-label={`Edit ${c.name}`}
+                      className="font-medium text-primary hover:underline"
                       onClick={() => setOpenIndex(i)}
                     >
                       {c.name}

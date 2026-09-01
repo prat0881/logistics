@@ -43,7 +43,10 @@ const rahul: ContactDraft = {
 describe("ContactsSection", () => {
   it("has no per-row action buttons — the row itself is the control", () => {
     render(<Harness initial={[asha]} />);
-    expect(screen.queryByRole("button", { name: /^edit/i })).not.toBeInTheDocument();
+    // The row's own button is labelled "Edit Asha Menon" (Task 1's accessible-name fix), so a
+    // bare /^edit/i query now matches it too. Assert there is exactly one such button — the row
+    // itself — rather than none, to still catch a future separate Edit action button.
+    expect(screen.getAllByRole("button", { name: /^edit/i })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /^remove/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /asha menon/i })).toBeInTheDocument();
   });
@@ -143,5 +146,14 @@ describe("ContactsSection", () => {
       expect(screen.getByLabelText(/^name$/i)).toHaveValue("Rahul Sethi");
       expect(screen.getByLabelText(/email/i)).toHaveValue("rahul@example.com");
     });
+  });
+
+  it("styles the contact name as a link so it reads as clickable", () => {
+    render(<Harness initial={[asha]} />);
+    const nameButton = screen.getByRole("button", { name: /asha menon/i });
+    // `text-primary` is the app-wide affordance for a clickable record name — every list page
+    // uses it. Dropping it is what made this table read as static text.
+    expect(nameButton).toHaveClass("text-primary");
+    expect(nameButton).toHaveAttribute("aria-label", "Edit Asha Menon");
   });
 });
