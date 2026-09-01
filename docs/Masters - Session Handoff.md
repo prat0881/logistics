@@ -161,6 +161,63 @@ Both merged on 2026-08-31. The product works, no data was corrupted, and the int
 - 50 legacy seed entries still carry `role`/`zone` literals the derivation now overrides. Documented in place; the new unit test turns them into the oracle rather than a trap.
 - Browsing the unassigned-warehouse pool caps at 100 without pagination; search reaches past it.
 
+## Deferred minors — status after the consistency pass (2026-09-01)
+
+Two entries in the list above were **resolved** by the master-data consistency branch:
+
+- ~~`lib/api.ts` `raise()`: an empty-string `body.message` yields an empty `ApiError.message`~~ —
+  **fixed** (Task 1). `raise()` now trims and falls back to a status string, and additionally
+  prefers the first Zod issue's message over the pipe's literal `"Validation failed"`.
+- ~~Browsing the unassigned-warehouse pool caps at 100 without pagination~~ — still true, but the
+  picker now also distinguishes a **failed** pool fetch from an empty one, which it previously
+  rendered identically.
+
+The rest of that list stands.
+
+## Follow-up work owed by the master-data consistency pass
+
+Recorded here because the branch's working ledger is gitignored scratch. None of these block the
+merge; each was reviewed and deliberately deferred.
+
+1. **`AuthProvider`-race test convention (own PR).** `ClientsListPage.test.tsx`,
+   `VesselsListPage.test.tsx`, `WarehousesListPage.test.tsx` and
+   `FreightForwardersListPage.test.tsx` each await a list row and then assert role-gated UI is
+   absent. `AuthProvider` renders children immediately with `user = null` and `useCanWrite()`
+   defaults false, so these can pass off the default unauthenticated state without the role ever
+   being evaluated. Roughly 17 files share the shape. **`FxRatesPage.test.tsx`'s `AuthSettled`
+   probe is the pattern to propagate.** This is the same class that failed CI on PR #54.
+2. **`raise()`'s issue-first message is app-wide.** Every non-masters `ZodValidationPipe` 400 now
+   renders the first Zod issue's raw message (no field path) where `"Validation failed"` used to
+   sit — query wizard, RFQ workspace, Compare. `issues[0]` is schema-key order, not relevance
+   order, so the surfaced issue may not be the actionable one. Fail-soft, arguably an
+   improvement, but user-visible beyond this branch's scope.
+3. **`usePackages.ts:50-55` (MSDS upload) bypasses `raise()`**, hand-building its own `ApiError`
+   from `b?.message`, so that one path still shows `"Validation failed"`. Pre-existing
+   divergence, now wider.
+4. **The owner-warehouses Save gate can fire on a healthy draft.** TanStack Query sets
+   `status: "error"` on a *background refetch* failure while retaining `data`, so a post-load
+   refetch failure blocks Save with "Could not load…". Fail-closed, not data loss, but a user can
+   be told to retry when nothing is wrong.
+5. **Neither owner form gates on `existing.isSuccess`.** If the parent `GET /:id` fails while the
+   child queries succeed, `reset()` never runs and Save is stopped only incidentally by
+   required-scalar validation. Pre-existing; not reachable as data loss today.
+6. **`warehouseVehicleSchema.tonnage` is `z.string()` against a `TruckTonnage` enum column**, so
+   the API accepts any string and fails at Prisma — a 500 where a 400 belongs. **No longer
+   user-reachable**: the vehicle dialog's control is now a select over `TRUCK_TONNAGES`. Belongs
+   to the Stage-4 pass, where `TruckTonnage` is already in scope.
+7. **`WarehouseContact.isWeekendIncharge` is unmodelled in `contactCoreSchema`**, so nothing can
+   set it. Left alone deliberately: a warehouse-only tenth field would break the shared
+   nine-field contact shape that makes `reconcileContacts` owner-agnostic across three services.
+8. **`queryClient` is constructed bare** (`api.ts`), so `refetchOnWindowFocus` is on with
+   `staleTime: 0`, and each form's `reset()` replaces the whole draft. A background refetch
+   mid-edit therefore wipes unsaved contacts, vehicles and typed fields. Pre-existing in shape,
+   materially worse now that one long form holds all children behind one Save. Guarding the
+   reset on `formState.isDirty` is the usual fix.
+
+Also unbuilt, and recorded as a dropped requirement rather than an omission: design §5.3's
+"the same state renders as a marker in the list row" for records with no primary contact. No list
+page was touched; the advisory banner on the form carries the signal instead.
+
 ## The exact next step
 
 **Both branches are merged and deployed. Two things remain.**
