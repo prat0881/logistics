@@ -30,11 +30,13 @@ const isPrimary = (c: ContactUpsert) => c.pocLevel === PocLevel.PRIMARY;
  * Reconcile one owner's contact list to exactly `contacts`. MUST be called inside the caller's
  * transaction, with `delegate` taken from that transaction client.
  *
- * Write order is deletes -> demotions -> promotions -> creates, and that order is the whole
- * point. `<Owner>Contact_one_primary` is a partial unique index, so a payload that swaps which
- * contact is primary is valid as a whole but violates the index at every intermediate state if
- * the promotion lands before the demotion. Reordering these four blocks reintroduces a bug that
- * only appears on a swap, never on a plain edit.
+ * Write order is deletes -> demotions -> promotions -> creates. The load-bearing part of that
+ * order is demotions BEFORE promotions: `<Owner>Contact_one_primary` is a partial unique index,
+ * so a payload that swaps which contact is primary is valid as a whole but violates the index at
+ * every intermediate state if the promotion lands first. Reordering those two steps reintroduces
+ * a bug that only appears on a swap, never on a plain edit. The remaining steps are not load-
+ * bearing in the same way — see step 4's own comment for why create order is defensive
+ * consistency rather than a second index hazard.
  */
 export async function reconcileContacts(opts: {
   delegate: ContactDelegate;

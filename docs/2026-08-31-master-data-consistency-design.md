@@ -218,11 +218,15 @@ Existing rates stay read-only history.
 While creating, `pic` / `contactNumber` / `email` drive a synthetic PRIMARY row rendered in the
 contacts table. The user may add further contacts but cannot mark a second primary. On submit the
 payload **always** carries the full mirrored array — `[mirror, ...extras]` — never `contacts: []`
-and never an omitted `contacts`. `create()` skips its own seed whenever `contacts` already
-contains a PRIMARY, so the row is written once, not twice. That skip is what keeps the record to
-**exactly one PRIMARY after create**, which is the real requirement.
+and never an omitted `contacts`. `create()` skips its own seed whenever the caller supplies
+**any** `contacts` at all — the guard is `if (!contacts?.length)`, not a test for a PRIMARY in the
+payload. The two coincide for every schema-valid body, since
+`freightForwarderCreateSchema`'s `exactlyOnePrimary`-when-supplied refine guarantees a supplied
+array already carries exactly one, which is how the record still ends with **exactly one PRIMARY
+after create** — the real requirement.
 
-> **Corrections (2026-09-01, whole-branch review).** Two claims here were wrong.
+> **Corrections (2026-09-01, whole-branch review).** Three claims here were wrong — the third
+> introduced by this very correction pass and caught in re-review.
 >
 > 1. "the payload omits `contacts` when the mirrored row is the only contact" is superseded: the
 >    FF page now always sends `[mirror, ...extras]`, because `freightForwarderCreateSchema`'s
@@ -232,6 +236,13 @@ contains a PRIMARY, so the row is written once, not twice. That skip is what kee
 >    tripping". It is not: `reconcileContacts` deletes before it creates, so that index never
 >    trips on this path. The skip's real job is the exactly-one-PRIMARY-after-create invariant,
 >    as restated above.
+> 3. The 2026-09-01 rewrite of the paragraph above then restated the skip's *condition* wrongly,
+>    as "whenever `contacts` already contains a PRIMARY". The guard is `if (!contacts?.length)` —
+>    any supplied array skips the seed, primary or not — and
+>    `freight-forwarders.service.ts:81-83` carries a comment warning against exactly that
+>    phrasing. Extensionally equivalent for schema-valid payloads, so no behavioural
+>    consequence, but it was the design contradicting the source it describes, in the paragraph
+>    that exists to stop that.
 
 On an existing record the three fields stay `disabled` and display whichever contact is PRIMARY.
 Editing that contact in the dialog updates them after save, via `syncPrimaryContactColumns`.
