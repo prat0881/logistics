@@ -186,14 +186,17 @@ merge; each was reviewed and deliberately deferred.
    defaults false, so these can pass off the default unauthenticated state without the role ever
    being evaluated. Roughly 17 files share the shape. **`FxRatesPage.test.tsx`'s `AuthSettled`
    probe is the pattern to propagate.** This is the same class that failed CI on PR #54.
-2. **`raise()`'s issue-first message is app-wide.** Every non-masters `ZodValidationPipe` 400 now
-   renders the first Zod issue's raw message (no field path) where `"Validation failed"` used to
-   sit — query wizard, RFQ workspace, Compare. `issues[0]` is schema-key order, not relevance
-   order, so the surfaced issue may not be the actionable one. Fail-soft, arguably an
-   improvement, but user-visible beyond this branch's scope.
+2. ~~**`raise()`'s issue-first message is app-wide.**~~ — **RESOLVED before merge (user's
+   call).** The issue preference briefly lived in `raise()`, which changed every non-masters
+   `ZodValidationPipe` 400 across the query wizard, RFQ workspace and Compare. It was scoped
+   back: `raise()` again surfaces the body's own `message` for every caller (keeping only the
+   separate blank-message trim guard), and the masters read `issues` off the thrown `ApiError`
+   themselves via `features/masters/form/masterErrorMessage.ts`. Those screens are byte-for-byte
+   unchanged from before this branch. **If you ever want readable validation errors elsewhere,
+   call `masterErrorMessage` from that screen — do not move the preference back into `raise()`.**
 3. **`usePackages.ts:50-55` (MSDS upload) bypasses `raise()`**, hand-building its own `ApiError`
-   from `b?.message`, so that one path still shows `"Validation failed"`. Pre-existing
-   divergence, now wider.
+   from `b?.message`, so that path shows `"Validation failed"`. Pre-existing divergence, and
+   unchanged by the scoping above.
 4. **The owner-warehouses Save gate can fire on a healthy draft.** TanStack Query sets
    `status: "error"` on a *background refetch* failure while retaining `data`, so a post-load
    refetch failure blocks Save with "Could not load…". Fail-closed, not data loss, but a user can
