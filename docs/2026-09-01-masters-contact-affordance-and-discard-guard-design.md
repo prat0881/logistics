@@ -63,8 +63,11 @@ So the fix is to adopt the existing pattern, not to invent a new highlight.
 >
 > Nothing bad landed: it was caught in task review, repaired first as a page-wide
 > `toHaveLength(1)` and then, in `dfd5047`, scoped to the row with `within(row)
-> .getAllByRole("button")` — a strictly stronger guard than the original, since it also catches a
-> second control added inside the row.
+> `.getAllByRole("button")`. That is stronger where it matters — it catches any second control
+> added inside the row, whatever it is called — but not *strictly* stronger: the original
+> page-wide query would also have caught a stray Edit button rendered outside the row, which
+> the row-scoped one cannot see. A deliberate trade: a row control's regression is a second
+> control in that row.
 >
 > The general rule to carry forward: **changing an accessible name invalidates negative
 > name-anchored queries as readily as positive ones.** "The new name still contains the old
