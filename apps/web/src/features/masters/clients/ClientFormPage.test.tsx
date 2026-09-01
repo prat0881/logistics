@@ -342,12 +342,16 @@ describe("ClientFormPage (edit)", () => {
 
   // The counterpart to the test above: the warehouses gate must block a draft that never got
   // its ids, and ONLY that draft. Here the query loaded cleanly and a later background refetch
-  // failed, so the query cache state is "error" while `data` still holds the ids the load
-  // effect already seeded — the data-loss path the gate exists for is not live, and Save must
-  // go through. It does today (react-query v5 leaves the observer's `status` at "success" for a
-  // refetch failure that retains data, so `isSuccess` would also have allowed it), and the gate
-  // now reads `data === undefined` so it keeps going through if that library detail ever
-  // changes. Asserting the cache state below is what makes the fixture's claim checkable.
+  // failed, so the state is "error" while `data` still holds the ids the load effect already
+  // seeded — the data-loss path the gate exists for is not live, and Save must go through.
+  //
+  // The keystroke before the click is load-bearing, not incidental typing. React-query derives
+  // the observer's `isSuccess` straight from that "error" state, but `notifyOnChangeProps`
+  // tracking means the failed refetch notifies nobody while only `data` is read during render,
+  // so without a re-render the component keeps serving the pre-failure result and the old
+  // `!isSuccess` gate would pass by luck. Typing forces the render that exposes the real
+  // values, which is exactly how a user meets this: edit a field, hit Save, get told to retry
+  // when nothing is wrong. Asserting the query state below keeps the fixture's claim checkable.
   it("still saves when the assigned-warehouses query succeeded and only a later refetch failed", async () => {
     const patchCalls: { warehouseIds?: string[] }[] = [];
     let warehouseCalls = 0;
@@ -415,6 +419,8 @@ describe("ClientFormPage (edit)", () => {
     expect(state?.status).toBe("error");
     expect(state?.data).toBeDefined();
 
+    // Forces the re-render that surfaces the post-failure observer result — see above.
+    await userEvent.type(screen.getByLabelText(/company name/i), "x");
     await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(patchCalls).toHaveLength(1));

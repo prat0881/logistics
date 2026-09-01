@@ -15,8 +15,10 @@
 - ⚠️ **`apps/api` IS touched on this branch — do not skip an api run.** The bullets above are
   written almost entirely about `apps/web`, and the work after them (the contact-affordance fix,
   the discard guard, and the final fix wave) is web-facing, so it is easy to read this file and
-  conclude the api is untouched. It is not. Four api changes landed: a corrected create-ordering
-  comment in `apps/api/src/common/reconcile-contacts.ts`, a **new cross-owner IDOR e2e case** in
+  conclude the api is untouched. It is not — against `main` the branch's api footprint is 15
+  files. Narrowly, **the whole-branch review range alone added four api changes**: a corrected
+  create-ordering comment in `apps/api/src/common/reconcile-contacts.ts`, a **new cross-owner
+  IDOR e2e case** in
   `apps/api/test/clients-composite.e2e-spec.ts`, an added id assertion in
   `apps/api/test/warehouses-composite.e2e-spec.ts`, and a comment rewrite in
   `apps/api/test/reconcile-contacts.spec.ts`. Only the first is production code, but the second
@@ -210,18 +212,39 @@ merge; each was reviewed and deliberately deferred.
 3. **`usePackages.ts:50-55` (MSDS upload) bypasses `raise()`**, hand-building its own `ApiError`
    from `b?.message`, so that path shows `"Validation failed"`. Pre-existing divergence, and
    unchanged by the scoping above.
-4. ~~**The owner-warehouses Save gate can fire on a healthy draft.**~~ — **CLOSED, and the
-   premise was wrong.** The claim was that TanStack Query sets `status: "error"` on a *background
-   refetch* failure while retaining `data`, so a healthy loaded draft could be blocked with
-   "Could not load…". Measured on v5.101 (probe: load once, fail the refetch, read both): the
-   query **cache** state does go to `"error"` with `data` retained, but the observer `useQuery`
-   returns keeps `status: "success"`, so `isSuccess` stayed true and **no draft was ever wrongly
-   blocked**. The gate on both `ClientFormPage` and `FreightForwarderFormPage` was nonetheless
-   changed to `ownedWarehouses.data === undefined`, which states the actual hazard ("the load
-   effect never seeded `warehouseIds`") without depending on that library detail, and
-   `ClientFormPage.test.tsx` now pins the succeeded-then-failed-refetch case. **Note for whoever
-   reads follow-up 5 or writes the next such gate: `useQuery`'s `status` and
-   `queryClient.getQueryState()`'s `status` are not the same value.**
+4. **The owner-warehouses Save gate could fire on a healthy draft** — **FIXED, and the original
+   report was right.** TanStack Query sets `status: "error"` on a *background refetch* failure
+   while retaining `data`, so a post-load refetch failure blocked Save with "Please retry before
+   saving" on a draft with nothing wrong with it. Fail-closed, not data loss, but a dead end: the
+   form offers no retry short of a page reload.
+
+   Verified against `@tanstack/query-core` 5.101 rather than argued: `query.js:375-388` sets
+   `status: "error"` with `data` retained; `queryObserver.js:262,313-316` derives
+   `status`/`isSuccess`/`isError` straight from that state, and `isRefetchError = isError &&
+   hasData` exists for precisely this case. A fresh `getOptimisticResult()` after a failed
+   refetch reports `{ status: "error", isSuccess: false, isRefetchError: true, data: [...] }`.
+
+   **Why it looked benign, and the trap to avoid repeating.** `notifyOnChangeProps` tracking
+   (`queryObserver.js:133-153,388-408`) means only the properties actually read during render are
+   tracked. Both forms read only `.data`, so the refetch failure notified nobody and a probe
+   placed inside `onValidSubmit` read the *previous render's closure* — reporting `isSuccess:
+   true` and appearing to disprove the defect. It does not: force any re-render and the observer
+   reports `isSuccess: false` with `data` defined. Worse, the old gate was **self-arming** —
+   `trackProp` fires on any proxy access and tracked props are never cleared, so reading
+   `.isSuccess` inside `onValidSubmit` tracked it permanently; after one Save click the next
+   failed refetch *did* notify, and one keystroke (`isDirty` is subscribed and passed to
+   `MasterForm`) was enough to surface the block.
+
+   **Fixed on all three gates** — `ownedWarehouses` on `ClientFormPage` and
+   `FreightForwarderFormPage`, and `contactsQuery` on the latter — now
+   `…​.data === undefined`, which is the hazard ("the load effect never seeded the field") stated
+   directly. `ClientFormPage.test.tsx` pins it, typing into a field before Save so the assertion
+   sees the post-failure render; it fails under the old `!isSuccess` form.
+
+   **Note for whoever writes the next such gate: `useQuery`'s `status` and
+   `queryClient.getQueryState()`'s `status` ARE the same value.** What differs is whether your
+   component has been *notified* of the change. Never conclude anything from a value read inside
+   a callback closure — take a fresh result, or force a render first.
 5. **Neither owner form gates on `existing.isSuccess`.** If the parent `GET /:id` fails while the
    child queries succeed, `reset()` never runs and Save is stopped only incidentally by
    required-scalar validation. Pre-existing; not reachable as data loss today.

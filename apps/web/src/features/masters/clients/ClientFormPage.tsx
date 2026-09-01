@@ -110,15 +110,25 @@ export function ClientFormPage() {
     // detaches every warehouse from this client. Blocking here is what stops that empty draft
     // from ever reaching the PATCH.
     //
-    // The check is on `data`, not on `isSuccess`, because `data === undefined` IS the hazard —
-    // "the load effect never seeded warehouseIds" — stated directly, with no dependency on how
-    // react-query happens to spell its status. The two agree today: measured on v5.101, when a
-    // background refetch fails on a query that already holds data, the query CACHE state goes
-    // to "error" but the observer `useQuery` returns keeps `status: "success"` — so `isSuccess`
-    // stays true and such a draft saves either way. That equivalence is an implementation
-    // detail of the library, though, and were it to flip, the status form would start blocking
-    // a healthy, fully-seeded draft behind a retry message with no retry affordance short of a
-    // page reload. The data form cannot: if `data` is defined the ids are real.
+    // The check is on `data`, not on `isSuccess`, and that difference is load-bearing — the
+    // `!isSuccess` form it replaced blocked healthy, fully-seeded drafts. Measured on
+    // @tanstack/query-core 5.101: a background refetch that fails on a query already holding
+    // data sets the query state to "error" while RETAINING `data`, and the observer derives
+    // `status`/`isSuccess`/`isError` straight from that state (`isRefetchError = isError &&
+    // hasData` exists for exactly this case). So from the next render onward `isSuccess` is
+    // false with the real ids still in `data`, and `!isSuccess` reported "Please retry before
+    // saving" on a draft with nothing wrong with it — a dead end, since this form offers no
+    // retry short of a page reload.
+    //
+    // It hid behind `notifyOnChangeProps` tracking, which is why it looked benign: this render
+    // reads only `ownedWarehouses.data`, so only "data" is tracked and a refetch failure
+    // notifies nobody. But the old gate was self-arming — reading `.isSuccess` here tracked
+    // "isSuccess" permanently (tracked props are never cleared), so after one Save click the
+    // next failed refetch DID notify, and any later render (a keystroke suffices — `isDirty` is
+    // subscribed and passed to MasterForm) surfaced the block.
+    //
+    // `data === undefined` is immune to all of that because it IS the hazard stated directly:
+    // "the load effect never seeded warehouseIds". If `data` is defined the ids are real.
     if (id && ownedWarehouses.data === undefined) {
       setSubmitError(
         ownedWarehouses.isError
