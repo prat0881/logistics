@@ -43,10 +43,14 @@ const rahul: ContactDraft = {
 describe("ContactsSection", () => {
   it("has no per-row action buttons — the row itself is the control", () => {
     render(<Harness initial={[asha]} />);
-    // The row's own button is labelled "Edit Asha Menon" (Task 1's accessible-name fix), so a
-    // bare /^edit/i query now matches it too. Assert there is exactly one such button — the row
-    // itself — rather than none, to still catch a future separate Edit action button.
-    expect(screen.getAllByRole("button", { name: /^edit/i })).toHaveLength(1);
+    // Scoped to the row itself: this proves the row holds exactly one control, and that
+    // control is the name button. A count taken from the whole document (e.g. counting
+    // /^edit/i buttons page-wide) could be fooled by a regression that reverts the row
+    // button's label to plain text while adding a separate, genuinely distinct Edit action
+    // button elsewhere in the row — the counts could coincidentally still match. Scoping to
+    // the row and counting *all* buttons within it closes that gap.
+    const row = screen.getByRole("row", { name: /asha menon/i });
+    expect(within(row).getAllByRole("button")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /^remove/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /asha menon/i })).toBeInTheDocument();
   });
