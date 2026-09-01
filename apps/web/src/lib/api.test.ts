@@ -216,7 +216,7 @@ describe("raise()", () => {
         status: 409,
         json: async () => ({
           message: "This client already has a primary contact",
-          issues: [{ path: ["contacts"], message: "   " }],
+          issues: [{ path: ["contacts"], message: "One contact must be marked Primary" }],
         }),
       } as unknown as Response),
     );
