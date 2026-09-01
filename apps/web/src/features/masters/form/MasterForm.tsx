@@ -82,7 +82,20 @@ export function MasterForm({
             <Button type="button" variant="outline" onClick={() => setConfirmingDiscard(false)}>
               Keep editing
             </Button>
-            <Button type="button" variant="destructive" onClick={onCancel}>
+            {/* Close the dialog before handing control back. Every caller's `onCancel` today
+                navigates away and unmounts this component, which would hide the leftover
+                `confirmingDiscard: true` — but that is a property of the callers, not of the
+                prop contract, and a shared form shell is exactly the thing that acquires a
+                non-navigating `onCancel` later. Resetting here makes the state correct on its
+                own terms rather than by luck. */}
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                setConfirmingDiscard(false);
+                onCancel();
+              }}
+            >
               Discard
             </Button>
           </DialogFooter>

@@ -15,8 +15,10 @@ const authMe = { status: 200, body: { user: { id: "1", name: "T", email: "t@x.co
 // through it, so every handler below needs a branch for it.
 const emptyUnassignedWarehouses = { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
 
-function renderAtRoute(initialEntry: string) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderAtRoute(
+  initialEntry: string,
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   return render(
     <QueryClientProvider client={qc}>
       <AuthProvider>
@@ -336,6 +338,87 @@ describe("ClientFormPage (edit)", () => {
     const alerts = await screen.findAllByRole("alert");
     expect(alerts.some((a) => /warehouses/i.test(a.textContent ?? ""))).toBe(true);
     expect(patchCalls).toHaveLength(0);
+  });
+
+  // The counterpart to the test above: the warehouses gate must block a draft that never got
+  // its ids, and ONLY that draft. Here the query loaded cleanly and a later background refetch
+  // failed, so the query cache state is "error" while `data` still holds the ids the load
+  // effect already seeded — the data-loss path the gate exists for is not live, and Save must
+  // go through. It does today (react-query v5 leaves the observer's `status` at "success" for a
+  // refetch failure that retains data, so `isSuccess` would also have allowed it), and the gate
+  // now reads `data === undefined` so it keeps going through if that library detail ever
+  // changes. Asserting the cache state below is what makes the fixture's claim checkable.
+  it("still saves when the assigned-warehouses query succeeded and only a later refetch failed", async () => {
+    const patchCalls: { warehouseIds?: string[] }[] = [];
+    let warehouseCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me")) return authMe;
+        if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
+        if (url.endsWith("/api/clients/c9/warehouses")) {
+          warehouseCalls += 1;
+          // First read succeeds; every later one fails — exactly a healthy load followed by a
+          // broken background refetch.
+          return warehouseCalls === 1
+            ? { status: 200, body: [{ id: "7c9e6679-7425-40de-944b-e07fc1f90ae7", name: "WH One" }] }
+            : { status: 500, body: { message: "warehouses unavailable" } };
+        }
+        if (url.endsWith("/api/clients/c9")) {
+          if (init?.method === "PATCH") {
+            patchCalls.push(JSON.parse(String(init.body)));
+            return { status: 200, body: {} };
+          }
+          return {
+            status: 200,
+            body: {
+              id: "c9",
+              clientCode: "CL-0009",
+              companyName: "Refetch Co",
+              industry: null,
+              country: "IN",
+              streetAddress: "1 Old Rd",
+              city: "Old City",
+              postalCode: null,
+              status: "ACTIVE",
+              contacts: [
+                {
+                  id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+                  name: "Asha Menon",
+                  designation: null,
+                  email: "asha@example.com",
+                  contactNo: "+971501234567",
+                  whatsappAvailable: false,
+                  wechatAvailable: false,
+                  botimAvailable: false,
+                  pocLevel: "PRIMARY",
+                  status: "ACTIVE",
+                },
+              ],
+            },
+          };
+        }
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderAtRoute("/masters/clients/c9", qc);
+
+    await waitFor(() => expect(screen.getByLabelText(/company name/i)).toHaveValue("Refetch Co"));
+    await waitFor(() => expect(qc.getQueryData(["clients", "c9", "warehouses"])).toBeDefined());
+
+    await qc.refetchQueries({ queryKey: ["clients", "c9", "warehouses"] });
+
+    // Prove the fixture actually produced the state under test before asserting on behaviour —
+    // otherwise a refetch that silently never happened would let this pass for the wrong reason.
+    const state = qc.getQueryState(["clients", "c9", "warehouses"]);
+    expect(state?.status).toBe("error");
+    expect(state?.data).toBeDefined();
+
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(patchCalls).toHaveLength(1));
+    expect(patchCalls[0].warehouseIds).toEqual(["7c9e6679-7425-40de-944b-e07fc1f90ae7"]);
   });
 
   // The `id` on a dialog-edited contact survives only because react-hook-form carries

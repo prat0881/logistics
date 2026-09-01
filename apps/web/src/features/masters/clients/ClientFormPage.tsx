@@ -101,15 +101,25 @@ export function ClientFormPage() {
     // shape as FreightForwarderFormPage's contacts gate, and for the same reason: `warehouseIds`
     // is seeded `[]` by defaultValues and only filled in by the load effect's
     // `(ownedWarehouses.data ?? []).map(...)`. If that query has failed (after react-query's
-    // retries `data` stays undefined forever — WarehousePicker's seeding effect is guarded on a
-    // truthy `assignedSignature` so it never fires either; this is permanent, not a race) or is
-    // still pending while `existing.data` has already landed, the draft carries an explicit
-    // empty array. `warehouseIds` is a declared schema field, so `[]` survives the resolver and
-    // reaches the wire; server-side `if (warehouseIds)` passes (`Boolean([])` is `true`) and
-    // setWarehousesTx runs `updateMany({ where: { clientId, id: { notIn: [] } } })`, which
-    // matches EVERY row and detaches every warehouse from this client. Blocking here is what
-    // stops that empty draft from ever reaching the PATCH.
-    if (id && !ownedWarehouses.isSuccess) {
+    // retries `data` stays undefined — WarehousePicker's seeding effect is guarded on a truthy
+    // `assignedSignature` so it never fires either) or is still pending while `existing.data`
+    // has already landed, the draft carries an explicit empty array. `warehouseIds` is a
+    // declared schema field, so `[]` survives the resolver and reaches the wire; server-side
+    // `if (warehouseIds)` passes (`Boolean([])` is `true`) and setWarehousesTx runs
+    // `updateMany({ where: { clientId, id: { notIn: [] } } })`, which matches EVERY row and
+    // detaches every warehouse from this client. Blocking here is what stops that empty draft
+    // from ever reaching the PATCH.
+    //
+    // The check is on `data`, not on `isSuccess`, because `data === undefined` IS the hazard —
+    // "the load effect never seeded warehouseIds" — stated directly, with no dependency on how
+    // react-query happens to spell its status. The two agree today: measured on v5.101, when a
+    // background refetch fails on a query that already holds data, the query CACHE state goes
+    // to "error" but the observer `useQuery` returns keeps `status: "success"` — so `isSuccess`
+    // stays true and such a draft saves either way. That equivalence is an implementation
+    // detail of the library, though, and were it to flip, the status form would start blocking
+    // a healthy, fully-seeded draft behind a retry message with no retry affordance short of a
+    // page reload. The data form cannot: if `data` is defined the ids are real.
+    if (id && ownedWarehouses.data === undefined) {
       setSubmitError(
         ownedWarehouses.isError
           ? "Could not load this client's assigned warehouses. Please retry before saving."

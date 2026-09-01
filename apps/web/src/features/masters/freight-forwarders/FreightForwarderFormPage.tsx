@@ -156,16 +156,22 @@ export function FreightForwarderFormPage() {
     }
     // The same hazard, one query over: `warehouseIds` is seeded `[]` by defaultValues and only
     // filled in by the load effect's `(ownedWarehouses.data ?? []).map(...)`. If that query has
-    // failed (after react-query's retries `data` stays undefined forever — WarehousePicker's
-    // seeding effect is guarded on a truthy `assignedSignature` so it never fires either; this
-    // is permanent, not a race) or is still pending while `existing.data` has landed, the draft
-    // carries an explicit empty array. It is a declared schema field, so `[]` survives the
+    // failed (after react-query's retries `data` stays undefined — WarehousePicker's seeding
+    // effect is guarded on a truthy `assignedSignature` so it never fires either) or is still
+    // pending while `existing.data` has landed, the draft carries an explicit empty array. It
+    // is a declared schema field, so `[]` survives the
     // resolver and reaches the wire; server-side `if (warehouseIds)` passes (`Boolean([])` is
     // `true`) and setWarehousesTx runs `updateMany({ where: { freightForwarderId, id: { notIn:
     // [] } } })`, which matches EVERY row and detaches every warehouse. On this page it also
     // blanks `whLocation` (setWarehousesTx is its sole writer), which rfq.service.ts snapshots
     // into every future RFQ. Edit mode only — a create page has nothing to fetch.
-    if (id && !ownedWarehouses.isSuccess) {
+    //
+    // The check is on `data`, not on `isSuccess`, because `data === undefined` IS the hazard —
+    // "the load effect never seeded warehouseIds" — stated directly, with no dependency on how
+    // react-query happens to spell its status. See ClientFormPage's copy of this gate for the
+    // measured v5.101 behaviour the two forms agree on today, and why the data form is the one
+    // that stays correct if that changes.
+    if (id && ownedWarehouses.data === undefined) {
       setSubmitError(
         ownedWarehouses.isError
           ? "Could not load this forwarder's assigned warehouses. Please retry before saving."
