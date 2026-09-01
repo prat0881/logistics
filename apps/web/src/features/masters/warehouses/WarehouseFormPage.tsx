@@ -55,7 +55,7 @@ export function WarehouseFormPage() {
     setValue,
     clearErrors,
     getValues,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<WarehouseCreateInput>({
     resolver: zodResolver(warehouseFormSchema),
     defaultValues: {
@@ -235,6 +235,8 @@ export function WarehouseFormPage() {
       onSubmit={handleSubmit(onValidSubmit, onInvalidSubmit)}
       isSubmitting={isSubmitting}
       onCancel={() => navigate("/masters/warehouses")}
+      isDirty={isDirty}
+      recordNoun="warehouse"
     >
       {existing.data?.freightForwarderId || existing.data?.clientId ? (
         <p className="text-sm text-muted-foreground">

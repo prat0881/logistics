@@ -23,7 +23,7 @@ export function FxRateFormPage() {
     register,
     control,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = form;
 
   // Mirrors VesselFormPage: without this catch a rejected save produced nothing at all — the
@@ -49,6 +49,8 @@ export function FxRateFormPage() {
         onSubmit={handleSubmit(onSubmit)}
         isSubmitting={isSubmitting}
         onCancel={() => navigate("/masters/fx-rates")}
+        isDirty={isDirty}
+        recordNoun="FX rate"
       >
         <FormSection title="Rate">
           <SelectField

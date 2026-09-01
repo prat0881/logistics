@@ -54,7 +54,7 @@ export function FreightForwarderFormPage() {
     handleSubmit,
     reset,
     getValues,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<FreightForwarderCreateInput>({
     resolver: zodResolver(freightForwarderFormSchema),
     defaultValues: { availableCountries: [], modes: [], handleDg: false, contacts: [], warehouseIds: [] },
@@ -260,6 +260,8 @@ export function FreightForwarderFormPage() {
       onSubmit={handleSubmit(onValidSubmit, onInvalidSubmit)}
       isSubmitting={isSubmitting}
       onCancel={() => navigate("/masters/freight-forwarders")}
+      isDirty={isDirty}
+      recordNoun="freight forwarder"
     >
       <FormSection title="Company & contact">
         <Field id="companyName" label="Company name" error={err("companyName")}>

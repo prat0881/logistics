@@ -46,7 +46,7 @@ export function ClientFormPage() {
     handleSubmit,
     reset,
     getValues,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<ClientCreateInput>({
     resolver: zodResolver(clientFormSchema),
     defaultValues: { contacts: [], warehouseIds: [] },
@@ -181,6 +181,8 @@ export function ClientFormPage() {
       onSubmit={handleSubmit(onValidSubmit, onInvalidSubmit)}
       isSubmitting={isSubmitting}
       onCancel={() => navigate("/masters/clients")}
+      isDirty={isDirty}
+      recordNoun="client"
     >
       <FormSection title="Company">
         <Field id="companyName" label="Company name" error={err("companyName")}>

@@ -73,7 +73,7 @@ export function ChargeLineFormPage() {
     control,
     reset,
     setValue,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<ChargeLineCreateInput>({
     resolver: zodResolver(chargeLineCreateSchema),
     defaultValues: { mode: "ROAD", isAdditional: false, inputType: "PLAIN" },
@@ -154,6 +154,8 @@ export function ChargeLineFormPage() {
       onSubmit={handleSubmit(onSubmit)}
       isSubmitting={isSubmitting}
       onCancel={() => navigate("/masters/charge-catalogue")}
+      isDirty={isDirty}
+      recordNoun="charge line"
     >
       {isEdit && (
         <div className="space-y-1">

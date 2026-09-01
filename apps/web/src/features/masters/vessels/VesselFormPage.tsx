@@ -17,7 +17,7 @@ export function VesselFormPage() {
     register,
     handleSubmit,
     reset,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<VesselCreateInput>({
     resolver: zodResolver(vesselCreateSchema),
   });
@@ -58,6 +58,8 @@ export function VesselFormPage() {
       onSubmit={handleSubmit(onSubmit)}
       isSubmitting={isSubmitting}
       onCancel={() => navigate("/masters/vessels")}
+      isDirty={isDirty}
+      recordNoun="vessel"
     >
       <FormSection title="Vessel">
         <Field id="name" label="Name" error={err("name")}>

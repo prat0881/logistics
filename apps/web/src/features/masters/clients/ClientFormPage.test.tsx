@@ -423,4 +423,21 @@ describe("ClientFormPage (edit)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/legacy contact/i);
     expect(patchCalls).toHaveLength(0);
   });
+
+  it("arms the discard guard when only a contact was changed", async () => {
+    // Loads a client, edits nothing but a contact through the dialog, then cancels.
+    // `contacts` is Controller-managed, so this is what proves react-hook-form marks the form
+    // dirty for controlled fields — without that, the guard silently never fires on the one
+    // kind of edit these screens exist for.
+    vi.stubGlobal("fetch", mockLegacyClient({ id: "c1", pocLevel: "PRIMARY", patchCalls: [] }));
+    renderAtRoute("/masters/clients/c1");
+    await userEvent.click(await screen.findByRole("button", { name: /edit asha menon/i }));
+    const nameField = await screen.findByLabelText(/^name$/i);
+    await userEvent.clear(nameField);
+    await userEvent.type(nameField, "Asha Menon-Rao");
+    await userEvent.click(screen.getByRole("button", { name: /save contact/i }));
+
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(await screen.findByText(/discard unsaved changes/i)).toBeInTheDocument();
+  });
 });

@@ -13,6 +13,7 @@ describe("MasterForm", () => {
         onSubmit={vi.fn()}
         isSubmitting={false}
         onCancel={vi.fn()}
+        isDirty={false}
       >
         <FormSection title="Company">
           <Field id="companyName" label="Company name" error="Required">
@@ -34,7 +35,7 @@ describe("MasterForm", () => {
 
   it("disables Save and shows progress while submitting", () => {
     render(
-      <MasterForm title="T" onSubmit={vi.fn()} isSubmitting onCancel={vi.fn()}>
+      <MasterForm title="T" onSubmit={vi.fn()} isSubmitting onCancel={vi.fn()} isDirty={false}>
         <p>body</p>
       </MasterForm>,
     );
@@ -45,13 +46,81 @@ describe("MasterForm", () => {
     const onSubmit = vi.fn();
     const onCancel = vi.fn();
     render(
-      <MasterForm title="T" onSubmit={onSubmit} isSubmitting={false} onCancel={onCancel}>
+      <MasterForm title="T" onSubmit={onSubmit} isSubmitting={false} onCancel={onCancel} isDirty={false}>
         <p>body</p>
       </MasterForm>,
     );
     await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
     expect(onCancel).toHaveBeenCalledOnce();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("cancels immediately when nothing has changed", async () => {
+    const onCancel = vi.fn();
+    render(
+      <MasterForm title="T" onSubmit={vi.fn()} isSubmitting={false} onCancel={onCancel} isDirty={false}>
+        <p>body</p>
+      </MasterForm>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(screen.queryByText(/discard unsaved changes/i)).not.toBeInTheDocument();
+  });
+
+  it("asks before discarding when the form is dirty, and does not cancel yet", async () => {
+    const onCancel = vi.fn();
+    render(
+      <MasterForm
+        title="T"
+        onSubmit={vi.fn()}
+        isSubmitting={false}
+        onCancel={onCancel}
+        isDirty
+        recordNoun="client"
+      >
+        <p>body</p>
+      </MasterForm>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(await screen.findByText(/discard unsaved changes/i)).toBeInTheDocument();
+    expect(screen.getByText(/changes to this client will not be saved/i)).toBeInTheDocument();
+    // The whole point: the record is still there to go back to.
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("keeps editing when the user backs out of the discard prompt", async () => {
+    const onCancel = vi.fn();
+    render(
+      <MasterForm title="T" onSubmit={vi.fn()} isSubmitting={false} onCancel={onCancel} isDirty>
+        <p>body</p>
+      </MasterForm>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /keep editing/i }));
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.queryByText(/discard unsaved changes/i)).not.toBeInTheDocument();
+  });
+
+  it("discards when the user confirms", async () => {
+    const onCancel = vi.fn();
+    render(
+      <MasterForm title="T" onSubmit={vi.fn()} isSubmitting={false} onCancel={onCancel} isDirty>
+        <p>body</p>
+      </MasterForm>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^discard$/i }));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to a neutral noun when the page does not supply one", async () => {
+    render(
+      <MasterForm title="T" onSubmit={vi.fn()} isSubmitting={false} onCancel={vi.fn()} isDirty>
+        <p>body</p>
+      </MasterForm>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(await screen.findByText(/changes to this record will not be saved/i)).toBeInTheDocument();
   });
 });
 
