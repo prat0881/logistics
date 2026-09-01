@@ -53,6 +53,25 @@ So the fix is to adopt the existing pattern, not to invent a new highlight.
 | D5 | **Confirm with `ui/dialog`, not `window.confirm`** | Consistent with `ContactDialog`/`VehicleDialog` on the same screens, themable, and testable through the same queries as the rest of the suite. |
 | D6 | **The button gains `aria-label={\`Edit ${name}\`}`** | Its accessible name is currently just the contact's name, which does not convey that activating it edits. The existing tests match `/asha menon/i`, which the new label still contains, so no assertion weakens. |
 
+> **Correction (2026-09-01, whole-branch review fix wave).** D6's rationale is wrong on its last
+> clause. It reasoned only about *positive, exact-string* queries — `getByRole("button", { name:
+> /asha menon/i })`, which the longer label still satisfies. The assertions that actually broke
+> were **negative and name-anchored**: `expect(queryByRole("button", { name: /^edit/i
+> })).not.toBeInTheDocument()` in both `ContactsSection.test.tsx` and `VehiclesSection.test.tsx`,
+> the guards against a per-row Edit *action* button. `"Edit Asha Menon"` matches `/^edit/i`, so
+> the new label turned both into guaranteed failures — not a weakening, a break.
+>
+> Nothing bad landed: it was caught in task review, repaired first as a page-wide
+> `toHaveLength(1)` and then, in `dfd5047`, scoped to the row with `within(row)
+> .getAllByRole("button")` — a strictly stronger guard than the original, since it also catches a
+> second control added inside the row.
+>
+> The general rule to carry forward: **changing an accessible name invalidates negative
+> name-anchored queries as readily as positive ones.** "The new name still contains the old
+> string" is only ever an argument about positive queries; a negative query asserting *no* control
+> matches a pattern is broken by any name that newly matches it. Before changing an accessible
+> name, grep for both — `getBy`/`findBy` *and* `queryBy … not.toBeInTheDocument`.
+
 ## 4. Part A — the clickable-name affordance
 
 `contacts/ContactsSection.tsx` and `warehouses/VehiclesSection.tsx`: change the name/tonnage cell
@@ -67,7 +86,7 @@ still renders as plain text with no button, because it is edited through the `pi
 `MasterForm` gains one required prop:
 
 ```ts
-MasterForm({ title, error?, banner?, onSubmit, isSubmitting, onCancel, isDirty, children })
+MasterForm({ title, error?, banner?, onSubmit, isSubmitting, onCancel, isDirty, recordNoun?, children })
 ```
 
 Behaviour on Cancel:

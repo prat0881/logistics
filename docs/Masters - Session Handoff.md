@@ -12,6 +12,19 @@
 
   Two smaller corrections to that entry, made 2026-09-01: it credited the branch with "added FX-rate zoned-datetime handling" (`ZonedDateTimeField` was pre-existing — the FX form only moved onto it), and with fixes "the whole-branch review found", which was written before this branch's whole-branch review had run. That review ran on 2026-09-01; its fix wave is the last six commits on the branch — `9485eec` lint unblock, `e02a987` the `warehouseIds` data-loss gate on the Client and FF forms, `4b229a6` coverage for the state-3 residual and the cross-owner contact guard, `ebaf588` the reconcile create-ordering comment correction, `65e3b6a` real validation messages in place of the literal "Validation failed", and `919a45c` these doc corrections.
 
+- ⚠️ **`apps/api` IS touched on this branch — do not skip an api run.** The bullets above are
+  written almost entirely about `apps/web`, and the work after them (the contact-affordance fix,
+  the discard guard, and the final fix wave) is web-facing, so it is easy to read this file and
+  conclude the api is untouched. It is not. Four api changes landed: a corrected create-ordering
+  comment in `apps/api/src/common/reconcile-contacts.ts`, a **new cross-owner IDOR e2e case** in
+  `apps/api/test/clients-composite.e2e-spec.ts`, an added id assertion in
+  `apps/api/test/warehouses-composite.e2e-spec.ts`, and a comment rewrite in
+  `apps/api/test/reconcile-contacts.spec.ts`. Only the first is production code, but the second
+  adds a test that must actually be executed to mean anything. **api 756/756 was measured at
+  `499b52c`**, which is downstream of all four; every commit after it touches only `apps/web` and
+  `docs/`, so that measurement still stands — but it stands because someone ran it, not because
+  the api was left alone. Still no migration, and that must stay true.
+
 ### Delivery detail (unchanged)
 
 Branch `feat/masters`, worktree `.claude/worktrees/feat+masters`, **49 commits over `main@b875291`**, 127 files, +11,311/−603. **`pnpm run ci` GREEN — 1,498 tests** (shared 369 · web 662 · api 467) plus lint, typecheck and all three builds. Design: `docs/superpowers/specs/2026-08-25-master-data-expansion-design.md`. Plan: `docs/superpowers/plans/2026-08-25-master-data-expansion.md` (15 tasks). Post-deploy corrections owed: `docs/superpowers/specs/2026-08-26-post-deploy-corrections.md`.
@@ -197,10 +210,18 @@ merge; each was reviewed and deliberately deferred.
 3. **`usePackages.ts:50-55` (MSDS upload) bypasses `raise()`**, hand-building its own `ApiError`
    from `b?.message`, so that path shows `"Validation failed"`. Pre-existing divergence, and
    unchanged by the scoping above.
-4. **The owner-warehouses Save gate can fire on a healthy draft.** TanStack Query sets
-   `status: "error"` on a *background refetch* failure while retaining `data`, so a post-load
-   refetch failure blocks Save with "Could not load…". Fail-closed, not data loss, but a user can
-   be told to retry when nothing is wrong.
+4. ~~**The owner-warehouses Save gate can fire on a healthy draft.**~~ — **CLOSED, and the
+   premise was wrong.** The claim was that TanStack Query sets `status: "error"` on a *background
+   refetch* failure while retaining `data`, so a healthy loaded draft could be blocked with
+   "Could not load…". Measured on v5.101 (probe: load once, fail the refetch, read both): the
+   query **cache** state does go to `"error"` with `data` retained, but the observer `useQuery`
+   returns keeps `status: "success"`, so `isSuccess` stayed true and **no draft was ever wrongly
+   blocked**. The gate on both `ClientFormPage` and `FreightForwarderFormPage` was nonetheless
+   changed to `ownedWarehouses.data === undefined`, which states the actual hazard ("the load
+   effect never seeded `warehouseIds`") without depending on that library detail, and
+   `ClientFormPage.test.tsx` now pins the succeeded-then-failed-refetch case. **Note for whoever
+   reads follow-up 5 or writes the next such gate: `useQuery`'s `status` and
+   `queryClient.getQueryState()`'s `status` are not the same value.**
 5. **Neither owner form gates on `existing.isSuccess`.** If the parent `GET /:id` fails while the
    child queries succeed, `reset()` never runs and Save is stopped only incidentally by
    required-scalar validation. Pre-existing; not reachable as data loss today.
