@@ -2,7 +2,18 @@
 
 > Resume point for a fresh session. Records what shipped, what was decided and why, what the plan got wrong, and the exact next step. Sibling of `Stage 3 - Session Handoff.md` and `Stage 4 - Session Handoff.md`. This work is **not** a numbered stage — it is the master-data layer the client specified in the four master-table workbooks, plus a charge-line catalogue.
 
-## Current status (2026-08-31 — MERGED)
+## Current status (2026-09-04)
+
+> **START HERE.** [PR #55](https://github.com/sj132q/svyft-logistics/pull/55) is **OPEN and not
+> merged.** Branch `claude/master-data-consistency-a920af`, worktree
+> `.claude/worktrees/master-data-consistency-a920af`, tip `5ec93ec`, **56 commits** ahead of
+> `main`. `pnpm run ci` green at that tip — lint ×3, typecheck ×3, **2,255 tests**
+> (shared 446 · web 1053 · api 756), builds ×3, exit 0. Whole-branch reviewed, fix waves applied.
+> **No migration on the branch, and that must stay true.**
+>
+> Everything below the next two sections describes the *earlier* masters build (PR #53), which
+> IS merged. Do not confuse the two.
+
 
 - ✅ **Master Data Expansion — MERGED to `main` via [PR #53](https://github.com/sj132q/svyft-logistics/pull/53).** Stage 5 ([PR #52](https://github.com/sj132q/svyft-logistics/pull/52)) merged alongside it; `main` tip `d58972d`. **CI and Deploy both green on `main`** (31 Aug, two runs) — which also settles the migration-interleaving question: masters' eight migrations and Stage-5's seven applied to production without error despite Stage-5's carrying earlier timestamps.
 - ✅ **The predicted merge cost was real but ~3× smaller than estimated.** Masters made `FreightForwarder.companyAddress`/`city`/`country` NOT NULL, which broke Stage-5's e2e fixtures — **17 create sites across 16 api specs**, fixed in `c2691c9` by adding the three fields. No assertion needed changing; none of those specs asserts on forwarder shape. The handoff's original estimate of 47 files counted every file *containing* `freightForwarder.create`, not the files that would actually fail. **If another long-lived branch merges `main` later, expect the same break and the same fix** — check `pnpm --filter @svyft/api typecheck` for `FreightForwarderCreateInput` before suspecting the branch's own commits.
@@ -26,6 +37,29 @@
   `499b52c`**, which is downstream of all four; every commit after it touches only `apps/web` and
   `docs/`, so that measurement still stands — but it stands because someone ran it, not because
   the api was left alone. Still no migration, and that must stay true.
+
+### What PR #55 contains — two plans, both complete
+
+**Plan 1 — master-data consistency (13 tasks).** Design `docs/2026-08-31-master-data-consistency-design.md`,
+plan `docs/plans/masters/2026-08-31-master-data-consistency.md`. One atomic Save per screen
+carrying `contacts`/`warehouseIds`/`vehicles`, reconciled server-side in one transaction by a
+shared owner-agnostic `reconcileContacts`; a shared form shell across all six masters; contacts
+and vehicles managed through a dialog; a mandatory primary contact with a three-state rule
+(required on create · blocked if you demote away the one a record loaded with · allowed behind an
+advisory banner for legacy records that never had one); FX rates on a `/new` page, still
+append-only; Charge Catalogue's `inputType` restricted and `sortOrder` hidden.
+
+**Plan 2 — contact affordance & discard guard (2 tasks).** Design
+`docs/2026-09-01-masters-contact-affordance-and-discard-guard-design.md`, plan
+`docs/plans/masters/2026-09-01-contact-affordance-and-discard-guard.md`. Raised after using the
+rebuilt screens: the contacts table looked read-only. It was not — the name cell was already a
+button opening the edit dialog — but it diverged from the app's clickable-name idiom by exactly
+one class (`text-primary`), so it read as static text. Fixed by adopting the existing idiom in
+both the contacts and vehicles tables, plus an `aria-label`. Second half: all six forms discarded
+unsaved changes silently on Cancel; a confirm dialog now lives in `MasterForm` (which owns the
+Cancel button) driven by a required `isDirty` prop each page passes from its own `formState`.
+
+**Both SDD workspaces have been deleted** — git history and this file are the record.
 
 ### Delivery detail (unchanged)
 
@@ -165,7 +199,10 @@ Both merged on 2026-08-31. The product works, no data was corrupted, and the int
 - **Do not run `prisma format`** — it reformats all 985 lines.
 - **BSD `sed` on macOS ignores `\b`.** A rename using it silently under-applied (2 of 8 references) and looked successful. Use python or perl for boundary-aware replaces.
 - **The worktree's shell cwd drifts** to the main checkout, which sits on `feat/stage-5-fx-master`. Run `git branch --show-current` before every commit — this session nearly committed masters work onto Stage 5.
-- **This worktree uses its own database**, `svyft_masters` on port 5433, so it cannot collide with the Stage-5 session's e2e runs. `apps/api/.env` is gitignored and does not travel with a new worktree.
+- **Each worktree needs its OWN database on port 5433.** The masters worktree used `svyft_masters`; the consistency worktree (`claude/master-data-consistency-a920af`) uses **`svyft_masters_consistency`**. `apps/api/.env` is gitignored and does NOT travel with a new worktree — a fresh worktree needs `pnpm install`, its own `.env`, `prisma migrate deploy` and `prisma generate` before any api e2e run.
+- **Never run two e2e suites against one database.** Two `jest --runInBand` runs sharing a database corrupt each other's fixtures. This session did it — a backgrounded `pnpm run ci` overlapping a subagent's own — and got a spurious failure in `award-generate.e2e-spec.ts`, a Stage-5 spec the branch never touches, reporting a 17,557-second file duration. If a suite fails in a spec your change has nothing to do with, suspect this first.
+- **Never pipe a command whose exit code you intend to act on.** `pnpm run ci 2>&1 | tail -25; echo $?` reports `tail`'s status, so a failed CI run read as success. Redirect to a file instead: `cmd > /tmp/out.log 2>&1; echo "EXIT=$?"`.
+- **A value read inside a callback closure is not library semantics.** Probing `isSuccess` from inside a submit handler reported the *previous render's* result and produced a confident, wrong conclusion about react-query. Take a fresh observer result, or force a render, before concluding anything about a library's behaviour. Full account in follow-up #4 below.
 
 ## Deferred minors (non-blocking, from the final review)
 
@@ -261,19 +298,55 @@ merge; each was reviewed and deliberately deferred.
    materially worse now that one long form holds all children behind one Save. Guarding the
    reset on `formState.isDirty` is the usual fix.
 
+9. **`masterErrorMessage` discards `issue.path`.** For the masters' own refines this is fine —
+   their messages are self-describing ("Exactly one contact must be marked Primary"). But a
+   `ZodValidationPipe` issue like `{ path: ["contacts", 0, "email"], message: "Required" }` renders
+   as a bare `"Required"`, no more actionable than the `"Validation failed"` it replaced. Mostly
+   unreachable today because each form's resolver mirrors the server schema and catches scalar
+   issues inline first. Prefixing the joined path when non-empty would close it — but it changes
+   rendered copy at 14 sites, so it wants its own decision.
+10. **Two near-identical error resolvers.** `features/compare/errorMessage.ts` is
+    `(error, fallback) => error instanceof ApiError ? error.message : fallback` — the same
+    signature as `masterErrorMessage`, differing only in the `issues` preference. Deliberate for
+    now (item #2 above explains why the preference is masters-only); if a third appears, extract
+    one helper with a `preferIssues` flag. Separately, `masterErrorMessage` lives in
+    `features/masters/form/` while 6 of its 14 call sites — five list pages and `WarehousePicker` —
+    are not forms; `features/masters/masterErrorMessage.ts` would match its use.
+11. **`closest("div")` in the FF inline-error test is fragile.** It resolves to `Field`'s wrapper
+    today, because `Field` renders a single `<div>` holding label, control and alert. If `Field`
+    ever nests the control, the query silently widens to a div that also contains the page-level
+    alert, and the test stops distinguishing inline from page-level — which is the entire point of
+    it. A `data-testid` on the `Field` wrapper, or asserting the alert's text matches the
+    lead-time rule specifically, would make it robust.
+
 Also unbuilt, and recorded as a dropped requirement rather than an omission: design §5.3's
 "the same state renders as a marker in the list row" for records with no primary contact. No list
 page was touched; the advisory banner on the form carries the signal instead.
 
 ## The exact next step
 
-**One thing remains: spec the Stage-4 pass.**
+**1. Get PR #55 reviewed and merged.** It is open, CI-green at `5ec93ec`, and whole-branch
+reviewed with its fix waves applied. Nothing in it is known-broken. Until it merges, the six
+master screens on `main` are still the pre-consistency versions.
+
+Two things a reviewer should know rather than rediscover:
+- The **API contract changed** (no migration): `contacts` is now required with exactly one PRIMARY
+  on Client and Warehouse create. Any other in-flight branch merging this will see
+  `ClientCreateInput` / `WarehouseCreateInput` typecheck errors — the same shape of break masters'
+  own `FreightForwarderCreateInput` change caused. See the ⚠️ bullet at the top.
+- The branch touches **15 api files** against `main`. Run the api suite; do not infer from the
+  web-heavy narrative in this file that it was untouched.
+
+**2. Work the follow-up list** (nine items, below) whenever convenient — none blocks the merge.
+The two most worth doing early are the `AuthProvider`-race test convention (#1, ~17 files, its own
+PR, and the same class that failed CI on PR #54) and guarding `reset()` on `isDirty` (#8), which
+is now a six-line change because all six pages already destructure `isDirty`.
+
+**3. Then spec the Stage-4 pass** — the seven items above, none started. This has **not** been
+specced.
 
 ~~Apply the post-deploy correction~~ — **done 2026-09-01**, all three items, through the admin
 screens. See the top of this file.
-
-**Spec the Stage-4 pass** — the seven items above, none started, and unblocked since both branches
-merged. This has **not** been specced; it is the next session's first task.
 
 **How to approach the Stage-4 pass.** Settle the three open workbook questions *first*, because two of them change quoting behaviour and would otherwise get decided mid-build: whether destination charges are always-included (thirteen lines flip if the sheet is right), what the shipment-type field should be, and whether FSC/Peak/Heavy stay always-included. Then sequence the seven items — the two "retire the old representation" items are the largest and share a shape (repoint readers, prove equivalence, drop columns), and the wizard/`Point` migration is the one users will actually notice, since **until it lands the Warehouse master has no consumer**.
 
