@@ -231,6 +231,64 @@ describe("WarehouseFormPage (create)", () => {
     await userEvent.selectOptions(screen.getByLabelText(/type of warehouse/i), "OWNED");
     expect(screen.getByLabelText(/handling rate/i)).toHaveValue(null);
   });
+
+  // Total vehicles is the fleet size, not the number of tonnage rows — the `.length` this
+  // replaced reported 2 here, and disagreed with the `totalVehicles` the API derives
+  // (WarehousesService.get sums `quantity`). Two rows whose quantities differ from each other
+  // AND from the row count, so 5 is reachable only by summing: a row count gives 2, and summing
+  // the tonnage codes or taking a max would give neither.
+  it("totals vehicles by quantity, not by the number of tonnage rows", async () => {
+    renderForm();
+    await screen.findByLabelText(/type of warehouse/i);
+    await addVehicle("T_5", "3");
+    await addVehicle("T_9", "2");
+    expect(await screen.findByText(/total vehicles:/i)).toHaveTextContent("Total vehicles: 5");
+  });
+
+  it("offers the weekend working fee only once weekend working is ticked", async () => {
+    renderForm();
+    // The fee lives in Contract & rates, so OWNED is a precondition — this proves the fee is
+    // gated on the checkbox specifically, not merely on the section being on screen.
+    await userEvent.selectOptions(await screen.findByLabelText(/type of warehouse/i), "OWNED");
+    expect(screen.getByLabelText(/handling rate/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/weekend working fee/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText(/^weekend working$/i));
+    expect(screen.getByLabelText(/weekend working fee/i)).toBeInTheDocument();
+  });
+
+  it("does not save a weekend working fee after weekend working is un-ticked", async () => {
+    // The half that matters is the POST body. react-hook-form keeps an unmounted field's
+    // registered value (`shouldUnregister` defaults to false), so hiding the input is not enough
+    // — without the clearing effect this body still carries weekendWorkingFee: 250.
+    const postBodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me")) return authMe;
+        if (url.endsWith("/api/warehouses") && init?.method === "POST") {
+          postBodies.push(JSON.parse(init.body as string));
+          return { status: 201, body: { id: "w9", name: "Weekend DC" } };
+        }
+        return { status: 404 };
+      }),
+    );
+    renderAtRoute("/masters/warehouses/new");
+    await fillBaseFields("OWNED", "Weekend DC");
+    await userEvent.type(screen.getByLabelText(/agreement valid until/i), "2027-01-01");
+    await userEvent.type(screen.getByLabelText(/insurance valid until/i), "2027-02-01");
+    await userEvent.click(screen.getByLabelText(/^weekend working$/i));
+    await userEvent.type(screen.getByLabelText(/weekend working fee/i), "250");
+    await userEvent.selectOptions(screen.getByLabelText(/rate currency/i), "AED");
+    await userEvent.click(screen.getByLabelText(/^weekend working$/i));
+    expect(screen.queryByLabelText(/weekend working fee/i)).not.toBeInTheDocument();
+    await addPrimaryContact();
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(postBodies).toHaveLength(1));
+    expect(postBodies[0]).not.toHaveProperty("weekendWorkingFee");
+    expect(postBodies[0]).toMatchObject({ weekendWorking: false });
+  });
 });
 
 function ownedWarehouseDto(overrides: Record<string, unknown> = {}) {

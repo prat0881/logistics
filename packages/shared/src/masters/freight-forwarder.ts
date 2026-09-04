@@ -46,7 +46,6 @@ export const freightForwarderCreateSchema = z.object({
   modes: z.array(z.enum(FREIGHT_MODES)).min(1, "Select at least one mode"),
   handleDg: z.boolean().optional(),
   vatTrnEori: z.string().max(100).optional(),
-  whLocation: z.string().max(200).optional(),
   defaultCurrency: z.enum(CURRENCY_CODES).optional(),
   paymentTerms: z.enum(PAYMENT_TERMS).optional(),
   typicalLeadTime: z.number().int().min(0).max(365).optional(),
@@ -67,19 +66,26 @@ export const freightForwarderCreateSchema = z.object({
 });
 // pic/contactNumber/email are derived once a forwarder exists: FreightForwardersService's
 // syncPrimaryContactColumns is their sole writer after create(), which seeds the primary
-// contact from these same three fields. whLocation joins them for the same reason:
-// FreightForwardersService.setWarehouses (Task 14) is its sole writer after create(), derived
-// from the assigned warehouses. All four are omitted here (not just made optional) so the
-// update DTO can't carry them at all — editing a forwarder's contact details or warehouses
-// happens through its contact list / warehouse picker, in exactly one place each. They stay on
-// the *create* schema above: creation still needs them (pic/contactNumber/email are NOT NULL)
-// and rfq.service.ts still reads all four off the row.
+// contact from these same three fields. They are omitted here (not just made optional) so the
+// update DTO can't carry them at all — editing a forwarder's contact details happens through its
+// contact list, in exactly one place. They stay on the *create* schema above: creation still
+// needs them (the columns are NOT NULL) and rfq.service.ts still reads them off the row.
+//
+// `whLocation` is absent from BOTH schemas, and that is the stronger form of the same rule.
+// FreightForwardersService.setWarehousesTx is its only writer, on create as much as on update:
+// create() calls it inside its own transaction whenever `warehouseIds` is supplied, so a
+// client-supplied `whLocation` would either be immediately overwritten by the assignment or
+// describe warehouses the forwarder does not have. A forwarder created with no warehouses simply
+// starts with the column null, and the first assignment fills it. It is still a column and still
+// on FreightForwarderDto, because rfq.service.ts snapshots it into the RFQ payload; it is simply
+// never an input. update()'s `delete data.whLocation` stays as defence in depth for a caller that
+// bypasses this schema.
 // `contacts` is re-declared here rather than inherited from the create schema's `.omit()`:
 // update-time keeps the Client/Warehouse *update* rule (at-most-one, never exactly-one) so a
 // legacy forwarder with no primary contact stays saveable (design C4) — create's
 // exactly-one-when-supplied rule above would otherwise block every edit to such a row.
 export const freightForwarderUpdateSchema = freightForwarderCreateSchema
-  .omit({ pic: true, contactNumber: true, email: true, whLocation: true, contacts: true })
+  .omit({ pic: true, contactNumber: true, email: true, contacts: true })
   .partial()
   .extend({
     contacts: z

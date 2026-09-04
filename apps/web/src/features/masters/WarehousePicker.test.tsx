@@ -49,11 +49,15 @@ function stubFetch(handler: (url: string, init?: RequestInit) => { status: numbe
 
 /** Renders the picker with fixed, non-interactive props — for tests that only assert on the
  *  initial render (checked state, truncation hint) and never toggle a box. */
-function renderFixed({ value = [] as string[], assigned = [] as WarehouseDto[] }) {
+function renderFixed({
+  value = [] as string[],
+  assigned = [] as WarehouseDto[],
+  ownerPath = "freight-forwarders" as "freight-forwarders" | "clients",
+}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <WarehousePicker ownerPath="freight-forwarders" value={value} onChange={() => {}} assigned={assigned} />
+      <WarehousePicker ownerPath={ownerPath} value={value} onChange={() => {}} assigned={assigned} />
     </QueryClientProvider>,
   );
 }
@@ -237,5 +241,66 @@ describe("WarehousePicker", () => {
 
     await screen.findByRole("checkbox", { name: "Unassigned WH" });
     expect(screen.queryByText(/showing .* of .* unassigned warehouses/i)).not.toBeInTheDocument();
+  });
+
+  // The pool each owner may draw from is scoped by Warehouse master type: a forwarder assigns
+  // FF-tagged warehouses, a client CLIENT-tagged ones. Asserting on the requested URL, not on
+  // what comes back, because the filtering is the API's (`WarehousesService.list` ANDs `type`
+  // with `unassigned` and `q`) — a client-side filter over an unfiltered fetch would still show
+  // the right rows while silently consuming the 100-row page cap on warehouses it then discards.
+  it.each([
+    ["freight-forwarders", "FF"],
+    ["clients", "CLIENT"],
+  ] as const)("asks the server for only %s-owned warehouse types", async (ownerPath, type) => {
+    const urls: string[] = [];
+    stubFetch((url) => {
+      urls.push(url);
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
+      }
+      return { status: 404 };
+    });
+    renderFixed({ ownerPath });
+
+    await screen.findByText(/no warehouses available to assign/i);
+    const poolUrl = urls.find((u) => u.startsWith("/api/warehouses?unassigned=true"));
+    expect(poolUrl).toContain(`type=${type}`);
+  });
+
+  it("keeps searching within the owner's type", async () => {
+    const urls: string[] = [];
+    stubFetch((url) => {
+      urls.push(url);
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
+      }
+      return { status: 404 };
+    });
+    renderFixed({ ownerPath: "clients" });
+
+    await screen.findByText(/no warehouses available to assign/i);
+    await userEvent.type(screen.getByLabelText(/search warehouses by name/i), "Jebel");
+    await screen.findByText(/no warehouses available to assign/i);
+    const searchUrl = urls.find((u) => u.includes("q=Jebel"));
+    expect(searchUrl).toContain("type=CLIENT");
+  });
+
+  // Warehouse type has been independent of ownership until now, so a record may already hold a
+  // warehouse typed OWNED. The type filter narrows the searchable POOL only — filtering
+  // `assigned` too would hide such a row while leaving it assigned, stranding a link the owner's
+  // form is the only place to remove. It must stay listed and checked.
+  it("still lists an already-assigned warehouse whose type is outside the filter", async () => {
+    stubFetch((url) => {
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
+      }
+      return { status: 404 };
+    });
+    renderFixed({
+      value: ["legacy"],
+      assigned: [warehouse({ id: "legacy", name: "Legacy Owned DC", type: "OWNED", freightForwarderId: "ff1" })],
+    });
+
+    expect(await screen.findByRole("checkbox", { name: "Legacy Owned DC" })).toBeChecked();
   });
 });

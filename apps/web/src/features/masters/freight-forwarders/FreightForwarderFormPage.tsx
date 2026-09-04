@@ -76,7 +76,10 @@ export function FreightForwarderFormPage() {
       modes: d.modes,
       handleDg: d.handleDg,
       vatTrnEori: d.vatTrnEori ?? undefined,
-      whLocation: d.whLocation ?? undefined,
+      // `whLocation` is deliberately not loaded: no field renders it, the update schema omits it
+      // and update() strips it, so carrying it in the draft could only put a stale value on the
+      // wire. Unlike `contacts`/`vehicles` elsewhere in this build, omitting it deletes nothing —
+      // setWarehousesTx recomputes the column from the assignment on every save.
       defaultCurrency: (d.defaultCurrency ?? undefined) as CurrencyCode | undefined,
       paymentTerms: d.paymentTerms ?? undefined,
       typicalLeadTime: d.typicalLeadTime ?? undefined,
@@ -346,17 +349,13 @@ export function FreightForwarderFormPage() {
         <Field id="vatTrnEori" label="VAT / TRN / EORI" error={err("vatTrnEori")}>
           <Input id="vatTrnEori" {...register("vatTrnEori")} />
         </Field>
-        {/* Read-only once the record exists: whLocation is derived from the assigned
-            warehouses (FreightForwardersService.setWarehouses is its sole writer after create)
-            — editing it here would be silently reverted by the next warehouse assignment, and
-            worse, could itself blank out a value the picker had just set (see setWarehouses's
-            update() comment). Same disabled-once-id pattern as pic/contactNumber/email above. */}
-        <Field id="whLocation" label="Warehouse location" error={err("whLocation")}>
-          <Input id="whLocation" disabled={Boolean(id)} {...register("whLocation")} />
-          {id && (
-            <p className="text-sm text-muted-foreground">Set by the warehouses assigned below.</p>
-          )}
-        </Field>
+        {/* No "Warehouse location" field. `whLocation` is derived from the assigned warehouses
+            — FreightForwardersService.setWarehousesTx is its sole writer, and update() strips it
+            from every PATCH — so the Warehouses picker at the bottom of this form is the one
+            place that sets it. It was previously rendered read-only-once-saved, which left an
+            editable box on create whose value the first warehouse assignment would overwrite.
+            The column and `FreightForwarderDto.whLocation` both stay: rfq.service.ts snapshots
+            them into every RFQ payload. */}
         <SelectField
           id="paymentTerms"
           label="Payment terms"

@@ -323,19 +323,90 @@ Also unbuilt, and recorded as a dropped requirement rather than an omission: des
 "the same state renders as a marker in the list row" for records with no primary contact. No list
 page was touched; the advisory banner on the form carries the signal instead.
 
+## Post-review fix batch (2026-09-04) — four master-screen corrections
+
+Raised by the user after using the rebuilt screens, and implemented on the same branch
+(`claude/master-data-consistency-a920af`) on top of the whole-branch review's fix wave. **Still no
+migration**, and the Warehouse/Client API contracts are untouched. One API contract change, on the
+Freight Forwarder create schema — see item 3.
+
+1. **Warehouse form — "Total vehicles" now sums `quantity`.** It rendered
+   `(field.value ?? []).length`, the number of tonnage *rows*, so three 5T trucks plus two 9T
+   trucks read "2". It also disagreed with the `totalVehicles` the API has always derived
+   (`WarehousesService.get` sums `quantity`), which is what made this a display-only bug rather
+   than a data one. Web only.
+
+2. **Warehouse form — the weekend working fee is gated on the Weekend working checkbox.** The
+   checkbox sits in Operations (it applies to every warehouse type); the fee sits in Contract &
+   rates (OWNED/CONTRACTED only), so the gate is the conjunction. `WarehouseFormPage` owns the
+   watch and passes `showWeekendWorkingFee` down, keeping `ContractAndRatesSection`
+   presentational. A **transition-only** effect (`true → false`) clears the fee, modelled on the
+   existing `prevType` rate-clearing effect and for the identical reason: react-hook-form keeps an
+   unmounted field's registered value, so hiding the input alone would still POST the fee. It is
+   transition-only, not "clear whenever unchecked", because the load effect sets `weekendWorking`
+   from the stored record and clearing on that first pass would blank a stored fee on the next
+   unrelated PATCH. **Accepted consequence:** a legacy row with `weekendWorking: false` and a
+   stored fee keeps that fee until someone toggles the box.
+
+3. **Freight Forwarder form — the "Warehouse location" field is gone, and `whLocation` left the
+   create schema.** User's call, taken over the smaller "remove the input only" option. The field
+   was already read-only once saved; on create it was an editable box whose value the first
+   warehouse assignment overwrote. `whLocation` is now absent from **both** FF schemas, making
+   `setWarehousesTx` its only writer in fact as well as in intent, and the load effect no longer
+   maps it into the draft. **Unchanged, deliberately:** the column, `FreightForwarderDto.whLocation`,
+   the `delete data.whLocation` in `update()` (defence in depth), and `rfq.service.ts:308`'s
+   snapshot. `freightForwarderUpdateSchema`'s `.omit()` dropped `whLocation` as it is now
+   redundant. **Contract change, no migration:** a create payload carrying `whLocation` is now
+   silently stripped by Zod rather than stored — it does not 400, so old callers still succeed. No
+   api spec sent it; the change cost zero api test edits.
+
+4. **Warehouse search in the FF and Client forms filters by warehouse type.** `WarehousePicker`
+   sends `type=FF` for `ownerPath="freight-forwarders"` and `type=CLIENT` for `"clients"`.
+   `GET /api/warehouses` already accepted `type` and ANDs it with `unassigned` and `q`, so this is
+   web-only — no API change. **The filter applies to the pool, never to `assigned`**: type has
+   been independent of ownership (D3), so a record may already hold an OWNED/CONTRACTED warehouse,
+   and filtering `assigned` too would hide it while leaving it assigned — stranding a link the
+   owner's form is the only place to remove.
+
+**Left open, deliberately:** nothing stops the API assigning a wrongly-typed warehouse — only the
+UI filters. A guard in `setWarehousesTx` would reject payloads the API accepts today and would
+break existing e2e fixtures, so it belongs with the Stage-4 pass, where ownership is already in
+scope.
+
+**Owed, not run: `docs/2026-09-04-warehouse-type-mismatch-cleanup.md`.** The user's decision for
+pre-existing mismatched rows (assigned but typed OWNED/CONTRACTED) is to **delete** them, against
+the recommendation to re-type them. That doc holds the dry-run query, backup, transactional
+delete, and — **not optional** — the step that recomputes `FreightForwarder.whLocation`, which is
+a denormalised column with no FK, so a direct delete leaves it naming a warehouse that no longer
+exists. It is a manual production operation and has not been executed. Whether any mismatched row
+exists in production is **unknown**: Neon was not reachable from the worktree, so step 1 has not
+been run.
+
+Every new test was verified to fail against the pre-fix code, not merely to pass after it — the
+"tests that cannot fail" shape recorded above.
+
 ## The exact next step
 
-**1. Get PR #55 reviewed and merged.** It is open, CI-green at `5ec93ec`, and whole-branch
-reviewed with its fix waves applied. Nothing in it is known-broken. Until it merges, the six
-master screens on `main` are still the pre-consistency versions.
+**1. Get PR #55 reviewed and merged.** It is open, whole-branch reviewed with its fix waves
+applied, and now also carries the 2026-09-04 four-item fix batch above. Nothing in it is
+known-broken. Until it merges, the six master screens on `main` are still the pre-consistency
+versions.
 
-Two things a reviewer should know rather than rediscover:
+Three things a reviewer should know rather than rediscover:
 - The **API contract changed** (no migration): `contacts` is now required with exactly one PRIMARY
   on Client and Warehouse create. Any other in-flight branch merging this will see
   `ClientCreateInput` / `WarehouseCreateInput` typecheck errors — the same shape of break masters'
   own `FreightForwarderCreateInput` change caused. See the ⚠️ bullet at the top.
+- **`whLocation` also left `freightForwarderCreateSchema`** (2026-09-04, item 3 above). A create
+  payload still carrying it is stripped, not rejected, so this breaks no caller — but any branch
+  whose code sets it will now see it silently dropped rather than stored.
 - The branch touches **15 api files** against `main`. Run the api suite; do not infer from the
   web-heavy narrative in this file that it was untouched.
+
+**1b. Decide the warehouse type-mismatch cleanup** —
+`docs/2026-09-04-warehouse-type-mismatch-cleanup.md`, steps written, not run, and it needs
+production access this session did not have. It does not block the merge: the picker change is
+correct with or without it.
 
 **2. Work the follow-up list** (nine items, below) whenever convenient — none blocks the merge.
 The two most worth doing early are the `AuthProvider`-race test convention (#1, ~17 files, its own

@@ -70,6 +70,10 @@ export function WarehouseFormPage() {
 
   const type = useWatch({ control, name: "type" });
   const isContracted = CONTRACTED_TYPES.includes(type as (typeof CONTRACTED_TYPES)[number]);
+  // The fee is a charge for working a weekend — it is meaningless on a warehouse that does not.
+  // The checkbox lives in Operations (an operational fact of the site, shown for every type) and
+  // the fee in Contract & rates (OWNED/CONTRACTED only), so the gate is the conjunction.
+  const weekendWorking = useWatch({ control, name: "weekendWorking" });
 
   // The single most dangerous lines in this effect are `contacts:` and `vehicles:` below. The
   // API treats "absent from the array" as "delete", so omitting either mapping would leave the
@@ -157,6 +161,25 @@ export function WarehouseFormPage() {
     for (const f of rateFields) setValue(f, undefined);
     clearErrors([...rateFields]);
   }, [type, isContracted, setValue, clearErrors]);
+
+  // The same shape as the type effect above, for the same reason: `weekendWorkingFee`'s only
+  // renderer unmounts when the box is unchecked, and react-hook-form keeps an unmounted field's
+  // registered value (`shouldUnregister` defaults to false). Without this, unchecking Weekend
+  // working would still save the fee that is no longer on screen.
+  //
+  // Only on a real user transition (true -> false), never on the first observed value. The load
+  // effect sets `weekendWorking` from the stored record, and clearing on that pass would blank a
+  // stored fee on the next unrelated PATCH — the silent-overwrite hazard that effect's own
+  // comment warns about. So a legacy row carrying a fee with `weekendWorking: false` keeps it
+  // until someone actually toggles the box; the fee is simply not offered for editing until then.
+  const prevWeekendWorking = useRef<boolean | undefined>(undefined);
+  useEffect(() => {
+    const was = prevWeekendWorking.current;
+    prevWeekendWorking.current = weekendWorking;
+    if (was !== true || weekendWorking) return;
+    setValue("weekendWorkingFee", undefined);
+    clearErrors("weekendWorkingFee");
+  }, [weekendWorking, setValue, clearErrors]);
 
   // Captured off `existing.data` (the server's record), NOT the live draft — this is what lets
   // the three-state rule below tell "this record never had a primary" (state 3, save allowed)
@@ -344,7 +367,14 @@ export function WarehouseFormPage() {
         </label>
       </FormSection>
 
-      {isContracted && <ContractAndRatesSection control={control} register={register} errors={errors} />}
+      {isContracted && (
+        <ContractAndRatesSection
+          control={control}
+          register={register}
+          errors={errors}
+          showWeekendWorkingFee={Boolean(weekendWorking)}
+        />
+      )}
 
       <Controller
         control={control}
@@ -352,9 +382,18 @@ export function WarehouseFormPage() {
         render={({ field }) => (
           <div className="space-y-2">
             <VehiclesSection value={field.value ?? []} onChange={field.onChange} />
+            {/* The total number of vehicles, not the number of tonnage rows — three 5T trucks
+                and two 9T trucks is five, which the `.length` this replaced reported as 2. Same
+                figure the API derives and returns as `totalVehicles` (WarehousesService.get:
+                `vehicles.reduce((sum, v) => sum + v.quantity, 0)`), so the draft and the saved
+                record agree. `quantity` is a required positive int and VehicleDialog validates
+                each row against `warehouseVehicleUpsertSchema` before it reaches this array, so
+                there is no partial row to guard against. */}
             <p className="text-sm text-muted-foreground">
               Total vehicles:{" "}
-              <span className="font-medium text-foreground">{(field.value ?? []).length}</span>
+              <span className="font-medium text-foreground">
+                {(field.value ?? []).reduce((sum, v) => sum + v.quantity, 0)}
+              </span>
             </p>
           </div>
         )}

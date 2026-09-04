@@ -1,16 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Paginated, WarehouseDto } from "@svyft/shared";
+import type { Paginated, WarehouseDto, WarehouseMasterType } from "@svyft/shared";
 import { fetchJson } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { masterErrorMessage } from "./form";
 
 /**
+ * The Warehouse master type each owner may draw from. `WarehouseMasterType` is the annotation
+ * rather than a bare string so a rename of the enum in `@svyft/shared` fails this file at
+ * compile time instead of silently sending a `type` the API filters to nothing.
+ */
+const OWNER_WAREHOUSE_TYPE: Record<"freight-forwarders" | "clients", WarehouseMasterType> = {
+  "freight-forwarders": "FF",
+  clients: "CLIENT",
+};
+
+/**
  * Owner-agnostic, fully controlled draft editor (Task 8). It no longer talks to the network to
  * save anything — the owning form page's single Save is the only commit point, carrying
  * `warehouseIds` alongside the parent record and its contacts in one request. This component
- * only fetches the *unassigned* pool (`GET /api/warehouses?unassigned=true`) to offer as
+ * only fetches the *unassigned* pool (`GET /api/warehouses?unassigned=true&type=…`) to offer as
  * checkbox options; toggling a box calls `onChange` with the next id array, exactly like
  * `ContactsSection`'s `value`/`onChange` contract.
  *
@@ -19,6 +29,13 @@ import { masterErrorMessage } from "./form";
  * unassigned pool with `assigned` for the checkbox list: a warehouse this owner already has
  * would otherwise vanish from the list the moment it's checked, since ?unassigned=true excludes
  * it.
+ *
+ * The `type` filter is applied to the pool only, NOT to `assigned`. Warehouse type has been
+ * independent of ownership until now, so a record may already hold a warehouse typed
+ * OWNED/CONTRACTED; filtering `assigned` too would hide that row while leaving it assigned,
+ * stranding a link with no way to remove it from the owner's own form. Merging it in keeps it
+ * visible and uncheckable — which also means this component is correct both before and after the
+ * one-off cleanup of those mismatched rows.
  */
 export function WarehousePicker({
   ownerPath,
@@ -32,6 +49,11 @@ export function WarehousePicker({
   assigned: WarehouseDto[];
 }) {
   const [search, setSearch] = useState("");
+  // The pool a forwarder can draw from is the warehouses tagged FF; a client's is those tagged
+  // CLIENT. `type` is ANDed server-side with `unassigned` and `q` (WarehousesService.list), so
+  // this narrows the query rather than the fetched page — an OWNED warehouse is now unreachable
+  // from either owner form, however it is searched for.
+  const type = OWNER_WAREHOUSE_TYPE[ownerPath];
   // The unassigned pool is capped at pageSize=100 (the API's max) and name-ordered, so a
   // warehouse alphabetically past the cap would otherwise be invisible with no hint it exists.
   // `q` re-scopes the *server-side* query rather than filtering the already-fetched 100, so
@@ -39,10 +61,10 @@ export function WarehousePicker({
   // is not gated on an ownerId — a brand-new, unsaved record can now assign warehouses too,
   // since nothing commits until the parent's own Save.
   const unassigned = useQuery({
-    queryKey: ["warehouses", "unassigned", ownerPath, search],
+    queryKey: ["warehouses", "unassigned", ownerPath, type, search],
     queryFn: () =>
       fetchJson<Paginated<WarehouseDto>>(
-        `/api/warehouses?unassigned=true&pageSize=100&q=${encodeURIComponent(search)}`,
+        `/api/warehouses?unassigned=true&type=${type}&pageSize=100&q=${encodeURIComponent(search)}`,
       ),
   });
 

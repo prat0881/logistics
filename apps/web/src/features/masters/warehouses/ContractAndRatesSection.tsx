@@ -22,6 +22,14 @@ interface Props {
   control: Control<WarehouseCreateInput>;
   register: UseFormRegister<WarehouseCreateInput>;
   errors: FieldErrors<WarehouseCreateInput>;
+  /**
+   * Whether the warehouse works weekends. Decided by the caller, not read from the form here:
+   * the `weekendWorking` checkbox lives in WarehouseFormPage's Operations section (it applies to
+   * every warehouse type, while this whole section is OWNED/CONTRACTED-only), and that page
+   * already owns the effect that clears the fee when the box is unchecked. Keeping the watch
+   * there leaves this component presentational.
+   */
+  showWeekendWorkingFee: boolean;
 }
 
 /**
@@ -35,7 +43,7 @@ interface Props {
  * every sibling master form (Client/Vessel/FreightForwarder) and `ContactsSection`/`VehiclesSection`
  * within this same feature.
  */
-export function ContractAndRatesSection({ control, register, errors }: Props) {
+export function ContractAndRatesSection({ control, register, errors, showWeekendWorkingFee }: Props) {
   const err = (name: keyof WarehouseCreateInput) =>
     errors[name] ? (
       <p role="alert" className="text-sm text-destructive">
@@ -91,16 +99,18 @@ export function ContractAndRatesSection({ control, register, errors }: Props) {
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" {...register("isBonded")} /> Bonded warehouse
         </label>
-        <div className="space-y-1">
-          <Label htmlFor="weekendWorkingFee">Weekend working fee</Label>
-          <Input
-            id="weekendWorkingFee"
-            type="number"
-            step="any"
-            {...register("weekendWorkingFee", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
-          />
-          {err("weekendWorkingFee")}
-        </div>
+        {showWeekendWorkingFee && (
+          <div className="space-y-1">
+            <Label htmlFor="weekendWorkingFee">Weekend working fee</Label>
+            <Input
+              id="weekendWorkingFee"
+              type="number"
+              step="any"
+              {...register("weekendWorkingFee", { setValueAs: (v: string) => (v === "" ? undefined : Number(v)) })}
+            />
+            {err("weekendWorkingFee")}
+          </div>
+        )}
       </div>
 
       <h3 className="text-sm font-medium text-foreground">Rate card</h3>

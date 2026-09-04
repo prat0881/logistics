@@ -363,7 +363,11 @@ describe("FreightForwarderFormPage (edit)", () => {
             modes: ["AIR"],
             handleDg: false,
             vatTrnEori: null,
-            whLocation: null,
+            // Deliberately non-null: `whLocation` is derived server-side from the assigned
+            // warehouses and no longer has a field on this form, so a loaded value must never
+            // reappear in the draft or on the wire. A `null` here could not tell that apart from
+            // the field simply being empty.
+            whLocation: "Jebel Ali DC",
             defaultCurrency: null,
             paymentTerms: null,
             typicalLeadTime: null,
@@ -391,6 +395,40 @@ describe("FreightForwarderFormPage (edit)", () => {
     expect(await screen.findByLabelText(/person in charge/i)).toBeDisabled();
     expect(screen.getByLabelText(/contact number/i)).toBeDisabled();
     expect(screen.getByLabelText(/^email$/i)).toBeDisabled();
+  });
+
+  // The Warehouse location field is gone entirely — the Warehouses picker below replaces it.
+  // `whLocation` is derived from the assignment (setWarehousesTx is its sole writer) and
+  // `freightForwarderUpdateSchema` never accepted it, so the field could only ever mislead. Both
+  // halves matter: not rendered, AND not carried in the draft — the fixture loads
+  // "Jebel Ali DC", so a leftover load mapping would put a stale value on the wire even with no
+  // input on screen.
+  it("has no Warehouse location field, and never sends whLocation", async () => {
+    const patchCalls: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockLoadedForwarder({
+        id: "f7",
+        contacts: [
+          { id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301", name: "Asha Menon", email: "asha@example.com", contactNo: "+971501234567", pocLevel: "PRIMARY" },
+        ],
+        patchCalls,
+      }),
+    );
+    renderAtRoute("/masters/freight-forwarders/f7");
+
+    await screen.findByLabelText(/person in charge/i);
+    expect(screen.queryByLabelText(/warehouse location/i)).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Jebel Ali DC")).not.toBeInTheDocument();
+    // The picker that replaces it is present.
+    expect(screen.getByLabelText(/search warehouses by name/i)).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText(/company name/i));
+    await userEvent.type(screen.getByLabelText(/company name/i), "Renamed Freight");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(patchCalls).toHaveLength(1));
+    expect(patchCalls[0]).not.toHaveProperty("whLocation");
   });
 
   it("sends one PATCH carrying both parent fields and contacts", async () => {
