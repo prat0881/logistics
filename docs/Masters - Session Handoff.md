@@ -6,9 +6,11 @@
 
 > **START HERE.** [PR #55](https://github.com/sj132q/svyft-logistics/pull/55) is **OPEN and not
 > merged.** Branch `claude/master-data-consistency-a920af`, worktree
-> `.claude/worktrees/master-data-consistency-a920af`, tip `5ec93ec`, **56 commits** ahead of
-> `main`. `pnpm run ci` green at that tip — lint ×3, typecheck ×3, **2,255 tests**
-> (shared 446 · web 1053 · api 756), builds ×3, exit 0. Whole-branch reviewed, fix waves applied.
+> `.claude/worktrees/master-data-consistency-a920af`, **last code commit `38c2875`** (this
+> handoff's own commit sits on top of it), **59 commits** ahead of `main`. `pnpm run ci` green at
+> `38c2875` — lint ×3, typecheck ×3, **2,263 tests**
+> (shared 446 · web 1061 · api 756), builds ×3, exit 0. Whole-branch reviewed, fix waves applied,
+> plus the 2026-09-04 four-item fix batch (its own section below).
 > **No migration on the branch, and that must stay true.**
 >
 > Everything below the next two sections describes the *earlier* masters build (PR #53), which
