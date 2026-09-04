@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "@/features/auth/AuthProvider";
@@ -69,8 +69,20 @@ const FORM_ROUTES: [string, RegExp][] = [
 describe("master form routes are Administrator/Manager only", () => {
   it.each(FORM_ROUTES)("redirects an Executive away from %s", async (path, formLabel) => {
     renderAt(path, "EXECUTIVE");
-    // The redirect lands on /queries (via "/"), so the form itself must never render.
-    await waitFor(() => expect(screen.queryByRole("form", { name: formLabel })).not.toBeInTheDocument());
+    // Await the redirect DESTINATION, not the absence of the form.
+    //
+    // The previous `waitFor(() => expect(queryByRole(...)).not.toBeInTheDocument())` proved
+    // nothing: a waitFor whose callback asserts an absence is satisfied on its very first tick,
+    // because the form is not on screen yet either way — AuthProvider renders children
+    // immediately with `user = null`, so AdminOnly denies before /api/auth/me has even resolved.
+    // The whole block therefore passed with the role check deleted, and would also have passed
+    // if the route had simply failed to render for an unrelated reason.
+    //
+    // The Queries heading only appears once the redirect has actually landed, which requires
+    // auth to have settled to a role AdminOnly rejects. That makes it both the positive control
+    // and proof that the user was sent somewhere rather than left on a blank screen — the reason
+    // an AuthSettled probe is NOT the right tool here (see @/test/AuthSettled).
+    expect(await screen.findByRole("heading", { name: "Queries" })).toBeInTheDocument();
     expect(screen.queryByRole("form", { name: formLabel })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
   });

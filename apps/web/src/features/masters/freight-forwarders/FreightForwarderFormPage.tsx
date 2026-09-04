@@ -24,7 +24,7 @@ import { useFreightForwarder, useFreightForwarderContacts, useOwnerWarehouses } 
 import { ContactsSection, type ContactDraft } from "../contacts/ContactsSection";
 import { WarehousePicker } from "../WarehousePicker";
 import { MultiSelectCombobox } from "@/components/MultiSelectCombobox";
-import { MasterForm, FormSection, Field, SelectField, masterErrorMessage } from "../form";
+import { MasterForm, FormSection, Field, SelectField, masterErrorMessage, useIsDirtyRef } from "../form";
 import { Input } from "@/components/ui/input";
 
 const MODE_OPTS = FREIGHT_MODES.map((m) => ({ code: m, name: m }));
@@ -60,7 +60,16 @@ export function FreightForwarderFormPage() {
     defaultValues: { availableCountries: [], modes: [], handleDg: false, contacts: [], warehouseIds: [] },
   });
 
+  // Mirrors `isDirty` into a ref so the hydration effect below can read it without joining
+  // its dependency array — see useIsDirtyRef for the full reasoning.
+  const isDirtyRef = useIsDirtyRef(isDirty);
+
   useEffect(() => {
+    // Never overwrite a draft the user has started editing. A background refetch
+    // (refetchOnWindowFocus is on, staleTime 0) re-runs this effect with a fresh object
+    // identity, and reset() below replaces the ENTIRE draft — typed fields and every child
+    // collection — so without this, tabbing away and back mid-edit silently discards the work.
+    if (isDirtyRef.current) return;
     if (!existing.data) return;
     const d = existing.data;
     reset({

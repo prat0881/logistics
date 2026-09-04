@@ -529,4 +529,84 @@ describe("ClientFormPage (edit)", () => {
     await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
     expect(await screen.findByText(/discard unsaved changes/i)).toBeInTheDocument();
   });
+
+  // `queryClient` is constructed bare in lib/api.ts, so refetchOnWindowFocus is on with
+  // staleTime 0: tabbing away to copy an address and back refetches this record mid-edit. The
+  // hydration effect keys on `existing.data`, and its reset() replaces the WHOLE draft — every
+  // typed field plus the Controller-managed contacts and warehouse arrays.
+  //
+  // **The refetch must return CHANGED data for this to bite, and that is not a detail of the
+  // test — it is the shape of the bug.** react-query applies structural sharing
+  // (`replaceEqualDeep`), so a refetch whose body is deeply equal to the cached one keeps the
+  // PREVIOUS object reference; `existing.data`'s identity never changes and the effect never
+  // re-runs. An earlier version of this test refetched identical data and passed with the guard
+  // deliberately disabled — it could not fail. So the reachable hazard is specifically: someone
+  // else edits the record (or any field of it changes server-side) while this user has the form
+  // open, and their in-progress work is replaced by the other person's version without warning.
+  //
+  // invalidateQueries drives the refetch rather than a synthetic focus event: it exercises the
+  // same path (refetch on a query that already holds data) without depending on jsdom focus
+  // handling or on react-query's focus manager being wired up under test.
+  it("does not discard a started edit when a background refetch brings changed data", async () => {
+    let clientGets = 0;
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.endsWith("/api/auth/me")) return authMe;
+        if (url.startsWith("/api/warehouses?unassigned=true")) return emptyUnassignedWarehouses;
+        if (url.endsWith("/api/clients/c1/warehouses")) return { status: 200, body: [] };
+        if (url.endsWith("/api/clients/c1")) {
+          clientGets += 1;
+          return {
+            status: 200,
+            body: {
+              id: "c1",
+              clientCode: "CL-0001",
+              // Changes on the second GET, standing in for a concurrent edit by someone else.
+              companyName: clientGets === 1 ? "Legacy Co" : "Legacy Co (edited elsewhere)",
+              industry: null,
+              country: "IN",
+              streetAddress: "1 Old Rd",
+              city: "Old City",
+              postalCode: null,
+              status: "ACTIVE",
+              contacts: [
+                {
+                  id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+                  name: "Asha Menon",
+                  designation: null,
+                  email: "asha@example.com",
+                  contactNo: "+971501234567",
+                  whatsappAvailable: false,
+                  wechatAvailable: false,
+                  botimAvailable: false,
+                  pocLevel: "PRIMARY",
+                  status: "ACTIVE",
+                },
+              ],
+            },
+          };
+        }
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderAtRoute("/masters/clients/c1", qc);
+
+    const companyName = await screen.findByLabelText(/company name/i);
+    await waitFor(() => expect(companyName).toHaveValue("Legacy Co"));
+    await userEvent.clear(companyName);
+    await userEvent.type(companyName, "Renamed Mid-Edit Co");
+
+    await qc.invalidateQueries();
+    // Assert only once the refetch has settled, so this cannot pass by outrunning the very
+    // refetch it exists to survive.
+    await waitFor(() => expect(clientGets).toBeGreaterThan(1));
+    await waitFor(() => expect(qc.isFetching()).toBe(0));
+
+    expect(companyName).toHaveValue("Renamed Mid-Edit Co");
+    // The contact must survive too: reset() replaces the whole Controller-managed array, and
+    // losing a contact is worse than losing a typed field.
+    expect(screen.getByRole("button", { name: /edit asha menon/i })).toBeInTheDocument();
+  });
 });

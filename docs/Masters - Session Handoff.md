@@ -233,13 +233,11 @@ The rest of that list stands.
 Recorded here because the branch's working ledger is gitignored scratch. None of these block the
 merge; each was reviewed and deliberately deferred.
 
-1. **`AuthProvider`-race test convention (own PR).** `ClientsListPage.test.tsx`,
-   `VesselsListPage.test.tsx`, `WarehousesListPage.test.tsx` and
-   `FreightForwardersListPage.test.tsx` each await a list row and then assert role-gated UI is
-   absent. `AuthProvider` renders children immediately with `user = null` and `useCanWrite()`
-   defaults false, so these can pass off the default unauthenticated state without the role ever
-   being evaluated. Roughly 17 files share the shape. **`FxRatesPage.test.tsx`'s `AuthSettled`
-   probe is the pattern to propagate.** This is the same class that failed CI on PR #54.
+1. ~~**`AuthProvider`-race test convention (own PR).**~~ — **DONE 2026-09-04.** The probe now
+   lives at `@/test/AuthSettled` and all four masters list-page tests await it; `App.test.tsx`
+   awaits its redirect destination instead. It was **13 cases in 5 files, not "roughly 17
+   files"** — see the dedicated section above for that correction and for the delayed-auth
+   experiment that proved the old assertions could pass against a broken gate.
 2. ~~**`raise()`'s issue-first message is app-wide.**~~ — **RESOLVED before merge (user's
    call).** The issue preference briefly lived in `raise()`, which changed every non-masters
    `ZodValidationPipe` 400 across the query wizard, RFQ workspace and Compare. It was scoped
@@ -294,11 +292,13 @@ merge; each was reviewed and deliberately deferred.
 7. **`WarehouseContact.isWeekendIncharge` is unmodelled in `contactCoreSchema`**, so nothing can
    set it. Left alone deliberately: a warehouse-only tenth field would break the shared
    nine-field contact shape that makes `reconcileContacts` owner-agnostic across three services.
-8. **`queryClient` is constructed bare** (`api.ts`), so `refetchOnWindowFocus` is on with
-   `staleTime: 0`, and each form's `reset()` replaces the whole draft. A background refetch
-   mid-edit therefore wipes unsaved contacts, vehicles and typed fields. Pre-existing in shape,
-   materially worse now that one long form holds all children behind one Save. Guarding the
-   reset on `formState.isDirty` is the usual fix.
+8. ~~**`queryClient` is constructed bare** (`api.ts`), so `refetchOnWindowFocus` is on with
+   `staleTime: 0`, and each form's `reset()` replaces the whole draft.~~ — **DONE 2026-09-04**,
+   via `useIsDirtyRef` on all five forms. **One claim here was wrong and is corrected above:** a
+   refetch of *unchanged* data wipes nothing, because react-query's structural sharing keeps the
+   previous object reference, so the hydration effect never re-runs. The reachable case is a
+   concurrent edit by another user. `queryClient` is still constructed bare — that part stands,
+   and `refetchOnWindowFocus: false` was rejected as too broad.
 
 9. **`masterErrorMessage` discards `issue.path`.** For the masters' own refines this is fine —
    their messages are self-describing ("Exactly one contact must be marked Primary"). But a
@@ -375,17 +375,66 @@ UI filters. A guard in `setWarehousesTx` would reject payloads the API accepts t
 break existing e2e fixtures, so it belongs with the Stage-4 pass, where ownership is already in
 scope.
 
-**Owed, not run: `docs/2026-09-04-warehouse-type-mismatch-cleanup.md`.** The user's decision for
-pre-existing mismatched rows (assigned but typed OWNED/CONTRACTED) is to **delete** them, against
-the recommendation to re-type them. That doc holds the dry-run query, backup, transactional
-delete, and — **not optional** — the step that recomputes `FreightForwarder.whLocation`, which is
-a denormalised column with no FK, so a direct delete leaves it naming a warehouse that no longer
-exists. It is a manual production operation and has not been executed. Whether any mismatched row
-exists in production is **unknown**: Neon was not reachable from the worktree, so step 1 has not
-been run.
+**✅ The type-mismatch cleanup is DONE** — applied by the user in production on 2026-09-04. Do not
+re-run. `docs/2026-09-04-warehouse-type-mismatch-cleanup.md` is now a closed record. The decision
+for pre-existing mismatched rows (assigned but typed OWNED/CONTRACTED) was to **delete** them,
+taken against the recommendation to re-type them instead. **All five steps ran, step 5 included**
+(user-confirmed) — so `FreightForwarder.whLocation` was recomputed and is consistent with the
+surviving assignments. That step mattered because `whLocation` is a denormalised column with no
+FK: nothing in the database would have corrected it, and `rfq.service.ts:308` snapshots it into
+every future RFQ.
 
 Every new test was verified to fail against the pre-fix code, not merely to pass after it — the
 "tests that cannot fail" shape recorded above.
+
+## Follow-up items #1 and #8 — CLOSED (2026-09-04)
+
+Done ahead of the Stage-4 pass, on the user's call, because one was a live CI-flake source and the
+other was silent data loss.
+
+### #1 — the `AuthProvider` race. Two corrections to what this file said about it.
+
+**It was not "roughly 17 files".** Every test combining a non-writer role with an absence
+assertion was enumerated and read. Compare, Quotation and `QuotingClientPanel` already carry
+auth-settlement probes of their own, and the Charge Catalogue 403 test awaits an alert that exists
+only on the error branch — a valid positive control. The real set was **13 cases in 5 files**: one
+each in the four masters list pages, plus the nine-case `it.each(FORM_ROUTES)` block in
+`App.test.tsx`. It did not need its own PR.
+
+**The failure mode is ordering-dependent, not permanent.** A first attempt to prove the defect by
+breaking `canWriteMasters` outright failed to discriminate: the old tests caught it too, because
+the repo's synchronous `mockFetch` happens to settle auth before the assertion runs. The
+discriminating mutation is one that is *correct while loading and wrong after settling* — a gate
+that wrongly admits `EXECUTIVE`. With `/api/auth/me` delayed 400 ms behind the list query, the old
+assertion **passes** against that broken gate and the new one **fails**. That experiment is the
+evidence these rewrites were worth making; it is not in the tree (it was a scratch file).
+
+The probe moved out of `FxRatesPage.test.tsx` into `@/test/AuthSettled` and is now shared by all
+five list-page tests. `App.test.tsx` deliberately does **not** use it: its gate is a redirect, so
+it awaits the destination (`heading "Queries"`) instead. Its old form — `waitFor` wrapping a
+negative assertion — was satisfied on its first tick and proved nothing at all.
+
+### #8 — the `reset()` guard. The mechanism is narrower than this file claimed.
+
+Five forms (Client, Vessel, Freight Forwarder, Warehouse, Charge Line) now read `isDirty` through
+`useIsDirtyRef` and skip hydration once the user has touched the draft. A **ref, not a
+dependency**: adding `isDirty` to the effect's deps re-runs hydration on the flip back to false
+that `reset()` and a successful submit both cause, reintroducing the clobber. Guarded on `isDirty`
+rather than "hydrate once" because Client and FF hydrate from three queries that land at different
+times.
+
+**Correction to the original report: a background refetch of UNCHANGED data does not wipe
+anything.** react-query applies structural sharing (`replaceEqualDeep`), so a deeply-equal refetch
+keeps the previous object reference — `data`'s identity never changes and the effect never
+re-runs. The first version of the new test refetched identical data and **passed with the guard
+deliberately disabled**; it could not fail, the exact shape this file warns about, caught by
+mutating the guard rather than by trusting a green run. The reachable hazard is a **concurrent
+edit**: another user changes the record while this one has the form open, and their in-progress
+work is silently replaced. `ClientFormPage.test.tsx` pins that sequence and fails without the
+guard.
+
+`refetchOnWindowFocus: false` on the QueryClient was considered and rejected — it would change
+fetching for the query wizard, RFQ workspace and Compare, none of which have this problem.
 
 ## The exact next step
 
@@ -410,10 +459,11 @@ Three things a reviewer should know rather than rediscover:
 production access this session did not have. It does not block the merge: the picker change is
 correct with or without it.
 
-**2. Work the follow-up list** (nine items, below) whenever convenient — none blocks the merge.
-The two most worth doing early are the `AuthProvider`-race test convention (#1, ~17 files, its own
-PR, and the same class that failed CI on PR #54) and guarding `reset()` on `isDirty` (#8), which
-is now a six-line change because all six pages already destructure `isDirty`.
+**2. Work the follow-up list** whenever convenient — none blocks the merge. **The two that were
+worth doing early, #1 and #8, are now DONE** (2026-09-04; see their own section above, including
+two corrections to what this file originally claimed about them). Seven items remain: #3, #5, #6,
+#7, #9, #10, #11. None is user-facing data loss; #6 and #7 are already in scope for the Stage-4
+pass.
 
 **3. Then spec the Stage-4 pass** — the seven items above, none started. This has **not** been
 specced.

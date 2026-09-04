@@ -3,9 +3,12 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { AuthProvider, useAuth } from "@/features/auth/AuthProvider";
+import { AuthProvider } from "@/features/auth/AuthProvider";
 import { FxRatesPage } from "./FxRatesPage";
 import { mockFetch } from "@/test/mock-fetch";
+// This file defined AuthSettled originally; it moved to @/test when the same race turned up in
+// the four masters list pages, so all five share one probe.
+import { AuthSettled } from "@/test/AuthSettled";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -18,17 +21,6 @@ const SEEDED_RATE = {
   createdById: "u1",
   createdAt: "2026-08-01T00:00:00.000Z",
 };
-
-// A tiny probe reading the same AuthProvider context useCanWrite() reads, so a test can prove
-// auth has actually settled to a specific role before asserting on role-gated UI. FxRatesPage
-// itself renders nothing that depends on auth having *loaded* — only on the resolved role — and
-// its FX table comes from an independent useFxRatesList() query that can resolve before or after
-// /api/auth/me regardless of role. Neither the table nor "nothing rendered yet" proves settlement
-// for a non-writer; this does, because it only shows the resolved role once loading is false.
-function AuthSettled() {
-  const { loading, user } = useAuth();
-  return <p>{loading ? "auth loading" : `auth role: ${user?.role ?? "none"}`}</p>;
-}
 
 function renderPage(role: string, extra?: ReactNode) {
   vi.stubGlobal(

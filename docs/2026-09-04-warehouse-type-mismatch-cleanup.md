@@ -1,7 +1,15 @@
 # One-off cleanup: warehouses assigned to an owner but typed OWNED/CONTRACTED
 
-**Status:** not run. Steps only — this is a destructive, manual production operation, deliberately
-not automated and not part of any migration.
+**Status: APPLIED by the user, 2026-09-04 — all five steps, step 5 included.** Closed record; do
+not re-run. The steps are kept below for provenance, and because step 5 is idempotent and reusable
+on its own should `FreightForwarder.whLocation` ever be suspected of drift again.
+
+`whLocation` is therefore consistent with the surviving warehouse assignments as of that date.
+This matters because it is a denormalised column with no foreign key — nothing in the database
+would have corrected it, and `rfq.service.ts:308` snapshots it into every future RFQ.
+
+This was a destructive, manual production operation, deliberately not automated and not part of
+any migration.
 
 ## Why this exists
 

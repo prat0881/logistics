@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { vesselCreateSchema, MASTER_STATUSES, type VesselCreateInput } from "@svyft/shared";
 import { postJson, patchJson } from "@/lib/api";
 import { useVessel } from "../useMasters";
-import { MasterForm, FormSection, Field, SelectField, masterErrorMessage } from "../form";
+import { MasterForm, FormSection, Field, SelectField, masterErrorMessage, useIsDirtyRef } from "../form";
 import { Input } from "@/components/ui/input";
 
 export function VesselFormPage() {
@@ -22,7 +22,16 @@ export function VesselFormPage() {
     resolver: zodResolver(vesselCreateSchema),
   });
 
+  // Mirrors `isDirty` into a ref so the hydration effect below can read it without joining
+  // its dependency array — see useIsDirtyRef for the full reasoning.
+  const isDirtyRef = useIsDirtyRef(isDirty);
+
   useEffect(() => {
+    // Never overwrite a draft the user has started editing. A background refetch
+    // (refetchOnWindowFocus is on, staleTime 0) re-runs this effect with a fresh object
+    // identity, and reset() below replaces the ENTIRE draft — typed fields and every child
+    // collection — so without this, tabbing away and back mid-edit silently discards the work.
+    if (isDirtyRef.current) return;
     if (existing.data) {
       reset({
         name: existing.data.name,

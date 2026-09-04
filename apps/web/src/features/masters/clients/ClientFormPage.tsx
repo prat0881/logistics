@@ -16,7 +16,7 @@ import { postJson, patchJson } from "@/lib/api";
 import { useClient, useOwnerWarehouses } from "../useMasters";
 import { ContactsSection } from "../contacts/ContactsSection";
 import { WarehousePicker } from "../WarehousePicker";
-import { MasterForm, FormSection, Field, SelectField, masterErrorMessage } from "../form";
+import { MasterForm, FormSection, Field, SelectField, masterErrorMessage, useIsDirtyRef } from "../form";
 import { Input } from "@/components/ui/input";
 
 // clientCreateSchema's own `contacts` rule (.min(1).refine(exactlyOnePrimary)) is unconditional
@@ -52,12 +52,21 @@ export function ClientFormPage() {
     defaultValues: { contacts: [], warehouseIds: [] },
   });
 
+  // Mirrors `isDirty` into a ref so the hydration effect below can read it without joining
+  // its dependency array — see useIsDirtyRef for the full reasoning.
+  const isDirtyRef = useIsDirtyRef(isDirty);
+
   // The single most dangerous line in this effect is `contacts:` below. The API treats "absent
   // from the array" as "delete", so omitting this mapping would leave the draft's contacts
   // empty and the very next unrelated PATCH (e.g. fixing a typo in the city) would silently
   // delete every contact on the record — the same silent-overwrite hazard WarehouseFormPage's
   // own reset() comment warns about for its rate fields.
   useEffect(() => {
+    // Never overwrite a draft the user has started editing. A background refetch
+    // (refetchOnWindowFocus is on, staleTime 0) re-runs this effect with a fresh object
+    // identity, and reset() below replaces the ENTIRE draft — typed fields and every child
+    // collection — so without this, tabbing away and back mid-edit silently discards the work.
+    if (isDirtyRef.current) return;
     if (!existing.data) return;
     const d = existing.data;
     reset({
