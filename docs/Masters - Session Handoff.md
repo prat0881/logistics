@@ -465,8 +465,26 @@ two corrections to what this file originally claimed about them). Seven items re
 #7, #9, #10, #11. None is user-facing data loss; #6 and #7 are already in scope for the Stage-4
 pass.
 
-**3. Then spec the Stage-4 pass** — the seven items above, none started. This has **not** been
-specced.
+**3. ~~Then spec the Stage-4 pass~~ — SPECCED, 2026-09-04:
+`docs/2026-09-04-stage-4-pass-design.md`.** Eight items now (the seven below plus the
+warehouse-type server guard). Nothing is built.
+
+**It is blocked on one business input, and only one:** which of the 16 non-tag DESTINATION charge
+lines are always-included. The spec lists all 16 by key with a recommendation. This blocks item 2
+only; items 1, 5 and 8 are independent and can start immediately.
+
+Three things the spec establishes that this file got wrong — do not re-derive them from the
+sections below:
+- The Configure Charges rule maps onto the **existing** `category` / `isAdditional` pair. `category`
+  decides where a line renders, `isAdditional` decides automatic-vs-chosen. No new column.
+- **Zero** DESTINATION lines are automatic today (all 26 active ones are `isAdditional: true`), so
+  the Destination group would render empty under the rule. That, not "thirteen lines flip", is the
+  actual gap.
+- Item 5 is **37 models, not 28**, and **`FxRate` already has audit columns**. `WarehouseVehicle`
+  does not, despite sitting beside `WarehouseContact`.
+
+Sea's Freight group being empty is **correct** — `SEA_MAIN_FREIGHT` is intentionally inactive
+because sea freight is priced by the structured `seaRates[]`. Do not "fix" it.
 
 ~~Apply the post-deploy correction~~ — **done 2026-09-01**, all three items, through the admin
 screens. See the top of this file.
