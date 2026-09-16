@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WarehouseDto } from "@svyft/shared";
 import { WarehousePicker } from "./WarehousePicker";
@@ -42,28 +43,45 @@ function warehouse(overrides: Partial<WarehouseDto> = {}): WarehouseDto {
   };
 }
 
-function renderPicker({ ownerId, assigned = [] }: { ownerId?: string; assigned?: WarehouseDto[] }) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return {
-    qc,
-    ...render(
-      <QueryClientProvider client={qc}>
-        <WarehousePicker ownerPath="freight-forwarders" ownerId={ownerId} assigned={assigned} />
-      </QueryClientProvider>,
-    ),
-  };
-}
-
 function stubFetch(handler: (url: string, init?: RequestInit) => { status: number; body?: unknown }) {
   vi.stubGlobal("fetch", mockFetch(handler));
 }
 
-describe("WarehousePicker", () => {
-  it("shows the 'save this record first' message when there is no ownerId", () => {
-    renderPicker({ ownerId: undefined });
-    expect(screen.getByText(/save this record before assigning warehouses/i)).toBeInTheDocument();
-  });
+/** Renders the picker with fixed, non-interactive props — for tests that only assert on the
+ *  initial render (checked state, truncation hint) and never toggle a box. */
+function renderFixed({
+  value = [] as string[],
+  assigned = [] as WarehouseDto[],
+  ownerPath = "freight-forwarders" as "freight-forwarders" | "clients",
+}) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <WarehousePicker ownerPath={ownerPath} value={value} onChange={() => {}} assigned={assigned} />
+    </QueryClientProvider>,
+  );
+}
 
+/** A real, stateful value/onChange pair — like ContactsSection.test.tsx's Harness — for tests
+ *  that need toggling and re-rendering to actually flow through the controlled contract, not a
+ *  spy that never updates what's on screen. */
+function Harness({ initialValue = [] as string[], initialAssigned = [] as WarehouseDto[] }) {
+  const [value, setValue] = useState<string[]>(initialValue);
+  const [assigned, setAssigned] = useState<WarehouseDto[]>(initialAssigned);
+  return (
+    <>
+      <WarehousePicker ownerPath="freight-forwarders" value={value} onChange={setValue} assigned={assigned} />
+      {/* Lets a test simulate the parent re-rendering with a fresh `assigned` array — exactly
+          what `ownedWarehouses.data ?? []` produces on an unrelated re-render or an
+          identical-content refetch. */}
+      <button type="button" onClick={() => setAssigned([...assigned])}>
+        rerender-with-new-array
+      </button>
+    </>
+  );
+}
+
+describe("WarehousePicker", () => {
   it("merges the unassigned pool with the currently-assigned warehouses, all checked appropriately", async () => {
     stubFetch((url) => {
       if (url.startsWith("/api/warehouses?unassigned=true")) {
@@ -71,7 +89,7 @@ describe("WarehousePicker", () => {
       }
       return { status: 404 };
     });
-    renderPicker({ ownerId: "ff1", assigned: [warehouse({ id: "a1", name: "Assigned WH" })] });
+    renderFixed({ value: ["a1"], assigned: [warehouse({ id: "a1", name: "Assigned WH" })] });
 
     const assignedBox = await screen.findByRole("checkbox", { name: "Assigned WH" });
     const unassignedBox = await screen.findByRole("checkbox", { name: "Unassigned WH" });
@@ -79,76 +97,49 @@ describe("WarehousePicker", () => {
     expect(unassignedBox).not.toBeChecked();
   });
 
-  it("saves the selected set to the PUT endpoint, including a newly-checked warehouse", async () => {
-    const captured: { url?: string; method?: string; body?: Record<string, unknown> } = {};
-    stubFetch((url, init) => {
+  it("checking an unassigned warehouse calls onChange with it added to the draft", async () => {
+    stubFetch((url) => {
       if (url.startsWith("/api/warehouses?unassigned=true")) {
         return { status: 200, body: { items: [warehouse({ id: "u1", name: "Unassigned WH" })], total: 1, page: 1, pageSize: 100 } };
       }
-      if (url.endsWith("/api/freight-forwarders/ff1/warehouses") && init?.method === "PUT") {
-        captured.url = url;
-        captured.method = init.method;
-        captured.body = JSON.parse(String(init.body)) as Record<string, unknown>;
-        return { status: 200, body: [] };
-      }
       return { status: 404 };
     });
-    renderPicker({ ownerId: "ff1", assigned: [warehouse({ id: "a1", name: "Assigned WH" })] });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <Harness initialValue={["a1"]} initialAssigned={[warehouse({ id: "a1", name: "Assigned WH" })]} />
+      </QueryClientProvider>,
+    );
 
     await userEvent.click(await screen.findByRole("checkbox", { name: "Unassigned WH" }));
-    await userEvent.click(screen.getByRole("button", { name: /save warehouses/i }));
 
-    await waitFor(() => expect(captured.method).toBe("PUT"));
-    expect(captured.url).toBe("/api/freight-forwarders/ff1/warehouses");
-    expect(captured.body?.warehouseIds).toEqual(expect.arrayContaining(["a1", "u1"]));
-    expect((captured.body?.warehouseIds as string[]).length).toBe(2);
-  });
-
-  it("surfaces the server's 409 message instead of failing silently, without clearing the selection", async () => {
-    stubFetch((url, init) => {
-      if (url.startsWith("/api/warehouses?unassigned=true")) {
-        return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
-      }
-      if (init?.method === "PUT") {
-        return { status: 409, body: { message: "Test WH is already assigned to another record" } };
-      }
-      return { status: 404 };
-    });
-    renderPicker({ ownerId: "ff1", assigned: [warehouse({ id: "a1", name: "Assigned WH" })] });
-
-    await userEvent.click(screen.getByRole("button", { name: /save warehouses/i }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Test WH is already assigned to another record");
-    // The selection was not cleared by the failed save.
+    expect(screen.getByRole("checkbox", { name: "Unassigned WH" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Assigned WH" })).toBeChecked();
   });
 
-  it("unassigning everything sends an empty warehouseIds array", async () => {
-    const captured: { body?: Record<string, unknown> } = {};
-    stubFetch((url, init) => {
+  it("unchecking an assigned warehouse calls onChange with it removed from the draft", async () => {
+    stubFetch((url) => {
       if (url.startsWith("/api/warehouses?unassigned=true")) {
         return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
       }
-      if (init?.method === "PUT") {
-        captured.body = JSON.parse(String(init.body)) as Record<string, unknown>;
-        return { status: 200, body: [] };
-      }
       return { status: 404 };
     });
-    renderPicker({ ownerId: "ff1", assigned: [warehouse({ id: "a1", name: "Assigned WH" })] });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <Harness initialValue={["a1"]} initialAssigned={[warehouse({ id: "a1", name: "Assigned WH" })]} />
+      </QueryClientProvider>,
+    );
 
     await userEvent.click(await screen.findByRole("checkbox", { name: "Assigned WH" }));
-    await userEvent.click(screen.getByRole("button", { name: /save warehouses/i }));
 
-    await waitFor(() => expect(captured.body).toEqual({ warehouseIds: [] }));
+    expect(screen.getByRole("checkbox", { name: "Assigned WH" })).not.toBeChecked();
   });
 
   it("does not discard a checked-but-unsaved selection when the parent re-renders with a content-equal but different assigned array", async () => {
     // Simulates the real trigger: the parent hands us `ownedWarehouses.data ?? []`, and every
     // parent re-render — an unrelated form field changing, or a window-focus refetch that
     // resolves to identical content — can produce a fresh array *reference* for the same
-    // *content*. A fix keyed on that reference (not the ids it holds) would wipe the user's
-    // still-unsaved checkbox change right here.
+    // *content*. A fix keyed on that reference (not the ids it holds, and not the emptiness of
+    // the draft) would wipe the user's still-unsaved checkbox change right here.
     stubFetch((url) => {
       if (url.startsWith("/api/warehouses?unassigned=true")) {
         return {
@@ -158,68 +149,41 @@ describe("WarehousePicker", () => {
       }
       return { status: 404 };
     });
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const { rerender } = render(
-      <QueryClientProvider client={qc}>
-        <WarehousePicker
-          ownerPath="freight-forwarders"
-          ownerId="ff1"
-          assigned={[warehouse({ id: "a1", name: "Assigned WH" })]}
-        />
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <Harness initialValue={["a1"]} initialAssigned={[warehouse({ id: "a1", name: "Assigned WH" })]} />
       </QueryClientProvider>,
     );
 
     await userEvent.click(await screen.findByRole("checkbox", { name: "Unassigned WH" }));
     expect(screen.getByRole("checkbox", { name: "Unassigned WH" })).toBeChecked();
 
-    // A brand-new array, freshly allocated, but the same ids as before — exactly what
-    // `ownedWarehouses.data ?? []` produces across an unrelated re-render or an
-    // identical-content refetch.
-    rerender(
-      <QueryClientProvider client={qc}>
-        <WarehousePicker
-          ownerPath="freight-forwarders"
-          ownerId="ff1"
-          assigned={[warehouse({ id: "a1", name: "Assigned WH" })]}
-        />
-      </QueryClientProvider>,
-    );
+    // A brand-new array, freshly allocated, but the same ids as before.
+    await userEvent.click(screen.getByRole("button", { name: "rerender-with-new-array" }));
 
     expect(screen.getByRole("checkbox", { name: "Unassigned WH" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Assigned WH" })).toBeChecked();
   });
 
-  it("resets the selection when the assigned set actually changes", async () => {
-    // The other half of the same fix: a content-based signature must still reset `selected`
-    // when the assignment genuinely changes underneath the component (e.g. after a save), not
-    // just skip every reset unconditionally.
+  it("seeds the draft from the assigned set when the draft starts empty", async () => {
+    // The other half of the same mechanism: the draft (`value`) starts empty — a fresh
+    // `defaultValues: { warehouseIds: [] }` before the parent's load effect has run, or before
+    // it has resolved — and once the assigned set becomes known, the picker seeds `onChange`
+    // with it exactly once, without requiring the user to re-check boxes the server already
+    // has recorded as assigned.
     stubFetch((url) => {
       if (url.startsWith("/api/warehouses?unassigned=true")) {
         return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
       }
       return { status: 404 };
     });
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const { rerender } = render(
-      <QueryClientProvider client={qc}>
-        <WarehousePicker
-          ownerPath="freight-forwarders"
-          ownerId="ff1"
-          assigned={[warehouse({ id: "a1", name: "Assigned WH" })]}
-        />
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <Harness initialValue={[]} initialAssigned={[warehouse({ id: "a1", name: "Assigned WH" })]} />
       </QueryClientProvider>,
     );
+
     expect(await screen.findByRole("checkbox", { name: "Assigned WH" })).toBeChecked();
-
-    rerender(
-      <QueryClientProvider client={qc}>
-        <WarehousePicker ownerPath="freight-forwarders" ownerId="ff1" assigned={[]} />
-      </QueryClientProvider>,
-    );
-
-    // "Assigned WH" no longer appears at all (it's neither assigned nor in the unassigned pool
-    // in this fixture) — the real assertion is that the component picked up the change.
-    expect(screen.queryByRole("checkbox", { name: "Assigned WH" })).not.toBeInTheDocument();
   });
 
   it("shows a truncation hint when the unassigned pool exceeds what was fetched, and searching re-queries the server rather than filtering client-side", async () => {
@@ -237,13 +201,33 @@ describe("WarehousePicker", () => {
       }
       return { status: 404 };
     });
-    renderPicker({ ownerId: "ff1", assigned: [] });
+    renderFixed({ value: [], assigned: [] });
 
     expect(await screen.findByText(/showing 1 of 150 unassigned warehouses/i)).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText(/search warehouses by name/i), "Foo");
     expect(await screen.findByRole("checkbox", { name: "Foo WH" })).toBeInTheDocument();
     expect(requestedUrls.some((u) => u.includes("q=Foo"))).toBe(true);
+  });
+
+  // The anti-pattern WarehousesListPage's own isError branch already forbids in this repo: "A
+  // failed fetch must never render the same 'No warehouses yet.' message an empty, successful
+  // load produces." The picker was rewritten in Task 8 and did not inherit it — it rendered
+  // "No warehouses available to assign." for a 500 exactly as it does for a genuinely empty
+  // pool, so the user would tick nothing, save, and never learn there were options.
+  it("renders the server's error when the unassigned pool fetch fails, not the empty-pool message", async () => {
+    stubFetch((url) => {
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 500, body: { message: "Could not reach the warehouse service" } };
+      }
+      return { status: 404 };
+    });
+    renderFixed({ value: [], assigned: [] });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /could not reach the warehouse service/i,
+    );
+    expect(screen.queryByText(/no warehouses available to assign/i)).not.toBeInTheDocument();
   });
 
   it("does not show a truncation hint once every unassigned warehouse has been fetched", async () => {
@@ -253,66 +237,70 @@ describe("WarehousePicker", () => {
       }
       return { status: 404 };
     });
-    renderPicker({ ownerId: "ff1", assigned: [] });
+    renderFixed({ value: [], assigned: [] });
 
     await screen.findByRole("checkbox", { name: "Unassigned WH" });
     expect(screen.queryByText(/showing .* of .* unassigned warehouses/i)).not.toBeInTheDocument();
   });
 
-  it("on save, invalidates the master Warehouses list and the owner's own cached record, not just its own unassigned-pool query", async () => {
-    stubFetch((url, init) => {
+  // The pool each owner may draw from is scoped by Warehouse master type: a forwarder assigns
+  // FF-tagged warehouses, a client CLIENT-tagged ones. Asserting on the requested URL, not on
+  // what comes back, because the filtering is the API's (`WarehousesService.list` ANDs `type`
+  // with `unassigned` and `q`) — a client-side filter over an unfiltered fetch would still show
+  // the right rows while silently consuming the 100-row page cap on warehouses it then discards.
+  it.each([
+    ["freight-forwarders", "FF"],
+    ["clients", "CLIENT"],
+  ] as const)("asks the server for only %s-owned warehouse types", async (ownerPath, type) => {
+    const urls: string[] = [];
+    stubFetch((url) => {
+      urls.push(url);
       if (url.startsWith("/api/warehouses?unassigned=true")) {
         return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
       }
-      if (init?.method === "PUT") return { status: 200, body: [] };
       return { status: 404 };
     });
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const spy = vi.spyOn(qc, "invalidateQueries");
-    render(
-      <QueryClientProvider client={qc}>
-        <WarehousePicker
-          ownerPath="freight-forwarders"
-          ownerId="ff1"
-          assigned={[warehouse({ id: "a1", name: "Assigned WH" })]}
-        />
-      </QueryClientProvider>,
-    );
+    renderFixed({ ownerPath });
 
-    await userEvent.click(screen.getByRole("button", { name: /save warehouses/i }));
-    await waitFor(() => expect(spy).toHaveBeenCalled());
-
-    const invalidatedKeys = spy.mock.calls.map((call) => (call[0] as { queryKey?: unknown[] })?.queryKey);
-    // The master Warehouses list (useWarehouses) is keyed ["warehouses", q, page, pageSize] —
-    // only a bare ["warehouses"] prefix invalidation reaches it, an exact
-    // ["warehouses","unassigned",search] does not.
-    expect(invalidatedKeys).toContainEqual(["warehouses"]);
-    // FreightForwarderFormPage's own cached record (useFreightForwarder) is keyed
-    // ["freight-forwarder", id] — this is what makes the read-only whLocation field refresh.
-    expect(invalidatedKeys).toContainEqual(["freight-forwarder", "ff1"]);
-    expect(invalidatedKeys).toContainEqual(["freight-forwarders", "ff1", "warehouses"]);
+    await screen.findByText(/no warehouses available to assign/i);
+    const poolUrl = urls.find((u) => u.startsWith("/api/warehouses?unassigned=true"));
+    expect(poolUrl).toContain(`type=${type}`);
   });
 
-  it("invalidates the client's own cached record ([\"client\", id]) when saving from a client's picker", async () => {
-    stubFetch((url, init) => {
+  it("keeps searching within the owner's type", async () => {
+    const urls: string[] = [];
+    stubFetch((url) => {
+      urls.push(url);
       if (url.startsWith("/api/warehouses?unassigned=true")) {
         return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
       }
-      if (init?.method === "PUT") return { status: 200, body: [] };
       return { status: 404 };
     });
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const spy = vi.spyOn(qc, "invalidateQueries");
-    render(
-      <QueryClientProvider client={qc}>
-        <WarehousePicker ownerPath="clients" ownerId="c1" assigned={[]} />
-      </QueryClientProvider>,
-    );
+    renderFixed({ ownerPath: "clients" });
 
-    await userEvent.click(screen.getByRole("button", { name: /save warehouses/i }));
-    await waitFor(() => expect(spy).toHaveBeenCalled());
+    await screen.findByText(/no warehouses available to assign/i);
+    await userEvent.type(screen.getByLabelText(/search warehouses by name/i), "Jebel");
+    await screen.findByText(/no warehouses available to assign/i);
+    const searchUrl = urls.find((u) => u.includes("q=Jebel"));
+    expect(searchUrl).toContain("type=CLIENT");
+  });
 
-    const invalidatedKeys = spy.mock.calls.map((call) => (call[0] as { queryKey?: unknown[] })?.queryKey);
-    expect(invalidatedKeys).toContainEqual(["client", "c1"]);
+  // Warehouse type has been independent of ownership until now, so a record may already hold a
+  // warehouse typed OWNED. The type filter narrows the searchable POOL only — filtering
+  // `assigned` too would hide such a row while leaving it assigned, stranding a link the owner's
+  // form is the only place to remove. It must stay listed and checked.
+  it("still lists an already-assigned warehouse whose type is outside the filter", async () => {
+    stubFetch((url) => {
+      if (url.startsWith("/api/warehouses?unassigned=true")) {
+        return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 100 } };
+      }
+      return { status: 404 };
+    });
+    renderFixed({
+      value: ["legacy"],
+      assigned: [warehouse({ id: "legacy", name: "Legacy Owned DC", type: "OWNED", freightForwarderId: "ff1" })],
+    });
+
+    expect(await screen.findByRole("checkbox", { name: "Legacy Owned DC" })).toBeChecked();
   });
 });

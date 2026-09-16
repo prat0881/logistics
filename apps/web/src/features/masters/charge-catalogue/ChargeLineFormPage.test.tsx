@@ -163,4 +163,126 @@ describe("ChargeLineFormPage", () => {
     expect(posts[0].variant).toBe(displayedVariant);
     expect(posts[0].mode).toBe("ROAD");
   });
+
+  it("offers only the two input types resolveChargeConfig actually surfaces", async () => {
+    renderForm();
+    const select = await screen.findByLabelText(/input type/i);
+    const values = within(select).getAllByRole("option").map((o) => (o as HTMLOptionElement).value);
+    expect(values).toEqual(["PLAIN", "HEAVY_WEIGHT_CALC"]);
+  });
+
+  it("renders an existing TRUCKING line's input type read-only with an explanation", async () => {
+    const TRUCKING_LINE = { ...EXISTING_LINE, id: "trucking-id", key: "ROAD_CORE_TRUCKING", inputType: "TRUCKING" };
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "ADMINISTRATOR" } } };
+        if (url.endsWith("/api/charge-line-definitions/admin") && (!init || init.method === undefined || init.method === "GET"))
+          return { status: 200, body: [TRUCKING_LINE] };
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/masters/charge-catalogue/trucking-id"]}>
+            <Routes>
+              <Route path="/masters/charge-catalogue/:id" element={<ChargeLineFormPage />} />
+              <Route path="/masters/charge-catalogue" element={<p>charge catalogue list</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    // The row's generated key also contains "TRUCKING" (ROAD_CORE_TRUCKING), so this asserts
+    // against the read-only input-type label specifically rather than a bare /trucking/i,
+    // which would match both and throw "multiple elements found".
+    expect(await screen.findByText(/trucking \(type/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/input type/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/prices through the portal's rate rows/i)).toBeInTheDocument();
+  });
+
+  it("has no Sort order field", async () => {
+    renderForm();
+    await screen.findByLabelText(/label/i);
+    expect(screen.queryByLabelText(/sort order/i)).not.toBeInTheDocument();
+  });
+
+  it("does not send sortOrder on save", async () => {
+    const patchBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "ADMINISTRATOR" } } };
+        if (url.endsWith("/api/charge-line-definitions/admin") && (!init || init.method === undefined || init.method === "GET"))
+          return { status: 200, body: [EXISTING_LINE] };
+        if (url.endsWith(`/api/charge-line-definitions/${EXISTING_LINE.id}`) && init?.method === "PATCH") {
+          patchBodies.push(JSON.parse(init.body as string));
+          return { status: 200, body: {} };
+        }
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[`/masters/charge-catalogue/${EXISTING_LINE.id}`]}>
+            <Routes>
+              <Route path="/masters/charge-catalogue/:id" element={<ChargeLineFormPage />} />
+              <Route path="/masters/charge-catalogue" element={<p>charge catalogue list</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    await screen.findByLabelText(/^label$/i);
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+    expect(patchBodies[0]).not.toHaveProperty("sortOrder");
+  });
+
+  it("does not send inputType when saving a locked (TRUCKING) row", async () => {
+    // Companion to "does not send sortOrder on save": that test proves the PATCH-body
+    // mechanism for an editable (PLAIN) row; this proves the symmetric case for a row whose
+    // input type renders read-only — Save must not resend whatever the resolver defaulted the
+    // unregistered inputType field to, which would silently overwrite the real TRUCKING value.
+    const TRUCKING_LINE = { ...EXISTING_LINE, id: "trucking-id", key: "ROAD_CORE_TRUCKING", inputType: "TRUCKING" };
+    const patchBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "ADMINISTRATOR" } } };
+        if (url.endsWith("/api/charge-line-definitions/admin") && (!init || init.method === undefined || init.method === "GET"))
+          return { status: 200, body: [TRUCKING_LINE] };
+        if (url.endsWith(`/api/charge-line-definitions/${TRUCKING_LINE.id}`) && init?.method === "PATCH") {
+          patchBodies.push(JSON.parse(init.body as string));
+          return { status: 200, body: {} };
+        }
+        return { status: 404 };
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AuthProvider>
+          <MemoryRouter initialEntries={["/masters/charge-catalogue/trucking-id"]}>
+            <Routes>
+              <Route path="/masters/charge-catalogue/:id" element={<ChargeLineFormPage />} />
+              <Route path="/masters/charge-catalogue" element={<p>charge catalogue list</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+    await screen.findByText(/trucking \(type/i);
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(patchBodies).toHaveLength(1));
+    expect(patchBodies[0]).not.toHaveProperty("inputType");
+    expect(patchBodies[0]).not.toHaveProperty("sortOrder");
+  });
 });

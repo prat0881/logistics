@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -5,10 +6,11 @@ import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "@/features/auth/AuthProvider";
 import { WarehousesListPage } from "./WarehousesListPage";
 import { mockFetch } from "@/test/mock-fetch";
+import { AuthSettled } from "@/test/AuthSettled";
 
 afterEach(() => vi.unstubAllGlobals());
 
-function renderList(role: string) {
+function renderList(role: string, extra?: ReactNode) {
   vi.stubGlobal(
     "fetch",
     mockFetch((url) => {
@@ -43,6 +45,7 @@ function renderList(role: string) {
     <QueryClientProvider client={qc}>
       <AuthProvider>
         <MemoryRouter>
+          {extra}
           <WarehousesListPage />
         </MemoryRouter>
       </AuthProvider>
@@ -59,8 +62,15 @@ describe("WarehousesListPage", () => {
   });
 
   it("hides New for an Executive", async () => {
-    renderList("EXECUTIVE");
-    await waitFor(() => expect(screen.getByText("Dubai DC")).toBeInTheDocument());
+    renderList("EXECUTIVE", <AuthSettled />);
+    // Await the probe, not the data row. The list query and /api/auth/me are independent
+    // and resolve in either order, and useCanWrite() is false while auth loads as well as
+    // for an Executive — so awaiting the row proves nothing about the role, and this test
+    // passed unchanged with the role check deleted. See AuthSettled's own doc comment.
+    expect(await screen.findByText("auth role: EXECUTIVE")).toBeInTheDocument();
+    // The row too, awaited separately: neither query's arrival implies the other's. This
+    // keeps the original "the list actually rendered" coverage.
+    expect(await screen.findByText("Dubai DC")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /new warehouse/i })).not.toBeInTheDocument();
   });
 });

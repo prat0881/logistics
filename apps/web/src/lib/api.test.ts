@@ -136,3 +136,104 @@ describe("unauthorized (401) handler (U1)", () => {
     expect(onUnauth).not.toHaveBeenCalled();
   });
 });
+
+describe("raise()", () => {
+  it("falls back to a status message when the server sends an empty message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ message: "" }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      status: 409,
+      message: "Request failed: 409",
+    });
+  });
+
+  it("falls back when the message is whitespace only", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: "   " }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      message: "Request failed: 400",
+    });
+  });
+
+  it("preserves a real server message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ message: "This client already has a primary contact" }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      message: "This client already has a primary contact",
+    });
+  });
+
+  // ZodValidationPipe throws `{ message: "Validation failed", issues }` for every schema
+  // rejection. raise() is the shared fetch boundary for the whole app, so it surfaces the
+  // body's own `message` as-is rather than reaching into `issues` — a caller that wants a
+  // specific issue's text (e.g. the masters' `masterErrorMessage` helper) reads `issues` off the
+  // thrown `ApiError` itself, which is why `issues` must still come through intact below.
+  it("uses the body's message even when issues are present, and still passes issues through", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          message: "Validation failed",
+          issues: [
+            { path: ["contacts"], message: "One contact must be marked Primary" },
+            { path: ["city"], message: "Required" },
+          ],
+        }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      status: 400,
+      message: "Validation failed",
+      issues: [{ path: ["contacts"] }, { path: ["city"] }],
+    });
+  });
+
+  it("does not let an issue's message override a real server message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          message: "This client already has a primary contact",
+          issues: [{ path: ["contacts"], message: "One contact must be marked Primary" }],
+        }),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toMatchObject({
+      message: "This client already has a primary contact",
+    });
+  });
+
+  it("still produces an ApiError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      } as unknown as Response),
+    );
+    await expect(fetchJson("/api/clients")).rejects.toBeInstanceOf(ApiError);
+  });
+});

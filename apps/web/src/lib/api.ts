@@ -48,14 +48,21 @@ async function raise(res: Response, url: string): Promise<never> {
   if (res.status === 401 && !url.includes("/api/auth/")) {
     onUnauthorized?.();
   }
-  throw new ApiError(
-    res.status,
-    (body as Record<string, unknown> | undefined)?.message as string ??
-      `Request failed: ${res.status}`,
-    findings,
-    issues,
-    body,
-  );
+  // `??` alone is not enough here: an empty or whitespace-only string is a *present* string, so
+  // it passes a nullish check and would render as a blank alert. Every master form shows one
+  // consolidated error region, and a blank region on a real failure is worse than no region, so
+  // fall back to a status message for a blank `message` too.
+  //
+  // `raise()` is the shared fetch boundary for the whole app, so it surfaces the body's own
+  // `message` as-is — it does not know which caller can make use of `issues`. A caller that
+  // wants a specific issue's text (e.g. the masters' `masterErrorMessage` helper, for
+  // ZodValidationPipe's `{ message: "Validation failed", issues }` shape) reads `issues` off
+  // the thrown `ApiError` itself; `issues` is passed through below untouched.
+  const text = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : undefined);
+  const rawMessage = text((body as Record<string, unknown> | undefined)?.message);
+  const message = rawMessage ?? `Request failed: ${res.status}`;
+
+  throw new ApiError(res.status, message, findings, issues, body);
 }
 
 export async function fetchJson<T>(url: string): Promise<T> {

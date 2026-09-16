@@ -1,5 +1,12 @@
 # Post-deploy corrections — freight forwarder terms
 
+> **✅ CLOSED — applied 2026-09-01.** All three corrections below were verified and applied
+> through the production admin UI (the rebuilt Freight Forwarder form): the two forwarders'
+> payment terms, all 23 lead times, and the single `'Not recorded'` address component.
+> **Do not re-apply.** This file is kept as the provenance record of what was changed and why,
+> because the pre-deploy capture it derives from is the only place the original text ever
+> existed.
+
 **Applies to:** the first production deploy of `feat/masters`.
 **Decided by the user, 2026-08-26:** deploy as-is and correct through the admin UI afterwards,
 rather than amending the migration.

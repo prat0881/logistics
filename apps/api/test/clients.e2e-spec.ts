@@ -9,6 +9,7 @@ import { Role, ACCESS_TOKEN_COOKIE } from "@svyft/shared";
 import { AppModule } from "../src/app.module";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { PrismaExceptionFilter } from "../src/common/prisma-exception.filter";
+import { clientCreateBody } from "./helpers/client";
 
 const CO = "Clients E2E Co";
 
@@ -59,7 +60,15 @@ describe("Clients (e2e)", () => {
     const created = await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.MANAGER))
-      .send({ companyName: CO, country: "IN", industry: "Logistics", streetAddress: "1 Test Road", city: "Test City" })
+      .send(
+        clientCreateBody({
+          companyName: CO,
+          country: "IN",
+          industry: "Logistics",
+          streetAddress: "1 Test Road",
+          city: "Test City",
+        }),
+      )
       .expect(201);
     expect(created.body.clientCode).toMatch(/^CL-\d{4}$/);
     const id = created.body.id;
@@ -75,13 +84,24 @@ describe("Clients (e2e)", () => {
     await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.MANAGER))
-      .send({ companyName: CO, country: "IN", streetAddress: "1 Test Road", city: "Test City" })
+      .send(
+        clientCreateBody({
+          companyName: CO,
+          country: "IN",
+          streetAddress: "1 Test Road",
+          city: "Test City",
+        }),
+      )
       .expect(409);
   });
 
   it("adds a contact, and refuses a second primary with 409", async () => {
     const c = await prisma.client.findFirst({ where: { companyName: CO } });
     const id = c!.id;
+    // The composite create now seeds a PRIMARY contact of its own (design C1). This test is
+    // about the *standalone* POST /:id/contacts endpoint's one-primary rule, so clear the
+    // seeded primary first and let the two contacts below contest the index between them.
+    await prisma.clientContact.updateMany({ where: { clientId: id }, data: { pocLevel: "NONE" } });
     await request(app.getHttpServer())
       .post(`/api/clients/${id}/contacts`)
       .set("Cookie", cookie(Role.MANAGER))
@@ -140,7 +160,14 @@ describe("Clients (e2e)", () => {
     const res = await request(app.getHttpServer())
       .post("/api/clients")
       .set("Cookie", cookie(Role.MANAGER))
-      .send({ companyName: `${CO} RESILIENT`, country: "IN", streetAddress: "1 Test Road", city: "Test City" })
+      .send(
+        clientCreateBody({
+          companyName: `${CO} RESILIENT`,
+          country: "IN",
+          streetAddress: "1 Test Road",
+          city: "Test City",
+        }),
+      )
       .expect(201);
     expect(res.body.clientCode).toMatch(/^CL-\d{4}$/);
   });

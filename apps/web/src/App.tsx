@@ -14,6 +14,7 @@ import { VesselFormPage } from "@/features/masters/vessels/VesselFormPage";
 import { FreightForwardersListPage } from "@/features/masters/freight-forwarders/FreightForwardersListPage";
 import { FreightForwarderFormPage } from "@/features/masters/freight-forwarders/FreightForwarderFormPage";
 import { FxRatesPage } from "@/features/masters/fx-rates/FxRatesPage";
+import { FxRateFormPage } from "@/features/masters/fx-rates/FxRateFormPage";
 import { WarehousesListPage } from "@/features/masters/warehouses/WarehousesListPage";
 import { WarehouseFormPage } from "@/features/masters/warehouses/WarehouseFormPage";
 import { ChargeCatalogueListPage } from "@/features/masters/charge-catalogue/ChargeCatalogueListPage";
@@ -259,6 +260,16 @@ export function App() {
         element={
           <Protected>
             <FxRatesPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/masters/fx-rates/new"
+        element={
+          <Protected>
+            <AdminOrManagerOnly>
+              <FxRateFormPage />
+            </AdminOrManagerOnly>
           </Protected>
         }
       />

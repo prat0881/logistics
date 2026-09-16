@@ -123,3 +123,44 @@ describe("VesselFormPage save failure", () => {
     expect(screen.queryByText("vessels list")).not.toBeInTheDocument();
   });
 });
+
+// Vessels have no child collections (no contacts, no warehouses) — the shared MasterForm shell
+// is the whole story here. These two tests cover what the shell adds over the old bespoke form:
+// the Status field the schema always carried but never rendered, and a real Cancel.
+describe("VesselFormPage shell", () => {
+  it("renders one Vessel section with a Status field and a Cancel button", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        return { status: 404 };
+      }),
+    );
+    renderForm();
+    expect(await screen.findByRole("heading", { name: /new vessel/i })).toBeInTheDocument();
+    expect(screen.getByText(/^vessel$/i)).toBeInTheDocument(); // the section heading
+    expect(screen.getByLabelText(/status/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+  });
+
+  it("returns to the list on Cancel without saving", async () => {
+    const postCalls: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      mockFetch((url, init) => {
+        if (url.endsWith("/api/auth/me"))
+          return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role: "MANAGER" } } };
+        if (url.endsWith("/api/vessels") && init?.method === "POST") {
+          postCalls.push(1);
+          return { status: 201, body: {} };
+        }
+        return { status: 404 };
+      }),
+    );
+    renderForm();
+    await userEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+    expect(await screen.findByText("vessels list")).toBeInTheDocument();
+    expect(postCalls).toHaveLength(0);
+  });
+});

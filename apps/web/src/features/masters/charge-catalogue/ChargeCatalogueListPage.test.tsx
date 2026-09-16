@@ -126,4 +126,39 @@ describe("ChargeCatalogueListPage", () => {
     // The row must survive a refused delete, not disappear from the list.
     expect(screen.getByText("Wharfage Charges")).toBeInTheDocument();
   });
+
+  it("drops the Input and Sort columns", async () => {
+    renderList((url) => {
+      if (url.endsWith("/api/auth/me")) return authOk("ADMINISTRATOR");
+      if (url.endsWith("/api/charge-line-definitions/admin"))
+        return { status: 200, body: [WHARFAGE] };
+      return { status: 404 };
+    });
+    await screen.findByRole("table");
+    expect(screen.queryByRole("columnheader", { name: /^input$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /^sort$/i })).not.toBeInTheDocument();
+  });
+
+  it("badges a non-PLAIN line beside its label", async () => {
+    const HEAVY = { ...WHARFAGE, id: "line-3", key: "AIR_MAIN_HEAVY_WEIGHT", inputType: "HEAVY_WEIGHT_CALC" };
+    renderList((url) => {
+      if (url.endsWith("/api/auth/me")) return authOk("ADMINISTRATOR");
+      if (url.endsWith("/api/charge-line-definitions/admin"))
+        return { status: 200, body: [HEAVY] };
+      return { status: 404 };
+    });
+    expect(await screen.findByText(/heavy-weight/i)).toBeInTheDocument();
+  });
+
+  // Must survive the rework — Stage-4 item 6 depends on it.
+  it("still hides the uncategorised ROAD_WH_HANDLING row", async () => {
+    renderList((url) => {
+      if (url.endsWith("/api/auth/me")) return authOk("ADMINISTRATOR");
+      if (url.endsWith("/api/charge-line-definitions/admin"))
+        return { status: 200, body: [WHARFAGE, ROAD_WH_HANDLING] };
+      return { status: 404 };
+    });
+    await screen.findByRole("table");
+    expect(screen.queryByText("ROAD_WH_HANDLING")).not.toBeInTheDocument();
+  });
 });

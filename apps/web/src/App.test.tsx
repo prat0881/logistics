@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "@/features/auth/AuthProvider";
@@ -23,7 +23,16 @@ function renderAt(path: string, role: string) {
     mockFetch((url) => {
       if (url.endsWith("/api/auth/me"))
         return { status: 200, body: { user: { id: "1", name: "T", email: "t@x.com", role } } };
-      // Every list endpoint any redirect target might hit; shape is irrelevant to these assertions.
+      // Owner-scoped sub-resources (GET /api/<owner>/:id/contacts, GET /api/<owner>/:id/warehouses)
+      // are bare arrays server-side — listContacts/listWarehouses are plain findMany calls, not
+      // paginated. They never carry a query string, unlike the real paginated list endpoints
+      // (e.g. /api/warehouses?q=...&page=...&pageSize=...), so this suffix check can't collide
+      // with those. Returning the paginated shape here instead crashed ClientFormPage and
+      // FreightForwarderFormPage with "X.map/X.some is not a function" the moment either fetched
+      // its owner's contacts or warehouses — not a production bug, a stale fixture.
+      if (url.endsWith("/contacts") || url.endsWith("/warehouses")) return { status: 200, body: [] };
+      // Every remaining list endpoint any redirect target might hit; shape is irrelevant to
+      // these assertions.
       if (url.includes("/api/")) return { status: 200, body: { items: [], total: 0, page: 1, pageSize: 10 } };
       return { status: 404 };
     }),
@@ -40,22 +49,40 @@ function renderAt(path: string, role: string) {
   );
 }
 
+// Each regex must match the page's actual aria-label (MasterForm renders aria-label={title}) and
+// must NOT match any other master's — "new"/"edit" plus the exact entity name, not a generic
+// "<thing> form" the shared shell never renders. These went stale once Tasks 8-11 moved
+// clients/vessels/freight-forwarders/warehouses onto MasterForm's dynamic "New X"/"Edit X" title;
+// the old hardcoded aria-label="X form" markup is gone.
 const FORM_ROUTES: [string, RegExp][] = [
-  ["/masters/clients/new", /client form/i],
-  ["/masters/clients/c1", /client form/i],
-  ["/masters/vessels/new", /vessel form/i],
-  ["/masters/vessels/v1", /vessel form/i],
-  ["/masters/freight-forwarders/new", /freight forwarder form/i],
-  ["/masters/freight-forwarders/f1", /freight forwarder form/i],
-  ["/masters/warehouses/new", /warehouse form/i],
-  ["/masters/warehouses/w1", /warehouse form/i],
+  ["/masters/clients/new", /^new client$/i],
+  ["/masters/clients/c1", /^edit client$/i],
+  ["/masters/vessels/new", /^new vessel$/i],
+  ["/masters/vessels/v1", /^edit vessel$/i],
+  ["/masters/freight-forwarders/new", /^new freight forwarder$/i],
+  ["/masters/freight-forwarders/f1", /^edit freight forwarder$/i],
+  ["/masters/warehouses/new", /^new warehouse$/i],
+  ["/masters/warehouses/w1", /^edit warehouse$/i],
+  ["/masters/fx-rates/new", /^new fx rate$/i],
 ];
 
 describe("master form routes are Administrator/Manager only", () => {
   it.each(FORM_ROUTES)("redirects an Executive away from %s", async (path, formLabel) => {
     renderAt(path, "EXECUTIVE");
-    // The redirect lands on /queries (via "/"), so the form itself must never render.
-    await waitFor(() => expect(screen.queryByRole("form", { name: formLabel })).not.toBeInTheDocument());
+    // Await the redirect DESTINATION, not the absence of the form.
+    //
+    // The previous `waitFor(() => expect(queryByRole(...)).not.toBeInTheDocument())` proved
+    // nothing: a waitFor whose callback asserts an absence is satisfied on its very first tick,
+    // because the form is not on screen yet either way — AuthProvider renders children
+    // immediately with `user = null`, so AdminOnly denies before /api/auth/me has even resolved.
+    // The whole block therefore passed with the role check deleted, and would also have passed
+    // if the route had simply failed to render for an unrelated reason.
+    //
+    // The Queries heading only appears once the redirect has actually landed, which requires
+    // auth to have settled to a role AdminOnly rejects. That makes it both the positive control
+    // and proof that the user was sent somewhere rather than left on a blank screen — the reason
+    // an AuthSettled probe is NOT the right tool here (see @/test/AuthSettled).
+    expect(await screen.findByRole("heading", { name: "Queries" })).toBeInTheDocument();
     expect(screen.queryByRole("form", { name: formLabel })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
   });

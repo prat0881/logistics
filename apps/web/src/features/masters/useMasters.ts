@@ -3,6 +3,7 @@ import { fetchJson } from "@/lib/api";
 import type {
   ChargeLineDefinitionAdminDto,
   ClientDto,
+  ContactDto,
   FreightForwarderDto,
   Paginated,
   VesselDto,
@@ -59,6 +60,20 @@ export function useFreightForwarder(id: string | undefined) {
   return useQuery({
     queryKey: ["freight-forwarder", id],
     queryFn: () => fetchJson<FreightForwarderDto>(`/api/freight-forwarders/${id}`),
+    enabled: !!id,
+  });
+}
+
+/**
+ * Unlike ClientDto/WarehouseDto, FreightForwarderDto does not embed `contacts` — GET
+ * /api/freight-forwarders/:id returns only the parent row (FreightForwardersService.get has no
+ * `include`). Its contacts live behind the dedicated GET /:id/contacts endpoint instead, so the
+ * form page's edit-mode load effect needs this separate query to seed the `contacts` field.
+ */
+export function useFreightForwarderContacts(id: string | undefined) {
+  return useQuery({
+    queryKey: ["freight-forwarder", id, "contacts"],
+    queryFn: () => fetchJson<ContactDto[]>(`/api/freight-forwarders/${id}/contacts`),
     enabled: !!id,
   });
 }

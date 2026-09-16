@@ -10,14 +10,25 @@ import {
 import { useCanWrite } from "@/features/auth/useCanWrite";
 import { ApiError, del, patchJson } from "@/lib/api";
 import { useChargeCatalogueAdmin } from "../useMasters";
+import { masterErrorMessage } from "../form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 const CATEGORY_LABELS: Record<ChargeCategory, string> = {
   ORIGIN: "Origin Charges",
   FREIGHT: "Freight Charges",
   DESTINATION: "Destination Charges",
   ADDITIONAL: "Additional Charges",
+};
+
+// Mirrors the labels in ChargeLineFormPage — kept local rather than imported for the same
+// reason: this screen shouldn't need charge-config.ts's export surface to change either.
+const INPUT_TYPE_LABELS: Record<string, string> = {
+  PLAIN: "Plain amount",
+  TRUCKING: "Trucking",
+  WAREHOUSE_STAGING: "Warehouse staging",
+  HEAVY_WEIGHT_CALC: "Heavy-weight",
 };
 
 type StatusFilter = "" | "active" | "inactive";
@@ -53,7 +64,7 @@ export function ChargeCatalogueListPage() {
       await patchJson(`/api/charge-line-definitions/${id}`, { isActive: false });
       await qc.invalidateQueries({ queryKey: ["charge-catalogue-admin"] });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not deactivate this charge line");
+      setError(masterErrorMessage(e, "Could not deactivate this charge line"));
     }
   }
 
@@ -64,7 +75,7 @@ export function ChargeCatalogueListPage() {
       await qc.invalidateQueries({ queryKey: ["charge-catalogue-admin"] });
     } catch (e) {
       // Surfaces the 409 "in use on N legs" message from the API rather than a generic failure.
-      setError(e instanceof ApiError ? e.message : "Could not delete this charge line");
+      setError(masterErrorMessage(e, "Could not delete this charge line"));
     } finally {
       setConfirmDeleteId(null);
     }
@@ -96,9 +107,7 @@ export function ChargeCatalogueListPage() {
         <p role="alert" className="text-sm text-destructive">
           {fetchError instanceof ApiError && fetchError.status === 403
             ? "This screen needs Administrator or Manager access."
-            : fetchError instanceof ApiError
-              ? fetchError.message
-              : "Could not load the charge catalogue."}
+            : masterErrorMessage(fetchError, "Could not load the charge catalogue.")}
         </p>
       ) : (
         <>
@@ -154,8 +163,6 @@ export function ChargeCatalogueListPage() {
                     <th className="px-4 py-2 font-medium">Variant</th>
                     <th className="px-4 py-2 font-medium">Category</th>
                     <th className="px-4 py-2 font-medium">Additional</th>
-                    <th className="px-4 py-2 font-medium">Input</th>
-                    <th className="px-4 py-2 font-medium">Sort</th>
                     <th className="px-4 py-2 font-medium">Status</th>
                     {canWrite && <th className="px-4 py-2 font-medium">Actions</th>}
                   </tr>
@@ -165,24 +172,29 @@ export function ChargeCatalogueListPage() {
                     rows.map((l) => (
                       <tr key={l.id} className="border-b border-border last:border-0 hover:bg-muted/50">
                         <td className="px-4 py-2">
-                          {canWrite ? (
-                            <Link
-                              to={`/masters/charge-catalogue/${l.id}`}
-                              className="font-medium text-primary hover:underline"
-                            >
-                              {l.label}
-                            </Link>
-                          ) : (
-                            <span className="font-medium">{l.label}</span>
-                          )}
+                          <span className="flex items-center gap-2">
+                            {canWrite ? (
+                              <Link
+                                to={`/masters/charge-catalogue/${l.id}`}
+                                className="font-medium text-primary hover:underline"
+                              >
+                                {l.label}
+                              </Link>
+                            ) : (
+                              <span className="font-medium">{l.label}</span>
+                            )}
+                            {l.inputType !== "PLAIN" && (
+                              <Badge variant="secondary">
+                                {INPUT_TYPE_LABELS[l.inputType] ?? l.inputType}
+                              </Badge>
+                            )}
+                          </span>
                           <div className="font-mono text-xs text-muted-foreground">{l.key}</div>
                         </td>
                         <td className="px-4 py-2">{l.mode}</td>
                         <td className="px-4 py-2">{l.variant}</td>
                         <td className="px-4 py-2">{l.category ? CATEGORY_LABELS[l.category] : ""}</td>
                         <td className="px-4 py-2 text-muted-foreground">{l.isAdditional ? "Yes" : "No"}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{l.inputType}</td>
-                        <td className="px-4 py-2 tabular-nums text-muted-foreground">{l.sortOrder}</td>
                         <td className="px-4 py-2 text-muted-foreground">{l.isActive ? "Active" : "Inactive"}</td>
                         {canWrite && (
                           <td className="px-4 py-2">
@@ -226,7 +238,7 @@ export function ChargeCatalogueListPage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={canWrite ? 9 : 8} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                      <td colSpan={canWrite ? 7 : 6} className="px-4 py-8 text-center text-sm text-muted-foreground">
                         {q || mode || category || status
                           ? "No charge lines match your filters."
                           : "No charge lines yet."}

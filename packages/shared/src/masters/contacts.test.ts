@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { contactCreateSchema, E164, POC_LEVELS } from "./contacts";
+import { contactUpsertSchema, exactlyOnePrimary, atMostOnePrimary } from "./contacts";
 
 describe("POC levels", () => {
   it("exposes exactly three, primary first", () => {
@@ -47,5 +48,59 @@ describe("the nine-field contact schema", () => {
 
   it("rejects a contact with no email or phone", () => {
     expect(contactCreateSchema.safeParse({ name: "Asha Menon" }).success).toBe(false);
+  });
+});
+
+describe("contactUpsertSchema", () => {
+  it("accepts an existing contact carrying an id", () => {
+    const parsed = contactUpsertSchema.parse({
+      id: "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+      name: "Asha Menon",
+      email: "asha@example.com",
+      contactNo: "+971501234567",
+    });
+    expect(parsed.id).toBe("3f2504e0-4f89-11d3-9a0c-0305e82c3301");
+    expect(parsed.pocLevel).toBe("NONE"); // default applied on the output type
+  });
+
+  it("accepts a new contact with no id", () => {
+    expect(
+      contactUpsertSchema.safeParse({
+        name: "New Person",
+        email: "new@example.com",
+        contactNo: "+971501234567",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a non-uuid id", () => {
+    expect(
+      contactUpsertSchema.safeParse({
+        id: "not-a-uuid",
+        name: "X",
+        email: "x@example.com",
+        contactNo: "+971501234567",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("primary-count predicates", () => {
+  const at = (level: string) => ({ pocLevel: level as never });
+
+  it("exactlyOnePrimary is true for exactly one", () => {
+    expect(exactlyOnePrimary([at("PRIMARY"), at("SECONDARY")])).toBe(true);
+  });
+  it("exactlyOnePrimary is false for none", () => {
+    expect(exactlyOnePrimary([at("SECONDARY"), at("NONE")])).toBe(false);
+  });
+  it("exactlyOnePrimary is false for two", () => {
+    expect(exactlyOnePrimary([at("PRIMARY"), at("PRIMARY")])).toBe(false);
+  });
+  it("atMostOnePrimary allows zero", () => {
+    expect(atMostOnePrimary([at("NONE")])).toBe(true);
+  });
+  it("atMostOnePrimary rejects two", () => {
+    expect(atMostOnePrimary([at("PRIMARY"), at("PRIMARY")])).toBe(false);
   });
 });
